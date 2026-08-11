@@ -1,0 +1,194 @@
+using Meimad.Planner.Server.Domain.Cases;
+using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Domain.CaseOperations;
+
+namespace Meimad.Planner.Server.Application.Cases;
+
+internal sealed class CaseService
+{
+    private readonly ICaseRepository repository;
+    private readonly TimeProvider timeProvider;
+
+    public CaseService(ICaseRepository repository, TimeProvider timeProvider)
+    {
+        this.repository = repository;
+        this.timeProvider = timeProvider;
+    }
+
+    internal async Task<PlannerCase> CreateAsync(
+        CreateCaseCommand command,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        var values = CaseValidator.ValidateAndNormalize(ToValues(command));
+        var now = timeProvider.GetUtcNow();
+        var plannerCase = new PlannerCase(
+            Guid.NewGuid().ToString("N"),
+            values.PartNumber,
+            values.Name,
+            values.Revision,
+            values.Customer,
+            values.CustomerReference,
+            values.PreviewPath,
+            values.WorkingFolderPath,
+            values.MaterialType,
+            values.MaterialSpecification,
+            values.RawMaterialForm,
+            values.RawMaterialDimensions,
+            values.CurrentSetupTimeSeconds,
+            values.CurrentCycleTimePerPartSeconds,
+            values.Notes,
+            false,
+            1,
+            now,
+            now);
+
+        return await repository.CreateAsync(plannerCase, editAuthority, cancellationToken);
+    }
+
+    internal Task<PlannerCase?> GetByIdAsync(
+        string caseId,
+        CancellationToken cancellationToken = default)
+    {
+        return repository.GetByIdAsync(caseId, cancellationToken);
+    }
+
+    internal Task<IReadOnlyList<PlannerCase>> ListAsync(
+        string? search,
+        string? customer,
+        bool? isActive,
+        CancellationToken cancellationToken = default) =>
+        repository.ListAsync(search?.Trim(), customer?.Trim(), isActive, cancellationToken);
+
+    internal Task<IReadOnlyList<CaseOperationDetails>> ListOperationsAsync(
+        string caseId,
+        CancellationToken cancellationToken = default) =>
+        repository.ListOperationsAsync(caseId, cancellationToken);
+
+    internal async Task<CaseOperationDetails> CreateOperationAsync(
+        string caseId,
+        CreateCaseOperationCommand command,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        var values = CaseOperationValidator.ValidateAndNormalize(
+            new CaseOperationCreateValues(
+                caseId,
+                command.OperationNumber,
+                command.Name,
+                command.RequiredMachineType,
+                command.SetupTimeSeconds,
+                command.CycleTimePerPartSeconds,
+                command.DependencyType,
+                command.PredecessorCaseOperationId,
+                command.SimultaneousGroupKey));
+        var now = timeProvider.GetUtcNow();
+        var operation = new NewCaseOperation(
+            Guid.NewGuid().ToString("N"),
+            values.CaseId,
+            values.OperationNumber,
+            values.Name,
+            values.RequiredMachineType,
+            values.SetupTimeSeconds,
+            values.CycleTimePerPartSeconds,
+            values.DependencyType,
+            values.PredecessorCaseOperationId,
+            values.SimultaneousGroupKey,
+            now);
+
+        return await repository.CreateOperationAsync(
+                operation,
+                editAuthority,
+                cancellationToken)
+            ?? throw new CaseNotFoundException(caseId);
+    }
+
+    internal async Task<PlannerCase> UpdateAsync(
+        string caseId,
+        int expectedVersion,
+        UpdateCaseCommand command,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await repository.GetByIdAsync(caseId, cancellationToken)
+            ?? throw new CaseNotFoundException(caseId);
+
+        var values = CaseValidator.ValidateAndNormalize(new CaseValues(
+            Select(command.PartNumber, current.PartNumber),
+            Select(command.Name, current.Name),
+            Select(command.Revision, current.Revision),
+            Select(command.Customer, current.Customer),
+            Select(command.CustomerReference, current.CustomerReference),
+            Select(command.PreviewPath, current.PreviewPath),
+            Select(command.WorkingFolderPath, current.WorkingFolderPath),
+            Select(command.MaterialType, current.MaterialType),
+            Select(command.MaterialSpecification, current.MaterialSpecification),
+            Select(command.RawMaterialForm, current.RawMaterialForm),
+            Select(command.RawMaterialDimensions, current.RawMaterialDimensions),
+            Select(command.CurrentSetupTimeSeconds, current.CurrentSetupTimeSeconds),
+            Select(command.CurrentCycleTimePerPartSeconds, current.CurrentCycleTimePerPartSeconds),
+            Select(command.Notes, current.Notes)));
+
+        var updated = current with
+        {
+            PartNumber = values.PartNumber,
+            Name = values.Name,
+            Revision = values.Revision,
+            Customer = values.Customer,
+            CustomerReference = values.CustomerReference,
+            PreviewPath = values.PreviewPath,
+            WorkingFolderPath = values.WorkingFolderPath,
+            MaterialType = values.MaterialType,
+            MaterialSpecification = values.MaterialSpecification,
+            RawMaterialForm = values.RawMaterialForm,
+            RawMaterialDimensions = values.RawMaterialDimensions,
+            CurrentSetupTimeSeconds = values.CurrentSetupTimeSeconds,
+            CurrentCycleTimePerPartSeconds = values.CurrentCycleTimePerPartSeconds,
+            Notes = values.Notes,
+            Version = expectedVersion + 1,
+            UpdatedAt = timeProvider.GetUtcNow()
+        };
+
+        return await repository.UpdateAsync(
+                updated,
+                expectedVersion,
+                editAuthority,
+                cancellationToken)
+            ?? throw new CaseVersionConflictException(caseId, expectedVersion);
+    }
+
+    private static CaseValues ToValues(CreateCaseCommand command) => new(
+        command.PartNumber,
+        command.Name,
+        command.Revision,
+        command.Customer,
+        command.CustomerReference,
+        command.PreviewPath,
+        command.WorkingFolderPath,
+        command.MaterialType,
+        command.MaterialSpecification,
+        command.RawMaterialForm,
+        command.RawMaterialDimensions,
+        command.CurrentSetupTimeSeconds,
+        command.CurrentCycleTimePerPartSeconds,
+        command.Notes);
+
+    private static T Select<T>(OptionalField<T> field, T current) =>
+        field.IsSpecified ? field.Value : current;
+}
+
+internal sealed class CaseNotFoundException : Exception
+{
+    internal CaseNotFoundException(string caseId)
+        : base($"Case '{caseId}' was not found.")
+    {
+    }
+}
+
+internal sealed class CaseVersionConflictException : Exception
+{
+    internal CaseVersionConflictException(string caseId, int expectedVersion)
+        : base($"Case '{caseId}' is no longer at version {expectedVersion}.")
+    {
+    }
+}

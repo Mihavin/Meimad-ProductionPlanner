@@ -1,0 +1,211 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Meimad.Planner.Server.Application.Machines;
+using Meimad.Planner.Server.Domain.Machines;
+
+namespace Meimad.Planner.Server.Api.Machines;
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record CreateMachineRequest(
+    string? Number,
+    string? Name,
+    string? ProcessType,
+    string? AxisType,
+    IReadOnlyList<string?>? Capabilities,
+    string? WorkingCalendarId,
+    bool? IsActive,
+    bool? DisplayEnabled,
+    string? PicturePath)
+{
+    internal CreateMachineCommand ToCommand() => new(
+        Number,
+        Name,
+        ProcessType,
+        AxisType,
+        Capabilities,
+        WorkingCalendarId,
+        IsActive,
+        DisplayEnabled,
+        PicturePath);
+}
+
+internal sealed class PatchMachineRequest
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> Fields { get; init; } =
+        new(StringComparer.Ordinal);
+
+    internal UpdateMachineCommand ToCommand()
+    {
+        var reader = new Reader(Fields);
+        var command = new UpdateMachineCommand(
+            reader.String("number"),
+            reader.String("name"),
+            reader.String("processType"),
+            reader.String("axisType"),
+            reader.StringArray("capabilities"),
+            reader.String("workingCalendarId"),
+            reader.Boolean("isActive"),
+            reader.Boolean("displayEnabled"),
+            reader.String("picturePath"));
+        reader.ThrowIfInvalid();
+        return command;
+    }
+
+    private sealed class Reader
+    {
+        private static readonly HashSet<string> Allowed =
+        [
+            "number", "name", "processType", "axisType", "capabilities",
+            "workingCalendarId", "isActive", "displayEnabled", "picturePath"
+        ];
+
+        private readonly IReadOnlyDictionary<string, JsonElement> fields;
+        private readonly List<MachineRequestIssue> issues = [];
+
+        internal Reader(IReadOnlyDictionary<string, JsonElement> fields)
+        {
+            this.fields = fields;
+            foreach (var field in fields.Keys.Where(field => !Allowed.Contains(field)))
+            {
+                issues.Add(new MachineRequestIssue(field, "unknown_field", $"Field '{field}' is not supported."));
+            }
+
+            if (fields.Count == 0)
+            {
+                issues.Add(new MachineRequestIssue(string.Empty, "empty_patch", "At least one Machine field is required."));
+            }
+        }
+
+        internal MachineField<string?> String(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return MachineField<string?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return MachineField<string?>.Specified(null);
+            }
+
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return MachineField<string?>.Specified(element.GetString());
+            }
+
+            InvalidType(name, "string or null");
+            return MachineField<string?>.Unspecified;
+        }
+
+        internal MachineField<bool?> Boolean(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return MachineField<bool?>.Unspecified;
+            }
+
+            if (element.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return MachineField<bool?>.Specified(element.GetBoolean());
+            }
+
+            InvalidType(name, "boolean");
+            return MachineField<bool?>.Unspecified;
+        }
+
+        internal MachineField<IReadOnlyList<string?>?> StringArray(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return MachineField<IReadOnlyList<string?>?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return MachineField<IReadOnlyList<string?>?>.Specified(null);
+            }
+
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                InvalidType(name, "string array or null");
+                return MachineField<IReadOnlyList<string?>?>.Unspecified;
+            }
+
+            var values = new List<string?>();
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                {
+                    InvalidType(name, "string array or null");
+                    return MachineField<IReadOnlyList<string?>?>.Unspecified;
+                }
+
+                values.Add(item.ValueKind == JsonValueKind.Null ? null : item.GetString());
+            }
+
+            return MachineField<IReadOnlyList<string?>?>.Specified(values);
+        }
+
+        internal void ThrowIfInvalid()
+        {
+            if (issues.Count > 0)
+            {
+                throw new MachineRequestException(issues);
+            }
+        }
+
+        private void InvalidType(string field, string expected) =>
+            issues.Add(new MachineRequestIssue(field, "invalid_type", $"Field '{field}' must be a {expected}."));
+    }
+}
+
+internal sealed record MachineResponse(
+    string MachineId,
+    string Number,
+    string Name,
+    string ProcessType,
+    string? AxisType,
+    IReadOnlyList<string> Capabilities,
+    string WorkingCalendarId,
+    bool IsActive,
+    bool DisplayEnabled,
+    string? PicturePath,
+    string? DeviceId,
+    int BacklogCount,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    internal static MachineResponse FromDomain(Machine machine) => new(
+        machine.MachineId,
+        machine.Number,
+        machine.Name,
+        machine.ProcessType,
+        machine.AxisType,
+        machine.Capabilities,
+        machine.WorkingCalendarId,
+        machine.IsActive,
+        machine.DisplayEnabled,
+        machine.PicturePath,
+        machine.DisplayDeviceId,
+        machine.BacklogCount,
+        machine.Version,
+        machine.CreatedAt,
+        machine.UpdatedAt);
+}
+
+internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);
+
+internal sealed record MachineRequestIssue(string Field, string Code, string Message);
+
+internal sealed class MachineRequestException : Exception
+{
+    internal MachineRequestException(IReadOnlyList<MachineRequestIssue> issues)
+        : base("Machine request is invalid.")
+    {
+        Issues = issues;
+    }
+
+    internal IReadOnlyList<MachineRequestIssue> Issues { get; }
+}

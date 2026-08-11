@@ -1,0 +1,414 @@
+using System.ComponentModel;
+using System.IO;
+using System.Net.Http;
+using System.Runtime.CompilerServices;
+using Meimad.Planner.Client.Windows.Api;
+using Meimad.Planner.Client.Windows.Configuration;
+
+namespace Meimad.Planner.Client.Windows.Presentation;
+
+internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
+{
+    private readonly IClientSettingsStore settingsStore;
+    private readonly IPlannerApiClientFactory apiClientFactory;
+    private IPlannerApiClient? apiClient;
+    private ClientSettings? activeSettings;
+    private EditModeStatus? editStatus;
+    private string serverAddress = ClientSettings.DefaultServerAddress;
+    private string localUserName = "Planner";
+    private string clientId = string.Empty;
+    private string healthLevel = "offline";
+    private string healthHeadline = "Not connected";
+    private string healthDetail = "Enter the factory Server address and connect.";
+    private string modeLevel = "offline";
+    private string modeHeadline = "View Mode unavailable";
+    private string modeDetail = "Connect to read the server-owned Edit Mode state.";
+    private string localIdentityText = "Local user: not loaded";
+    private bool isBusy;
+    private bool hasPendingTransfer;
+    private string pendingTransferText = string.Empty;
+
+    internal MainWindowViewModel(
+        IClientSettingsStore settingsStore,
+        IPlannerApiClientFactory apiClientFactory)
+    {
+        this.settingsStore = settingsStore;
+        this.apiClientFactory = apiClientFactory;
+        CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
+        MachinePlanningBoard = new MachinePlanningBoardViewModel();
+        Timeline = new TimelineViewModel();
+        ConnectCommand = new AsyncCommand(ConnectAsync, () => !IsBusy);
+        RefreshCommand = new AsyncCommand(RefreshAsync, () => !IsBusy && apiClient is not null);
+        RequestEditCommand = new AsyncCommand(
+            RequestEditAsync,
+            () => !IsBusy && editStatus?.State == ClientEditState.Viewer && HealthLevel == "healthy");
+        ReleaseEditCommand = new AsyncCommand(
+            ReleaseEditAsync,
+            () => !IsBusy && editStatus?.State == ClientEditState.Editor);
+        ApproveTransferCommand = new AsyncCommand(
+            () => DecideTransferAsync(release: true),
+            CanDecideTransfer);
+        RejectTransferCommand = new AsyncCommand(
+            () => DecideTransferAsync(release: false),
+            CanDecideTransfer);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public AsyncCommand ConnectCommand { get; }
+
+    public AsyncCommand RefreshCommand { get; }
+
+    public AsyncCommand RequestEditCommand { get; }
+
+    public AsyncCommand ReleaseEditCommand { get; }
+
+    public AsyncCommand ApproveTransferCommand { get; }
+
+    public AsyncCommand RejectTransferCommand { get; }
+
+    public CaseWorkspaceViewModel CaseWorkspace { get; }
+
+    public MachinePlanningBoardViewModel MachinePlanningBoard { get; }
+
+    public TimelineViewModel Timeline { get; }
+
+    public string ServerAddress
+    {
+        get => serverAddress;
+        set => SetField(ref serverAddress, value);
+    }
+
+    public string LocalUserName
+    {
+        get => localUserName;
+        set => SetField(ref localUserName, value);
+    }
+
+    public string ClientId
+    {
+        get => clientId;
+        private set => SetField(ref clientId, value);
+    }
+
+    public string HealthLevel
+    {
+        get => healthLevel;
+        private set => SetField(ref healthLevel, value);
+    }
+
+    public string HealthHeadline
+    {
+        get => healthHeadline;
+        private set => SetField(ref healthHeadline, value);
+    }
+
+    public string HealthDetail
+    {
+        get => healthDetail;
+        private set => SetField(ref healthDetail, value);
+    }
+
+    public string ModeLevel
+    {
+        get => modeLevel;
+        private set => SetField(ref modeLevel, value);
+    }
+
+    public string ModeHeadline
+    {
+        get => modeHeadline;
+        private set => SetField(ref modeHeadline, value);
+    }
+
+    public string ModeDetail
+    {
+        get => modeDetail;
+        private set => SetField(ref modeDetail, value);
+    }
+
+    public string LocalIdentityText
+    {
+        get => localIdentityText;
+        private set => SetField(ref localIdentityText, value);
+    }
+
+    public bool IsBusy
+    {
+        get => isBusy;
+        private set
+        {
+            if (SetField(ref isBusy, value))
+            {
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public bool HasPendingTransfer
+    {
+        get => hasPendingTransfer;
+        private set => SetField(ref hasPendingTransfer, value);
+    }
+
+    public string PendingTransferText
+    {
+        get => pendingTransferText;
+        private set => SetField(ref pendingTransferText, value);
+    }
+
+    internal async Task InitializeAsync()
+    {
+        try
+        {
+            var settings = await settingsStore.LoadAsync();
+            ApplySettings(settings);
+            ReplaceApiClient(settings.ServerBaseUri);
+            await RefreshAsync();
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            var defaults = ClientSettings.Default();
+            ApplySettings(defaults);
+            SetOffline("Local settings unavailable", FriendlyMessage(exception));
+        }
+    }
+
+    internal async Task ConnectAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            var settings = ClientSettings.Create(ServerAddress, LocalUserName, ClientId);
+            await settingsStore.SaveAsync(settings);
+            ApplySettings(settings);
+            ReplaceApiClient(settings.ServerBaseUri);
+            await RefreshCoreAsync();
+        });
+    }
+
+    internal async Task RefreshAsync()
+    {
+        if (apiClient is null || IsBusy)
+        {
+            return;
+        }
+
+        await RunBusyAsync(RefreshCoreAsync);
+    }
+
+    internal async Task RequestEditAsync()
+    {
+        if (apiClient is null)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            editStatus = await apiClient.RequestEditAsync(
+                ClientId,
+                activeSettings!.LocalUserId);
+            ApplyEditStatus(editStatus);
+        });
+    }
+
+    internal async Task ReleaseEditAsync()
+    {
+        if (apiClient is null || editStatus?.State != ClientEditState.Editor)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            editStatus = await apiClient.ReleaseEditAsync(ClientId, editStatus.Generation);
+            ApplyEditStatus(editStatus);
+        });
+    }
+
+    public void Dispose()
+    {
+        apiClient?.Dispose();
+    }
+
+    private async Task DecideTransferAsync(bool release)
+    {
+        if (apiClient is null
+            || editStatus?.State != ClientEditState.Editor
+            || editStatus.PendingRequest is null)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            editStatus = await apiClient.DecideTransferAsync(
+                ClientId,
+                editStatus.Generation,
+                editStatus.PendingRequest.RequestId,
+                release);
+            ApplyEditStatus(editStatus);
+        });
+    }
+
+    private async Task RefreshCoreAsync()
+    {
+        var health = await apiClient!.GetHealthAsync();
+        editStatus = await apiClient.GetEditModeAsync(ClientId);
+        HealthLevel = string.Equals(health.Status, "healthy", StringComparison.OrdinalIgnoreCase)
+            ? "healthy"
+            : "attention";
+        HealthHeadline = $"Connected — {health.Status}";
+        HealthDetail = $"{health.Service} {health.Version} • Server UTC {health.ServerTimeUtc:yyyy-MM-dd HH:mm:ss}";
+        ApplyEditStatus(editStatus);
+        await CaseWorkspace.EnsureLoadedAsync();
+        await MachinePlanningBoard.EnsureLoadedAsync();
+        await Timeline.EnsureLoadedAsync();
+    }
+
+    private async Task RunBusyAsync(Func<Task> operation)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await operation();
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            SetOffline("Server unavailable", FriendlyMessage(exception));
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void ApplySettings(ClientSettings settings)
+    {
+        activeSettings = settings;
+        ServerAddress = settings.ServerBaseUri.AbsoluteUri;
+        LocalUserName = settings.LocalUserName;
+        ClientId = settings.ClientId;
+        LocalIdentityText = $"Local user: {settings.LocalUserName} • Client: {settings.ClientId}";
+    }
+
+    private void ApplyEditStatus(EditModeStatus status)
+    {
+        HasPendingTransfer = status.PendingRequest is not null
+            && status.State == ClientEditState.Editor;
+        PendingTransferText = HasPendingTransfer
+            ? $"Client {status.PendingRequest!.RequesterClientId} requests Edit Mode. Decision deadline: {status.PendingRequest.DecisionDeadline.ToLocalTime():HH:mm:ss}."
+            : string.Empty;
+
+        switch (status.State)
+        {
+            case ClientEditState.Editor:
+                ModeLevel = "editor";
+                ModeHeadline = "🔓 Edit Mode — you are the editor";
+                ModeDetail = $"Generation {status.Generation}. All planning changes are authorized by the Server.";
+                break;
+            case ClientEditState.RequestingEdit:
+                ModeLevel = "requesting";
+                ModeHeadline = "⏳ Requesting Edit Mode";
+                ModeDetail = status.PendingRequest is null
+                    ? "Waiting for the current editor."
+                    : $"Waiting for {status.Holder?.UserId ?? "the current editor"} until {status.PendingRequest.DecisionDeadline.ToLocalTime():HH:mm:ss}.";
+                break;
+            default:
+                ModeLevel = "viewer";
+                ModeHeadline = "🔒 View Mode — read only";
+                ModeDetail = status.Holder is null
+                    ? "No editor currently holds the token. Request Edit Mode to make changes."
+                    : $"Current editor: {DisplayHolder(status.Holder)}. Request Edit Mode to ask for transfer.";
+                break;
+        }
+
+        RaiseCommandStates();
+        CaseWorkspace.AttachSession(apiClient, ClientId, status);
+        MachinePlanningBoard.AttachSession(apiClient, ClientId, status);
+        Timeline.AttachSession(apiClient);
+    }
+
+    private void SetOffline(string headline, string detail)
+    {
+        HealthLevel = "offline";
+        HealthHeadline = headline;
+        HealthDetail = detail;
+        ModeLevel = "offline";
+        ModeHeadline = "⚠ View Mode unavailable";
+        ModeDetail = "Planning changes are disabled until the Server confirms Edit Mode.";
+        HasPendingTransfer = false;
+        PendingTransferText = string.Empty;
+        editStatus = null;
+        CaseWorkspace.AttachSession(apiClient, ClientId, null);
+        MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
+        Timeline.AttachSession(apiClient);
+        RaiseCommandStates();
+    }
+
+    private string DisplayHolder(EditModeHolder holder) =>
+        string.Equals(holder.ClientId, ClientId, StringComparison.Ordinal)
+            ? activeSettings?.LocalUserName ?? holder.UserId
+            : holder.ClientId;
+
+    private void ReplaceApiClient(Uri serverBaseUri)
+    {
+        apiClient?.Dispose();
+        apiClient = apiClientFactory.Create(serverBaseUri);
+        CaseWorkspace.AttachSession(apiClient, ClientId, null);
+        MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
+        Timeline.AttachSession(apiClient);
+        RaiseCommandStates();
+    }
+
+    private bool CanDecideTransfer() => !IsBusy
+        && editStatus?.State == ClientEditState.Editor
+        && editStatus.PendingRequest is not null;
+
+    private void RaiseCommandStates()
+    {
+        ConnectCommand.RaiseCanExecuteChanged();
+        RefreshCommand.RaiseCanExecuteChanged();
+        RequestEditCommand.RaiseCanExecuteChanged();
+        ReleaseEditCommand.RaiseCanExecuteChanged();
+        ApproveTransferCommand.RaiseCanExecuteChanged();
+        RejectTransferCommand.RaiseCanExecuteChanged();
+    }
+
+    private static bool IsExpected(Exception exception) => exception is
+        ClientSettingsException or
+        PlannerApiException or
+        PlannerProtocolException or
+        HttpRequestException or
+        TaskCanceledException or
+        IOException or
+        UnauthorizedAccessException;
+
+    private static string FriendlyMessage(Exception exception) => exception switch
+    {
+        TaskCanceledException => "The Server did not respond before the client timeout.",
+        HttpRequestException => "The configured Server could not be reached.",
+        PlannerApiException api => $"{api.Message} ({api.Code})",
+        _ => exception.Message
+    };
+
+    private bool SetField<T>(
+        ref T field,
+        T value,
+        [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return false;
+        }
+
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        return true;
+    }
+}

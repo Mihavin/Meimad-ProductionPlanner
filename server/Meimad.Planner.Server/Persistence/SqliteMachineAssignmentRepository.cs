@@ -1,0 +1,674 @@
+using System.Globalization;
+using System.Text.Json;
+using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.MachineAssignments;
+using Meimad.Planner.Server.Domain.Machines;
+using Microsoft.Data.Sqlite;
+
+namespace Meimad.Planner.Server.Persistence;
+
+internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepository
+{
+    private readonly SqliteDatabase database;
+
+    public SqliteMachineAssignmentRepository(SqliteDatabase database)
+    {
+        this.database = database;
+    }
+
+    public async Task<AssignmentMutationResult> AssignOrMoveAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var requiredMachineType = await ReadRequiredMachineTypeAsync(
+            connection,
+            transaction,
+            batchOperationId,
+            cancellationToken);
+        var targetMachine = await ReadMachineAsync(
+            connection,
+            transaction,
+            machineId,
+            cancellationToken)
+            ?? throw new AssignmentMachineNotFoundException(machineId);
+        if (!MachineCompatibility.IsCompatible(targetMachine, requiredMachineType))
+        {
+            throw new IncompatibleMachineException(batchOperationId, machineId);
+        }
+
+        var current = await ReadAssignmentForOperationAsync(
+            connection,
+            transaction,
+            batchOperationId,
+            cancellationToken);
+        var targetOriginal = await ReadAssignmentsForMachineAsync(
+            connection,
+            transaction,
+            machineId,
+            cancellationToken);
+        var sameMachine = current is not null
+            && string.Equals(current.MachineId, machineId, StringComparison.Ordinal);
+        var maximumPosition = sameMachine ? targetOriginal.Count - 1 : targetOriginal.Count;
+        if (backlogPosition > maximumPosition)
+        {
+            throw new BacklogPositionOutOfRangeException(backlogPosition, maximumPosition);
+        }
+
+        IReadOnlyList<MachineAssignment> sourceOriginal = [];
+        if (current is not null && !sameMachine)
+        {
+            sourceOriginal = await ReadAssignmentsForMachineAsync(
+                connection,
+                transaction,
+                current.MachineId,
+                cancellationToken);
+        }
+
+        var targetFinal = targetOriginal
+            .Where(assignment => assignment.MachineAssignmentId != current?.MachineAssignmentId)
+            .ToList();
+        var selected = current ?? new MachineAssignment(
+            Guid.NewGuid().ToString("N"),
+            batchOperationId,
+            machineId,
+            backlogPosition,
+            1,
+            now,
+            now);
+        targetFinal.Insert(backlogPosition, selected with { MachineId = machineId });
+        var sourceFinal = sourceOriginal
+            .Where(assignment => assignment.MachineAssignmentId != current?.MachineAssignmentId)
+            .ToList();
+
+        var originalAssignments = targetOriginal
+            .Concat(sourceOriginal)
+            .ToDictionary(assignment => assignment.MachineAssignmentId, StringComparer.Ordinal);
+        await StageBacklogAsync(connection, transaction, targetOriginal, cancellationToken);
+        if (sourceOriginal.Count > 0)
+        {
+            await StageBacklogAsync(connection, transaction, sourceOriginal, cancellationToken);
+        }
+
+        var persisted = await WriteFinalBacklogsAsync(
+            connection,
+            transaction,
+            sourceFinal,
+            targetFinal,
+            originalAssignments,
+            selected.MachineAssignmentId,
+            now,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new AssignmentMutationResult(persisted, current is null);
+    }
+
+    public async Task<bool> UnassignAsync(
+        string batchOperationId,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var current = await ReadAssignmentForOperationAsync(
+            connection,
+            transaction,
+            batchOperationId,
+            cancellationToken);
+        if (current is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return false;
+        }
+
+        await EnsureAssignmentMayChangeAsync(
+            connection, transaction, batchOperationId, cancellationToken);
+
+        var original = await ReadAssignmentsForMachineAsync(
+            connection,
+            transaction,
+            current.MachineId,
+            cancellationToken);
+        await using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM machine_assignments WHERE id = $id;";
+            deleteCommand.Parameters.AddWithValue("$id", current.MachineAssignmentId);
+            await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var remaining = original
+            .Where(assignment => assignment.MachineAssignmentId != current.MachineAssignmentId)
+            .ToList();
+        await StageBacklogAsync(connection, transaction, remaining, cancellationToken);
+        var originalById = remaining.ToDictionary(
+            assignment => assignment.MachineAssignmentId,
+            StringComparer.Ordinal);
+        await WriteFinalBacklogsAsync(
+            connection,
+            transaction,
+            [],
+            remaining,
+            originalById,
+            string.Empty,
+            now,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<IReadOnlyList<MachineBacklogItem>> GetBacklogAsync(
+        string machineId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT machine_assignments.id,
+                   machine_assignments.batch_operation_id,
+                   machine_assignments.machine_id,
+                   machine_assignments.backlog_position,
+                   machine_assignments.version,
+                   machine_assignments.created_at,
+                   machine_assignments.updated_at,
+                   batch_operations.production_batch_id,
+                   batch_operations.operation_number,
+                   batch_operations.name,
+                   batch_operations.required_machine_type
+            FROM machine_assignments
+            JOIN batch_operations
+              ON batch_operations.id = machine_assignments.batch_operation_id
+            WHERE machine_assignments.machine_id = $machineId
+            ORDER BY machine_assignments.backlog_position;
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        var items = new List<MachineBacklogItem>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(new MachineBacklogItem(
+                ReadAssignment(reader),
+                reader.GetString(7),
+                reader.GetInt32(8),
+                reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10)));
+        }
+
+        return items;
+    }
+
+    public async Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
+        string batchOperationId,
+        BatchOperationExecutionAction action,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var execution = await ReadExecutionStateAsync(
+            connection, transaction, batchOperationId, cancellationToken)
+            ?? throw new BatchOperationNotFoundException(batchOperationId);
+        if (execution.AssignmentId is null || execution.MachineId is null
+            || !execution.BacklogPosition.HasValue)
+        {
+            throw new BatchOperationNotAssignedException(batchOperationId);
+        }
+
+        var targetStatus = action switch
+        {
+            BatchOperationExecutionAction.Start
+                when execution.Status is "not_started" or "suspended" => "in_progress",
+            BatchOperationExecutionAction.Suspend
+                when execution.Status == "in_progress" => "suspended",
+            BatchOperationExecutionAction.Finish
+                when execution.Status == "in_progress" => "completed",
+            _ => throw new BatchOperationTransitionException(execution.Status, action)
+        };
+
+        if (action == BatchOperationExecutionAction.Start)
+        {
+            if (execution.BacklogPosition.Value != 0)
+            {
+                throw new BatchOperationNotFirstException(batchOperationId);
+            }
+
+            await EnsureMachineHasNoRunningOperationAsync(
+                connection, transaction, execution.MachineId, batchOperationId, cancellationToken);
+        }
+
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE batch_operations
+                SET status = $status, version = version + 1, updated_at = $updatedAt
+                WHERE id = $id;
+                """;
+            update.Parameters.AddWithValue("$status", targetStatus);
+            update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
+            update.Parameters.AddWithValue("$id", batchOperationId);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (action == BatchOperationExecutionAction.Finish)
+        {
+            var original = await ReadAssignmentsForMachineAsync(
+                connection, transaction, execution.MachineId, cancellationToken);
+            await using (var delete = connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM machine_assignments WHERE id = $id;";
+                delete.Parameters.AddWithValue("$id", execution.AssignmentId);
+                await delete.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            var remaining = original
+                .Where(assignment => assignment.MachineAssignmentId != execution.AssignmentId)
+                .ToList();
+            await StageBacklogAsync(connection, transaction, remaining, cancellationToken);
+            await WriteFinalBacklogsAsync(
+                connection,
+                transaction,
+                [],
+                remaining,
+                remaining.ToDictionary(value => value.MachineAssignmentId, StringComparer.Ordinal),
+                string.Empty,
+                now,
+                cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new BatchOperationExecutionResult(
+            batchOperationId,
+            execution.MachineId,
+            targetStatus,
+            execution.Version + 1);
+    }
+
+    private static async Task<ExecutionState?> ReadExecutionStateAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT batch_operations.status, batch_operations.version,
+                   machine_assignments.id, machine_assignments.machine_id,
+                   machine_assignments.backlog_position
+            FROM batch_operations
+            LEFT JOIN machine_assignments
+              ON machine_assignments.batch_operation_id = batch_operations.id
+            WHERE batch_operations.id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", batchOperationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new ExecutionState(
+            reader.GetString(0),
+            reader.GetInt32(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetInt32(4));
+    }
+
+    private static async Task EnsureMachineHasNoRunningOperationAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        string exceptBatchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM machine_assignments
+                JOIN batch_operations
+                  ON batch_operations.id = machine_assignments.batch_operation_id
+                WHERE machine_assignments.machine_id = $machineId
+                  AND batch_operations.id <> $exceptOperationId
+                  AND batch_operations.status = 'in_progress');
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        command.Parameters.AddWithValue("$exceptOperationId", exceptBatchOperationId);
+        if (Convert.ToInt32(
+                await command.ExecuteScalarAsync(cancellationToken),
+                CultureInfo.InvariantCulture) == 1)
+        {
+            throw new MachineAlreadyRunningOperationException(machineId);
+        }
+    }
+
+    private static async Task<MachineAssignment> WriteFinalBacklogsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<MachineAssignment> sourceFinal,
+        IReadOnlyList<MachineAssignment> targetFinal,
+        IReadOnlyDictionary<string, MachineAssignment> originalAssignments,
+        string selectedAssignmentId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        MachineAssignment? selected = null;
+        foreach (var entry in sourceFinal.Select((assignment, position) => (assignment, position))
+                     .Concat(targetFinal.Select((assignment, position) => (assignment, position))))
+        {
+            var assignment = entry.assignment with { BacklogPosition = entry.position };
+            if (originalAssignments.TryGetValue(assignment.MachineAssignmentId, out var original))
+            {
+                var changed = !string.Equals(
+                        original.MachineId,
+                        assignment.MachineId,
+                        StringComparison.Ordinal)
+                    || original.BacklogPosition != assignment.BacklogPosition;
+                assignment = assignment with
+                {
+                    Version = changed ? original.Version + 1 : original.Version,
+                    UpdatedAt = changed ? now : original.UpdatedAt
+                };
+                await UpdateAssignmentAsync(connection, transaction, assignment, cancellationToken);
+            }
+            else
+            {
+                await InsertAssignmentAsync(connection, transaction, assignment, cancellationToken);
+            }
+
+            if (assignment.MachineAssignmentId == selectedAssignmentId)
+            {
+                selected = assignment;
+            }
+        }
+
+        return selected ?? new MachineAssignment(
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            0,
+            0,
+            default,
+            default);
+    }
+
+    private static async Task StageBacklogAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<MachineAssignment> assignments,
+        CancellationToken cancellationToken)
+    {
+        if (assignments.Count == 0)
+        {
+            return;
+        }
+
+        var start = assignments.Max(assignment => (long)assignment.BacklogPosition)
+            + assignments.Count
+            + 1L;
+        for (var index = 0; index < assignments.Count; index++)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE machine_assignments
+                SET backlog_position = $temporaryPosition
+                WHERE id = $id;
+                """;
+            command.Parameters.AddWithValue("$temporaryPosition", start + index);
+            command.Parameters.AddWithValue("$id", assignments[index].MachineAssignmentId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static async Task UpdateAssignmentAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MachineAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE machine_assignments
+            SET machine_id = $machineId,
+                backlog_position = $position,
+                version = $version,
+                updated_at = $updatedAt
+            WHERE id = $id;
+            """;
+        AddAssignmentParameters(command, assignment);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task InsertAssignmentAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MachineAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO machine_assignments (
+                id, batch_operation_id, machine_id, backlog_position,
+                version, created_at, updated_at)
+            VALUES (
+                $id, $operationId, $machineId, $position,
+                $version, $createdAt, $updatedAt);
+            """;
+        AddAssignmentParameters(command, assignment);
+        command.Parameters.AddWithValue("$operationId", assignment.BatchOperationId);
+        command.Parameters.AddWithValue("$createdAt", FormatInstant(assignment.CreatedAt));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void AddAssignmentParameters(
+        SqliteCommand command,
+        MachineAssignment assignment)
+    {
+        command.Parameters.AddWithValue("$id", assignment.MachineAssignmentId);
+        command.Parameters.AddWithValue("$machineId", assignment.MachineId);
+        command.Parameters.AddWithValue("$position", assignment.BacklogPosition);
+        command.Parameters.AddWithValue("$version", assignment.Version);
+        command.Parameters.AddWithValue("$updatedAt", FormatInstant(assignment.UpdatedAt));
+    }
+
+    private static async Task<string?> ReadRequiredMachineTypeAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT required_machine_type, status FROM batch_operations WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", batchOperationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new BatchOperationNotFoundException(batchOperationId);
+        }
+
+        if (reader.GetString(1) == "completed")
+        {
+            throw new CompletedBatchOperationCannotBeAssignedException(batchOperationId);
+        }
+
+        if (reader.GetString(1) == "in_progress")
+        {
+            throw new RunningBatchOperationCannotMoveException(batchOperationId);
+        }
+
+        return reader.IsDBNull(0) ? null : reader.GetString(0);
+    }
+
+    private static async Task EnsureAssignmentMayChangeAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT status FROM batch_operations WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", batchOperationId);
+        var status = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (status == "in_progress")
+        {
+            throw new RunningBatchOperationCannotMoveException(batchOperationId);
+        }
+    }
+
+    private static async Task<Machine?> ReadMachineAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, number, name, machine_type, axis_type, capabilities_json,
+                   working_calendar_id, is_active, display_enabled,
+                   version, created_at, updated_at
+            FROM machines
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", machineId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var capabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(5)) ?? [];
+        return new Machine(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            capabilities,
+            reader.GetString(6),
+            reader.GetBoolean(7),
+            reader.GetBoolean(8),
+            null,
+            0,
+            reader.GetInt32(9),
+            ParseInstant(reader.GetString(10)),
+            ParseInstant(reader.GetString(11)));
+    }
+
+    private static async Task<MachineAssignment?> ReadAssignmentForOperationAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, batch_operation_id, machine_id, backlog_position,
+                   version, created_at, updated_at
+            FROM machine_assignments
+            WHERE batch_operation_id = $operationId;
+            """;
+        command.Parameters.AddWithValue("$operationId", batchOperationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadAssignment(reader) : null;
+    }
+
+    private static async Task<IReadOnlyList<MachineAssignment>> ReadAssignmentsForMachineAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, batch_operation_id, machine_id, backlog_position,
+                   version, created_at, updated_at
+            FROM machine_assignments
+            WHERE machine_id = $machineId
+            ORDER BY backlog_position;
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        var assignments = new List<MachineAssignment>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            assignments.Add(ReadAssignment(reader));
+        }
+
+        return assignments;
+    }
+
+    private static MachineAssignment ReadAssignment(SqliteDataReader reader) => new(
+        reader.GetString(0),
+        reader.GetString(1),
+        reader.GetString(2),
+        reader.GetInt32(3),
+        reader.GetInt32(4),
+        ParseInstant(reader.GetString(5)),
+        ParseInstant(reader.GetString(6)));
+
+    private static async Task EnsureEditAuthorityAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await SqliteEditModeRepository.ApplyExpiredRequestAsync(
+            connection,
+            transaction,
+            DateTimeOffset.UtcNow,
+            cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
+        {
+            throw new EditModeMutationException(
+                "edit_mode_required",
+                "No Windows client currently holds Edit Mode.");
+        }
+
+        if (!string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
+            || reader.GetInt64(1) != editAuthority.Generation)
+        {
+            throw new EditModeMutationException(
+                "edit_generation_stale",
+                "This client does not hold the active Edit Mode generation.");
+        }
+    }
+
+    private static string FormatInstant(DateTimeOffset value) =>
+        value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static DateTimeOffset ParseInstant(string value) =>
+        DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
+    private sealed record ExecutionState(
+        string Status,
+        int Version,
+        string? AssignmentId,
+        string? MachineId,
+        int? BacklogPosition);
+}

@@ -1,0 +1,245 @@
+# ESP32 / Color E-Ink Work Tablet
+
+- **Concept baseline:** v0.1
+- **Source date:** 11 August 2026
+- **Status:** Hardware and firmware concept; choices marked TBD require prototyping.
+
+This document normalizes `Meimad_Planner_ESP32_EInk_Work_Tablet_Concept_v0.1.docx`. The source title identifies v0.1 while its footer says v0.3; this repository treats the device concept as v0.1 until the source is corrected.
+
+## 1. Purpose and authority boundary
+
+The Color E-Ink Work Tablet is a low-cost, low-power operational display and local setup checklist for use near CNC Machines and in the Tool Room.
+
+It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative data source.
+
+Primary goals are:
+
+- One inexpensive, unified device design for all Machines.
+- One tablet per Machine plus one or two spares.
+- Months of practical operation from replaceable AA batteries, subject to measurement.
+- Official data flowing from server to device only.
+- Paper-like local checklist marks and notes that never synchronize.
+
+## 2. MVP boundaries
+
+| Included | Excluded |
+|---|---|
+| Read-only Machine and setup views | Planning edits or official-data write-back |
+| Wi-Fi package download | USB Mass Storage to CNC |
+| SD/microSD cache | Official CNC program-carrier responsibility |
+| Device-local checklist and comments | Full tool inventory management |
+| Read-only NC/text viewer | Full Android-tablet behavior |
+| Replaceable 3 x AA power | Rechargeable battery or charger circuit |
+| Service/programming connector if needed | OTA update unless later accepted as low risk |
+
+## 3. Target hardware
+
+| Area | Target or constraint |
+|---|---|
+| MCU | ESP32-S3 or similar low-power Wi-Fi-capable controller. Final selection is TBD. |
+| Display | Approximately 7.5-inch-class Color E-Ink; exact panel, controller, resolution, orientation, and palette are TBD. |
+| Storage | Removable SD/microSD for official packages, previews, rendered screens, NC/text, tool tables, and local annotations. |
+| Power | Three replaceable AA batteries; no rechargeable cell or charger in MVP. Chemistry and electrical arrangement are TBD. |
+| Regulation | Low-quiescent-current design with brownout-safe Wi-Fi peaks; power-gate SD/display where practical. |
+| Inputs | Refresh and Page buttons. Long Page press or a button chord enters setup mode. The complete interaction design is TBD. |
+| USB | Optional programming/service connector only; never expose Mass Storage to CNC in MVP. |
+| Mechanical | Rugged mount near the Machine, easy setup-time removal, and practical dust/oil-mist protection. Required rating is TBD. |
+| Status | Prefer on-screen indication; avoid always-on LEDs. |
+| Battery | Measure voltage and show a persistent Low Battery warning. Threshold and calibration are TBD. |
+
+Hardware and firmware must not be customized per Machine. Machine identity, network configuration, server location, and credentials are provisioned data.
+
+## 4. Power and refresh behavior
+
+Deep sleep is the default state.
+
+1. Wake manually at any time when Refresh is pressed, or automatically during a configured workday/shift window.
+2. Make a small version/change request before downloading content or refreshing the E-Ink panel.
+3. If nothing changed and the user did not explicitly force a full refresh, return to sleep without a display refresh.
+4. If the assigned revision changed, download required content into a staging area.
+5. Verify the manifest and every downloaded file.
+6. Activate the new package only after the complete revision passes verification.
+7. Render or display the relevant screen, persist last-known-good state, and return to sleep.
+
+An automatic check every ten minutes is only an example. The work calendar, wake interval, retry/backoff, clock source, time zone, DST, and force-refresh gesture are TBD.
+
+The panel retains the last visible image without continuous power. The final battery-life goal must be expressed as a measured workload and numeric acceptance threshold after a bench prototype exists.
+
+## 5. Device modes
+
+| Mode | Required behavior |
+|---|---|
+| Machine Display | Current job, next jobs, status/conflicts, last update, and battery. |
+| Setup Package | Part/Case, Batch, Operation, assigned Machine, optional tool-cart ID, package revision, instructions, and setup checklist. |
+| Tool Checklist | Device-local installed/not-installed marks, local status, and optional local comment. |
+| NC/Text Viewer | Paginated, read-only NC text, instructions, offsets, and tool tables. |
+| Wi-Fi Setup | Temporary access point for Wi-Fi, server, device/Machine identity, and token provisioning. |
+| Offline | Last cached package/screen with an unambiguous stale/offline warning and last-update time. |
+
+The two-button hardware does not yet explain checklist selection, five-state status selection, free-text entry, Back/Next navigation, or confirmation prompts. Input hardware and the complete interaction state machine are blocking decisions.
+
+## 6. Setup workflow
+
+1. The tablet normally remains mounted at its assigned Machine and displays that Machine's backlog.
+2. At the start of setup, the setupist removes the tablet and takes it to the Tool Room.
+3. An authorized Windows user prepares or confirms the official package for a specific Machine, Batch, and Operation.
+4. The tablet downloads the package over Wi-Fi after assignment or Refresh.
+5. The setupist receives the prepared tool cart and sees its cart ID on the tablet.
+6. The setupist returns to the Machine with tablet and cart.
+7. During setup, the tablet acts as a local checklist and read-only viewer.
+8. If a problem is found, the setupist takes the tablet to the programmer or QC. An authorized Windows user corrects and republishes the official package.
+9. The tablet downloads the new revision. Local notes remain local and are not applied to the official package.
+
+The implemented baseline lets the current Windows Edit Mode holder publish for an already assigned Batch Operation and create corrections as new immutable revisions. A distinct preparer/approver role, approval UI/audit, revision naming/order, reassignment confirmation, retention, and superseded-package access remain TBD.
+
+## 7. Official job package
+
+Each package contains or references:
+
+- Package ID and revision.
+- Case/part number and preview image.
+- Batch ID and Operation ID.
+- Assigned Machine and optional tool-cart ID.
+- Operation instructions and setup notes.
+- Tool table.
+- Provided read-only offsets or related files.
+- NC/text program files for viewing only.
+- Color/status metadata for simple E-Ink rendering.
+- Manifest entries containing filename, size, version, timestamp, and checksum.
+
+Official files remain read-only in the device UI. The implemented Server publisher creates an opaque package ID plus caller-named immutable revision, snapshots Machine/part/Batch/Operation metadata, assigns each asset a role, and includes SHA-256/length/media metadata in the manifest. Preview, allow-listed NC/text, package-specific tool table, offsets, and instructions are supported. Approval roles/UI, revision ordering policy, signatures, compression, range/resume, retention, and physical-device activation remain TBD.
+
+Download and activation must be last-known-good: interruption, corrupt SD data, or a checksum mismatch must never replace the previous verified package.
+
+## 8. Local checklist and annotations
+
+Local data is stored separately from official package content and is keyed to package ID and revision.
+
+- Per-tool installed / not installed mark.
+- Optional status: missing, replaced, question, needs programmer, or needs QC.
+- Short local comment per tool or package page.
+- Clear notice that the information is local and not synchronized.
+
+When a new official revision arrives, the revision change must be obvious. The device may offer to clear earlier marks, but migration, retention, and deletion behavior are TBD. Local data must never be accepted as authoritative server planning or package data.
+
+## 9. Proposed SD layout from the source concept
+
+```text
+/meimad/
+  config.json
+  devices/
+    device_state.json
+  packages/
+    active/
+      manifest.json
+      preview.bmp
+      tools.csv
+      instructions.txt
+      nc/
+        OP20_MAIN.nc
+      offsets/
+        offsets.txt
+    history/
+      <package_id>_<revision>/
+  local_notes/
+    <package_id>_<revision>_notes.json
+  cache/
+    screens/
+      machine_page.bmp
+      tool_page_001.bmp
+```
+
+This is a conceptual layout, not a frozen on-device contract. Filesystem, SD capacity, atomic writes, corruption recovery, power-loss safety, history limit, and data-at-rest protection are TBD. Unlimited `history/` would conflict with the lost-device goal of retaining only limited current data.
+
+## 10. API needs
+
+The source concept names these read-only routes:
+
+```http
+GET /api/eink/devices/{device_id}/version
+GET /api/eink/devices/{device_id}/machine-screen
+GET /api/eink/devices/{device_id}/package-manifest
+GET /api/eink/devices/{device_id}/package-file/{file_id}
+GET /api/eink/devices/{device_id}/time-config
+```
+
+The Server implements the versioned `/api/v1/eink/devices/{deviceId}/...` forms documented in [API contract](api-contract.md), including revision-qualified manifest/file routes. Authentication is by a per-device revocable bearer token; only its SHA-256 hash is persisted. A bound device can read only the package associated with the first unfinished Operation on its assigned Machine.
+
+Structured JSON is the implemented v1 Server/simulator baseline. A pre-rendered panel asset may be added only through an explicit compatible contract decision because it changes firmware complexity, fonts, pagination, server rendering, payload size, and display-specific coupling. The browser simulator at `/eink-simulator/` performs the version request first, displays the structured Machine screen, reads manifests/files, verifies file SHA-256, and preserves its last rendered screen on errors. It does not claim physical SD staging, atomic activation, deep sleep, E-Ink refresh, or local annotation behavior.
+
+The source also suggests optional battery/firmware telemetry using a `GET .../ping` request. That conflicts with the read-only boundary and safe HTTP semantics if it records state. Telemetry is excluded from the baseline contract until a narrowly scoped, authenticated design is approved. Server observation of normal reads may update operational last-seen state, but must never change planning data.
+
+## 11. Wi-Fi provisioning
+
+- On first boot or a setup gesture, create a temporary access point; `MP-M07-SETUP` is an example name only.
+- A technician connects with a phone or laptop and enters Wi-Fi SSID/password, server address, device/Machine ID, and token.
+- The device stores configuration and restarts in normal mode.
+- Configuration reset is available through a long press or service procedure.
+- No recompilation or Machine-specific firmware image is required.
+
+Server-side credential rotation/revocation and Machine/spare binding are implemented through active-editor administration routes. Setup-AP authentication and timeout, HTTPS trust, device-side credential storage, token lifetime, factory reset, and recovery remain firmware decisions.
+
+## 12. Security boundary
+
+- A device credential grants only the read-only Machine/package resources assigned to that tablet.
+- Do not expose unrelated customer, drawing, or engineering data.
+- Limit cached official data and support immediate credential revocation for a lost device.
+- Keep official and local data in separate storage namespaces.
+- Do not provide CNC write functions or USB Mass Storage in MVP.
+- Device state and any later telemetry remain operational data, never planning data.
+
+Transport security, certificate trust, removable-media encryption/signing, secure boot, firmware signing, token storage, and physical attack assumptions are TBD.
+
+## 13. Color E-Ink UI rules
+
+- White background and black primary text.
+- Large, flat status blocks.
+- No gradients, shadows, animation, or tiny colored text.
+- Blue means current/in progress; green done/OK; yellow attention; orange risk; red blocking; grey idle/no data.
+- Duplicate every color meaning with text and/or a symbol.
+- Always show last update and stale/offline state where relevant.
+- Make a package revision change visually prominent.
+
+Machine view shows Machine ID/type, last update, battery, current part/Batch/Operation/quantity/status, and the next three jobs. Setup view shows Machine, cart, part, Batch, Operation, revision, and paginated checklist. NC/text view shows filename, revision, page position, and a read-only notice.
+
+Display resolution, minimum font size, viewing distance, lighting range, localization, Unicode/RTL, bitmap format, page geometry, and ghosting/full-refresh policy are TBD.
+
+## 14. Failure behavior
+
+| Failure | Required response |
+|---|---|
+| No Wi-Fi | Show cached content with stale/offline warning. |
+| Server unreachable | Keep the last package and show last-update time. |
+| Low battery | Show a persistent warning until batteries are replaced. |
+| Missing/corrupt SD | Show an error and do not attempt package download. |
+| Checksum mismatch | Reject the new file/revision and retain the previous verified package. |
+| New revision | Make the revision change explicit. |
+| Display refresh failure | Retry once; persist an error indication for a later successful refresh. Exact presentation is TBD. |
+
+Retry limits, backoff/jitter, corrupted configuration, invalid token, clock loss, oversized files, mid-download battery loss, and rollback details must be added to the firmware acceptance suite.
+
+## 15. Prototype verification plan
+
+1. Build one bench prototype with the selected MCU, panel, SD interface, buttons, and 3-AA power input.
+2. Measure deep-sleep current.
+3. Measure one wake and version-check cycle.
+4. Measure one full package download and E-Ink refresh cycle.
+5. Test temporary-AP provisioning and reset.
+6. Test checklist persistence across sleep and, if possible, across battery replacement.
+7. Test readability at Machine distance and under representative shop-floor lighting.
+8. Fault-inject network loss, invalid credentials, SD removal/corruption, malformed manifests, checksum failure, and power loss during activation.
+9. Run a one-week pilot on one Machine before ordering multiple devices.
+
+Numeric pass/fail thresholds for battery life, timing, readability, storage, recovery, and pilot success must be approved before the prototype can pass.
+
+## 16. Deferred work
+
+- USB Mass Storage to CNC.
+- Server write-back of tool notes or checklist state.
+- Official CNC program transfer responsibility.
+- Full Android-tablet behavior.
+- Full tool inventory tracking.
+- Rechargeable battery and charger circuit.
+- OTA update unless explicitly approved as low risk.
+
+The consolidated unresolved-decision register is in [Implementation plan](implementation-plan.md#open-decisions).

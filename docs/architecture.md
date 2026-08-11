@@ -1,0 +1,367 @@
+# Architecture
+
+- **Status:** Target architecture; Server foundation, planning-resource slices, Timeline API/Windows Timeline, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, Windows Case/Operation/Order/Batch/Machine workspaces, and Case Operation graph validation implemented
+- **Scope:** Factory-local MVP
+
+## 1. Architectural drivers
+
+- Keep one authoritative data owner.
+- Eliminate direct multi-client access to a shared database file.
+- Preserve fully manual planning while calculating consequences and explaining conflicts centrally.
+- Support one full editing surface and multiple read-only operational surfaces.
+- Keep the factory deployment independent of public Internet access.
+- Support low-power devices that wake briefly, transfer only changed data, and retain a last-known-good display.
+- Make backup and restore an owned server responsibility.
+
+## 2. Current repository state
+
+The repository contains an implemented .NET 10 Server host and server-owned SQLite schema version 8. Core planning-resource, Single Edit Mode, verified SQLite backup, Timeline calculation/API, Windows WPF client, LAN-served TV Dashboard, and E-Ink package-generation/API/simulator slices are available. The Server preserves manual planning and rejects incompatible commands without scheduling or silently repairing. Single Edit Mode invalidates stale generations, and every implemented planning mutation validates authority inside its SQLite write transaction. Backup creates and verifies a consistent online snapshot without replacing the active database. The API-only Windows client covers Case and Machine create/edit workflows, guarded planning-record deletion, Working Calendars, append-only Case Operation creation, Order and Batch creation, a manual Machine Planning Board with explicit Start/Suspend/Finish controls, and a read-only Timeline. Deletion is relationship-aware and never removes external files. TV and E-Ink device surfaces are read-only and have no Edit Mode integration. Full human authentication, route edit/reorder, package approval UI/roles and retention, full conflict policy, and physical device firmware remain incomplete.
+
+## 3. System context
+
+```mermaid
+flowchart LR
+    Planner[Planner] --> Windows[Windows Planning Client]
+    Windows -->|read and single-editor writes| Server[Meimad Planner Server]
+    Server --> SQLite[(Server-local SQLite)]
+    Server --> CaseFolders[Case Working Folders]
+    Server --> Backup[Controlled Backups]
+    TV[TV Dashboard] -->|read-only| Server
+    Tablet[Color E-Ink Work Tablet] -->|read-only polling and downloads| Server
+    Operator[Server Operator] --> Server
+
+    classDef authority fill:#1E88E5,color:#fff,stroke:#111;
+    class Server,SQLite authority;
+```
+
+The Server is the authority. Case Working Folders remain external file storage; the database stores their paths and generated preview/cache references, not copies of original engineering files.
+
+### 3.1 MVP boundary
+
+The complete MVP runs on the factory network:
+
+- One Meimad Planner Server process on a designated Windows host.
+- One Server-owned local SQLite database.
+- Windows Planning Clients using the local REST API for all reads and edits.
+- Read-only TV Dashboard browsers using dashboard projections.
+- Read-only E-Ink Work Tablets using device-scoped display/package endpoints.
+
+The architecture has no Customer Portal, cloud service, public Internet endpoint, router forwarding, or native mobile application. Those are outside the MVP boundary and must not be provisioned as dormant components.
+
+## 4. Component responsibilities
+
+### 4.1 Required component map
+
+```mermaid
+flowchart LR
+    Windows[Windows Planning Client]
+    TV[TV Dashboard Web UI]
+    EInk[E-Ink Work Tablet]
+
+    subgraph Server[Meimad Planner Server]
+        API[REST / Local API]
+        Edit[Single Edit Mode]
+        App[Application Orchestration]
+        Domain[Domain / Business Rules]
+        Timeline[Timeline / Time Calculation Engine]
+        Conflict[Conflict Engine]
+        Views[Read Projections]
+        Persistence[SQLite Persistence and Migrations]
+        Backup[Backup Service]
+        DB[(SQLite Database)]
+
+        API -->|queries| App
+        API -->|mutation request| Edit
+        Edit -->|authorized mutation| App
+        App --> Domain
+        App --> Timeline
+        Timeline --> Conflict
+        Domain --> Conflict
+        Timeline --> Views
+        Conflict --> Views
+        App --> Views
+        App --> Persistence
+        Persistence --> DB
+        Backup --> DB
+    end
+
+    Windows -->|read; edit only with token| API
+    TV -->|read-only dashboard projection| API
+    EInk -->|read-only device API| API
+```
+
+Every box inside the Server is a logical component. They may initially ship in one Server process, but their boundaries must remain explicit in code and tests. SQLite and the Backup Service are inside the Server trust boundary; no client can reach the database file.
+
+### 4.2 Meimad Planner Server
+
+The implemented `server/` component is the sole authoritative runtime. It hosts the API and coordinates domain validation, manual-plan mutations, timeline calculation, conflict generation, read projections, Single Edit Mode, persistence, migrations, backup, and the LAN-served display simulators.
+
+It may run as a console/executable during development. The production target is one Windows Service on a designated factory PC or local Server.
+
+### 4.3 REST / local API
+
+The API is the only client entry point. It provides versioned REST endpoints over the factory LAN or host loopback and owns:
+
+- Request parsing, contract validation, authentication, and authorization once the identity model is approved.
+- Edit-token and optimistic-concurrency checks for mutations.
+- Command dispatch to application orchestration.
+- Purpose-built read projections for Windows, TV, and E-Ink clients.
+- Stable error codes, correlation IDs, health/readiness, and safe failure responses.
+
+The API must not contain authoritative scheduling or domain rules. It delegates those rules to the Server layers below it. No public listener or Internet-facing gateway is part of the MVP.
+
+### 4.4 Domain / business rules layer
+
+This layer owns authoritative state transitions and invariants for Cases, Orders, Production Batches, allocations, Case and Batch Operations, Machines, assignments, calendars, and downtime.
+
+It validates that Orders remain demand-only, only Batch Operations are assigned to Machines, allocations follow the approved balance equation, dependencies retain their defined meanings, and original engineering files are not modified. It has no dependency on REST, UI, SQLite, filesystem implementation, or device firmware.
+
+### 4.5 Timeline / time calculation engine
+
+The implemented pure Timeline Engine calculates projected setup, production, idle, downtime, and locked-group reservation intervals from immutable inputs. Its inputs are explicit Machine backlog order, already-resolved setup/production durations, explicit half-open UTC Machine/setup availability windows, planned downtime, a calculation horizon, and operation dependencies. It has no SQLite, REST, clock, or UI dependency.
+
+For each Machine, backlog adjacency is a hard precedence constraint. Sequential dependencies add precedence; Parallel-capable and Independent dependencies add none. Locked-simultaneous members use a common start and projected finish, with shorter Machines reserved through the longest member result. Setup work uses the intersection of Machine and setup availability; production uses Machine availability; downtime is subtracted. Work may split across availability windows. The engine schedules each fixed-order node at its earliest feasible instant inside the supplied horizon, produces consequences only, and never changes assignments, backlog order, durations, calendars, downtime, or dependencies.
+
+The implemented application projection reads the current assignments, active Machines, Working Calendar JSON, downtime, Batch timing snapshots, quantities, and current Case route dependencies in one SQLite read transaction, then calls the pure engine through `GET /api/v1/timeline`. Server-created Working Calendars contain a recurring weekly local shift and timezone; the mapper expands it deterministically over the requested horizon with timezone/DST conversion. Legacy explicit UTC `availability` arrays remain readable, and setup-calendar JSON still uses explicit UTC windows. Production duration is provisionally `planned quantity × cycle seconds`; missing timing or calendar configuration becomes an explained conflict. Route dependency mapping remains transitional because Batch Operations do not yet snapshot dependencies. Dated exceptions, breaks, overnight shifts, plan revisions, shared setup capacity, in-progress work, rounding, and recalculation SLA remain TBD.
+
+### 4.6 Conflict engine
+
+The pure engine currently returns deterministic blocking input/calculation conflicts for invalid calendars/durations/references, duplicate placement, impossible locked groups, dependency/backlog cycles, failed predecessors, and insufficient horizon availability. The broader Conflict Engine remains responsible for stable production conflict policy such as capability, deadline risk, missing business timing, accepted warnings, and plan-revision-aware explanations.
+
+Conflicts are projections, not silent repair commands. The engine may cause a structurally invalid command to be rejected according to the approved policy, but it must never mutate a valid manual plan to remove a warning.
+
+### 4.7 Single Edit Mode
+
+Single Edit Mode is a Server-owned coordination component. Its implemented caller states are Viewer, Editor, and RequestingEdit. It guarantees at most one active Windows editor generation and one pending transfer request while other Windows clients remain viewers. A competing requester receives `edit_request_pending` rather than being placed in an implicit queue. TV and E-Ink clients are architecturally prohibited from requesting or holding edit authority; credential-class enforcement awaits the authentication layer.
+
+Every implemented planning mutation validates the active client ID and generation in the same immediate SQLite transaction as the write. Release transfers immediately, Reject retains the current holder and returns the requester to Viewer, no response transfers automatically after the configured timeout, and voluntary release transfers a pending requester or clears the token when none is pending. The default timeout remains 30 seconds; `EditMode:TransferTimeoutSeconds` accepts 1–3600 seconds. A server timeout worker materializes expired transfers, and all status/command/write transactions also process an expired request before checking authority, so an old generation cannot write after its deadline. Authentication, disconnect/crash policy, notifications, and audit remain TBD.
+
+### 4.8 SQLite persistence and migrations
+
+The persistence component translates approved application transactions to a Server-local SQLite database. Only this component opens the database for normal operation. It owns connection lifecycle, transactions, foreign-key enforcement, ordered migrations, optimistic revisions, and integrity checks.
+
+The database file must not be placed on a network share. Clients receive data only through API contracts and cannot use a SQLite library or database path.
+
+The implemented foundation records migration identity in `schema_migrations` and the active version in SQLite `user_version`; ordered migrations currently reach schema version 8. Schema v5 adds durable Edit Mode transfer requests and a partial unique index that permits only one pending request. Schema v6 adds immutable E-Ink package-revision/file metadata. Schema v7 adds immutable Machine/Case/Batch/Operation snapshots and package asset roles used by the generator; file bytes remain in a Server-owned package root and never enter SQLite. Schema v8 adds the optional Machine picture path; image bytes remain external and are streamed only by the Server. The Server refuses a database newer than its known migration set. Schema initialization is a hosted startup step, so a migration failure prevents the API host from reporting ready. All repositories are internal Server components, and there is currently no direct database-ready health payload.
+
+### 4.9 Backup Service
+
+The implemented Backup Service is an internal Server component. It serializes backup operations and uses SQLite's online backup API against the live server-owned connection, producing a transactionally consistent snapshot while normal database activity may continue. SQLite writes the snapshot first to a unique server-local temporary work folder, never directly to a possibly remote backup share.
+
+The service runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the local snapshot, durably copies it to a unique pending file in the configured destination, and renames that file to `meimad-planner-backup-<UTC timestamp>-<unique suffix>.db` within that destination. It verifies the published file again, restores it through SQLite into a separate unique local test database, and repeats both checks. Every restore-verification path is compared against the active database path and rejected if equal. Temporary verification databases are deleted; the active database is never a restore destination.
+
+Retention is count-based, scoped only to managed backup filenames in the configured folder, and applied after successful restore verification. The current backup is always retained; the default keeps 14 and configuration accepts 1–3650. Unrelated files are untouched. A verified backup remains available if later retention cleanup fails, while an unverified newly published file is removed. Backup schedule, encryption, destination-access policy, authenticated operator trigger, full disaster-recovery replacement workflow, RPO, and RTO remain TBD.
+
+### 4.10 Windows Planning Client
+
+The implemented `client-windows/` application uses WPF on .NET 10 and establishes the API-only desktop boundary. It currently owns:
+
+- a validated HTTP/HTTPS Server root setting;
+- a simple local display name and stable client ID stored under Local AppData;
+- `/health` connectivity/version status;
+- Viewer, Editor, and RequestingEdit presentation;
+- Edit Mode request, voluntary release, transfer approval, and rejection interactions;
+- bounded HTTP timeouts, safe error presentation, and five-second status refresh;
+- a Case Pool with Server-side search, customer, and derived-active filters;
+- Part Number/customer cards and preview thumbnails fetched as bytes from the Server preview route;
+- a Case Details form saved only by the active editor with Edit Mode generation and Case ETag;
+- an editor-only append Case Operation form plus Order and explicitly allocated Production Batch creation forms;
+- an Open Working Folder action whose path value originates in the Case API;
+- a snapshot-consistent Server projection for the unassigned Batch Operation pool and Machine columns;
+- drag/drop translation into exact assignment, reorder, cross-Machine move, and unassignment API commands;
+- explicit Start, Suspend, resume, and Finish commands for an assigned operation, with no client-side lifecycle rules;
+- explicit server rejection feedback without optimistic or automatic rearrangement;
+- a read-only Timeline that renders Server-returned setup, production, idle, reserved, and downtime intervals;
+- explained Server conflicts paired with severity text; and
+- dependency edge display filtered to the selected Batch only.
+
+The local name is an MVP development identity only; it is not authentication. The client derives a stable ASCII API user ID from the display name so Unicode local names are never placed directly in an HTTP header. If the Server is unavailable or returns an invalid contract, the client disables edit actions and explicitly reports that authority cannot be confirmed. Status color is always paired with text and a lock, wait, or warning symbol.
+
+The client assembly has no SQLite reference and stores no planning data or database path. It does not open the preview path; the Server reads and streams supported preview image bytes. Operation, Order, Batch, Machine, and Working Calendar forms send typed commands with the active edit generation. The Machine form loads calendars from the API and submits the selected opaque ID; process, axis, timezone, workweek, and shift presets use dropdowns rather than free-text hard-coded tokens. The Server owns calendar validation and expansion. The board waits for the Server assignment command, then reloads the authoritative projection; a rejected command leaves the board unchanged. Timeline timestamps and conflict semantics come from the Server. Future planning UI work adds route edit/reorder, Batch-update, calendar exceptions/breaks, and downtime workflows. The client never opens SQLite, calculates an authoritative schedule, silently repairs a plan, or writes Case Working Folder source files.
+
+### 4.11 TV Dashboard read-only web UI
+
+The implemented `client-tv-dashboard/` component is a dependency-free, read-only fullscreen/kiosk web surface served by the Meimad Server at `/tv-dashboard/`. It consumes only `GET /api/v1/tv-dashboard`, conditionally refreshes using ETags, and retains the last rendered snapshot during a connection failure. Its large Machine rows show status text/icon, top-backlog current/next work, projected finish when calculable, conflicts, urgent context, and current/upcoming downtime. Factory summary and urgent-Batch strips provide distance-readable overview.
+
+It contains no forms, mutation workflow, or Edit Mode call. Static assets and the projection are hosted by the existing LAN-only Server, so no cloud or separate web runtime is introduced. Human/dashboard authentication, kiosk browser management, screen-resolution acceptance, offline-display telemetry, and plan-revision-consistent composition remain pending.
+
+### 4.12 E-Ink Work Tablet read-only API
+
+The implemented Server exposes device-scoped GET endpoints for a small version check, an assigned Machine screen, current and exact-revision package manifests/files, and work-window/polling configuration. A revocable bearer credential is stored only as a SHA-256 hash and restricts every request to the registered device's current Machine/package. Active Windows editors can create a registration, bind or unbind it, enable or revoke it, and rotate its credential; the plaintext token is returned only when created or rotated.
+
+Official data flows Server-to-device only. An active Windows editor can generate a new official revision for an assigned Batch Operation; the Server copies approved Case-folder inputs without modifying them, generates package-specific tool/offset/instruction assets, snapshots work metadata, stages output, hashes every file, and publishes immutable database records only after a second Edit Mode/context check. A device credential is rejected outside the E-Ink GET surface, and there is no checklist, comment, telemetry, package update, or delete endpoint. The API exposes revision-qualified links, authorizes each file, confines storage paths to the configured Server-local package root, and re-verifies stored length and SHA-256 before returning bytes. Approval roles/UI, retention, signatures, and correction lifecycle beyond publishing a new revision remain open.
+
+The dependency-free browser simulator is served by the Server at `/eink-simulator/`. It uses the version endpoint first, renders the structured Machine projection, conditionally polls with ETags, loads exact-revision manifests, verifies file SHA-256 in the browser, and keeps its last rendered screen when a request fails. Structured JSON is the implemented v1 baseline; a future pre-rendered panel representation would require an explicit compatible contract decision. Physical SD staging/atomic activation, deep sleep, and device-local annotations remain firmware responsibilities and are not claimed by the simulator.
+
+### 4.13 ESP32 device project boundary
+
+Hardware and firmware remain a separate project, started only after the E-Ink API stabilizes. Firmware owns provisioning, credential storage, work-window wake scheduling, deep sleep, battery measurement, version polling, staged download, checksum verification, atomic activation, last-known-good cache, panel rendering/display, physical-input state machine, and device-local annotations.
+
+## 5. Deployment topology
+
+```mermaid
+flowchart TB
+    subgraph Host[Designated factory Windows host]
+        Service[Meimad Planner Windows Service]
+        DB[(Local SQLite file)]
+        Logs[Local logs]
+        Service --> DB
+        Service --> Logs
+    end
+
+    subgraph LAN[Factory LAN / Wi-Fi]
+        WinA[Windows Client A]
+        WinB[Windows Client B]
+        TV1[TV kiosk browser]
+        E1[E-Ink Machine 01]
+        E2[E-Ink Machine 02]
+    end
+
+    WinA --> Service
+    WinB --> Service
+    TV1 --> Service
+    E1 --> Service
+    E2 --> Service
+    Service --> Folders[Network Case Working Folders]
+    Service --> BackupTarget[Approved backup target]
+```
+
+- Development may run the Server as a console/executable.
+- Production should run it as a Windows Service using a dedicated identity with least-privilege access to the database, approved Case Working Folders, logs, and backup destination.
+- Only the Server host opens the SQLite file.
+- The service binds only to the approved factory interface. No router forwarding or public endpoint is part of MVP.
+- Host discovery, port, TLS, certificates, service account, installer/update method, and firewall policy are TBD.
+
+## 6. Authoritative write flow
+
+```mermaid
+sequenceDiagram
+    participant W as Windows Client
+    participant A as Server API
+    participant E as Edit Coordinator
+    participant D as Domain/Planning Engine
+    participant S as SQLite
+
+    W->>A: Mutation + edit authority + expected revision
+    A->>E: Validate active editor
+    E-->>A: Allowed / rejected
+    A->>D: Validate command and invariants
+    D->>D: Recalculate projections and conflicts
+    D->>S: Atomic transaction
+    S-->>D: New revision
+    D-->>A: Result + conflicts + revision
+    A-->>W: Success or structured error
+```
+
+The server must never change assignments, ordering, or dependencies merely to remove a conflict. Recalculation produces derived consequences; the submitted manual plan remains intact unless validation rejects the command as structurally invalid.
+
+## 7. Single Edit Mode
+
+```mermaid
+sequenceDiagram
+    participant R as Requesting Windows Client
+    participant S as Server Edit Coordinator
+    participant H as Current Holder
+
+    R->>S: Request Edit Mode
+    S-->>H: Transfer request, 30-second countdown
+    alt Holder releases
+        H->>S: Release
+        S-->>R: Token transferred
+    else Holder rejects
+        H->>S: Reject
+        S-->>R: Viewer / rejected outcome
+    else No response by timeout
+        S->>S: Atomic automatic transfer
+        S-->>H: View Mode
+        S-->>R: Token transferred
+    end
+```
+
+The implemented coordinator serializes transitions with immediate SQLite transactions. The token singleton and unique pending-request index preserve one editor and one requester under concurrent acquisition and decision races. Every ownership change increments the generation. The no-response timeout is server-controlled and configurable from 1–3600 seconds, with 30 seconds as the source-compatible default. Multiple-requester queueing is deliberately absent in MVP; a client may retry after the active request finishes. Human identity, heartbeat/disconnect behavior, unsaved client state, notification transport, request cancellation, history retention, and audit remain open decisions.
+
+## 8. Read-model flow
+
+Windows, TV, and E-Ink views should consume purpose-built read projections rather than reconstructing schedule semantics independently.
+
+- **Windows board projection:** pool, filters, Machine backlogs, assignments, projected times, conflicts, and edit state.
+- **Timeline projection:** operations and reservations on a normalized time axis with dependency/conflict annotations.
+- **TV projection:** concise Machine current/next and factory summary.
+- **E-Ink projection:** small version token, Machine screen, current package manifest/files, and work-window configuration.
+
+Projection generation may initially be synchronous. Caching/background workers should be added only when measured scale requires them and must not create a second authority.
+
+## 9. E-Ink synchronization flow
+
+```mermaid
+sequenceDiagram
+    participant T as E-Ink Tablet
+    participant A as Read-only Device API
+    participant C as Package Store/Projection
+
+    T->>A: Version check with device credential / ETag
+    alt Unchanged
+        A-->>T: 304 or unchanged revision
+        T->>T: Sleep without panel refresh
+    else Changed
+        A-->>T: New screen/package revision
+        T->>A: Get manifest
+        A->>C: Resolve assigned exact revision
+        C-->>A: Manifest
+        A-->>T: Manifest
+        loop Required files
+            T->>A: Get file
+            A-->>T: Bytes + integrity metadata
+        end
+        T->>T: Verify, atomically activate, refresh, sleep
+    end
+```
+
+If Wi-Fi, server, storage, transfer, or verification fails, the device retains the prior verified package and shows an offline/stale/error indication. Local annotations are stored separately and never participate in the server flow.
+
+## 10. Persistence and file boundaries
+
+- SQLite is local to the Server process and changes only through server-owned migrations and transactions.
+- Backup uses SQLite's online backup API, direct and restored-copy integrity/foreign-key checks, and count-based retention. Restore verification is always isolated from the active database.
+- Case Working Folders are external. Original contents are read-only from Meimad Planner's perspective.
+- Generated previews/cache may be stored only in `_MeimadPlanner` under the Case folder.
+- Schema v7 package snapshot/file metadata is immutable after publication; the implemented correction mechanism is a distinct new revision for the same Batch Operation.
+- Device package activation should be staged and atomic so partial downloads cannot replace last-known-good content.
+
+The Server-local package root and file/count/text limits are configurable, and generation/read paths cannot escape their authorized roots. Package approval UI/roles, retention, signatures, network-path credentials, backup inclusion, schedule/encryption/access, and active-database disaster-recovery procedure are TBD.
+
+## 11. Security model
+
+Minimum boundaries are:
+
+- Factory-LAN-only service exposure.
+- No direct client database access.
+- Human identity and Edit Mode checked for every planning mutation.
+- Separate read-only credentials/scopes for TV and E-Ink; the E-Ink bearer boundary is implemented while TV/human authentication remains TBD.
+- Per-device E-Ink credentials restricted to the assigned Machine/package, stored only as hashes.
+- Implemented E-Ink revocation/rotation and spare-device reassignment; production administrative authorization/audit and device-side secret storage remain TBD.
+- No E-Ink official-data write-back and no CNC write path.
+- No unrelated confidential files in tablet packages.
+- Secrets, SQLite files, backups, logs, and generated packages excluded from source control.
+
+TLS, Windows identity/SSO versus application accounts, human/TV credentials, E-Ink token lifetime/device-side storage, administrative authorization, audit, encryption at rest, secure boot, and backup access are TBD and must be threat-modeled before production deployment.
+
+## 12. Reliability and observability
+
+The Server foundation should expose a health endpoint that distinguishes process health, database readiness, migration state, and critical dependency failures without leaking secrets. Logging should use structured events and correlation IDs once a format is selected.
+
+Required operational scenarios include service restart, database migration failure, concurrent edit requests, network partition, Case-folder unavailability, backup failure, restore verification, stale TV data, revoked device, partial E-Ink download, and corrupt SD media.
+
+Scale, response-time targets, recalculation SLA, uptime, recovery time, recovery point, time-based backup retention, log retention, and offline thresholds remain TBD.
+
+## 13. Dependency direction
+
+```text
+Clients -> versioned API contracts -> server application/domain -> persistence and external files
+```
+
+Infrastructure may depend on domain/application abstractions; domain logic must not depend on UI, transport, SQLite, filesystem, or device details. Contract DTOs should not become the persistence schema by accident.
+
+## 14. Architectural decisions still required
+
+The blocking choices are tracked in [Implementation plan](implementation-plan.md#open-decisions). No implementation should freeze the technology stack, identity model, scheduling semantics, allocation equation, route versioning, E-Ink rendering strategy, or telemetry behavior without recording the decision and updating this document.

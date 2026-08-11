@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Meimad.Planner.Server/Meimad.Planner.Server.csproj" />
+  <Project Path="../tests/Meimad.Planner.Server.Tests/Meimad.Planner.Server.Tests.csproj" />
+  <Project Path="../client-windows/Meimad.Planner.Client.Windows/Meimad.Planner.Client.Windows.csproj" />
+  <Project Path="../tests/Meimad.Planner.Client.Windows.Tests/Meimad.Planner.Client.Windows.Tests.csproj" />
+</Solution>

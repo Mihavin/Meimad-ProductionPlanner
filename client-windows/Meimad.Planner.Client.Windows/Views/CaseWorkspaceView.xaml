@@ -1,0 +1,412 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.CaseWorkspaceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinHeight="620">
+    <UserControl.Resources>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style x:Key="FormField" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,14,12" />
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="{StaticResource PanelBrush}"
+            BorderBrush="#D8DDE3"
+            BorderThickness="1"
+            CornerRadius="5"
+            Padding="18">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340" />
+                <ColumnDefinition Width="18" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel>
+                    <TextBlock Text="CASE POOL" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" />
+                    <TextBlock Text="Part masters from the Server" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,14" />
+                    <TextBlock Text="Search Part Number, name, or customer" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="120" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Customer filter" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding CustomerFilter, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Active state" Style="{StaticResource FieldLabel}" />
+                            <ComboBox ItemsSource="{Binding ActiveFilters}"
+                                      SelectedItem="{Binding ActiveFilter}"
+                                      MinHeight="38"
+                                      Padding="7" />
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,14">
+                        <Button Content="Search" Command="{Binding SearchCommand}" />
+                        <Button Content="Clear" Command="{Binding ClearFiltersCommand}" />
+                        <Button Content="Add Case" Command="{Binding BeginCreateCommand}" Margin="0" />
+                    </StackPanel>
+                </StackPanel>
+
+                <ListBox Grid.Row="2"
+                         ItemsSource="{Binding Cases}"
+                         SelectedItem="{Binding SelectedCase}"
+                         BorderBrush="#D8DDE3"
+                         HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10" Margin="2" BorderBrush="#E2E6EA" BorderThickness="0,0,0,1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="82" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Width="82" Height="68" Background="#EEF1F4" BorderBrush="#D4D9DE" BorderThickness="1">
+                                        <Grid>
+                                            <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                            <TextBlock Text="{Binding PreviewStatus}"
+                                                       FontSize="10"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       TextAlignment="Center"
+                                                       TextWrapping="Wrap"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Bottom"
+                                                       Background="#DFFFFFFF"
+                                                       Padding="3" />
+                                        </Grid>
+                                    </Border>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding PartNumber}" FontSize="17" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Customer}" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,5" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding ActiveStateText}" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Grid.Row="3" Text="{Binding StatusMessage}" TextWrapping="Wrap"
+                           Foreground="{StaticResource MutedTextBrush}" Margin="0,10,0,0" />
+            </Grid>
+
+            <Grid Grid.Column="2">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasForm}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <DockPanel Margin="0,0,0,12">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Content="Delete Case" Click="DeleteCase_Click" IsEnabled="{Binding CanDelete}" />
+                        <Button Content="Open Working Folder" Command="{Binding OpenWorkingFolderCommand}" />
+                        <Button Content="Refresh Case" Command="{Binding RefreshDetailsCommand}" Margin="0" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="{Binding FormHeading}" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                            <TextBlock Text="{Binding PartNumber}" FontSize="22" FontWeight="Bold" />
+                            <Border Background="#E8EEF4" CornerRadius="3" Padding="8,3" Margin="10,0,0,0">
+                                <TextBlock Text="{Binding ActiveStateText}" FontWeight="SemiBold" />
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </DockPanel>
+
+                <TabControl Grid.Row="1">
+                    <TabItem Header="Case form">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14">
+                            <StackPanel>
+                                <Border Height="180" Background="#EEF1F4" BorderBrush="#D4D9DE" BorderThickness="1" Margin="0,0,0,16">
+                                    <Grid>
+                                        <Image Source="{Binding DetailPreview}" Stretch="Uniform" />
+                                        <TextBlock Text="Preview thumbnail supplied by Server API"
+                                                   Background="#DFFFFFFF" Padding="6"
+                                                   HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                                                   Foreground="{StaticResource MutedTextBrush}" />
+                                    </Grid>
+                                </Border>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Part Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding PartNumber}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Name}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Revision" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Revision}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Customer" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Customer}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Customer Reference" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CustomerReference}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Type" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialType}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Specification" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialSpecification}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Form" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialForm}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Dimensions" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialDimensions}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Current Setup Time (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentSetupTimeSeconds}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Current Cycle Time / Part (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentCycleTimePerPartSeconds}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                </UniformGrid>
+                                <StackPanel Style="{StaticResource FormField}">
+                                    <TextBlock Text="Case Working Folder (external path)" Style="{StaticResource FieldLabel}"/>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Browse Folder…" Click="BrowseFolder_Click"
+                                                IsEnabled="{Binding CanEditForm}" Margin="8,0,0,0" />
+                                        <TextBox Text="{Binding WorkingFolderPath}" IsReadOnly="{Binding IsFormReadOnly}"/>
+                                    </DockPanel>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource FormField}">
+                                    <TextBlock Text="Picture Path (server-readable path only)" Style="{StaticResource FieldLabel}"/>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Browse Picture…" Click="BrowsePicture_Click"
+                                                IsEnabled="{Binding CanEditForm}" Margin="8,0,0,0" />
+                                        <TextBox Text="{Binding PreviewPath}" IsReadOnly="{Binding IsFormReadOnly}"/>
+                                    </DockPanel>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsFormReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>
+                                <DockPanel>
+                                    <TextBlock Text="Saving requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                        <Button Content="Cancel New Case" Command="{Binding CancelCreateCommand}">
+                                            <Button.Style>
+                                                <Style TargetType="Button">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsCreating}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
+                                        <Button Content="{Binding SaveButtonText}" Command="{Binding SaveCommand}" Margin="0" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="Operations">
+                        <Grid Margin="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="Delete Selected" Click="DeleteOperation_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Add Operation" Command="{Binding BeginCreateOperationCommand}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="Ordered route template. New operations append to the route."
+                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCreatingOperation}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Text="NEW CASE OPERATION" FontWeight="Bold" Margin="0,0,0,10" />
+                                    <UniformGrid Columns="2">
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Operation Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationNumber}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationName}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Required Machine Type" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationRequiredMachineType}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Dependency Type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OperationDependencyTypes}" SelectedItem="{Binding NewOperationDependencyType}" MinHeight="38" Padding="7"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Setup Time (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSetupTimeSeconds}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Cycle Time / Part (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationCycleTimePerPartSeconds}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Referenced Operation" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding Operations}" SelectedItem="{Binding NewOperationPredecessor}" DisplayMemberPath="DisplayName" MinHeight="38" Padding="7"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Simultaneous Group Key" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSimultaneousGroupKey}"/></StackPanel>
+                                    </UniformGrid>
+                                    <TextBlock Text="INDEPENDENT uses no referenced operation. SEQUENTIAL and PARALLEL_CAPABLE require one. LOCKED_SIMULTANEOUS also requires a group key. The Server validates the complete dependency graph."
+                                               TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                                    <DockPanel>
+                                        <TextBlock Text="Creation requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Cancel" Command="{Binding CancelCreateOperationCommand}" />
+                                            <Button Content="Create Operation" Command="{Binding CreateOperationCommand}" Margin="0" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Operations}" SelectedItem="{Binding SelectedOperation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Route" Binding="{Binding RouteDisplayPosition}" Width="55" />
+                                    <DataGridTextColumn Header="#" Binding="{Binding OperationNumber}" Width="55" />
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
+                                    <DataGridTextColumn Header="Machine type" Binding="{Binding RequiredMachineType}" Width="*" />
+                                    <DataGridTextColumn Header="Dependency" Binding="{Binding DependencyType}" Width="*" />
+                                    <DataGridTextColumn Header="Setup sec" Binding="{Binding SetupTimeSeconds}" Width="85" />
+                                    <DataGridTextColumn Header="Cycle sec" Binding="{Binding CycleTimePerPartSeconds}" Width="85" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </TabItem>
+                    <TabItem Header="Orders">
+                        <Grid Margin="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="Delete Selected" Click="DeleteOrder_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Add Order" Command="{Binding BeginCreateOrderCommand}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="Demand records for this Case; Orders are never assigned to Machines."
+                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCreatingOrder}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Text="NEW ORDER" FontWeight="Bold" Margin="0,0,0,10" />
+                                    <UniformGrid Columns="2">
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Order Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderNumber}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderQuantity}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Work Finish Date (YYYY-MM-DD)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderWorkFinishDate}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Status" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OrderStatuses}" SelectedItem="{Binding NewOrderStatus}" MinHeight="38" Padding="7"/></StackPanel>
+                                    </UniformGrid>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderNotes}" AcceptsReturn="True" MinHeight="65" TextWrapping="Wrap"/></StackPanel>
+                                    <DockPanel>
+                                        <TextBlock Text="Creation requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Cancel" Command="{Binding CancelCreateOrderCommand}" />
+                                            <Button Content="Create Order" Command="{Binding CreateOrderCommand}" Margin="0" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Orders}" SelectedItem="{Binding SelectedOrder}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Order" Binding="{Binding OrderNumber}" Width="*" />
+                                    <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90" />
+                                    <DataGridTextColumn Header="Work Finish Date" Binding="{Binding WorkFinishDate}" Width="140" />
+                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                                    <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="2*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </TabItem>
+                    <TabItem Header="Batches">
+                        <Grid Margin="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="Delete Selected" Click="DeleteBatch_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Add Production Batch" Command="{Binding BeginCreateBatchCommand}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="Production launches with explicit Order, stock, and scrap allocations."
+                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4" MaxHeight="390">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCreatingBatch}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <StackPanel>
+                                        <TextBlock Text="NEW PRODUCTION BATCH" FontWeight="Bold" Margin="0,0,0,10" />
+                                        <UniformGrid Columns="2">
+                                            <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Batch Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchNumber}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Planned Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchPlannedQuantity}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Stock Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchStockQuantity}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Scrap Allowance" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchScrapAllowance}"/></StackPanel>
+                                        </UniformGrid>
+                                        <TextBlock Text="Order allocations (enter zero or leave blank to omit)" Style="{StaticResource FieldLabel}" />
+                                        <DataGrid ItemsSource="{Binding BatchOrderAllocations}" AutoGenerateColumns="False" CanUserAddRows="False" MinHeight="105" MaxHeight="170" Margin="0,0,0,10">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Order" Binding="{Binding OrderNumber}" IsReadOnly="True" Width="*" />
+                                                <DataGridTextColumn Header="Demand" Binding="{Binding DemandQuantity}" IsReadOnly="True" Width="90" />
+                                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" IsReadOnly="True" Width="100" />
+                                                <DataGridTextColumn Header="Allocate" Binding="{Binding AllocatedQuantity, UpdateSourceTrigger=PropertyChanged}" Width="100" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <TextBlock Text="The Server validates that planned quantity equals all allocations and instantiates Batch Operations from the current Case route."
+                                                   TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                                        <DockPanel>
+                                            <TextBlock Text="New Batch status: planned" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                <Button Content="Cancel" Command="{Binding CancelCreateBatchCommand}" />
+                                                <Button Content="Create Batch" Command="{Binding CreateBatchCommand}" Margin="0" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Border>
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Batch" Binding="{Binding BatchNumber}" Width="*" />
+                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                                    <DataGridTextColumn Header="Planned quantity" Binding="{Binding PlannedQuantity}" Width="130" />
+                                    <DataGridTextColumn Header="Operations" Binding="{Binding BatchOperationCount}" Width="100" />
+                                    <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
+            </Grid>
+
+            <Border Grid.Column="2" Background="#F6F7F9" BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasForm}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="Select a Case" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                    <TextBlock Text="Case form, Operations, Orders, and Batches will appear here."
+                               Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

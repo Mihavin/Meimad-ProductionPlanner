@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/eink-simulator/">
+  <title>Meimad E-Ink Work Tablet Simulator</title>
+  <meta name="description" content="Read-only simulator for Meimad Color E-Ink Work Tablets">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <div class="eyebrow">MEIMAD PLANNER • DEVELOPMENT TOOL</div>
+      <h1>Color E-Ink Work Tablet Simulator</h1>
+    </div>
+    <div class="boundary-label">▣ READ-ONLY • NO WRITE-BACK • NO CNC TRANSFER</div>
+  </header>
+
+  <section class="connection-panel" aria-labelledby="connection-heading">
+    <div>
+      <h2 id="connection-heading">Device configuration</h2>
+      <p>Enter a registered device ID and its read-only token. These values stay in this browser.</p>
+    </div>
+    <label>Device ID<input id="device-id" autocomplete="off" spellcheck="false"></label>
+    <label>Device token<input id="device-token" type="password" autocomplete="off" spellcheck="false"></label>
+    <button id="connect" type="button">Connect / Refresh</button>
+    <div id="connection-state" class="connection-state" role="status">Not connected</div>
+  </section>
+
+  <main>
+    <nav class="local-tabs" aria-label="Simulator pages">
+      <button type="button" class="tab active" data-page="machine">Machine</button>
+      <button type="button" class="tab" data-page="package">Package</button>
+      <button type="button" class="tab" data-page="file">File viewer</button>
+      <span>Simulator navigation is device-local and never changes Server data.</span>
+    </nav>
+
+    <section class="tablet-shell" aria-label="Simulated 7.5 inch Color E-Ink display">
+      <div class="tablet-screen">
+        <div class="screen-header">
+          <div><strong id="machine-number">NO DEVICE</strong><span id="machine-type">UNASSIGNED</span></div>
+          <div class="screen-title" id="screen-title">MACHINE PAGE</div>
+          <div class="screen-meta"><span id="last-update">Never updated</span><span id="revision">Revision —</span></div>
+        </div>
+
+        <section id="machine-page" class="screen-page active-page">
+          <div id="status-block" class="status-block status-idle"><span class="status-symbol">■</span><strong>NO DATA</strong></div>
+          <div class="machine-layout">
+            <article class="current-card">
+              <div class="label">CURRENT JOB</div>
+              <div id="current-job" class="job-content empty-content">Connect a registered device.</div>
+            </article>
+            <article class="next-card">
+              <div class="label">NEXT JOBS</div>
+              <ol id="next-jobs" class="next-list"><li>No data</li></ol>
+            </article>
+          </div>
+          <div id="conflict-strip" class="conflict-strip">✓ No conflict data</div>
+        </section>
+
+        <section id="package-page" class="screen-page">
+          <div class="package-header">
+            <div><span class="label">OFFICIAL PACKAGE</span><strong id="package-id">No package assigned</strong></div>
+            <div><span class="label">REVISION</span><strong id="package-revision">—</strong></div>
+            <div><span class="label">TOOL CART</span><strong id="tool-cart">—</strong></div>
+          </div>
+          <div id="package-context" class="package-context">Package work metadata unavailable</div>
+          <div class="readonly-banner">▣ OFFICIAL FILES ARE READ-ONLY • LOCAL CHECKLIST/COMMENTS ARE NOT SENT TO SERVER</div>
+          <div id="package-files" class="package-files"><div class="empty-content">No manifest loaded.</div></div>
+        </section>
+
+        <section id="file-page" class="screen-page">
+          <div class="file-header"><strong id="file-name">No file selected</strong><span id="file-verification">READ-ONLY</span></div>
+          <pre id="file-content">Select a package file to preview it.</pre>
+          <img id="file-image" alt="Authorized package preview" hidden>
+        </section>
+
+        <div class="screen-footer">
+          <span id="time-config">Refresh configuration unavailable</span>
+          <span>REFRESH = version check first</span>
+          <span>PAGE = local simulator navigation</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="protocol-panel">
+      <h2>Protocol status</h2>
+      <div id="protocol-log" class="protocol-log">No requests made.</div>
+    </section>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
