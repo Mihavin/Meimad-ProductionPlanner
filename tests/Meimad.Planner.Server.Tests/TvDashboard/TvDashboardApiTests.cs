@@ -99,7 +99,7 @@ public sealed class TvDashboardApiTests
             VALUES ('order-tv', 'case-tv', 'ORDER-TV', 2, $due, 'active');
             INSERT INTO production_batches (
                 id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-tv', 'case-tv', 'B-TV', 'planned', 2);
+            VALUES ('batch-tv', 'case-tv', 'B-TV', 'waiting', 2);
             INSERT INTO batch_allocations (
                 id, production_batch_id, allocation_type, order_id, quantity)
             VALUES ('allocation-tv', 'batch-tv', 'order', 'order-tv', 2);

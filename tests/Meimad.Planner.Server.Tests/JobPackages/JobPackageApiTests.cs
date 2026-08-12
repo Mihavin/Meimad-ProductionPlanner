@@ -240,7 +240,7 @@ public sealed class JobPackageApiTests
                 $workingFolder, $previewPath);
             INSERT INTO production_batches (
                 id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-package', 'case-package', 'B-PKG', 'planned', 12);
+            VALUES ('batch-package', 'case-package', 'B-PKG', 'waiting', 12);
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name,
                 required_machine_type)

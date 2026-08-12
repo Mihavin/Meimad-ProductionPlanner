@@ -121,7 +121,7 @@ public partial class TimelineView : UserControl
             }
 
             var x = LabelWidth + chartWidth * (clippedStart - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
-            var width = Math.Max(2, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
+            var width = Math.Max(8, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
             var label = IntervalLabel(interval);
             var block = new Border
             {
@@ -152,7 +152,7 @@ public partial class TimelineView : UserControl
     {
         var type = interval.Type.ToUpperInvariant();
         return interval.OperationNumber.HasValue
-            ? $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber}"
+            ? $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd()
             : string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
     }
 

@@ -53,15 +53,6 @@ internal static partial class CaseValidator
             issues);
         var notes = OptionalText(values.Notes, "notes", NotesMaximum, issues);
 
-        ValidateDuration(
-            values.CurrentSetupTimeSeconds,
-            "currentSetupTimeSeconds",
-            issues);
-        ValidateDuration(
-            values.CurrentCycleTimePerPartSeconds,
-            "currentCycleTimePerPartSeconds",
-            issues);
-
         if (issues.Count > 0)
         {
             throw new CaseValidationException(issues);
@@ -79,8 +70,6 @@ internal static partial class CaseValidator
             materialSpecification,
             rawMaterialForm,
             rawMaterialDimensions,
-            values.CurrentSetupTimeSeconds,
-            values.CurrentCycleTimePerPartSeconds,
             notes);
     }
 
@@ -174,20 +163,6 @@ internal static partial class CaseValidator
                 field,
                 "too_long",
                 $"{field} must contain at most {maximumLength} characters."));
-        }
-    }
-
-    private static void ValidateDuration(
-        int? value,
-        string field,
-        ICollection<CaseValidationIssue> issues)
-    {
-        if (value < 0)
-        {
-            issues.Add(new CaseValidationIssue(
-                field,
-                "non_negative_required",
-                $"{field} must be zero or greater when supplied."));
         }
     }
 

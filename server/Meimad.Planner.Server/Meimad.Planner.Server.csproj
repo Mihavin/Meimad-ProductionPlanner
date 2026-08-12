@@ -8,7 +8,7 @@
     <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
     <RootNamespace>Meimad.Planner.Server</RootNamespace>
     <AssemblyName>Meimad.Planner.Server</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.2</Version>
   </PropertyGroup>
 
   <ItemGroup>

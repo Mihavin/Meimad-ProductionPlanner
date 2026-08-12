@@ -3,6 +3,7 @@ using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Domain.Machines;
+using Meimad.Planner.Server.Domain.ProductionBatches;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -287,6 +288,13 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 cancellationToken);
         }
 
+        await UpdateProductionBatchStatusAsync(
+            connection,
+            transaction,
+            execution.BatchId,
+            now,
+            cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
         return new BatchOperationExecutionResult(
             batchOperationId,
@@ -305,6 +313,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT batch_operations.status, batch_operations.version,
+                   batch_operations.production_batch_id,
                    machine_assignments.id, machine_assignments.machine_id,
                    machine_assignments.backlog_position
             FROM batch_operations
@@ -322,9 +331,58 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         return new ExecutionState(
             reader.GetString(0),
             reader.GetInt32(1),
-            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetInt32(4));
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetInt32(5));
+    }
+
+    private static async Task UpdateProductionBatchStatusAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        long total;
+        long completed;
+        long started;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT COUNT(*),
+                       COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN status <> 'not_started' THEN 1 ELSE 0 END), 0)
+                FROM batch_operations
+                WHERE production_batch_id = $batchId;
+                """;
+            read.Parameters.AddWithValue("$batchId", batchId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            total = reader.GetInt64(0);
+            completed = reader.GetInt64(1);
+            started = reader.GetInt64(2);
+        }
+
+        var targetStatus = total > 0 && completed == total
+            ? ProductionBatchValidator.CompleteStatus
+            : started > 0
+                ? ProductionBatchValidator.InProductionStatus
+                : ProductionBatchValidator.WaitingStatus;
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE production_batches
+            SET status = $status,
+                version = version + 1,
+                updated_at = $updatedAt
+            WHERE id = $batchId AND status <> $status;
+            """;
+        update.Parameters.AddWithValue("$status", targetStatus);
+        update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
+        update.Parameters.AddWithValue("$batchId", batchId);
+        await update.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task EnsureMachineHasNoRunningOperationAsync(
@@ -668,6 +726,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
     private sealed record ExecutionState(
         string Status,
         int Version,
+        string BatchId,
         string? AssignmentId,
         string? MachineId,
         int? BacklogPosition);

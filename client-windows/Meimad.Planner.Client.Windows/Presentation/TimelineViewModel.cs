@@ -18,6 +18,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     private string statusMessage = "Connect to the Server to calculate the Timeline.";
     private DateTimeOffset horizonStart;
     private DateTimeOffset horizonEnd;
+    private long invalidationVersion;
 
     internal TimelineViewModel()
     {
@@ -110,6 +111,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         }
 
         apiClient = newApiClient;
+        invalidationVersion++;
         hasLoaded = false;
         ClearProjection();
         RefreshCommand.RaiseCanExecuteChanged();
@@ -123,6 +125,13 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         }
     }
 
+    internal void Invalidate()
+    {
+        invalidationVersion++;
+        hasLoaded = false;
+        StatusMessage = "The plan changed. The Timeline will be recalculated from the Server.";
+    }
+
     internal async Task RefreshAsync()
     {
         if (!CanRefresh())
@@ -133,13 +142,16 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
 
         var from = new DateTimeOffset(DateTime.SpecifyKind(FromDate!.Value.Date, DateTimeKind.Utc));
         var to = new DateTimeOffset(DateTime.SpecifyKind(ToDate!.Value.Date, DateTimeKind.Utc));
+        var requestedVersion = invalidationVersion;
         IsBusy = true;
         try
         {
             var snapshot = await apiClient!.GetTimelineAsync(from, to);
             Apply(snapshot);
-            hasLoaded = true;
-            StatusMessage = $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}.";
+            hasLoaded = requestedVersion == invalidationVersion;
+            StatusMessage = hasLoaded
+                ? $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}."
+                : "The plan changed during calculation. The Timeline will be recalculated from the Server.";
         }
         catch (Exception exception) when (IsExpected(exception))
         {

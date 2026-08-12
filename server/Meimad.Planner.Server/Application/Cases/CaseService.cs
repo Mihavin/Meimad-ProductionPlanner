@@ -35,8 +35,8 @@ internal sealed class CaseService
             values.MaterialSpecification,
             values.RawMaterialForm,
             values.RawMaterialDimensions,
-            values.CurrentSetupTimeSeconds,
-            values.CurrentCycleTimePerPartSeconds,
+            0,
+            0,
             values.Notes,
             false,
             1,
@@ -103,6 +103,22 @@ internal sealed class CaseService
             ?? throw new CaseNotFoundException(caseId);
     }
 
+    internal Task<CaseOperationDetails> UpdateOperationAsync(
+        string caseId,
+        string operationId,
+        int expectedVersion,
+        UpdateCaseOperationCommand command,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default) =>
+        repository.UpdateOperationAsync(
+            caseId,
+            operationId,
+            expectedVersion,
+            command,
+            timeProvider.GetUtcNow(),
+            editAuthority,
+            cancellationToken);
+
     internal async Task<PlannerCase> UpdateAsync(
         string caseId,
         int expectedVersion,
@@ -125,8 +141,6 @@ internal sealed class CaseService
             Select(command.MaterialSpecification, current.MaterialSpecification),
             Select(command.RawMaterialForm, current.RawMaterialForm),
             Select(command.RawMaterialDimensions, current.RawMaterialDimensions),
-            Select(command.CurrentSetupTimeSeconds, current.CurrentSetupTimeSeconds),
-            Select(command.CurrentCycleTimePerPartSeconds, current.CurrentCycleTimePerPartSeconds),
             Select(command.Notes, current.Notes)));
 
         var updated = current with
@@ -142,8 +156,6 @@ internal sealed class CaseService
             MaterialSpecification = values.MaterialSpecification,
             RawMaterialForm = values.RawMaterialForm,
             RawMaterialDimensions = values.RawMaterialDimensions,
-            CurrentSetupTimeSeconds = values.CurrentSetupTimeSeconds,
-            CurrentCycleTimePerPartSeconds = values.CurrentCycleTimePerPartSeconds,
             Notes = values.Notes,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
@@ -169,8 +181,6 @@ internal sealed class CaseService
         command.MaterialSpecification,
         command.RawMaterialForm,
         command.RawMaterialDimensions,
-        command.CurrentSetupTimeSeconds,
-        command.CurrentCycleTimePerPartSeconds,
         command.Notes);
 
     private static T Select<T>(OptionalField<T> field, T current) =>
@@ -189,6 +199,22 @@ internal sealed class CaseVersionConflictException : Exception
 {
     internal CaseVersionConflictException(string caseId, int expectedVersion)
         : base($"Case '{caseId}' is no longer at version {expectedVersion}.")
+    {
+    }
+}
+
+internal sealed class CaseOperationNotFoundException : Exception
+{
+    internal CaseOperationNotFoundException(string caseId, string operationId)
+        : base($"Case Operation '{operationId}' was not found under Case '{caseId}'.")
+    {
+    }
+}
+
+internal sealed class CaseOperationVersionConflictException : Exception
+{
+    internal CaseOperationVersionConflictException(string operationId, int expectedVersion)
+        : base($"Case Operation '{operationId}' is no longer at version {expectedVersion}.")
     {
     }
 }

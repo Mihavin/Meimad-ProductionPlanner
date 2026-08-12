@@ -12,8 +12,6 @@ internal sealed record CaseValues(
     string? MaterialSpecification,
     string? RawMaterialForm,
     string? RawMaterialDimensions,
-    int? CurrentSetupTimeSeconds,
-    int? CurrentCycleTimePerPartSeconds,
     string? Notes);
 
 internal sealed record ValidatedCaseValues(
@@ -28,6 +26,4 @@ internal sealed record ValidatedCaseValues(
     string? MaterialSpecification,
     string? RawMaterialForm,
     string? RawMaterialDimensions,
-    int? CurrentSetupTimeSeconds,
-    int? CurrentCycleTimePerPartSeconds,
     string? Notes);

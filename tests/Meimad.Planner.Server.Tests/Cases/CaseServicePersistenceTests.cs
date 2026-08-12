@@ -31,8 +31,8 @@ public sealed class CaseServicePersistenceTests
         Assert.Equal("7075-T6", read.MaterialSpecification);
         Assert.Equal("Plate", read.RawMaterialForm);
         Assert.Equal("30 x 120 x 180 mm", read.RawMaterialDimensions);
-        Assert.Equal(1800, read.CurrentSetupTimeSeconds);
-        Assert.Equal(240, read.CurrentCycleTimePerPartSeconds);
+        Assert.Equal(0, read.CurrentSetupTimeSeconds);
+        Assert.Equal(0, read.CurrentCycleTimePerPartSeconds);
         Assert.Equal(1, read.Version);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
@@ -57,20 +57,61 @@ public sealed class CaseServicePersistenceTests
             Patch(
                 customer: OptionalField<string?>.Specified("Customer B"),
                 previewPath: OptionalField<string?>.Specified(null),
-                currentCycleTimePerPartSeconds: OptionalField<int?>.Specified(300),
                 notes: OptionalField<string?>.Specified("Updated notes")),
             editAuthority);
 
         Assert.Equal(2, updated.Version);
         Assert.Equal("Customer B", updated.Customer);
         Assert.Null(updated.PreviewPath);
-        Assert.Equal(300, updated.CurrentCycleTimePerPartSeconds);
+        Assert.Equal(0, updated.CurrentCycleTimePerPartSeconds);
         Assert.Equal("Updated notes", updated.Notes);
         Assert.Equal(created.PartNumber, updated.PartNumber);
         Assert.Equal(created.WorkingFolderPath, updated.WorkingFolderPath);
 
         var read = await service.GetByIdAsync(created.CaseId);
         Assert.Equal(updated, read);
+    }
+
+    [Fact]
+    public async Task Case_timing_is_the_sum_of_operation_timings_with_null_as_zero()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var editAuthority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+        var created = await service.CreateAsync(
+            CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "external-case-timing")),
+            editAuthority);
+
+        var first = await service.CreateOperationAsync(
+            created.CaseId,
+            new CreateCaseOperationCommand(
+                10,
+                "Saw",
+                "saw",
+                60,
+                30,
+                "INDEPENDENT",
+                null,
+                null),
+            editAuthority);
+        await service.CreateOperationAsync(
+            created.CaseId,
+            new CreateCaseOperationCommand(
+                20,
+                "Mill",
+                "mill",
+                120,
+                null,
+                "SEQUENTIAL",
+                first.CaseOperationId,
+                null),
+            editAuthority);
+
+        var read = await service.GetByIdAsync(created.CaseId);
+
+        Assert.NotNull(read);
+        Assert.Equal(180, read.CurrentSetupTimeSeconds);
+        Assert.Equal(30, read.CurrentCycleTimePerPartSeconds);
     }
 
     [Fact]
@@ -193,8 +234,6 @@ public sealed class CaseServicePersistenceTests
         "7075-T6",
         "Plate",
         "30 x 120 x 180 mm",
-        1800,
-        240,
         "Initial notes");
 
     private static UpdateCaseCommand Patch(
@@ -209,8 +248,6 @@ public sealed class CaseServicePersistenceTests
         OptionalField<string?>? materialSpecification = null,
         OptionalField<string?>? rawMaterialForm = null,
         OptionalField<string?>? rawMaterialDimensions = null,
-        OptionalField<int?>? currentSetupTimeSeconds = null,
-        OptionalField<int?>? currentCycleTimePerPartSeconds = null,
         OptionalField<string?>? notes = null) => new(
         partNumber ?? OptionalField<string?>.Unspecified,
         name ?? OptionalField<string?>.Unspecified,
@@ -223,7 +260,5 @@ public sealed class CaseServicePersistenceTests
         materialSpecification ?? OptionalField<string?>.Unspecified,
         rawMaterialForm ?? OptionalField<string?>.Unspecified,
         rawMaterialDimensions ?? OptionalField<string?>.Unspecified,
-        currentSetupTimeSeconds ?? OptionalField<int?>.Unspecified,
-        currentCycleTimePerPartSeconds ?? OptionalField<int?>.Unspecified,
         notes ?? OptionalField<string?>.Unspecified);
 }

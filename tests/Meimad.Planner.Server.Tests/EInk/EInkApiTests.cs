@@ -254,7 +254,7 @@ public sealed class EInkApiTests
             VALUES ('case-eink', 'PN-EINK', 'E-Ink Part', 'C:\Cases\PN-EINK');
             INSERT INTO production_batches (
                 id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-eink', 'case-eink', 'B-EINK', 'planned', 4);
+            VALUES ('batch-eink', 'case-eink', 'B-EINK', 'waiting', 4);
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name,
                 required_machine_type, setup_seconds, cycle_seconds)

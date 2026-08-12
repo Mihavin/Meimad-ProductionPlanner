@@ -95,7 +95,7 @@ internal sealed class TimelineProjectionService
         }
 
         var setupAvailability = source.SetupCalendarJson is null
-            ? MissingSetupCalendar(mappingConflicts)
+            ? DefaultSetupAvailability(horizonStart, horizonEnd, mappingConflicts)
             : ReadAvailability(
                 source.SetupCalendarJson,
                 null,
@@ -172,16 +172,18 @@ internal sealed class TimelineProjectionService
             mappingConflicts.Concat(domainConflicts).ToArray());
     }
 
-    private static IReadOnlyList<TimelineWindow> MissingSetupCalendar(
+    private static IReadOnlyList<TimelineWindow> DefaultSetupAvailability(
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
         ICollection<TimelineProjectionConflict> conflicts)
     {
         conflicts.Add(Conflict(
-            "setup_calendar_configuration_missing",
-            "blocking",
-            "Server setting 'timeline.setup_calendar_json' is missing.",
+            "setup_calendar_defaulted",
+            "attention",
+            "No separate setup calendar is configured; setup uses each assigned Machine's availability.",
             [],
             []));
-        return [];
+        return [new TimelineWindow(horizonStart, horizonEnd)];
     }
 
     private static IReadOnlyList<TimelineWindow> ReadAvailability(
@@ -455,6 +457,7 @@ internal sealed class TimelineProjectionService
             operation?.BatchNumber,
             operation?.PartNumber,
             operation?.OperationNumber,
+            operation?.OperationName,
             interval.StartsAt,
             interval.EndsAt,
             interval.Detail);

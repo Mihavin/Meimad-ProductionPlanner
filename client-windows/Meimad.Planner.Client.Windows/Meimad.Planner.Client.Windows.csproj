@@ -9,7 +9,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Meimad.Planner.Client.Windows</RootNamespace>
     <AssemblyName>Meimad.Planner.Client.Windows</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.2</Version>
   </PropertyGroup>
 
 </Project>

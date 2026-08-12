@@ -159,8 +159,8 @@
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Specification" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialSpecification}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Form" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialForm}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Dimensions" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialDimensions}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Current Setup Time (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentSetupTimeSeconds}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Current Cycle Time / Part (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentCycleTimePerPartSeconds}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Total Setup Time (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentSetupTime, Mode=OneWay}" IsReadOnly="True" IsTabStop="False" ToolTip="Read-only sum of setup time across all Case Operations."/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Total Cycle Time / Part (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentCycleTimePerPart, Mode=OneWay}" IsReadOnly="True" IsTabStop="False" ToolTip="Read-only sum of cycle time per part across all Case Operations."/></StackPanel>
                                 </UniformGrid>
                                 <StackPanel Style="{StaticResource FormField}">
                                     <TextBlock Text="Case Working Folder (external path)" Style="{StaticResource FieldLabel}"/>
@@ -210,6 +210,7 @@
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                     <Button Content="Delete Selected" Click="DeleteOperation_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Edit Selected" Command="{Binding BeginEditOperationCommand}" />
                                     <Button Content="Add Operation" Command="{Binding BeginCreateOperationCommand}" Margin="0" />
                                 </StackPanel>
                                 <TextBlock Text="Ordered route template. New operations append to the route."
@@ -228,24 +229,24 @@
                                     </Style>
                                 </Border.Style>
                                 <StackPanel>
-                                    <TextBlock Text="NEW CASE OPERATION" FontWeight="Bold" Margin="0,0,0,10" />
+                                    <TextBlock Text="{Binding OperationFormHeading}" FontWeight="Bold" Margin="0,0,0,10" />
                                     <UniformGrid Columns="2">
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Operation Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationNumber}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationName}"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Required Machine Type" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationRequiredMachineType}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Required Machine Type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OperationMachineTypeOptions}" SelectedItem="{Binding NewOperationRequiredMachineType}" MinHeight="38" Padding="7"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Dependency Type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OperationDependencyTypes}" SelectedItem="{Binding NewOperationDependencyType}" MinHeight="38" Padding="7"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Setup Time (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSetupTimeSeconds}"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Cycle Time / Part (seconds)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationCycleTimePerPartSeconds}"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Referenced Operation" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding Operations}" SelectedItem="{Binding NewOperationPredecessor}" DisplayMemberPath="DisplayName" MinHeight="38" Padding="7"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Setup Time (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSetupTime}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Cycle Time / Part (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationCycleTimePerPart}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Referenced Operation" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OperationReferenceOptions}" SelectedItem="{Binding NewOperationPredecessor}" DisplayMemberPath="DisplayName" MinHeight="38" Padding="7"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Simultaneous Group Key" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSimultaneousGroupKey}"/></StackPanel>
                                     </UniformGrid>
                                     <TextBlock Text="INDEPENDENT uses no referenced operation. SEQUENTIAL and PARALLEL_CAPABLE require one. LOCKED_SIMULTANEOUS also requires a group key. The Server validates the complete dependency graph."
                                                TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
                                     <DockPanel>
-                                        <TextBlock Text="Creation requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Saving requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                             <Button Content="Cancel" Command="{Binding CancelCreateOperationCommand}" />
-                                            <Button Content="Create Operation" Command="{Binding CreateOperationCommand}" Margin="0" />
+                                            <Button Content="{Binding OperationSaveButtonText}" Command="{Binding CreateOperationCommand}" Margin="0" />
                                         </StackPanel>
                                     </DockPanel>
                                 </StackPanel>
@@ -257,8 +258,8 @@
                                     <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
                                     <DataGridTextColumn Header="Machine type" Binding="{Binding RequiredMachineType}" Width="*" />
                                     <DataGridTextColumn Header="Dependency" Binding="{Binding DependencyType}" Width="*" />
-                                    <DataGridTextColumn Header="Setup sec" Binding="{Binding SetupTimeSeconds}" Width="85" />
-                                    <DataGridTextColumn Header="Cycle sec" Binding="{Binding CycleTimePerPartSeconds}" Width="85" />
+                                    <DataGridTextColumn Header="Setup (HH:mm:ss)" Binding="{Binding SetupTimeDisplay}" Width="120" />
+                                    <DataGridTextColumn Header="Cycle (HH:mm:ss)" Binding="{Binding CycleTimePerPartDisplay}" Width="120" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
@@ -367,7 +368,7 @@
                                         <TextBlock Text="The Server validates that planned quantity equals all allocations and instantiates Batch Operations from the current Case route."
                                                    TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
                                         <DockPanel>
-                                            <TextBlock Text="New Batch status: planned" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="New Batch status: Waiting" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                                 <Button Content="Cancel" Command="{Binding CancelCreateBatchCommand}" />
                                                 <Button Content="Create Batch" Command="{Binding CreateBatchCommand}" Margin="0" />
@@ -379,7 +380,7 @@
                             <DataGrid Grid.Row="2" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Batch" Binding="{Binding BatchNumber}" Width="*" />
-                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="120" />
                                     <DataGridTextColumn Header="Planned quantity" Binding="{Binding PlannedQuantity}" Width="130" />
                                     <DataGridTextColumn Header="Operations" Binding="{Binding BatchOperationCount}" Width="100" />
                                     <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />

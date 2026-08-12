@@ -10,24 +10,32 @@ namespace Meimad.Planner.Server.Persistence;
 internal sealed class SqliteCaseRepository : ICaseRepository
 {
     private const string Projection = """
-        id,
-        part_number,
-        name,
-        revision,
-        customer,
-        customer_reference,
-        preview_reference,
-        working_folder_path,
-        material_type,
-        material_specification,
-        raw_material_form,
-        raw_material_dimensions,
-        current_setup_seconds,
-        current_cycle_seconds,
-        notes,
-        version,
-        created_at,
-        updated_at
+        cases.id,
+        cases.part_number,
+        cases.name,
+        cases.revision,
+        cases.customer,
+        cases.customer_reference,
+        cases.preview_reference,
+        cases.working_folder_path,
+        cases.material_type,
+        cases.material_specification,
+        cases.raw_material_form,
+        cases.raw_material_dimensions,
+        COALESCE((
+            SELECT SUM(COALESCE(case_operations.setup_seconds, 0))
+            FROM case_operations
+            WHERE case_operations.case_id = cases.id
+        ), 0) AS current_setup_seconds,
+        COALESCE((
+            SELECT SUM(COALESCE(case_operations.cycle_seconds, 0))
+            FROM case_operations
+            WHERE case_operations.case_id = cases.id
+        ), 0) AS current_cycle_seconds,
+        cases.notes,
+        cases.version,
+        cases.created_at,
+        cases.updated_at
         """;
 
     private readonly SqliteDatabase database;
@@ -102,7 +110,17 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        return await ReadCaseAsync(connection, null, caseId, cancellationToken);
+    }
+
+    private static async Task<PlannerCase?> ReadCaseAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        string caseId,
+        CancellationToken cancellationToken)
+    {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"""
             SELECT {Projection},
                    EXISTS(
@@ -112,9 +130,10 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                          AND orders.status = 'active')
                    OR EXISTS(
                        SELECT 1
-                       FROM production_batches
-                       WHERE production_batches.case_id = cases.id
-                         AND production_batches.status = 'planned') AS is_active
+                        FROM production_batches
+                        WHERE production_batches.case_id = cases.id
+                          AND production_batches.status IN (
+                              'planned', 'waiting', 'in_production')) AS is_active
             FROM cases
             WHERE id = $id;
             """;
@@ -141,9 +160,10 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                            SELECT 1 FROM orders
                            WHERE orders.case_id = cases.id AND orders.status = 'active')
                        OR EXISTS(
-                           SELECT 1 FROM production_batches
-                           WHERE production_batches.case_id = cases.id
-                             AND production_batches.status = 'planned') AS is_active
+                            SELECT 1 FROM production_batches
+                            WHERE production_batches.case_id = cases.id
+                              AND production_batches.status IN (
+                                  'planned', 'waiting', 'in_production')) AS is_active
                 FROM cases
             )
             SELECT *
@@ -299,6 +319,111 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         return candidate;
     }
 
+    public async Task<CaseOperationDetails> UpdateOperationAsync(
+        string caseId,
+        string operationId,
+        int expectedVersion,
+        UpdateCaseOperationCommand command,
+        DateTimeOffset updatedAt,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(
+            connection,
+            transaction,
+            editAuthority,
+            cancellationToken);
+
+        var currentOperations = await ReadOperationsAsync(
+            connection,
+            transaction,
+            caseId,
+            cancellationToken);
+        var current = currentOperations.FirstOrDefault(operation =>
+            string.Equals(
+                operation.CaseOperationId,
+                operationId,
+                StringComparison.Ordinal))
+            ?? throw new CaseOperationNotFoundException(caseId, operationId);
+        if (current.Version != expectedVersion)
+        {
+            throw new CaseOperationVersionConflictException(operationId, expectedVersion);
+        }
+
+        var values = CaseOperationValidator.ValidateAndNormalize(
+            new CaseOperationCreateValues(
+                caseId,
+                Select(command.OperationNumber, current.OperationNumber),
+                Select(command.Name, current.Name),
+                Select(command.RequiredMachineType, current.RequiredMachineType),
+                Select(command.SetupTimeSeconds, current.SetupTimeSeconds),
+                Select(command.CycleTimePerPartSeconds, current.CycleTimePerPartSeconds),
+                Select(command.DependencyType, current.DependencyType),
+                Select(
+                    command.PredecessorCaseOperationId,
+                    current.PredecessorCaseOperationId),
+                Select(command.SimultaneousGroupKey, current.SimultaneousGroupKey)));
+        var candidate = current with
+        {
+            OperationNumber = values.OperationNumber,
+            Name = values.Name,
+            RequiredMachineType = values.RequiredMachineType,
+            SetupTimeSeconds = values.SetupTimeSeconds,
+            CycleTimePerPartSeconds = values.CycleTimePerPartSeconds,
+            DependencyType = values.DependencyType.ToContractToken(),
+            PredecessorCaseOperationId = values.PredecessorCaseOperationId,
+            SimultaneousGroupKey = values.SimultaneousGroupKey,
+            Version = expectedVersion + 1,
+            UpdatedAt = updatedAt
+        };
+        ValidateGraph(
+            caseId,
+            currentOperations.Select(operation =>
+                    operation.CaseOperationId == operationId ? candidate : operation)
+                .ToArray());
+
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE case_operations
+            SET operation_number = $operationNumber,
+                name = $name,
+                required_machine_type = $requiredMachineType,
+                setup_seconds = $setupSeconds,
+                cycle_seconds = $cycleSeconds,
+                dependency_type = $dependencyType,
+                predecessor_case_operation_id = $predecessorId,
+                simultaneous_group_key = $groupKey,
+                version = $version,
+                updated_at = $updatedAt
+            WHERE id = $id AND case_id = $caseId AND version = $expectedVersion;
+            """;
+        update.Parameters.AddWithValue("$id", candidate.CaseOperationId);
+        update.Parameters.AddWithValue("$caseId", candidate.CaseId);
+        update.Parameters.AddWithValue("$operationNumber", candidate.OperationNumber);
+        update.Parameters.AddWithValue("$name", candidate.Name);
+        AddNullableText(update, "$requiredMachineType", candidate.RequiredMachineType);
+        AddNullableInteger(update, "$setupSeconds", candidate.SetupTimeSeconds);
+        AddNullableInteger(update, "$cycleSeconds", candidate.CycleTimePerPartSeconds);
+        update.Parameters.AddWithValue(
+            "$dependencyType",
+            ToDependencyStorageToken(values.DependencyType));
+        AddNullableText(update, "$predecessorId", candidate.PredecessorCaseOperationId);
+        AddNullableText(update, "$groupKey", candidate.SimultaneousGroupKey);
+        update.Parameters.AddWithValue("$version", candidate.Version);
+        update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
+        update.Parameters.AddWithValue("$updatedAt", FormatInstant(candidate.UpdatedAt));
+        if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+        {
+            throw new CaseOperationVersionConflictException(operationId, expectedVersion);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return candidate;
+    }
+
     public async Task<PlannerCase?> UpdateAsync(
         PlannerCase plannerCase,
         int expectedVersion,
@@ -314,7 +439,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"""
+        command.CommandText = """
             UPDATE cases
             SET part_number = $partNumber,
                 name = $name,
@@ -327,24 +452,22 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 material_specification = $materialSpecification,
                 raw_material_form = $rawMaterialForm,
                 raw_material_dimensions = $rawMaterialDimensions,
-                current_setup_seconds = $currentSetupSeconds,
-                current_cycle_seconds = $currentCycleSeconds,
                 notes = $notes,
                 version = $version,
                 updated_at = $updatedAt
-            WHERE id = $id AND version = $expectedVersion
-            RETURNING {Projection};
+            WHERE id = $id AND version = $expectedVersion;
             """;
         AddWriteParameters(command, plannerCase);
         command.Parameters.AddWithValue("$expectedVersion", expectedVersion);
 
-        PlannerCase? updated;
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-        {
-            updated = await reader.ReadAsync(cancellationToken)
-                ? ReadCase(reader) with { IsActive = plannerCase.IsActive }
-                : null;
-        }
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        var updated = affected == 0
+            ? null
+            : await ReadCaseAsync(
+                connection,
+                transaction,
+                plannerCase.CaseId,
+                cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
         return updated;
@@ -529,6 +652,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
     private static int? GetNullableInt32(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+
+    private static T Select<T>(OptionalField<T> field, T current) =>
+        field.IsSpecified ? field.Value : current;
 
     private static string FormatInstant(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

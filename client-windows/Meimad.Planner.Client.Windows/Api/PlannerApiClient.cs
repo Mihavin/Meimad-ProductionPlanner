@@ -64,6 +64,16 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<CaseOperation> UpdateCaseOperationAsync(
+        string caseId,
+        string operationId,
+        CaseOperationUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerOrder>> ListOrdersAsync(
         string caseId,
         CancellationToken cancellationToken = default);
@@ -96,6 +106,10 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration,
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
+
+    Task<IReadOnlyList<PlannerMachine>> ListMachinesAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerMachine>>([]);
 
     Task<MachineResource> GetMachineAsync(string machineId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
@@ -345,6 +359,28 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<CaseOperation>(response, cancellationToken);
     }
 
+    public async Task<CaseOperation> UpdateCaseOperationAsync(
+        string caseId,
+        string operationId,
+        CaseOperationUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(operationId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CaseOperation>(response, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<PlannerOrder>> ListOrdersAsync(
         string caseId,
         CancellationToken cancellationToken = default) =>
@@ -424,6 +460,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<PlannerMachine>(response, cancellationToken);
     }
+
+    public async Task<IReadOnlyList<PlannerMachine>> ListMachinesAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<PlannerMachine>("api/v1/machines", cancellationToken);
 
     public async Task<MachineResource> GetMachineAsync(
         string machineId,

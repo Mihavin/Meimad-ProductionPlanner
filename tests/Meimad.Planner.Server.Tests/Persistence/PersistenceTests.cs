@@ -37,7 +37,7 @@ public sealed class PersistenceTests
 
                 INSERT INTO production_batches (
                     id, case_id, batch_number, status, planned_quantity, route_revision)
-                VALUES ('batch-1', 'case-1', 'B-100', 'planned', 11, 1);
+                VALUES ('batch-1', 'case-1', 'B-100', 'waiting', 11, 1);
 
                 INSERT INTO batch_allocations (
                     id, production_batch_id, allocation_type, order_id, quantity)
@@ -52,7 +52,7 @@ public sealed class PersistenceTests
                     route_position, name, required_machine_type, setup_seconds,
                     cycle_seconds, status)
                 VALUES ('batch-operation-1', 'batch-1', 'case-operation-1', 10,
-                    0, 'First milling', 'mill', 600, 45, 'planned');
+                    0, 'First milling', 'mill', 600, 45, 'not_started');
 
                 INSERT INTO machine_assignments (
                     id, batch_operation_id, machine_id, backlog_position)

@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using Meimad.Planner.Client.Windows.Api;
+using Meimad.Planner.Client.Windows.Formatting;
 
 namespace Meimad.Planner.Client.Windows.Presentation;
 
@@ -20,8 +21,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private bool isBusy;
     private bool isCreating;
     private bool isCreatingOperation;
+    private bool isEditingOperation;
     private bool isCreatingOrder;
     private bool isCreatingBatch;
+    private bool selectedDetailsAreStale;
     private CasePoolItemViewModel? selectedCase;
     private CaseOperation? selectedOperation;
     private PlannerOrder? selectedOrder;
@@ -43,15 +46,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string materialSpecification = string.Empty;
     private string rawMaterialForm = string.Empty;
     private string rawMaterialDimensions = string.Empty;
-    private string currentSetupTimeSeconds = string.Empty;
-    private string currentCycleTimePerPartSeconds = string.Empty;
+    private string currentSetupTime = DurationText.Format(0);
+    private string currentCycleTimePerPart = DurationText.Format(0);
     private string notes = string.Empty;
     private string activeStateText = string.Empty;
     private string newOperationNumber = string.Empty;
     private string newOperationName = string.Empty;
     private string newOperationRequiredMachineType = string.Empty;
-    private string newOperationSetupTimeSeconds = string.Empty;
-    private string newOperationCycleTimePerPartSeconds = string.Empty;
+    private string newOperationSetupTime = string.Empty;
+    private string newOperationCycleTimePerPart = string.Empty;
     private string newOperationDependencyType = "INDEPENDENT";
     private CaseOperation? newOperationPredecessor;
     private string newOperationSimultaneousGroupKey = string.Empty;
@@ -76,6 +79,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         RefreshDetailsCommand = new AsyncCommand(LoadSelectedCaseSafeAsync, () => SelectedCase is not null && !IsBusy);
         OpenWorkingFolderCommand = new AsyncCommand(OpenWorkingFolderAsync, () => CanOpenWorkingFolder);
         BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanBeginChildCreate);
+        BeginEditOperationCommand = new AsyncCommand(BeginEditOperationAsync, () => CanBeginEditOperation);
         CancelCreateOperationCommand = new AsyncCommand(CancelCreateOperationAsync, () => IsCreatingOperation && !IsBusy);
         CreateOperationCommand = new AsyncCommand(CreateOperationAsync, () => CanCreateOperation);
         BeginCreateOrderCommand = new AsyncCommand(BeginCreateOrderAsync, () => CanBeginChildCreate);
@@ -88,9 +92,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public event EventHandler? PlanChanged;
+
     public ObservableCollection<CasePoolItemViewModel> Cases { get; } = [];
 
     public ObservableCollection<CaseOperation> Operations { get; } = [];
+
+    public ObservableCollection<CaseOperation> OperationReferenceOptions { get; } = [];
+
+    public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty];
 
     public ObservableCollection<PlannerOrder> Orders { get; } = [];
 
@@ -120,6 +130,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand OpenWorkingFolderCommand { get; }
 
     public AsyncCommand BeginCreateOperationCommand { get; }
+
+    public AsyncCommand BeginEditOperationCommand { get; }
 
     public AsyncCommand CancelCreateOperationCommand { get; }
 
@@ -167,6 +179,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     isCreating = false;
                 }
                 isCreatingOperation = false;
+                isEditingOperation = false;
                 isCreatingOrder = false;
                 isCreatingBatch = false;
                 ResetOperationForm();
@@ -205,7 +218,18 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public bool CanEditForm => isEditor && !IsBusy;
     public bool CanDelete => isEditor && apiClient is not null && !IsBusy;
 
-    public CaseOperation? SelectedOperation { get => selectedOperation; set => SetField(ref selectedOperation, value); }
+    public CaseOperation? SelectedOperation
+    {
+        get => selectedOperation;
+        set
+        {
+            if (SetField(ref selectedOperation, value))
+            {
+                OnPropertyChanged(nameof(CanBeginEditOperation));
+                BeginEditOperationCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
     public PlannerOrder? SelectedOrder { get => selectedOrder; set => SetField(ref selectedOrder, value); }
     public ProductionBatch? SelectedBatch { get => selectedBatch; set => SetField(ref selectedBatch, value); }
 
@@ -220,7 +244,17 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool IsCreatingBatch => isCreatingBatch;
 
-    public bool IsCreatingOperation => isCreatingOperation;
+    public bool IsCreatingOperation => isCreatingOperation || isEditingOperation;
+
+    public bool IsEditingOperation => isEditingOperation;
+
+    public string OperationFormHeading => isEditingOperation
+        ? "EDIT CASE OPERATION"
+        : "NEW CASE OPERATION";
+
+    public string OperationSaveButtonText => isEditingOperation
+        ? "Save Operation"
+        : "Create Operation";
 
     public bool CanBeginChildCreate =>
         isEditor && apiClient is not null && SelectedCase is not null && !IsCreating && !IsBusy;
@@ -230,6 +264,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public bool CanCreateBatch => IsCreatingBatch && CanBeginChildCreate;
 
     public bool CanCreateOperation => IsCreatingOperation && CanBeginChildCreate;
+
+    public bool CanBeginEditOperation =>
+        CanBeginChildCreate && SelectedOperation is not null && !IsCreatingOperation;
 
     public string StatusMessage
     {
@@ -264,15 +301,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string MaterialSpecification { get => materialSpecification; set => SetField(ref materialSpecification, value); }
     public string RawMaterialForm { get => rawMaterialForm; set => SetField(ref rawMaterialForm, value); }
     public string RawMaterialDimensions { get => rawMaterialDimensions; set => SetField(ref rawMaterialDimensions, value); }
-    public string CurrentSetupTimeSeconds { get => currentSetupTimeSeconds; set => SetField(ref currentSetupTimeSeconds, value); }
-    public string CurrentCycleTimePerPartSeconds { get => currentCycleTimePerPartSeconds; set => SetField(ref currentCycleTimePerPartSeconds, value); }
+    public string CurrentSetupTime { get => currentSetupTime; private set => SetField(ref currentSetupTime, value); }
+    public string CurrentCycleTimePerPart { get => currentCycleTimePerPart; private set => SetField(ref currentCycleTimePerPart, value); }
     public string Notes { get => notes; set => SetField(ref notes, value); }
     public string ActiveStateText { get => activeStateText; private set => SetField(ref activeStateText, value); }
     public string NewOperationNumber { get => newOperationNumber; set => SetField(ref newOperationNumber, value); }
     public string NewOperationName { get => newOperationName; set => SetField(ref newOperationName, value); }
     public string NewOperationRequiredMachineType { get => newOperationRequiredMachineType; set => SetField(ref newOperationRequiredMachineType, value); }
-    public string NewOperationSetupTimeSeconds { get => newOperationSetupTimeSeconds; set => SetField(ref newOperationSetupTimeSeconds, value); }
-    public string NewOperationCycleTimePerPartSeconds { get => newOperationCycleTimePerPartSeconds; set => SetField(ref newOperationCycleTimePerPartSeconds, value); }
+    public string NewOperationSetupTime { get => newOperationSetupTime; set => SetField(ref newOperationSetupTime, value); }
+    public string NewOperationCycleTimePerPart { get => newOperationCycleTimePerPart; set => SetField(ref newOperationCycleTimePerPart, value); }
     public string NewOperationDependencyType
     {
         get => newOperationDependencyType;
@@ -317,6 +354,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             hasLoaded = false;
             Cases.Clear();
             ClearDetails();
+            OperationMachineTypeOptions.Clear();
+            OperationMachineTypeOptions.Add(string.Empty);
         }
 
         clientId = newClientId;
@@ -331,7 +370,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         {
             await LoadCasesAsync();
         }
+        else if (selectedDetailsAreStale && apiClient is not null && SelectedCase is not null)
+        {
+            await LoadSelectedCaseSafeAsync();
+        }
     }
+
+    internal void InvalidateSelectedDetails() => selectedDetailsAreStale = true;
 
     internal async Task LoadCasesAsync()
     {
@@ -423,18 +468,55 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingBatch = false;
         ResetOrderForm();
         ResetBatchForm();
+        isEditingOperation = false;
         isCreatingOperation = true;
         ResetOperationForm();
+        RebuildOperationReferenceOptions(null);
         StatusMessage = "Enter the next Case route operation. The Server appends it and validates all dependency semantics.";
+        RaiseStateProperties();
+        return Task.CompletedTask;
+    }
+
+    internal Task BeginEditOperationAsync()
+    {
+        var operation = SelectedOperation;
+        if (!CanBeginEditOperation || operation is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        isCreatingOrder = false;
+        isCreatingBatch = false;
+        ResetOrderForm();
+        ResetBatchForm();
+        isCreatingOperation = false;
+        isEditingOperation = true;
+        ResetOperationForm();
+        RebuildOperationReferenceOptions(operation.CaseOperationId);
+        NewOperationNumber = operation.OperationNumber.ToString(CultureInfo.InvariantCulture);
+        NewOperationName = operation.Name;
+        EnsureMachineTypeOption(operation.RequiredMachineType);
+        NewOperationRequiredMachineType = operation.RequiredMachineType ?? string.Empty;
+        NewOperationSetupTime = DurationText.FormatOptional(operation.SetupTimeSeconds);
+        NewOperationCycleTimePerPart = DurationText.FormatOptional(operation.CycleTimePerPartSeconds);
+        NewOperationDependencyType = operation.DependencyType;
+        NewOperationPredecessor = OperationReferenceOptions.FirstOrDefault(value =>
+            value.CaseOperationId == operation.PredecessorCaseOperationId);
+        NewOperationSimultaneousGroupKey = operation.SimultaneousGroupKey ?? string.Empty;
+        StatusMessage = $"Editing Case Operation {operation.OperationNumber}. Existing Production Batch snapshots will not be changed.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
 
     internal Task CancelCreateOperationAsync()
     {
+        var wasEditing = isEditingOperation;
         isCreatingOperation = false;
+        isEditingOperation = false;
         ResetOperationForm();
-        StatusMessage = "New Case Operation entry cancelled.";
+        StatusMessage = wasEditing
+            ? "Case Operation edit cancelled."
+            : "New Case Operation entry cancelled.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -451,33 +533,67 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!TryParseOptionalSeconds(NewOperationSetupTimeSeconds, out var setupSeconds)
-            || !TryParseOptionalSeconds(NewOperationCycleTimePerPartSeconds, out var cycleSeconds))
+        if (!DurationText.TryParseOptional(NewOperationSetupTime, out var setupSeconds)
+            || !DurationText.TryParseOptional(NewOperationCycleTimePerPart, out var cycleSeconds))
         {
-            StatusMessage = "Setup and cycle time must be whole non-negative seconds.";
+            StatusMessage = "Setup and cycle time must use HH:mm:ss (hours may exceed 23), or be empty.";
             return;
         }
 
         IsBusy = true;
         try
         {
-            var created = await apiClient.CreateCaseOperationAsync(
-                SelectedCase.CaseId,
-                new CaseOperationCreate(
-                    operationNumber,
-                    NewOperationName,
-                    NullIfBlank(NewOperationRequiredMachineType),
-                    setupSeconds,
-                    cycleSeconds,
-                    NewOperationDependencyType,
-                    NewOperationPredecessor?.CaseOperationId,
-                    NullIfBlank(NewOperationSimultaneousGroupKey)),
-                clientId,
-                editGeneration);
-            Operations.Add(created);
+            CaseOperation saved;
+            if (isEditingOperation && SelectedOperation is { } operation)
+            {
+                saved = await apiClient.UpdateCaseOperationAsync(
+                    SelectedCase.CaseId,
+                    operation.CaseOperationId,
+                    new CaseOperationUpdate(
+                        operationNumber,
+                        NewOperationName,
+                        NullIfBlank(NewOperationRequiredMachineType),
+                        setupSeconds,
+                        cycleSeconds,
+                        NewOperationDependencyType,
+                        NewOperationPredecessor?.CaseOperationId,
+                        NullIfBlank(NewOperationSimultaneousGroupKey)),
+                    $"\"case-operation:{operation.CaseOperationId}:v{operation.Version}\"",
+                    clientId,
+                    editGeneration);
+                var index = Operations.IndexOf(operation);
+                if (index >= 0)
+                {
+                    Operations[index] = saved;
+                }
+                SelectedOperation = saved;
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Existing Production Batches were not changed.";
+            }
+            else
+            {
+                saved = await apiClient.CreateCaseOperationAsync(
+                    SelectedCase.CaseId,
+                    new CaseOperationCreate(
+                        operationNumber,
+                        NewOperationName,
+                        NullIfBlank(NewOperationRequiredMachineType),
+                        setupSeconds,
+                        cycleSeconds,
+                        NewOperationDependencyType,
+                        NewOperationPredecessor?.CaseOperationId,
+                        NullIfBlank(NewOperationSimultaneousGroupKey)),
+                    clientId,
+                    editGeneration);
+                Operations.Add(saved);
+                SelectedOperation = saved;
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. Existing Production Batches were not changed.";
+            }
+
             isCreatingOperation = false;
+            isEditingOperation = false;
+            RecalculateCurrentTimeTotals();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
             ResetOperationForm();
-            StatusMessage = $"Case Operation {created.OperationNumber} ({created.Name}) created at route position {created.RoutePosition + 1}. Existing Production Batches were not changed.";
         }
         catch (Exception exception) when (IsExpected(exception))
         {
@@ -498,6 +614,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
 
         isCreatingOperation = false;
+        isEditingOperation = false;
         isCreatingBatch = false;
         ResetOperationForm();
         ResetBatchForm();
@@ -511,6 +628,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     internal Task CancelCreateOrderAsync()
     {
         isCreatingOperation = false;
+        isEditingOperation = false;
         isCreatingOrder = false;
         ResetOperationForm();
         ResetOrderForm();
@@ -582,6 +700,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
 
         isCreatingOperation = false;
+        isEditingOperation = false;
         isCreatingOrder = false;
         ResetOperationForm();
         ResetOrderForm();
@@ -654,7 +773,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 new ProductionBatchCreate(
                     SelectedCase.CaseId,
                     NewBatchNumber,
-                    "planned",
+                    "waiting",
                     plannedQuantity,
                     allocations),
                 clientId,
@@ -664,6 +783,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ResetBatchForm();
             await RefreshSelectedCaseSummaryAsync();
             StatusMessage = $"Production Batch {created.BatchNumber} created with {created.BatchOperationCount} route operation{(created.BatchOperationCount == 1 ? string.Empty : "s")}.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
         {
@@ -733,8 +853,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             var operationsTask = apiClient.ListCaseOperationsAsync(caseId);
             var ordersTask = apiClient.ListOrdersAsync(caseId);
             var batchesTask = apiClient.ListBatchesAsync(caseId);
+            var machinesTask = apiClient.ListMachinesAsync();
             var previewTask = apiClient.GetCasePreviewAsync(caseId);
-            await Task.WhenAll(caseTask, operationsTask, ordersTask, batchesTask, previewTask);
+            await Task.WhenAll(caseTask, operationsTask, ordersTask, batchesTask, machinesTask, previewTask);
 
             if (SelectedCase?.CaseId != caseId)
             {
@@ -745,9 +866,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             entityTag = resource.EntityTag;
             ApplyCase(resource.Value);
             Replace(Operations, await operationsTask);
+            RebuildOperationReferenceOptions(isEditingOperation ? SelectedOperation?.CaseOperationId : null);
+            ApplyMachineTypeOptions(await machinesTask);
             Replace(Orders, await ordersTask);
             Replace(Batches, await batchesTask);
             DetailPreview = ToBitmap(await previewTask);
+            selectedDetailsAreStale = false;
             StatusMessage = $"Case {resource.Value.PartNumber} loaded from the Server.";
         }
         finally
@@ -760,13 +884,6 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         if (apiClient is null || !isEditor || (!IsCreating && (SelectedCase is null || entityTag is null)))
         {
-            return;
-        }
-
-        if (!TryParseOptionalSeconds(CurrentSetupTimeSeconds, out var setup)
-            || !TryParseOptionalSeconds(CurrentCycleTimePerPartSeconds, out var cycle))
-        {
-            StatusMessage = "Setup and cycle time must be whole non-negative seconds.";
             return;
         }
 
@@ -785,8 +902,6 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 NullIfBlank(MaterialSpecification),
                 NullIfBlank(RawMaterialForm),
                 NullIfBlank(RawMaterialDimensions),
-                setup,
-                cycle,
                 NullIfBlank(Notes));
             var creating = IsCreating;
             var resource = creating
@@ -815,6 +930,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             StatusMessage = creating
                 ? $"Case {resource.Value.PartNumber} created by the Server."
                 : $"Case {resource.Value.PartNumber} saved by the Server.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
             RaiseStateProperties();
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -868,7 +984,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             : DeleteAsync(
                 () => apiClient.DeleteCaseOperationAsync(selectedCaseValue.CaseId, operation.CaseOperationId, clientId, editGeneration),
                 $"Operation {operation.OperationNumber} deleted.",
-                () => { Operations.Remove(operation); SelectedOperation = null; });
+                () =>
+                {
+                    Operations.Remove(operation);
+                    SelectedOperation = null;
+                    RebuildOperationReferenceOptions(null);
+                    RecalculateCurrentTimeTotals();
+                    PlanChanged?.Invoke(this, EventArgs.Empty);
+                });
     }
 
     internal Task DeleteSelectedOrderAsync()
@@ -890,7 +1013,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             : DeleteAsync(
                 () => apiClient.DeleteBatchAsync(batch.BatchId, clientId, editGeneration),
                 $"Production Batch {batch.BatchNumber} deleted.",
-                () => { Batches.Remove(batch); SelectedBatch = null; });
+                () =>
+                {
+                    Batches.Remove(batch);
+                    SelectedBatch = null;
+                    PlanChanged?.Invoke(this, EventArgs.Empty);
+                });
     }
 
     private async Task DeleteAsync(Func<Task> delete, string successMessage, Action apply)
@@ -927,8 +1055,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         MaterialSpecification = plannerCase.MaterialSpecification ?? string.Empty;
         RawMaterialForm = plannerCase.RawMaterialForm ?? string.Empty;
         RawMaterialDimensions = plannerCase.RawMaterialDimensions ?? string.Empty;
-        CurrentSetupTimeSeconds = plannerCase.CurrentSetupTimeSeconds?.ToString() ?? string.Empty;
-        CurrentCycleTimePerPartSeconds = plannerCase.CurrentCycleTimePerPartSeconds?.ToString() ?? string.Empty;
+        CurrentSetupTime = DurationText.Format(plannerCase.CurrentSetupTimeSeconds ?? 0);
+        CurrentCycleTimePerPart = DurationText.Format(plannerCase.CurrentCycleTimePerPartSeconds ?? 0);
         Notes = plannerCase.Notes ?? string.Empty;
         ActiveStateText = plannerCase.IsActive ? "Active" : "Inactive";
     }
@@ -960,11 +1088,64 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOperationNumber = string.Empty;
         NewOperationName = string.Empty;
         NewOperationRequiredMachineType = string.Empty;
-        NewOperationSetupTimeSeconds = string.Empty;
-        NewOperationCycleTimePerPartSeconds = string.Empty;
+        NewOperationSetupTime = string.Empty;
+        NewOperationCycleTimePerPart = string.Empty;
         NewOperationDependencyType = "INDEPENDENT";
         NewOperationPredecessor = null;
         NewOperationSimultaneousGroupKey = string.Empty;
+    }
+
+    private void ApplyMachineTypeOptions(IReadOnlyList<PlannerMachine> machines)
+    {
+        var selected = NewOperationRequiredMachineType;
+        var values = machines
+            .SelectMany(machine => new[] { machine.ProcessType, machine.AxisType }
+                .Concat(machine.Capabilities))
+            .Concat(Operations.Select(operation => operation.RequiredMachineType))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        OperationMachineTypeOptions.Clear();
+        OperationMachineTypeOptions.Add(string.Empty);
+        foreach (var value in values)
+        {
+            OperationMachineTypeOptions.Add(value);
+        }
+
+        EnsureMachineTypeOption(selected);
+        NewOperationRequiredMachineType = selected;
+    }
+
+    private void EnsureMachineTypeOption(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || OperationMachineTypeOptions.Contains(value, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        OperationMachineTypeOptions.Add(value.Trim());
+    }
+
+    private void RebuildOperationReferenceOptions(string? excludedOperationId)
+    {
+        OperationReferenceOptions.Clear();
+        foreach (var operation in Operations.Where(operation =>
+                     operation.CaseOperationId != excludedOperationId))
+        {
+            OperationReferenceOptions.Add(operation);
+        }
+    }
+
+    private void RecalculateCurrentTimeTotals()
+    {
+        var setupSeconds = Operations.Sum(operation => (long)(operation.SetupTimeSeconds ?? 0));
+        var cycleSeconds = Operations.Sum(operation => (long)(operation.CycleTimePerPartSeconds ?? 0));
+        CurrentSetupTime = DurationText.Format(setupSeconds);
+        CurrentCycleTimePerPart = DurationText.Format(cycleSeconds);
     }
 
     private void ResetBatchForm()
@@ -1011,8 +1192,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         selectedCase = null;
         isCreating = false;
         isCreatingOperation = false;
+        isEditingOperation = false;
         isCreatingOrder = false;
         isCreatingBatch = false;
+        selectedDetailsAreStale = false;
         entityTag = null;
         ResetOperationForm();
         ResetOrderForm();
@@ -1025,8 +1208,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         DetailPreview = null;
         Operations.Clear();
+        OperationReferenceOptions.Clear();
         Orders.Clear();
         Batches.Clear();
+        RecalculateCurrentTimeTotals();
         ApplyCase(new PlannerCase(
             string.Empty, string.Empty, string.Empty, null, null, null, null, string.Empty,
             null, null, null, null, null, null, null, false, 0, default, default));
@@ -1066,23 +1251,6 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
-    private static bool TryParseOptionalSeconds(string text, out int? value)
-    {
-        value = null;
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return true;
-        }
-
-        if (int.TryParse(text, out var parsed) && parsed >= 0)
-        {
-            value = parsed;
-            return true;
-        }
-
-        return false;
-    }
-
     private static string? NullIfBlank(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
@@ -1113,10 +1281,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsCreatingOrder));
         OnPropertyChanged(nameof(IsCreatingBatch));
         OnPropertyChanged(nameof(IsCreatingOperation));
+        OnPropertyChanged(nameof(IsEditingOperation));
+        OnPropertyChanged(nameof(OperationFormHeading));
+        OnPropertyChanged(nameof(OperationSaveButtonText));
         OnPropertyChanged(nameof(CanBeginChildCreate));
         OnPropertyChanged(nameof(CanCreateOrder));
         OnPropertyChanged(nameof(CanCreateBatch));
         OnPropertyChanged(nameof(CanCreateOperation));
+        OnPropertyChanged(nameof(CanBeginEditOperation));
         RaiseCommandStates();
     }
 
@@ -1130,6 +1302,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         RefreshDetailsCommand.RaiseCanExecuteChanged();
         OpenWorkingFolderCommand.RaiseCanExecuteChanged();
         BeginCreateOperationCommand.RaiseCanExecuteChanged();
+        BeginEditOperationCommand.RaiseCanExecuteChanged();
         CancelCreateOperationCommand.RaiseCanExecuteChanged();
         CreateOperationCommand.RaiseCanExecuteChanged();
         BeginCreateOrderCommand.RaiseCanExecuteChanged();

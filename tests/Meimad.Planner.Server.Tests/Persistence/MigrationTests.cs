@@ -35,7 +35,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(8L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(9L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -62,6 +62,11 @@ public sealed class MigrationTests
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 8;";
         Assert.Equal("machine_picture_path", await migrationCommand.ExecuteScalarAsync());
 
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 9;";
+        Assert.Equal(
+            "batch_lifecycle_and_dependency_snapshots",
+            await migrationCommand.ExecuteScalarAsync());
+
         foreach (var table in EntityTables)
         {
             await AssertTimestampColumnsAsync(connection, table);
@@ -85,7 +90,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(8L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(9L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -309,6 +314,10 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP INDEX ix_batch_operations_predecessor_snapshot;
+                ALTER TABLE batch_operations DROP COLUMN simultaneous_group_key;
+                ALTER TABLE batch_operations DROP COLUMN predecessor_source_case_operation_id;
+                ALTER TABLE batch_operations DROP COLUMN dependency_type;
                 DROP TRIGGER eink_package_files_immutable_delete;
                 DROP TRIGGER eink_package_files_immutable_update;
                 DROP TRIGGER eink_package_revisions_immutable_delete;
@@ -317,7 +326,7 @@ public sealed class MigrationTests
                 DROP TABLE eink_package_revisions;
                 DROP TABLE edit_requests;
                 ALTER TABLE machines DROP COLUMN picture_reference;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8);
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -405,6 +414,93 @@ public sealed class MigrationTests
     }
 
     [Fact]
+    public async Task Version_nine_snapshots_dependencies_and_backfills_batch_lifecycle()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DROP INDEX ix_batch_operations_predecessor_snapshot;
+                ALTER TABLE batch_operations DROP COLUMN simultaneous_group_key;
+                ALTER TABLE batch_operations DROP COLUMN predecessor_source_case_operation_id;
+                ALTER TABLE batch_operations DROP COLUMN dependency_type;
+                DELETE FROM schema_migrations WHERE version = 9;
+                PRAGMA user_version = 8;
+
+                INSERT INTO cases (id, part_number, name, working_folder_path)
+                VALUES ('case-v9', 'PN-V9', 'V9 Case', 'C:\Cases\PN-V9');
+
+                INSERT INTO case_operations (
+                    id, case_id, operation_number, route_position, name,
+                    dependency_type, predecessor_case_operation_id,
+                    simultaneous_group_key)
+                VALUES
+                    ('case-op-v9-1', 'case-v9', 10, 0, 'First',
+                     'independent', NULL, NULL),
+                    ('case-op-v9-2', 'case-v9', 20, 1, 'Second',
+                     'sequential', 'case-op-v9-1', NULL);
+
+                INSERT INTO production_batches (
+                    id, case_id, batch_number, status, planned_quantity)
+                VALUES
+                    ('batch-v9-waiting', 'case-v9', 'B-V9-W', 'planned', 1),
+                    ('batch-v9-running', 'case-v9', 'B-V9-R', 'planned', 1),
+                    ('batch-v9-complete', 'case-v9', 'B-V9-C', 'planned', 1);
+
+                INSERT INTO batch_operations (
+                    id, production_batch_id, source_case_operation_id,
+                    operation_number, route_position, name, status)
+                VALUES
+                    ('batch-op-v9-waiting', 'batch-v9-waiting', 'case-op-v9-1',
+                     10, 0, 'First', 'not_started'),
+                    ('batch-op-v9-running', 'batch-v9-running', 'case-op-v9-2',
+                     20, 0, 'Second', 'in_progress'),
+                    ('batch-op-v9-complete', 'batch-v9-complete', 'case-op-v9-2',
+                     20, 0, 'Second', 'completed');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var migrator = new DatabaseMigrator(
+            fixture.Database,
+            NullLogger<DatabaseMigrator>.Instance);
+        await migrator.MigrateAsync();
+
+        await using var reopened = await fixture.Database.OpenConnectionAsync();
+        await using var assertion = reopened.CreateCommand();
+        assertion.CommandText = """
+            SELECT dependency_type, predecessor_source_case_operation_id
+            FROM batch_operations
+            WHERE id = 'batch-op-v9-running';
+            """;
+        await using (var reader = await assertion.ExecuteReaderAsync())
+        {
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("sequential", reader.GetString(0));
+            Assert.Equal("case-op-v9-1", reader.GetString(1));
+        }
+
+        assertion.CommandText = """
+            SELECT id, status
+            FROM production_batches
+            ORDER BY id;
+            """;
+        var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using (var reader = await assertion.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                statuses.Add(reader.GetString(0), reader.GetString(1));
+            }
+        }
+
+        Assert.Equal("complete", statuses["batch-v9-complete"]);
+        Assert.Equal("in_production", statuses["batch-v9-running"]);
+        Assert.Equal("waiting", statuses["batch-v9-waiting"]);
+    }
+
+    [Fact]
     public async Task Every_server_connection_enables_foreign_keys()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
@@ -423,7 +519,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 9;";
+            command.CommandText = "PRAGMA user_version = 10;";
             await command.ExecuteNonQueryAsync();
         }
 

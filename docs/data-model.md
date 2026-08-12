@@ -1,6 +1,6 @@
 # Data Model
 
-- **Status:** Logical model plus SQLite schema version 8; Case/Order/Batch/Machine/assignment/Edit Mode/E-Ink package-generation/read slices, Case Operation graph domain, and append-only Case Operation persistence/API are implemented
+- **Status:** Logical model plus SQLite schema version 9; Case/Order/Batch/Machine/assignment/Edit Mode/E-Ink package-generation/read slices, Case Operation create/edit graph persistence/API, immutable Batch dependency snapshots, and derived Batch lifecycle are implemented
 - **Authority:** Server-owned SQLite in MVP
 
 This document separates source-required concepts from proposed implementation fields. Logical names use English `camelCase`; implemented SQL names are recorded separately and do not freeze future API JSON.
@@ -43,12 +43,12 @@ Each Production Batch has one required Case and may allocate only Orders belongi
 
 ## 3. Shared technical fields
 
-The source does not specify IDs, concurrency, timestamps, or audit. Schema v1 implements opaque IDs, positive `version`, and UTC-text `created_at` / `updated_at` fields on every entity table. Case and Order services increment `version` through optimistic updates; Batch creation initializes the Batch, allocations, and operation snapshots at version 1. Equivalent update behavior for other entities remains unimplemented. Actor and archive fields remain proposed:
+The source does not specify IDs, concurrency, timestamps, or audit. Schema v1 implements opaque IDs, positive `version`, and UTC-text `created_at` / `updated_at` fields on every entity table. Case, Order, Machine, and Case Operation services increment `version` through optimistic updates; Batch creation initializes the Batch, allocations, and operation snapshots at version 1. Operation execution advances the affected operation version and atomically advances the Batch version when its derived lifecycle status changes. Equivalent update behavior for other entities remains unimplemented. Actor and archive fields remain proposed:
 
 | Field | Purpose |
 |---|---|
 | `id` | Implemented: stable text identifier, except the singleton Edit Token and keyed Application Setting. |
-| `version` | Implemented storage field; mutation/concurrency behavior is not yet implemented. |
+| `version` | Implemented storage field; optimistic concurrency is implemented for mutable Case, Order, Machine, and Case Operation resources. |
 | `createdAt`, `updatedAt` | Implemented as `created_at` / `updated_at` UTC text with creation defaults. |
 | `createdBy`, `updatedBy` | Authenticated actor identifiers if human identity is approved. |
 | `archivedAt` | Optional non-destructive retirement marker where lifecycle requires it. |
@@ -76,7 +76,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | E-Ink Package Revision | `eink_package_revisions` | Required Batch Operation; unique revision per Operation; immutable Machine/Case/Batch/Operation snapshot after publication. |
 | E-Ink Package File | `eink_package_files` | Required package revision; asset role, stable file ID, safe logical/storage-relative paths, length, media type, order, and SHA-256; no bytes/BLOB. |
 
-All relationships use SQLite foreign keys. Planning relationships use restrictive deletion; deleting a Machine clears an optional device binding. Schema v1 adds relationship and backlog indexes. Case, Order, Batch, Machine, Machine Assignment, Single Edit Mode, and E-Ink device/package generation/read repositories/services/APIs are implemented through schema v8. Automatic scheduling, package approval/retention, downtime behavior, and cascade-delete behavior are not implemented.
+All relationships use SQLite foreign keys. Planning relationships use restrictive deletion; deleting a Machine clears an optional device binding. Schema v1 adds relationship and backlog indexes. Case, Order, Batch, Machine, Machine Assignment, Single Edit Mode, and E-Ink device/package generation/read repositories/services/APIs are implemented through schema v9. Automatic scheduling, package approval/retention, downtime behavior, and cascade-delete behavior are not implemented.
 
 Schema v2 adds Case-specific `customer`, `material_type`, `material_specification`, `raw_material_form`, `raw_material_dimensions`, and `notes` columns. Existing v1 `material` and `raw_stock` values are copied into the new specification/dimensions columns during upgrade. `preview_reference` stores only the optional Preview path; `working_folder_path` stores only the required external Case Working Folder path. The Case repository stores no file bytes and the table contains no BLOB column.
 
@@ -89,6 +89,10 @@ Schema v5 adds `edit_requests`. Final outcomes are retained as `transferred`, `r
 Schema v6 adds `eink_package_revisions` and `eink_package_files`. Triggers reject update/delete after insertion, making the metadata an immutable published-read baseline. Package files remain under the configured Server-local package root; SQLite stores only normalized relative paths, byte lengths, media types, ordering, timestamps, and lowercase SHA-256 values. There is intentionally no BLOB column or device write-back table.
 
 Schema v7 adds the package's publication-time Machine ID/number/name, Case/part identity/revision/customer, Production Batch/quantity, and Batch Operation number/name snapshots plus a constrained asset role (`preview`, `tool_table`, `nc`, `text`, `offsets`, `instructions`, or `other`). New packages populate all snapshot fields. Nullable columns preserve read compatibility with schema-v6 packages; those legacy rows expose `metadata: null`.
+
+Schema v8 adds the optional Machine `picture_reference` path. The path remains external Server-readable metadata and SQLite stores no image bytes.
+
+Schema v9 adds immutable dependency snapshots to `batch_operations`: dependency type, optional predecessor source Case Operation ID, and optional simultaneous-group key. Existing rows are backfilled from their source Case Operation relationships. New Batches copy these fields atomically with the existing scalar snapshots; the Timeline resolves the predecessor source ID to the corresponding operation inside that same Batch. The migration also normalizes legacy Production Batch lifecycle values into `waiting`, `in_production`, or `complete` from their related Batch Operation statuses; a Batch with no operations is `waiting`.
 
 ## 4. Core master and demand entities
 
@@ -108,13 +112,13 @@ Schema v7 adds the package's publication-time Machine ID/number/name, Case/part 
 | `materialSpecification` | Implemented, optional | Grade/specification such as `7075-T6`. |
 | `rawMaterialForm` | Implemented, optional | Form such as plate, bar, or casting. |
 | `rawMaterialDimensions` | Implemented, optional | Descriptive dimensions. |
-| `currentSetupTimeSeconds` | Implemented, optional | Non-negative integer seconds; Case-vs-operation ownership remains open. |
-| `currentCycleTimePerPartSeconds` | Implemented, optional | Non-negative integer seconds; no plan/fact history. |
+| `currentSetupTimeSeconds` | Implemented, read-only derived | Non-negative integer-second sum of all Case Operation setup values; null operation values contribute zero and an empty route returns `0`. |
+| `currentCycleTimePerPartSeconds` | Implemented, read-only derived | Non-negative integer-second sum of all Case Operation cycle-per-part values; null operation values contribute zero and an empty route returns `0`. It is not projected elapsed duration. |
 | `notes` | Implemented, optional | Plain text; maximum 8,000 characters. |
 
-Derived `isActive` is not stored or editable. Today it is true when the Case has at least one Order with status `active` or one Production Batch with status `planned`. Additional Batch lifecycle statuses remain TBD.
+Derived `isActive` is not stored or editable. It is true when the Case has at least one Order with status `active` or one Production Batch with status `waiting` or `in_production`.
 
-A Case may be created and persisted with no Orders. The Case service trims text, rejects missing Part Number/Name/Working Folder, requires absolute filesystem paths, and deliberately does not call the filesystem to prove a path exists. Original engineering files and external folders are never written by Case create/update.
+A Case may be created and persisted with no Orders or Operations. The Case service trims text, rejects missing Part Number/Name/Working Folder, requires absolute filesystem paths, and deliberately does not call the filesystem to prove a path exists. Original engineering files and external folders are never written by Case create/update. Legacy physical Case timing columns are retained for migration compatibility but are no longer mutation inputs or the source of the read projection.
 
 ### 4.2 Order
 
@@ -140,11 +144,11 @@ An Order is demand, not production. It has no Machine or Machine Assignment fiel
 | `batchId` | Implemented | Server-generated stable opaque ID. |
 | `caseId` | Implemented, required | One immutable route/part Case; every allocated Order must have this Case. |
 | `batchNumber` | Implemented, required | Trimmed human identifier, unique within a Case, maximum 200 characters. |
-| `status` | Implemented for creation | New Batches use exact token `planned`; later transitions remain TBD. |
+| `status` | Implemented, Server-owned | Exact tokens `waiting`, `in_production`, or `complete`; derived and persisted from related Batch Operation statuses, never directly edited. |
 | `plannedQuantity` | Implemented | Positive total Batch quantity; exactly equals Order allocations + stock + scrap allowance. |
 | `routeRevision` | Present but currently `null` | No authoritative aggregate Case-route revision exists yet. |
 
-A Batch may fulfill one Order, part of an Order, multiple same-Case Orders, stock, or stock only, and may include scrap allowance. It cannot span Cases. Creation is atomic with allocation rows and CaseOperation snapshots.
+A Batch may fulfill one Order, part of an Order, multiple same-Case Orders, stock, or stock only, and may include scrap allowance. It cannot span Cases. Creation is atomic with allocation rows and Case Operation scalar/dependency snapshots. A new Batch is `waiting`. A zero-operation Batch remains `waiting`; a non-empty Batch is `complete` only when all its operations are completed; otherwise it is `in_production` once any operation is in progress, suspended, or completed. Each operation execution change recomputes status in the same transaction; the Batch status/version changes only when that derived token changes.
 
 ### 5.2 Batch Allocation
 
@@ -167,12 +171,12 @@ The implemented invariant is `plannedQuantity = sum(order allocations) + stock +
 | `caseOperationId` | Implemented domain/create field | Stable Server-generated ID that does not change when route order changes. |
 | `caseId` | Implemented domain/create field | Parent Case; every graph member must match the graph Case. |
 | `operationNumber` | Implemented domain/create field | Positive and unique within a graph. |
-| `routePosition` | Implemented domain/create field | New operations append at `max + 1`; reordering remains TBD. |
+| `routePosition` | Implemented immutable edit field | New operations append at `max + 1`; PATCH cannot change position and reordering remains TBD. |
 | `name` | Implemented domain field | Required operation description. |
 | `requiredMachineType` | Implemented optional field | Structural assignment matches Machine process type, axis type, or capability case-insensitively; conflict severity remains TBD. |
-| `setupTimeSeconds` | Implemented optional field | Non-negative current value; ownership/precedence remains open. |
-| `cycleTimePerPartSeconds` | Implemented optional field | Non-negative current value; duration formula remains TBD. |
-| `version`, timestamps | Implemented domain fields | Positive version and non-decreasing Created/Updated instants. |
+| `setupTimeSeconds` | Implemented optional field | Non-negative current operation-owned value; null contributes zero to the Case summary. |
+| `cycleTimePerPartSeconds` | Implemented optional field | Non-negative current operation-owned value; null contributes zero to the Case summary; Timeline production-duration formula remains provisional. |
+| `version`, timestamps | Implemented domain/edit fields | Positive optimistic version and non-decreasing Created/Updated instants. |
 
 ### 6.2 Operation Dependency
 
@@ -188,7 +192,7 @@ A separate dependency record is implemented in the domain because it expresses m
 
 Sequential edges create the only ordering graph. Parallel-capable and independent records impose no order; absence of a record also means no relationship. Locked-simultaneous records group members transitively, require equal start and finish, use the longest future member duration, and reserve shorter resources until group finish. The validator collapses each locked group before detecting sequential cycles, but performs no scheduling or duration calculation.
 
-The implemented create-only repository deliberately uses the schema-v1 `case_operations` dependency columns as a limited MVP shape: a new operation has at most one referenced prior operation, and contract tokens are mapped to lowercase storage tokens. It rehydrates every stored row into the domain graph and validates operation uniqueness, references, dependency meanings, locked groups, and sequential acyclicity inside the same immediate transaction as the insert. New rows append and do not alter previously instantiated Batch Operations. This does **not** implement arbitrary fan-in/out dependency persistence; a later approved migration remains required before route edit/reorder or multi-record dependency mutation.
+The implemented repository uses the schema-v1 `case_operations` dependency columns as a limited MVP shape: an operation has at most one referenced prior operation, and contract tokens are mapped to lowercase storage tokens. Create and optimistic PATCH rehydrate every stored row into the domain graph and validate operation uniqueness, references, dependency meanings, locked groups, and sequential acyclicity inside the same immediate transaction as the write. PATCH may change operation number, name, required Machine type, setup/cycle values, and the one-link dependency fields, but never `caseOperationId`, `caseId`, `routePosition`, or creation time. Existing Batch Operations remain unchanged because schema v9 stores their scalar and dependency snapshots. This does **not** implement arbitrary fan-in/out dependency persistence or route reordering.
 
 ### 6.3 Batch Operation
 
@@ -200,10 +204,13 @@ The implemented create-only repository deliberately uses the schema-v1 `case_ope
 | `sourceRouteRevision` | Proposed | Identifies copied definition. |
 | `operationNumber`, `routePosition`, `name` | Implemented snapshots | Later CaseOperation edits do not propagate. |
 | `requiredMachineType` | Implemented snapshot | Future assignment checks may consume it. |
-| `setupTimeSeconds`, `cycleTimePerPartSeconds` | Implemented snapshots | Nullable route values used by the transitional Timeline mapper; missing values produce a conflict. |
+| `setupTimeSeconds`, `cycleTimePerPartSeconds` | Implemented snapshots | Nullable route values used by the Timeline mapper; missing values produce a conflict. |
+| `dependencyType` | Implemented schema-v9 snapshot | One of the four dependency tokens copied from the source Case Operation at Batch creation. |
+| `predecessorSourceCaseOperationId` | Implemented schema-v9 snapshot | Optional immutable predecessor source ID; the Timeline resolves it to the corresponding operation within the same Batch. |
+| `simultaneousGroupKey` | Implemented schema-v9 snapshot | Optional Locked-simultaneous group key copied at Batch creation. |
 | `status` | Implemented lifecycle | `not_started` → `in_progress` → `suspended`/`completed`; `suspended` may return to `in_progress`. |
 
-Implemented BatchOperation field snapshots do not change when the source CaseOperation changes. Start, Suspend, and Finish are explicit active-editor commands. Only an assigned first-backlog operation may start or resume, and a Machine may have at most one `in_progress` operation. An in-progress assignment cannot move or be removed until it is suspended. Suspend preserves assignment and position. Finish is allowed only from `in_progress`; it sets `completed`, deletes the active Machine Assignment, and atomically compacts the remaining backlog. Completed operations are excluded from the active board and cannot be reassigned. No start/finish timestamps or plan-versus-actual duration history are stored in this MVP slice. The current one-link schema cannot safely snapshot the implemented multi-record dependency graph, so dependency snapshots and aggregate `routeRevision` remain blocked on OD-005/OD-010.
+Implemented Batch Operation scalar and dependency snapshots do not change when the source Case Operation changes. Start, Suspend, and Finish are explicit active-editor commands. Only an assigned first-backlog operation may start or resume, and a Machine may have at most one `in_progress` operation. An in-progress assignment cannot move or be removed until it is suspended. Suspend preserves assignment and position and keeps the parent Batch `in_production`. Finish is allowed only from `in_progress`; it sets `completed`, deletes the active Machine Assignment, atomically compacts the remaining backlog, and recomputes the parent Batch lifecycle in that transaction. The Batch version advances if the derived status changes. Completed operations are excluded from the active board and cannot be reassigned. No start/finish timestamps or plan-versus-actual duration history are stored in this MVP slice. Aggregate `routeRevision` and arbitrary fan-in/out dependency persistence remain open.
 
 ## 7. Resource and schedule-input entities
 
@@ -238,7 +245,7 @@ Working Calendar storage, active-editor creation, read listing, and Machine refe
 | `backlogPosition` | Implemented contiguous zero-based integer, explicitly chosen by the planner. |
 | `manualConstraint` | Proposed future-friendly structure; do not add before scope is approved. |
 
-Compatibility is structural: an active Machine is compatible when a BatchOperation's optional `requiredMachineType` equals the Machine process type, axis type, or one capability, using case-insensitive comparison. A missing required type permits any active Machine. Assignment, same-Machine move, cross-Machine move, and unassign are atomic; affected lists are normalized to positions `0..n-1`, and unrelated relative order is stable. Machine changes that would invalidate current assignments are rejected. Assignment commands do not calculate or persist timeline dates, no Machine is chosen automatically, and no other assignment is moved except for positional normalization explicitly caused by the command; the separate Timeline read calculates consequences on demand.
+Compatibility is structural: an active Machine is compatible when a Batch Operation's optional `requiredMachineType` equals the Machine process type, axis type, or one capability, using case-insensitive comparison. A missing required type permits any active Machine. The Windows Case Operation editor builds its dropdown from the union of those tokens across registered Machines, adds a blank Any option, and preserves a selected legacy token even if it is no longer advertised by a Machine. The dropdown is presentation assistance, not a new authoritative enum; the Server continues to validate the submitted token and assignments. Assignment, same-Machine move, cross-Machine move, and unassign are atomic; affected lists are normalized to positions `0..n-1`, and unrelated relative order is stable. Machine changes that would invalidate current assignments are rejected. Assignment commands do not calculate or persist timeline dates, no Machine is chosen automatically, and no other assignment is moved except for positional normalization explicitly caused by the command; the separate Timeline read calculates consequences on demand.
 
 Deletion is deliberately restrictive. Cases must have no child Orders, Operations, or Batches. Case Operations cannot be referenced by another route row or Batch snapshot; successful deletion compacts route positions. Orders cannot be allocated. A Batch cannot have assignments or official packages; deleting an eligible Batch removes only its own allocation and BatchOperation rows. Machines cannot have assignments, downtime, device bindings, or official-package references. No deletion command touches an external Case folder, picture, engineering file, cache, or official package file.
 
@@ -305,13 +312,13 @@ The domain-only calculation model is transient and is not stored in SQLite. Its 
 - a half-open UTC calculation horizon;
 - ordered Machine backlogs containing stable operation IDs and already-resolved non-negative setup/production durations;
 - explicit half-open UTC availability windows per Machine;
-- explicit half-open UTC setup-availability windows;
+- optional explicit half-open UTC setup-availability windows;
 - planned Machine downtime intervals; and
 - dependency records using Sequential, Parallel-capable, Independent, or Locked simultaneous semantics.
 
-Its outputs are per-operation projected start/finish plus split setup, production, and reservation intervals; per-Machine setup/production/idle/reserved/downtime intervals; and deterministic conflicts with code, severity, affected operation IDs, affected Machine IDs, and explanation. Idle means supplied Machine-available time not occupied by calculated work/reservation; off-calendar time is not labeled idle. The setup calendar is currently an availability constraint, not a serialized shared-resource capacity model.
+Its outputs are per-operation projected start/finish plus split setup, production, and reservation intervals; per-Machine setup/production/idle/reserved/downtime intervals; and deterministic conflicts with code, severity, affected operation IDs, affected Machine IDs, and explanation. Operation intervals carry Batch/part identity plus operation number and name for accessible presentation. Idle means supplied Machine-available time not occupied by calculated work/reservation; off-calendar time is not labeled idle. A configured setup calendar is an availability constraint, not a serialized shared-resource capacity model.
 
-The engine converts supplied instants to UTC, merges overlapping availability, subtracts downtime, and may split work across windows. It never writes SQLite or mutates input collections. The application mapper expands weekly local Machine schedules using their stored timezone and also reads legacy explicit UTC `availability` arrays; setup availability remains an explicit `timeline.setup_calendar_json` ApplicationSetting. It maps planned downtime, derives each operation's production duration provisionally as `ProductionBatch.planned_quantity × BatchOperation.cycle_seconds`, and maps dependency edges from the current source CaseOperation. The latter is transitional: dependency records are not yet immutable Batch snapshots.
+The engine converts supplied instants to UTC, merges overlapping availability, subtracts downtime, and may split work across windows. It never writes SQLite or mutates input collections. The application mapper expands weekly local Machine schedules using their stored timezone and also reads legacy explicit UTC `availability` arrays. If `timeline.setup_calendar_json` is present, it additionally constrains setup; if absent, setup uses each assigned Machine's availability and the attention conflict `setup_calendar_defaulted` identifies the fallback. It maps planned downtime, derives each operation's production duration provisionally as `ProductionBatch.planned_quantity × BatchOperation.cycle_seconds`, and maps dependency edges exclusively from the schema-v9 Batch Operation snapshots.
 
 ## 10. E-Ink server-side support
 
@@ -360,13 +367,16 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 6. A Machine Assignment references one Batch Operation and one valid Machine.
 7. Dependency references remain inside the approved route scope and satisfy approved graph rules.
 8. Locked-simultaneous members share projected start and finish, and every member Machine stays reserved for the longest duration.
-9. There is at most one active editor generation.
-10. A planning mutation with a stale or absent edit generation is rejected atomically.
-11. The Server never changes backlog order or assignments merely to clear a conflict.
-12. Working-folder-generated files remain under `_MeimadPlanner`; original engineering files are not modified.
-13. Schema v7 package metadata is immutable after publication; corrections create a distinct revision and never overwrite an official package.
-14. Device credentials can read only their assigned resource scope.
-15. Device operational data cannot mutate or satisfy planning entities or conflicts.
+9. Case timing totals equal the separate sums of current Case Operation setup and cycle values, with null treated as zero; these totals never replace dependency-aware Timeline calculation.
+10. Production Batch status is `waiting`, `in_production`, or `complete` according to its Batch Operation statuses and changes atomically with execution.
+11. A Batch Operation's schema-v9 dependency snapshot is immutable when its source Case Operation is edited.
+12. There is at most one active editor generation.
+13. A planning mutation with a stale or absent edit generation is rejected atomically.
+14. The Server never changes backlog order or assignments merely to clear a conflict.
+15. Working-folder-generated files remain under `_MeimadPlanner`; original engineering files are not modified.
+16. Schema v7 package metadata is immutable after publication; corrections create a distinct revision and never overwrite an official package.
+17. Device credentials can read only their assigned resource scope.
+18. Device operational data cannot mutate or satisfy planning entities or conflicts.
 
 ## 13. Explicitly not modeled in MVP
 
@@ -380,11 +390,11 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 7.
+- Ordered server-owned migrations are implemented through version 9.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-Schema v8 and the implemented slices are initial persistence/domain contracts, not final semantics for the remaining entities. The blocking model decisions in [Implementation plan](implementation-plan.md#open-decisions) must be resolved before affected repositories and APIs are implemented; later changes require new migrations and must never rewrite an applied migration in a deployed system.
+Schema v9 and the implemented slices are the current persistence/domain contracts. Remaining blocking model decisions in [Implementation plan](implementation-plan.md#open-decisions) must be resolved before affected repositories and APIs are implemented; later changes require new migrations and must never rewrite an applied migration in a deployed system.

@@ -20,6 +20,13 @@ public sealed class MachineOperationExecutionApiTests
             AddEditHeaders(client);
 
             Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var statusConnection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("in_production", await ScalarAsync(
+                    statusConnection,
+                    "SELECT status FROM production_batches WHERE id = 'batch-1';"));
+            }
             using (var unassignRunning = await client.DeleteAsync(
                        "/api/v1/batch-operations/op-1/assignment"))
             {
@@ -47,12 +54,16 @@ public sealed class MachineOperationExecutionApiTests
             Assert.Equal("operation_completed", await ErrorCodeAsync(reassignCompleted));
 
             Assert.Equal("in_progress", await PostActionAsync(client, "op-2", "start"));
-            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            Assert.Equal("completed", await PostActionAsync(client, "op-2", "finish"));
             await using var connection = await database.OpenConnectionAsync();
             Assert.Equal("completed", await ScalarAsync(
                 connection, "SELECT status FROM batch_operations WHERE id = 'op-1';"));
             Assert.Equal(0L, (long)(await ScalarAsync(
                 connection, "SELECT COUNT(*) FROM machine_assignments WHERE batch_operation_id = 'op-1';"))!);
+            Assert.Equal("complete", await ScalarAsync(
+                connection, "SELECT status FROM production_batches WHERE id = 'batch-1';"));
+            Assert.Equal("waiting", await ScalarAsync(
+                connection, "SELECT status FROM production_batches WHERE id = 'batch-2';"));
         });
     }
 
@@ -162,7 +173,8 @@ public sealed class MachineOperationExecutionApiTests
             INSERT INTO cases (id, part_number, name, working_folder_path)
             VALUES ('case-1', 'PN-1', 'Part', 'C:\Cases\PN-1');
             INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-1', 'planned', 1);
+            VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 1),
+                   ('batch-2', 'case-1', 'B-2', 'waiting', 1);
             INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
             VALUES ('case-op-1', 'case-1', 10, 0, 'First'),
                    ('case-op-2', 'case-1', 20, 1, 'Second'),
@@ -172,7 +184,7 @@ public sealed class MachineOperationExecutionApiTests
                 operation_number, route_position, name, status)
             VALUES ('op-1', 'batch-1', 'case-op-1', 10, 0, 'First', 'not_started'),
                    ('op-2', 'batch-1', 'case-op-2', 20, 1, 'Second', 'not_started'),
-                   ('op-3', 'batch-1', 'case-op-3', 30, 2, 'Unassigned', 'not_started');
+                   ('op-3', 'batch-2', 'case-op-3', 30, 0, 'Unassigned', 'not_started');
             INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
             VALUES ('assignment-1', 'op-1', 'machine-1', 0),
                    ('assignment-2', 'op-2', 'machine-1', 1);

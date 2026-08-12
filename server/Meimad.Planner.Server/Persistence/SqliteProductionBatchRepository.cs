@@ -237,13 +237,15 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         ProductionBatch batch,
         CancellationToken cancellationToken)
     {
-        var operations = new List<BatchOperation>();
+        var snapshots = new List<InstantiatedOperation>();
         await using (var readCommand = connection.CreateCommand())
         {
             readCommand.Transaction = transaction;
             readCommand.CommandText = """
                 SELECT id, operation_number, route_position, name,
-                       required_machine_type, setup_seconds, cycle_seconds
+                       required_machine_type, setup_seconds, cycle_seconds,
+                       dependency_type, predecessor_case_operation_id,
+                       simultaneous_group_key
                 FROM case_operations
                 WHERE case_id = $caseId
                 ORDER BY route_position, operation_number, id;
@@ -252,36 +254,44 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             await using var reader = await readCommand.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                operations.Add(new BatchOperation(
-                    Guid.NewGuid().ToString("N"),
-                    batch.BatchId,
-                    reader.GetString(0),
-                    reader.GetInt32(1),
-                    reader.GetInt32(2),
-                    reader.GetString(3),
-                    GetNullableString(reader, 4),
-                    GetNullableInt32(reader, 5),
-                    GetNullableInt32(reader, 6),
-                    ProductionBatchValidator.BatchOperationNotStartedStatus,
-                    1,
-                    batch.CreatedAt,
-                    batch.CreatedAt));
+                snapshots.Add(new InstantiatedOperation(
+                    new BatchOperation(
+                        Guid.NewGuid().ToString("N"),
+                        batch.BatchId,
+                        reader.GetString(0),
+                        reader.GetInt32(1),
+                        reader.GetInt32(2),
+                        reader.GetString(3),
+                        GetNullableString(reader, 4),
+                        GetNullableInt32(reader, 5),
+                        GetNullableInt32(reader, 6),
+                        ProductionBatchValidator.BatchOperationNotStartedStatus,
+                        1,
+                        batch.CreatedAt,
+                        batch.CreatedAt),
+                    reader.GetString(7),
+                    GetNullableString(reader, 8),
+                    GetNullableString(reader, 9)));
             }
         }
 
-        foreach (var operation in operations)
+        foreach (var snapshot in snapshots)
         {
+            var operation = snapshot.Operation;
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
                 INSERT INTO batch_operations (
                     id, production_batch_id, source_case_operation_id,
                     operation_number, route_position, name, required_machine_type,
-                    setup_seconds, cycle_seconds, status, version, created_at, updated_at)
+                    setup_seconds, cycle_seconds, status, version, created_at, updated_at,
+                    dependency_type, predecessor_source_case_operation_id,
+                    simultaneous_group_key)
                 VALUES (
                     $id, $batchId, $sourceId,
                     $operationNumber, $routePosition, $name, $requiredMachineType,
-                    $setupSeconds, $cycleSeconds, $status, $version, $createdAt, $updatedAt);
+                    $setupSeconds, $cycleSeconds, $status, $version, $createdAt, $updatedAt,
+                    $dependencyType, $predecessorSourceId, $simultaneousGroupKey);
                 """;
             insertCommand.Parameters.AddWithValue("$id", operation.BatchOperationId);
             insertCommand.Parameters.AddWithValue("$batchId", operation.BatchId);
@@ -304,10 +314,21 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             insertCommand.Parameters.AddWithValue("$version", operation.Version);
             insertCommand.Parameters.AddWithValue("$createdAt", FormatInstant(operation.CreatedAt));
             insertCommand.Parameters.AddWithValue("$updatedAt", FormatInstant(operation.UpdatedAt));
+            insertCommand.Parameters.AddWithValue("$dependencyType", snapshot.DependencyType);
+            insertCommand.Parameters.AddWithValue(
+                "$predecessorSourceId",
+                snapshot.PredecessorSourceCaseOperationId is null
+                    ? DBNull.Value
+                    : snapshot.PredecessorSourceCaseOperationId);
+            insertCommand.Parameters.AddWithValue(
+                "$simultaneousGroupKey",
+                snapshot.SimultaneousGroupKey is null
+                    ? DBNull.Value
+                    : snapshot.SimultaneousGroupKey);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        return operations;
+        return snapshots.Select(snapshot => snapshot.Operation).ToArray();
     }
 
     private static async Task<IReadOnlyList<OrderAllocationReference>> ReadOrderReferencesAsync(
@@ -524,4 +545,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
 
     private static DateTimeOffset ParseInstant(string value) =>
         DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
+    private sealed record InstantiatedOperation(
+        BatchOperation Operation,
+        string DependencyType,
+        string? PredecessorSourceCaseOperationId,
+        string? SimultaneousGroupKey);
 }

@@ -30,6 +30,15 @@ internal interface ICaseRepository
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
+    Task<CaseOperationDetails> UpdateOperationAsync(
+        string caseId,
+        string operationId,
+        int expectedVersion,
+        UpdateCaseOperationCommand command,
+        DateTimeOffset updatedAt,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
     Task<PlannerCase?> UpdateAsync(
         PlannerCase plannerCase,
         int expectedVersion,

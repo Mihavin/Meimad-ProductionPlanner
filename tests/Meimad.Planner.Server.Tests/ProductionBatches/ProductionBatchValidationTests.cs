@@ -134,7 +134,7 @@ public sealed class ProductionBatchValidationTests
         ProductionBatchValidator.ValidateAndNormalize(new ProductionBatchValues(
             "case-1",
             "B-100",
-            "planned",
+            "waiting",
             plannedQuantity,
             allocations));
 

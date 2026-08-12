@@ -86,17 +86,15 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    batch_operations.status, production_batches.planned_quantity,
                    batch_operations.setup_seconds, batch_operations.cycle_seconds,
                    batch_operations.source_case_operation_id,
-                   case_operations.dependency_type,
-                   case_operations.predecessor_case_operation_id,
-                   case_operations.simultaneous_group_key,
+                   batch_operations.dependency_type,
+                   batch_operations.predecessor_source_case_operation_id,
+                   batch_operations.simultaneous_group_key,
                    machine_assignments.machine_id,
                    machine_assignments.backlog_position
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
             JOIN cases ON cases.id = production_batches.case_id
-            JOIN case_operations
-              ON case_operations.id = batch_operations.source_case_operation_id
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
             ORDER BY production_batches.id, batch_operations.route_position;

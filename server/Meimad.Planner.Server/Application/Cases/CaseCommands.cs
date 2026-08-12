@@ -12,8 +12,6 @@ internal sealed record CreateCaseCommand(
     string? MaterialSpecification,
     string? RawMaterialForm,
     string? RawMaterialDimensions,
-    int? CurrentSetupTimeSeconds,
-    int? CurrentCycleTimePerPartSeconds,
     string? Notes);
 
 internal readonly record struct OptionalField<T>(bool IsSpecified, T Value)
@@ -35,8 +33,6 @@ internal sealed record UpdateCaseCommand(
     OptionalField<string?> MaterialSpecification,
     OptionalField<string?> RawMaterialForm,
     OptionalField<string?> RawMaterialDimensions,
-    OptionalField<int?> CurrentSetupTimeSeconds,
-    OptionalField<int?> CurrentCycleTimePerPartSeconds,
     OptionalField<string?> Notes);
 
 internal sealed record CreateCaseOperationCommand(
@@ -48,3 +44,13 @@ internal sealed record CreateCaseOperationCommand(
     string? DependencyType,
     string? PredecessorCaseOperationId,
     string? SimultaneousGroupKey);
+
+internal sealed record UpdateCaseOperationCommand(
+    OptionalField<int> OperationNumber,
+    OptionalField<string?> Name,
+    OptionalField<string?> RequiredMachineType,
+    OptionalField<int?> SetupTimeSeconds,
+    OptionalField<int?> CycleTimePerPartSeconds,
+    OptionalField<string?> DependencyType,
+    OptionalField<string?> PredecessorCaseOperationId,
+    OptionalField<string?> SimultaneousGroupKey);

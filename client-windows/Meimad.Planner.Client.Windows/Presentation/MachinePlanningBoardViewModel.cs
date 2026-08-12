@@ -53,6 +53,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public event EventHandler? PlanChanged;
+
     public ObservableCollection<PlanningOperationViewModel> Pool { get; } = [];
 
     public ObservableCollection<PlanningMachineColumnViewModel> Machines { get; } = [];
@@ -314,7 +316,11 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
         finally { IsBusy = false; }
-        if (deleted) await RefreshAsync();
+        if (deleted)
+        {
+            await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     internal Task CancelAddMachineAsync()
@@ -433,6 +439,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         if (created)
         {
             await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -492,6 +499,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         await RefreshAsync();
+        PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 
     internal async Task UnassignAsync(PlanningOperationViewModel operation)
@@ -525,6 +533,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         await RefreshAsync();
+        PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 
     internal async Task ChangeExecutionStatusAsync(
@@ -581,6 +590,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         if (succeeded)
         {
             await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 

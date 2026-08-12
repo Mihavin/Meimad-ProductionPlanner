@@ -70,7 +70,10 @@ public sealed class ProductionBatchPersistenceTests
         {
             command.CommandText = """
                 UPDATE case_operations
-                SET name = 'Changed route name', cycle_seconds = 999
+                SET name = 'Changed route name',
+                    cycle_seconds = 999,
+                    dependency_type = 'independent',
+                    predecessor_case_operation_id = NULL
                 WHERE id = 'case-op-20';
                 """;
             await command.ExecuteNonQueryAsync();
@@ -83,6 +86,20 @@ public sealed class ProductionBatchPersistenceTests
             operation => operation.SourceCaseOperationId == "case-op-20");
         Assert.Equal("Mill", snapshotted.Name);
         Assert.Equal(300, snapshotted.CycleTimePerPartSeconds);
+
+        await using var snapshotConnection = await fixture.Database.OpenConnectionAsync();
+        await using var snapshotCommand = snapshotConnection.CreateCommand();
+        snapshotCommand.CommandText = """
+            SELECT dependency_type, predecessor_source_case_operation_id
+            FROM batch_operations
+            WHERE production_batch_id = $batchId
+              AND source_case_operation_id = 'case-op-20';
+            """;
+        snapshotCommand.Parameters.AddWithValue("$batchId", created.BatchId);
+        await using var snapshotReader = await snapshotCommand.ExecuteReaderAsync();
+        Assert.True(await snapshotReader.ReadAsync());
+        Assert.Equal("sequential", snapshotReader.GetString(0));
+        Assert.Equal("case-op-10", snapshotReader.GetString(1));
     }
 
     [Theory]
@@ -109,7 +126,7 @@ public sealed class ProductionBatchPersistenceTests
     }
 
     [Fact]
-    public async Task Planned_stock_only_batch_makes_case_active_without_creating_order_demand()
+    public async Task Waiting_stock_only_batch_makes_case_active_without_creating_order_demand()
     {
         await using var fixture = await Persistence.TemporaryDatabase.CreateAsync();
         await SeedPlanningDataAsync(fixture.Database);
@@ -167,7 +184,7 @@ public sealed class ProductionBatchPersistenceTests
         params CreateBatchAllocationCommand[] allocations) => new(
         caseId,
         batchNumber,
-        "planned",
+        "waiting",
         plannedQuantity,
         allocations);
 
@@ -195,10 +212,13 @@ public sealed class ProductionBatchPersistenceTests
 
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name,
-                required_machine_type, setup_seconds, cycle_seconds)
+                required_machine_type, setup_seconds, cycle_seconds,
+                dependency_type, predecessor_case_operation_id)
             VALUES
-                ('case-op-10', 'case-1', 10, 0, 'Saw', 'saw', 120, 30),
-                ('case-op-20', 'case-1', 20, 1, 'Mill', 'mill', 600, 300);
+                ('case-op-10', 'case-1', 10, 0, 'Saw', 'saw', 120, 30,
+                 'independent', NULL),
+                ('case-op-20', 'case-1', 20, 1, 'Mill', 'mill', 600, 300,
+                 'sequential', 'case-op-10');
             """;
         await command.ExecuteNonQueryAsync();
     }

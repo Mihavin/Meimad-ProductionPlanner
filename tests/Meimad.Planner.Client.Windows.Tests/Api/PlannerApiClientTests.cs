@@ -125,7 +125,7 @@ public sealed class PlannerApiClientTests
             "case-2",
             new CaseUpdate(
                 "PN-1", "Part", null, "Acme", null, null, "C:\\Cases\\PN-1",
-                null, null, null, null, 10, 20, null),
+                null, null, null, null, null),
             "\"case:case-2:v3\"",
             "windows-01",
             9);
@@ -136,6 +136,8 @@ public sealed class PlannerApiClientTests
         Assert.Equal("9", handler.Requests[0].Generation);
         Assert.Equal("\"case:case-2:v3\"", handler.Requests[0].IfMatch);
         Assert.Contains("\"partNumber\":\"PN-1\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("currentSetupTimeSeconds", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("currentCycleTimePerPartSeconds", handler.Requests[0].Body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -150,7 +152,7 @@ public sealed class PlannerApiClientTests
                 "PN-NEW", "New Part", "A", "Acme", "PO-77",
                 @"C:\Cases\PN-NEW\picture.png", @"C:\Cases\PN-NEW",
                 "Aluminium", "7075-T6", "Plate", "20 x 80 x 100",
-                300, 45, "New Case"),
+                "New Case"),
             "windows-01",
             13);
 
@@ -191,6 +193,22 @@ public sealed class PlannerApiClientTests
         Assert.Contains("\"workingCalendarId\":\"calendar-day\"", handler.Requests[0].Body, StringComparison.Ordinal);
         Assert.Contains("\"picturePath\":\"C:\\\\MachinePictures\\\\M-21.jpg\"", handler.Requests[0].Body, StringComparison.Ordinal);
         Assert.Equal("/api/v1/machines/machine-new/picture", handler.Requests[1].Path);
+    }
+
+    [Fact]
+    public async Task Machine_list_reads_compatibility_values_from_server()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, $$"""
+            { "items": [{{MachineJson("machine-1")}}], "nextCursor": null }
+            """));
+        using var api = CreateClient(handler);
+
+        var machine = Assert.Single(await api.ListMachinesAsync());
+
+        Assert.Equal("mill", machine.ProcessType);
+        Assert.Equal("5-axis", machine.AxisType);
+        Assert.Contains("probe", machine.Capabilities);
+        Assert.Equal("/api/v1/machines", handler.Requests[0].Path);
     }
 
     [Fact]
@@ -286,7 +304,7 @@ public sealed class PlannerApiClientTests
             Json(HttpStatusCode.Created, """
                 {
                   "batchId":"batch-2","caseId":"case-1","batchNumber":"B-2",
-                  "status":"planned","plannedQuantity":15,"routeRevision":3,
+                  "status":"waiting","plannedQuantity":15,"routeRevision":3,
                   "allocations":[],"batchOperationCount":4
                 }
                 """));
@@ -300,7 +318,7 @@ public sealed class PlannerApiClientTests
             new ProductionBatchCreate(
                 "case-1",
                 "B-2",
-                "planned",
+                "waiting",
                 15,
                 [
                     new BatchAllocationCreate("order", "order-1", 5),
@@ -362,6 +380,40 @@ public sealed class PlannerApiClientTests
         Assert.Equal("22", handler.Requests[0].Generation);
         Assert.Contains("\"dependencyType\":\"SEQUENTIAL\"", handler.Requests[0].Body, StringComparison.Ordinal);
         Assert.Contains("\"predecessorCaseOperationId\":\"operation-10\"", handler.Requests[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Case_operation_update_uses_nested_patch_edit_authority_and_etag()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "caseOperationId":"operation-20","caseId":"case-1",
+              "operationNumber":20,"routePosition":1,"name":"Finish mill revised",
+              "requiredMachineType":"5-axis","setupTimeSeconds":3723,
+              "cycleTimePerPartSeconds":45,"dependencyType":"SEQUENTIAL",
+              "predecessorCaseOperationId":"operation-10","simultaneousGroupKey":null,
+              "version":4
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var updated = await api.UpdateCaseOperationAsync(
+            "case-1",
+            "operation-20",
+            new CaseOperationUpdate(
+                20, "Finish mill revised", "5-axis", 3723, 45,
+                "SEQUENTIAL", "operation-10", null),
+            "\"case-operation:operation-20:v3\"",
+            "windows-01",
+            23);
+
+        Assert.Equal(4, updated.Version);
+        Assert.Equal(HttpMethod.Patch, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/cases/case-1/operations/operation-20", handler.Requests[0].Path);
+        Assert.Equal("windows-01", handler.Requests[0].ClientId);
+        Assert.Equal("23", handler.Requests[0].Generation);
+        Assert.Equal("\"case-operation:operation-20:v3\"", handler.Requests[0].IfMatch);
+        Assert.Contains("\"setupTimeSeconds\":3723", handler.Requests[0].Body, StringComparison.Ordinal);
     }
 
     [Fact]

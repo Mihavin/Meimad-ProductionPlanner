@@ -13,7 +13,8 @@ internal sealed class DatabaseMigrator
         new SchemaV5SingleEditModeMigration(),
         new SchemaV6EInkPackagesMigration(),
         new SchemaV7JobPackageGenerationMigration(),
-        new SchemaV8MachinePictureMigration()
+        new SchemaV8MachinePictureMigration(),
+        new SchemaV9BatchLifecycleMigration()
     ];
 
     private readonly SqliteDatabase database;

@@ -14,8 +14,10 @@ It currently provides:
 - an explicit offline state that disables editing when Server authority cannot be confirmed;
 - an API-backed Case Pool with Part Number/name/customer search, customer filtering, and Active/Inactive filtering;
 - preview thumbnails downloaded through the Server API;
-- a Case form with editor-only ETag/generation-protected saves;
-- read-only Operations, Orders, and Batches tabs;
+- a Case form with editor-only ETag/generation-protected saves and read-only operation-derived setup/cycle totals;
+- Case Operation create and optimistic edit controls, plus read-only Order and Batch lists with editor-only creation forms;
+- total-hours `HH:mm:ss` operation timing input/display while the API continues to exchange integer seconds;
+- a required-Machine dropdown built from registered Machine process/axis/capability tokens, with blank Any and legacy-value preservation;
 - an Open Working Folder action using the external path returned by the Case API;
 - a Machine Planning Board with an unassigned Production Batch Operation pool and Machine backlog columns;
 - editor-only Working Calendar creation with timezone, workweek, and shift presets;
@@ -25,11 +27,11 @@ It currently provides:
 - manual drag-and-drop assignment, stable reorder, cross-Machine move, and drag-back unassignment;
 - Start, Suspend, resume, and Finish controls on assigned operation cards, with every transition validated by the Server;
 - a conflicts/feedback panel that clearly distinguishes unavailable conflict calculation from server-rejected assignment commands;
-- a read-only Timeline with UTC horizon controls and labeled setup, production, idle, downtime, and reserved intervals;
+- a read-only Timeline with UTC horizon controls, labeled setup, production, idle, downtime, and reserved intervals, and visible operation name/number markers;
 - Server-returned conflict explanations; and
 - dependency edges filtered to one selected Production Batch.
 
-It deliberately contains no SQLite provider, database path, planning-domain persistence, automatic scheduling, timeline calculation, or business-rule implementation. It never reads preview image files directly: preview bytes come from `/api/v1/cases/{caseId}/preview`. Planning-board data comes from `/api/v1/planning-board`; every drop is sent to the assignment API and the client reloads the authoritative result before changing the displayed order. Timeline data comes from `/api/v1/timeline`; the client only filters and renders the Server's calculation output.
+It deliberately contains no SQLite provider, database path, planning-domain persistence, automatic scheduling, timeline calculation, or authoritative business-rule implementation. Duration parsing/formatting and Machine-token option composition are presentation concerns only; the Server validates the resulting seconds/token and owns Case aggregates, route graphs, Batch lifecycle, and Timeline consequences. It never reads preview image files directly: preview bytes come from `/api/v1/cases/{caseId}/preview`. Planning-board data comes from `/api/v1/planning-board`; every drop is sent to the assignment API and the client reloads the authoritative result before changing the displayed order. Timeline data comes from `/api/v1/timeline`; the client only filters and renders the Server's calculation output.
 
 Run from the repository root on Windows:
 

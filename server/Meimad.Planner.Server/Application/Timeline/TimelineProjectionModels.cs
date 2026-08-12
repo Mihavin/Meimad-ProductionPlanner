@@ -28,6 +28,7 @@ internal sealed record TimelineProjectionInterval(
     string? BatchNumber,
     string? PartNumber,
     int? OperationNumber,
+    string? OperationName,
     DateTimeOffset StartsAt,
     DateTimeOffset EndsAt,
     string? Detail);

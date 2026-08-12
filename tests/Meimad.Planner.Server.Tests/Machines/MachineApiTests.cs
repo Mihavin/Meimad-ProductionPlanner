@@ -229,7 +229,7 @@ public sealed class MachineApiTests
 
             INSERT INTO production_batches (
                 id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-API-M', 'planned', 1);
+            VALUES ('batch-1', 'case-1', 'B-API-M', 'waiting', 1);
 
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name, required_machine_type)

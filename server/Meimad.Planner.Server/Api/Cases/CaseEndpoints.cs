@@ -20,6 +20,7 @@ internal static class CaseEndpoints
         cases.MapGet("/{caseId}", GetByIdAsync);
         cases.MapGet("/{caseId}/operations", ListOperationsAsync);
         cases.MapPost("/{caseId}/operations", CreateOperationAsync);
+        cases.MapPatch("/{caseId}/operations/{operationId}", UpdateOperationAsync);
         cases.MapGet("/{caseId}/preview", GetPreviewAsync);
         cases.MapPatch("/{caseId}", UpdateAsync);
     }
@@ -129,6 +130,7 @@ internal static class CaseEndpoints
                 request.ToCommand(),
                 editAuthority!,
                 cancellationToken);
+            SetEntityTag(httpContext.Response, created);
             return Results.Created(
                 $"/api/v1/cases/{caseId}/operations",
                 CaseOperationResponse.FromApplication(created));
@@ -161,6 +163,95 @@ internal static class CaseEndpoints
                 StatusCodes.Status404NotFound,
                 "resource_not_found",
                 "The requested Case was not found.",
+                httpContext);
+        }
+        catch (EditModeMutationException exception)
+        {
+            return EditModeError(exception, httpContext);
+        }
+    }
+
+    private static async Task<IResult> UpdateOperationAsync(
+        string caseId,
+        string operationId,
+        PatchCaseOperationRequest request,
+        HttpContext httpContext,
+        CaseService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var editAuthority, out var accessError))
+        {
+            return accessError!;
+        }
+
+        if (!TryReadExpectedVersion(
+                httpContext.Request.Headers.IfMatch,
+                "case-operation",
+                operationId,
+                out var expectedVersion))
+        {
+            var missing = StringValues.IsNullOrEmpty(httpContext.Request.Headers.IfMatch);
+            return Error(
+                missing
+                    ? StatusCodes.Status428PreconditionRequired
+                    : StatusCodes.Status412PreconditionFailed,
+                missing ? "precondition_required" : "resource_version_stale",
+                "A matching Case Operation If-Match header is required.",
+                httpContext);
+        }
+
+        try
+        {
+            var updated = await service.UpdateOperationAsync(
+                caseId,
+                operationId,
+                expectedVersion,
+                request.ToCommand(),
+                editAuthority!,
+                cancellationToken);
+            SetEntityTag(httpContext.Response, updated);
+            return Results.Ok(CaseOperationResponse.FromApplication(updated));
+        }
+        catch (CaseRequestException exception)
+        {
+            return RequestError(exception, httpContext);
+        }
+        catch (CaseOperationValidationException exception)
+        {
+            return CaseOperationValidationError(
+                exception.Issues.Select(issue => new
+                {
+                    field = issue.Field,
+                    code = issue.Code,
+                    message = issue.Message
+                }),
+                httpContext);
+        }
+        catch (CaseOperationGraphValidationException exception)
+        {
+            return CaseOperationValidationError(
+                exception.Issues.Select(issue => new
+                {
+                    field = issue.Field,
+                    code = issue.Code,
+                    message = issue.Message
+                }),
+                httpContext);
+        }
+        catch (CaseOperationNotFoundException)
+        {
+            return Error(
+                StatusCodes.Status404NotFound,
+                "resource_not_found",
+                "The requested Case Operation was not found.",
+                httpContext);
+        }
+        catch (CaseOperationVersionConflictException)
+        {
+            return Error(
+                StatusCodes.Status412PreconditionFailed,
+                "resource_version_stale",
+                "The Case Operation changed after it was read.",
                 httpContext);
         }
         catch (EditModeMutationException exception)
@@ -308,6 +399,13 @@ internal static class CaseEndpoints
     private static bool TryReadExpectedVersion(
         StringValues ifMatch,
         string caseId,
+        out int version) =>
+        TryReadExpectedVersion(ifMatch, "case", caseId, out version);
+
+    private static bool TryReadExpectedVersion(
+        StringValues ifMatch,
+        string resourceType,
+        string resourceId,
         out int version)
     {
         version = 0;
@@ -317,7 +415,7 @@ internal static class CaseEndpoints
         }
 
         var value = ifMatch[0];
-        var prefix = $"\"case:{caseId}:v";
+        var prefix = $"\"{resourceType}:{resourceId}:v";
         if (value is null
             || !value.StartsWith(prefix, StringComparison.Ordinal)
             || !value.EndsWith('"'))
@@ -336,6 +434,14 @@ internal static class CaseEndpoints
     private static void SetEntityTag(HttpResponse response, PlannerCase plannerCase)
     {
         response.Headers.ETag = $"\"case:{plannerCase.CaseId}:v{plannerCase.Version}\"";
+    }
+
+    private static void SetEntityTag(
+        HttpResponse response,
+        CaseOperationDetails operation)
+    {
+        response.Headers.ETag =
+            $"\"case-operation:{operation.CaseOperationId}:v{operation.Version}\"";
     }
 
     private static IResult ValidationError(

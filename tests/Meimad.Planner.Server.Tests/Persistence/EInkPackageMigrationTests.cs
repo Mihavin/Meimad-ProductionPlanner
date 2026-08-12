@@ -16,7 +16,7 @@ public sealed class EInkPackageMigrationTests
                 VALUES ('case-package', 'PN-PKG', 'Package Part', 'C:\Cases\PN-PKG');
                 INSERT INTO production_batches (
                     id, case_id, batch_number, status, planned_quantity)
-                VALUES ('batch-package', 'case-package', 'B-PKG', 'planned', 1);
+                VALUES ('batch-package', 'case-package', 'B-PKG', 'waiting', 1);
                 INSERT INTO case_operations (
                     id, case_id, operation_number, route_position, name)
                 VALUES ('case-operation-package', 'case-package', 10, 0, 'Mill');

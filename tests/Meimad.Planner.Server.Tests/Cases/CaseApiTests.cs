@@ -166,8 +166,6 @@ public sealed class CaseApiTests
         materialSpecification = "7075-T6",
         rawMaterialForm = "Plate",
         rawMaterialDimensions = "30 x 120 x 180 mm",
-        currentSetupTimeSeconds = 1800,
-        currentCycleTimePerPartSeconds = 240,
         notes = "API test"
     };
 
@@ -197,7 +195,7 @@ public sealed class CaseApiTests
                 id, case_id, batch_number, status, planned_quantity,
                 version, created_at, updated_at)
             VALUES (
-                'batch-pool-1', $caseId, 'B-POOL-1', 'planned', 1,
+                'batch-pool-1', $caseId, 'B-POOL-1', 'waiting', 1,
                 1, '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
             """;
         command.Parameters.AddWithValue("$caseId", caseId);

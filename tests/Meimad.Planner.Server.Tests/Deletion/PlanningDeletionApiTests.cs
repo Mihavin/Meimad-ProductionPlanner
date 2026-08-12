@@ -119,8 +119,8 @@ public sealed class PlanningDeletionApiTests
             VALUES ('case-op-1', 'case-1', 10, 0, 'Mill'),
                    ('case-op-busy', 'case-busy', 10, 0, 'Mill');
             INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-1', 'planned', 1),
-                   ('batch-busy', 'case-busy', 'B-2', 'planned', 1);
+            VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 1),
+                   ('batch-busy', 'case-busy', 'B-2', 'waiting', 1);
             INSERT INTO batch_allocations (id, production_batch_id, allocation_type, order_id, quantity)
             VALUES ('allocation-1', 'batch-1', 'order', 'order-1', 1);
             INSERT INTO batch_operations (

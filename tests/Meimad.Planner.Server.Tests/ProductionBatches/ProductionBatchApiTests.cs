@@ -26,7 +26,7 @@ public sealed class ProductionBatchApiTests
                 {
                     caseId = "case-1",
                     batchNumber = "B-API-1",
-                    status = "planned",
+                    status = "waiting",
                     plannedQuantity = 16,
                     allocations = new object[]
                     {
@@ -85,7 +85,7 @@ public sealed class ProductionBatchApiTests
                 {
                     caseId = "case-1",
                     batchNumber = "B-CROSS-CASE",
-                    status = "planned",
+                    status = "waiting",
                     plannedQuantity = 5,
                     allocations = new[]
                     {
@@ -114,7 +114,7 @@ public sealed class ProductionBatchApiTests
         {
             caseId = "case-1",
             batchNumber,
-            status = "planned",
+            status = "waiting",
             plannedQuantity,
             allocations = new[]
         {

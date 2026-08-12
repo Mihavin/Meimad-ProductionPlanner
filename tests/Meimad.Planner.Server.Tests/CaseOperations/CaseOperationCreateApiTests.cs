@@ -50,7 +50,7 @@ public sealed class CaseOperationCreateApiTests
             {
                 caseId,
                 batchNumber = "B-1",
-                status = "planned",
+                status = "waiting",
                 plannedQuantity = 5,
                 allocations = new[]
                 {
@@ -75,6 +75,30 @@ public sealed class CaseOperationCreateApiTests
             Assert.Equal(1, second.GetProperty("routePosition").GetInt32());
             Assert.Equal(firstId, second.GetProperty("predecessorCaseOperationId").GetString());
 
+            using var patchRequest = new HttpRequestMessage(
+                HttpMethod.Patch,
+                $"/api/v1/cases/{caseId}/operations/{firstId}")
+            {
+                Content = JsonContent.Create(new
+                {
+                    name = "Saw updated",
+                    setupTimeSeconds = 90
+                })
+            };
+            patchRequest.Headers.TryAddWithoutValidation(
+                "If-Match",
+                $"\"case-operation:{firstId}:v1\"");
+            using var patchResponse = await client.SendAsync(patchRequest);
+            Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
+            Assert.Equal(
+                $"\"case-operation:{firstId}:v2\"",
+                patchResponse.Headers.ETag?.ToString());
+            using var patchDocument = JsonDocument.Parse(
+                await patchResponse.Content.ReadAsStringAsync());
+            Assert.Equal("Saw updated", patchDocument.RootElement.GetProperty("name").GetString());
+            Assert.Equal(0, patchDocument.RootElement.GetProperty("routePosition").GetInt32());
+            Assert.Equal(2, patchDocument.RootElement.GetProperty("version").GetInt32());
+
             using var routeResponse = await client.GetAsync($"/api/v1/cases/{caseId}/operations");
             using var routeDocument = JsonDocument.Parse(
                 await routeResponse.Content.ReadAsStringAsync());
@@ -83,7 +107,96 @@ public sealed class CaseOperationCreateApiTests
             using var snapshotResponse = await client.GetAsync($"/api/v1/batches/{batchId}/operations");
             using var snapshotDocument = JsonDocument.Parse(
                 await snapshotResponse.Content.ReadAsStringAsync());
-            Assert.Single(snapshotDocument.RootElement.GetProperty("items").EnumerateArray());
+            var snapshotted = Assert.Single(
+                snapshotDocument.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("Saw", snapshotted.GetProperty("name").GetString());
+            Assert.Equal(60, snapshotted.GetProperty("setupTimeSeconds").GetInt32());
+
+            using var caseResponse = await client.GetAsync($"/api/v1/cases/{caseId}");
+            using var caseDocument = JsonDocument.Parse(
+                await caseResponse.Content.ReadAsStringAsync());
+            Assert.Equal(
+                210,
+                caseDocument.RootElement.GetProperty("currentSetupTimeSeconds").GetInt32());
+            Assert.Equal(
+                75,
+                caseDocument.RootElement.GetProperty("currentCycleTimePerPartSeconds").GetInt32());
+        });
+    }
+
+    [Fact]
+    public async Task Operation_patch_requires_current_version_and_valid_complete_graph()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var caseId = await CreateCaseAsync(client);
+            var first = await CreateOperationAsync(client, caseId, new
+            {
+                operationNumber = 10,
+                name = "Saw",
+                setupTimeSeconds = 60,
+                cycleTimePerPartSeconds = 30,
+                dependencyType = "INDEPENDENT"
+            });
+            var firstId = first.GetProperty("caseOperationId").GetString()!;
+            var second = await CreateOperationAsync(client, caseId, new
+            {
+                operationNumber = 20,
+                name = "Mill",
+                setupTimeSeconds = 120,
+                cycleTimePerPartSeconds = 45,
+                dependencyType = "SEQUENTIAL",
+                predecessorCaseOperationId = firstId
+            });
+            var secondId = second.GetProperty("caseOperationId").GetString()!;
+
+            using (var duplicateRequest = PatchRequest(
+                       caseId,
+                       secondId,
+                       1,
+                       new { operationNumber = 10 }))
+            using (var duplicateResponse = await client.SendAsync(duplicateRequest))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, duplicateResponse.StatusCode);
+                Assert.Contains(
+                    "duplicate_operation_number",
+                    await duplicateResponse.Content.ReadAsStringAsync());
+            }
+
+            using (var staleRequest = PatchRequest(
+                       caseId,
+                       secondId,
+                       99,
+                       new { name = "Stale" }))
+            using (var staleResponse = await client.SendAsync(staleRequest))
+            {
+                Assert.Equal(HttpStatusCode.PreconditionFailed, staleResponse.StatusCode);
+            }
+
+            using (var routePositionRequest = PatchRequest(
+                       caseId,
+                       secondId,
+                       1,
+                       new { routePosition = 0 }))
+            using (var routePositionResponse = await client.SendAsync(routePositionRequest))
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, routePositionResponse.StatusCode);
+                Assert.Contains(
+                    "unknown_field",
+                    await routePositionResponse.Content.ReadAsStringAsync());
+            }
+
+            using var routeResponse = await client.GetAsync($"/api/v1/cases/{caseId}/operations");
+            using var routeDocument = JsonDocument.Parse(
+                await routeResponse.Content.ReadAsStringAsync());
+            var persisted = routeDocument.RootElement.GetProperty("items")
+                .EnumerateArray()
+                .Single(value => value.GetProperty("caseOperationId").GetString() == secondId);
+            Assert.Equal(20, persisted.GetProperty("operationNumber").GetInt32());
+            Assert.Equal("Mill", persisted.GetProperty("name").GetString());
+            Assert.Equal(1, persisted.GetProperty("version").GetInt32());
         });
     }
 
@@ -154,6 +267,24 @@ public sealed class CaseOperationCreateApiTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return document.RootElement.Clone();
+    }
+
+    private static HttpRequestMessage PatchRequest(
+        string caseId,
+        string operationId,
+        int version,
+        object body)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/api/v1/cases/{caseId}/operations/{operationId}")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.TryAddWithoutValidation(
+            "If-Match",
+            $"\"case-operation:{operationId}:v{version}\"");
+        return request;
     }
 
     private static async Task<string> CreateCaseAsync(HttpClient client)

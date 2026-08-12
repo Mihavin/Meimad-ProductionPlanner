@@ -18,8 +18,6 @@ internal sealed record CreateCaseRequest(
     string? MaterialSpecification,
     string? RawMaterialForm,
     string? RawMaterialDimensions,
-    int? CurrentSetupTimeSeconds,
-    int? CurrentCycleTimePerPartSeconds,
     string? Notes)
 {
     internal CreateCaseCommand ToCommand() => new(
@@ -34,8 +32,6 @@ internal sealed record CreateCaseRequest(
         MaterialSpecification,
         RawMaterialForm,
         RawMaterialDimensions,
-        CurrentSetupTimeSeconds,
-        CurrentCycleTimePerPartSeconds,
         Notes);
 }
 
@@ -82,8 +78,6 @@ internal sealed class PatchCaseRequest
             reader.ReadString("materialSpecification"),
             reader.ReadString("rawMaterialForm"),
             reader.ReadString("rawMaterialDimensions"),
-            reader.ReadNullableInt32("currentSetupTimeSeconds"),
-            reader.ReadNullableInt32("currentCycleTimePerPartSeconds"),
             reader.ReadString("notes"));
 
         reader.ThrowIfInvalid();
@@ -105,8 +99,6 @@ internal sealed class PatchCaseRequest
             "materialSpecification",
             "rawMaterialForm",
             "rawMaterialDimensions",
-            "currentSetupTimeSeconds",
-            "currentCycleTimePerPartSeconds",
             "notes"
         ];
 
@@ -157,6 +149,100 @@ internal sealed class PatchCaseRequest
             return OptionalField<string?>.Unspecified;
         }
 
+        internal void ThrowIfInvalid()
+        {
+            if (issues.Count > 0)
+            {
+                throw new CaseRequestException(issues);
+            }
+        }
+
+        private void AddTypeIssue(string name, string expected)
+        {
+            issues.Add(new CaseRequestIssue(
+                name,
+                "invalid_type",
+                $"Field '{name}' must be a {expected}."));
+        }
+    }
+}
+
+internal sealed class PatchCaseOperationRequest
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> Fields { get; init; } =
+        new(StringComparer.Ordinal);
+
+    internal UpdateCaseOperationCommand ToCommand()
+    {
+        var reader = new PatchFieldReader(Fields);
+        var command = new UpdateCaseOperationCommand(
+            reader.ReadInt32("operationNumber"),
+            reader.ReadString("name"),
+            reader.ReadString("requiredMachineType"),
+            reader.ReadNullableInt32("setupTimeSeconds"),
+            reader.ReadNullableInt32("cycleTimePerPartSeconds"),
+            reader.ReadString("dependencyType"),
+            reader.ReadString("predecessorCaseOperationId"),
+            reader.ReadString("simultaneousGroupKey"));
+
+        reader.ThrowIfInvalid();
+        return command;
+    }
+
+    private sealed class PatchFieldReader
+    {
+        private static readonly HashSet<string> AllowedFields =
+        [
+            "operationNumber",
+            "name",
+            "requiredMachineType",
+            "setupTimeSeconds",
+            "cycleTimePerPartSeconds",
+            "dependencyType",
+            "predecessorCaseOperationId",
+            "simultaneousGroupKey"
+        ];
+
+        private readonly IReadOnlyDictionary<string, JsonElement> fields;
+        private readonly List<CaseRequestIssue> issues = [];
+
+        internal PatchFieldReader(IReadOnlyDictionary<string, JsonElement> fields)
+        {
+            this.fields = fields;
+            foreach (var field in fields.Keys.Where(field => !AllowedFields.Contains(field)))
+            {
+                issues.Add(new CaseRequestIssue(
+                    field,
+                    "unknown_field",
+                    $"Field '{field}' is not supported."));
+            }
+
+            if (fields.Count == 0)
+            {
+                issues.Add(new CaseRequestIssue(
+                    string.Empty,
+                    "empty_patch",
+                    "At least one Case Operation field must be supplied."));
+            }
+        }
+
+        internal OptionalField<int> ReadInt32(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return OptionalField<int>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var value))
+            {
+                return OptionalField<int>.Specified(value);
+            }
+
+            AddTypeIssue(name, "32-bit integer");
+            return OptionalField<int>.Unspecified;
+        }
+
         internal OptionalField<int?> ReadNullableInt32(string name)
         {
             if (!fields.TryGetValue(name, out var element))
@@ -178,6 +264,27 @@ internal sealed class PatchCaseRequest
             return OptionalField<int?>.Unspecified;
         }
 
+        internal OptionalField<string?> ReadString(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return OptionalField<string?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return OptionalField<string?>.Specified(null);
+            }
+
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return OptionalField<string?>.Specified(element.GetString());
+            }
+
+            AddTypeIssue(name, "string or null");
+            return OptionalField<string?>.Unspecified;
+        }
+
         internal void ThrowIfInvalid()
         {
             if (issues.Count > 0)
@@ -186,13 +293,11 @@ internal sealed class PatchCaseRequest
             }
         }
 
-        private void AddTypeIssue(string name, string expected)
-        {
+        private void AddTypeIssue(string name, string expected) =>
             issues.Add(new CaseRequestIssue(
                 name,
                 "invalid_type",
                 $"Field '{name}' must be a {expected}."));
-        }
     }
 }
 

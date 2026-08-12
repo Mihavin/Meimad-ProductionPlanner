@@ -74,8 +74,6 @@ internal sealed record CaseUpdate(
     string? MaterialSpecification,
     string? RawMaterialForm,
     string? RawMaterialDimensions,
-    int? CurrentSetupTimeSeconds,
-    int? CurrentCycleTimePerPartSeconds,
     string? Notes);
 
 internal sealed record PlannerMachine(
@@ -149,9 +147,23 @@ internal sealed record CaseOperation(
     public string DisplayName => $"OP{OperationNumber} - {Name}";
 
     public int RouteDisplayPosition => RoutePosition + 1;
+
+    public string SetupTimeDisplay => Formatting.DurationText.FormatOptional(SetupTimeSeconds);
+
+    public string CycleTimePerPartDisplay => Formatting.DurationText.FormatOptional(CycleTimePerPartSeconds);
 }
 
 internal sealed record CaseOperationCreate(
+    int OperationNumber,
+    string Name,
+    string? RequiredMachineType,
+    int? SetupTimeSeconds,
+    int? CycleTimePerPartSeconds,
+    string DependencyType,
+    string? PredecessorCaseOperationId,
+    string? SimultaneousGroupKey);
+
+internal sealed record CaseOperationUpdate(
     int OperationNumber,
     string Name,
     string? RequiredMachineType,
@@ -187,7 +199,16 @@ internal sealed record ProductionBatch(
     int PlannedQuantity,
     int? RouteRevision,
     int BatchOperationCount,
-    int Version = 1);
+    int Version = 1)
+{
+    public string StatusDisplay => Status switch
+    {
+        "waiting" => "Waiting",
+        "in_production" => "In Production",
+        "complete" => "Complete",
+        _ => Status.Replace('_', ' ')
+    };
+}
 
 internal sealed record ProductionBatchCreate(
     string CaseId,
@@ -275,6 +296,7 @@ internal sealed record TimelineInterval(
     string? BatchNumber,
     string? PartNumber,
     int? OperationNumber,
+    string? OperationName,
     DateTimeOffset StartsAt,
     DateTimeOffset EndsAt,
     string? Detail);

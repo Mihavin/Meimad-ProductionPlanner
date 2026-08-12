@@ -37,6 +37,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel();
         Timeline = new TimelineViewModel();
+        CaseWorkspace.PlanChanged += (_, _) => Timeline.Invalidate();
+        MachinePlanningBoard.PlanChanged += (_, _) =>
+        {
+            CaseWorkspace.InvalidateSelectedDetails();
+            Timeline.Invalidate();
+        };
         ConnectCommand = new AsyncCommand(ConnectAsync, () => !IsBusy);
         RefreshCommand = new AsyncCommand(RefreshAsync, () => !IsBusy && apiClient is not null);
         RequestEditCommand = new AsyncCommand(

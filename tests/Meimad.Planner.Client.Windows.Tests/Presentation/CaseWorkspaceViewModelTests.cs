@@ -24,9 +24,21 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.Single(viewModel.Operations);
         Assert.Single(viewModel.Orders);
         Assert.Single(viewModel.Batches);
+        Assert.Equal("00:10:00", viewModel.CurrentSetupTime);
+        Assert.Equal("00:02:00", viewModel.CurrentCycleTimePerPart);
+        Assert.Contains("mill", viewModel.OperationMachineTypeOptions);
+        Assert.Contains("5-axis", viewModel.OperationMachineTypeOptions);
+        Assert.Contains("probe", viewModel.OperationMachineTypeOptions);
+        Assert.Contains(string.Empty, viewModel.OperationMachineTypeOptions);
+        Assert.Single(viewModel.OperationMachineTypeOptions, value =>
+            string.Equals(value, "mill", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(new CaseQuery("PN", "Acme", true), api.LastQuery);
         Assert.Equal(2, api.PreviewReads); // pool thumbnail and selected Case detail
         Assert.False(viewModel.IsFormReadOnly);
+
+        viewModel.InvalidateSelectedDetails();
+        await viewModel.EnsureLoadedAsync();
+        Assert.Equal(3, api.PreviewReads);
     }
 
     [Fact]
@@ -89,8 +101,6 @@ public sealed class CaseWorkspaceViewModelTests
         viewModel.MaterialSpecification = "4140";
         viewModel.RawMaterialForm = "Bar";
         viewModel.RawMaterialDimensions = "D80 x 200";
-        viewModel.CurrentSetupTimeSeconds = "900";
-        viewModel.CurrentCycleTimePerPartSeconds = "120";
         viewModel.Notes = "Created in client";
 
         await viewModel.SaveAsync();
@@ -138,7 +148,7 @@ public sealed class CaseWorkspaceViewModelTests
         await viewModel.CreateBatchAsync();
 
         Assert.NotNull(api.LastBatchCreate);
-        Assert.Equal("planned", api.LastBatchCreate!.Status);
+        Assert.Equal("waiting", api.LastBatchCreate!.Status);
         Assert.Equal(4, api.LastBatchCreate.Allocations.Count);
         Assert.Contains(api.LastBatchCreate.Allocations, allocation =>
             allocation.AllocationType == "order" && allocation.OrderId == "order-2" && allocation.Quantity == 6);
@@ -163,8 +173,8 @@ public sealed class CaseWorkspaceViewModelTests
         viewModel.NewOperationNumber = "20";
         viewModel.NewOperationName = "Finish mill";
         viewModel.NewOperationRequiredMachineType = "fiveAxisMill";
-        viewModel.NewOperationSetupTimeSeconds = "120";
-        viewModel.NewOperationCycleTimePerPartSeconds = "45";
+        viewModel.NewOperationSetupTime = "01:02:03";
+        viewModel.NewOperationCycleTimePerPart = "00:00:45";
         viewModel.NewOperationDependencyType = "SEQUENTIAL";
         viewModel.NewOperationPredecessor = viewModel.Operations[0];
         await viewModel.CreateOperationAsync();
@@ -172,10 +182,45 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.NotNull(api.LastOperationCreate);
         Assert.Equal("operation-1", api.LastOperationCreate!.PredecessorCaseOperationId);
         Assert.Equal("SEQUENTIAL", api.LastOperationCreate.DependencyType);
+        Assert.Equal(3723, api.LastOperationCreate.SetupTimeSeconds);
+        Assert.Equal(45, api.LastOperationCreate.CycleTimePerPartSeconds);
         Assert.Equal(2, viewModel.Operations.Count);
         Assert.Equal(1, viewModel.Operations[1].RoutePosition);
         Assert.False(viewModel.IsCreatingOperation);
+        Assert.Equal("01:02:13", viewModel.CurrentSetupTime);
+        Assert.Equal("00:01:05", viewModel.CurrentCycleTimePerPart);
         Assert.Equal(24, api.LastGeneration);
+    }
+
+    [Fact]
+    public async Task Editor_edits_operation_with_etag_legacy_machine_value_and_total_hours_duration()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(25));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+
+        await viewModel.BeginEditOperationAsync();
+
+        Assert.True(viewModel.IsEditingOperation);
+        Assert.Contains("SAW", viewModel.OperationMachineTypeOptions);
+        Assert.Empty(viewModel.OperationReferenceOptions);
+        viewModel.NewOperationName = "Saw revised";
+        viewModel.NewOperationRequiredMachineType = "5-axis";
+        viewModel.NewOperationSetupTime = "25:00:01";
+        viewModel.NewOperationCycleTimePerPart = string.Empty;
+        viewModel.NewOperationDependencyType = "INDEPENDENT";
+        await viewModel.CreateOperationAsync();
+
+        Assert.NotNull(api.LastOperationUpdate);
+        Assert.Equal(90_001, api.LastOperationUpdate!.SetupTimeSeconds);
+        Assert.Null(api.LastOperationUpdate.CycleTimePerPartSeconds);
+        Assert.Equal("\"case-operation:operation-1:v1\"", api.LastOperationEntityTag);
+        Assert.Equal("Saw revised", Assert.Single(viewModel.Operations).Name);
+        Assert.Equal("25:00:01", viewModel.CurrentSetupTime);
+        Assert.Equal("00:00:00", viewModel.CurrentCycleTimePerPart);
+        Assert.False(viewModel.IsCreatingOperation);
     }
 
     private static PlannerCase CreateCase() => new(
@@ -229,6 +274,8 @@ public sealed class CaseWorkspaceViewModelTests
         internal OrderCreate? LastOrderCreate { get; private set; }
         internal ProductionBatchCreate? LastBatchCreate { get; private set; }
         internal CaseOperationCreate? LastOperationCreate { get; private set; }
+        internal CaseOperationUpdate? LastOperationUpdate { get; private set; }
+        internal string? LastOperationEntityTag { get; private set; }
         internal string? LastEntityTag { get; private set; }
         internal string? LastClientId { get; private set; }
         internal long LastGeneration { get; private set; }
@@ -293,8 +340,8 @@ public sealed class CaseWorkspaceViewModelTests
                 create.MaterialSpecification,
                 create.RawMaterialForm,
                 create.RawMaterialDimensions,
-                create.CurrentSetupTimeSeconds,
-                create.CurrentCycleTimePerPartSeconds,
+                null,
+                null,
                 create.Notes,
                 false,
                 1,
@@ -335,6 +382,43 @@ public sealed class CaseWorkspaceViewModelTests
                 create.SimultaneousGroupKey));
         }
 
+        public Task<CaseOperation> UpdateCaseOperationAsync(
+            string caseId,
+            string operationId,
+            CaseOperationUpdate update,
+            string entityTag,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastOperationUpdate = update;
+            LastOperationEntityTag = entityTag;
+            LastClientId = clientId;
+            LastGeneration = editGeneration;
+            return Task.FromResult(new CaseOperation(
+                operationId,
+                caseId,
+                update.OperationNumber,
+                0,
+                update.Name,
+                update.RequiredMachineType,
+                update.SetupTimeSeconds,
+                update.CycleTimePerPartSeconds,
+                update.DependencyType,
+                update.PredecessorCaseOperationId,
+                update.SimultaneousGroupKey,
+                2));
+        }
+
+        public Task<IReadOnlyList<PlannerMachine>> ListMachinesAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<PlannerMachine>>([
+                new(
+                    "machine-1", "M-1", "Mill", "mill", "5-axis", ["probe", "MILL"],
+                    "calendar-1", true, true, null, null, 0, 1,
+                    DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            ]);
+
         public Task<IReadOnlyList<PlannerOrder>> ListOrdersAsync(
             string caseId,
             CancellationToken cancellationToken = default) =>
@@ -365,7 +449,7 @@ public sealed class CaseWorkspaceViewModelTests
             string caseId,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<ProductionBatch>>([
-                new("batch-1", caseId, "B-1", "planned", 5, null, 1)
+                new("batch-1", caseId, "B-1", "waiting", 5, null, 1)
             ]);
 
         public Task<ProductionBatch> CreateBatchAsync(

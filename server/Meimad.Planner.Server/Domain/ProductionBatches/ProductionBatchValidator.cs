@@ -2,7 +2,9 @@ namespace Meimad.Planner.Server.Domain.ProductionBatches;
 
 internal static class ProductionBatchValidator
 {
-    internal const string PlannedStatus = "planned";
+    internal const string WaitingStatus = "waiting";
+    internal const string InProductionStatus = "in_production";
+    internal const string CompleteStatus = "complete";
     internal const string BatchOperationNotStartedStatus = "not_started";
 
     private const int IdentifierMaximum = 200;
@@ -18,12 +20,12 @@ internal static class ProductionBatchValidator
             IdentifierMaximum,
             issues);
         var status = values.Status?.Trim();
-        if (!string.Equals(status, PlannedStatus, StringComparison.Ordinal))
+        if (!string.Equals(status, WaitingStatus, StringComparison.Ordinal))
         {
             issues.Add(new ProductionBatchValidationIssue(
                 "status",
                 "invalid_status",
-                "A new Production Batch status must be planned."));
+                "A new Production Batch status must be waiting."));
         }
 
         if (values.PlannedQuantity <= 0)
@@ -67,7 +69,7 @@ internal static class ProductionBatchValidator
         return new ValidatedProductionBatchValues(
             caseId!,
             batchNumber!,
-            PlannedStatus,
+            WaitingStatus,
             values.PlannedQuantity,
             allocations);
     }

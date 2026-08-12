@@ -1,6 +1,6 @@
 # API Contract
 
-- **Status:** Draft target contract; health, current planning-resource, TV, and E-Ink read/simulator slices are implemented as identified below
+- **Status:** Draft target contract; schema-v9 planning-resource, Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -50,7 +50,7 @@ The implemented Windows shell currently uses the development `X-Meimad-Client-Id
 - IDs are opaque strings. Clients must not infer type, order, or creation time from an ID.
 - Instants use RFC 3339 UTC strings, for example `2026-08-11T11:20:00Z`.
 - Local Work Finish Date without time uses ISO `YYYY-MM-DD` until its cutoff/time-zone semantics are decided.
-- **Proposed for API v1:** durations are non-negative integer seconds and use a `...Seconds` suffix. This matches schema v1 while the duration formula remains an open domain decision.
+- API durations are non-negative integer seconds and use a `...Seconds` suffix. The Windows client alone formats production-duration inputs and summaries as total-hours `HH:mm:ss`; hours may exceed 23. This display conversion does not change JSON or SQLite representation.
 - **Proposed for API v1:** production quantities are positive integers in the Case's implicit production unit. Fractional quantities and explicit units require a later contract decision.
 - Enum values normally use stable lower-camel-case contract tokens after their lifecycle is approved; Case Operation dependency types are the explicit uppercase tokens `SEQUENTIAL`, `PARALLEL_CAPABLE`, `INDEPENDENT`, and `LOCKED_SIMULTANEOUS`. Error codes use `snake_case`.
 - Resource representations include positive integer `version`, `createdAt`, and `updatedAt` fields. Storage column names never appear on the wire.
@@ -167,7 +167,7 @@ Implemented Server liveness endpoint:
 {
   "status": "healthy",
   "service": "Meimad Planner Server",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "serverTimeUtc": "2026-08-11T11:20:00Z"
 }
 ```
@@ -282,7 +282,7 @@ Unless explicitly marked implemented, paths in this section are **Proposed**. Mu
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/v1/cases` | Search/filter Cases, including Active once statuses are defined. |
+| `GET` | `/api/v1/cases` | Search/filter Cases, including derived Active state. |
 | `POST` | `/api/v1/cases` | Create a Case. |
 | `GET` | `/api/v1/cases/{caseId}` | Read Case details. |
 | `PATCH` | `/api/v1/cases/{caseId}` | Change approved current master fields. |
@@ -292,9 +292,9 @@ Unless explicitly marked implemented, paths in this section are **Proposed**. Mu
 | `PATCH` | `/api/v1/cases/{caseId}/operations/{operationId}` | Edit one route operation. |
 | `POST` | `/api/v1/cases/{caseId}/operations/reorder` | Atomically submit the complete desired route order. |
 
-Route mutation after Production Batch creation depends on the approved snapshot/version policy.
+Case Operation edits do not mutate an existing Production Batch because schema v9 snapshots scalar and dependency fields into Batch Operations. Route reorder remains a separate Proposed command.
 
-**Implemented now:** Case collection GET, POST, GET-by-ID, PATCH, nested operation GET/POST, and preview GET. GET-by-ID and collection results include derived `isActive`, based on active Order demand or a planned Production Batch. Operation edit and reorder remain Proposed.
+**Implemented now:** Case collection GET, POST, GET-by-ID, PATCH, nested operation GET/POST/PATCH, and preview GET. GET-by-ID and collection results include derived `isActive`, based on active Order demand or a `waiting`/`in_production` Production Batch. Operation reorder remains Proposed.
 
 The implemented `GET /cases` accepts optional `search`, `customer`, and `isActive` parameters, returns matching records ordered by Part Number, and currently returns `nextCursor: null`. `search` performs case-insensitive substring matching across Part Number, Name, and Customer; `customer` performs case-insensitive Customer substring matching. Customer Reference, status, cursor, and limit filtering remain Proposed.
 
@@ -313,9 +313,7 @@ Implemented Case create request:
   "materialSpecification": "7075-T6",
   "rawMaterialForm": "Plate",
   "rawMaterialDimensions": "30 x 120 x 180 mm",
-  "currentSetupTimeSeconds": 1800,
-  "currentCycleTimePerPartSeconds": 240,
-  "notes": "Current working values"
+  "notes": "Current route values are operation-owned"
 }
 ```
 
@@ -345,9 +343,11 @@ Implemented Case representation:
 }
 ```
 
-Part Number, Name, and Working Folder path are required. Both path fields must be absolute filesystem paths; Preview path is optional. The service stores the strings without checking existence, creating directories, reading files, or persisting binary content. Optional PATCH fields may be cleared with JSON `null`; omitting a field preserves it. PATCH requires the exact Case ETag in `If-Match` and returns `412` on a stale version.
+Part Number, Name, and Working Folder path are required. Both path fields must be absolute filesystem paths; Preview path is optional. The service stores the strings without checking existence, creating directories, reading files, or persisting binary content. Optional PATCH fields may be cleared with JSON `null`; omitting a field preserves it. `currentSetupTimeSeconds` and `currentCycleTimePerPartSeconds` are not accepted in Case POST/PATCH; they are read-only sums of Case Operation timing, with null contributing zero and an empty route returning zero. PATCH requires the exact Case ETag in `If-Match` and returns `412` on a stale version.
 
-Implemented limits are 200 characters for short identity/material fields, 500 for material specification and raw dimensions, 4,096 for paths, and 8,000 for Notes. Text is trimmed, blank optional text becomes `null`, and setup/cycle values are nullable non-negative 32-bit integer seconds. Part Number uniqueness remains undecided and is not enforced.
+The Case timing sums are descriptive route summaries. They do not replace the per-operation durations and dependency semantics used by the Timeline, so clients must not treat either sum as projected elapsed time.
+
+Implemented limits are 200 characters for short identity/material fields, 500 for material specification and raw dimensions, 4,096 for paths, and 8,000 for Notes. Text is trimmed and blank optional text becomes `null`. Case Operation setup/cycle values are nullable non-negative 32-bit integer seconds; Case timing fields are derived totals and are not accepted as master-data inputs. Part Number uniqueness remains undecided and is not enforced.
 
 The target contract returns Working Folder and Preview paths only to an authorized Windows planning caller and omits them from TV/E-Ink/errors. The current Case read endpoints have no human authentication layer yet, so deployments must not treat them as production-secure until OD-012 is implemented.
 
@@ -389,7 +389,22 @@ Implemented Case Operation representation:
 }
 ```
 
-POST appends the new operation at the next zero-based route position and validates Edit Mode plus the complete stored Case graph in the insert transaction. Operation Number is positive and unique; Name is required; Machine type is optional; setup/cycle seconds are nullable and non-negative. `INDEPENDENT` forbids a referenced operation; `SEQUENTIAL` and `PARALLEL_CAPABLE` require one; `LOCKED_SIMULTANEOUS` requires both a reference and group key. References must resolve inside the same Case. This create-only surface maps one relationship into the current schema-v1 predecessor columns and therefore does not yet expose arbitrary fan-in/out, edit, or reorder. Existing Production Batch snapshots are never retrofitted; later Batches copy the expanded route.
+POST appends the new operation at the next zero-based route position and validates Edit Mode plus the complete stored Case graph in the insert transaction. Operation Number is positive and unique; Name is required; Machine type is optional; setup/cycle seconds are nullable and non-negative. `INDEPENDENT` forbids a referenced operation; `SEQUENTIAL` and `PARALLEL_CAPABLE` require one; `LOCKED_SIMULTANEOUS` requires both a reference and group key. References must resolve inside the same Case. The one-link persistence shape does not expose arbitrary fan-in/out or reorder. Later Batches copy the expanded route; existing Batch snapshots are never retrofitted.
+
+Implemented Case Operation PATCH is partial. For example:
+
+```json
+{
+  "name": "Finish milling — revised",
+  "requiredMachineType": "fiveAxis",
+  "setupTimeSeconds": 900,
+  "cycleTimePerPartSeconds": 150
+}
+```
+
+The accepted fields are `operationNumber`, `name`, `requiredMachineType`, `setupTimeSeconds`, `cycleTimePerPartSeconds`, `dependencyType`, `predecessorCaseOperationId`, and `simultaneousGroupKey`. JSON `null` clears a nullable field; omission preserves it. `caseOperationId`, `caseId`, and `routePosition` are immutable and an unknown field is rejected. PATCH requires active Edit Mode plus the exact `If-Match: "case-operation:{operationId}:v{version}"`; a stale version returns `412`. The Server merges the partial request, validates the complete Case graph, and increments the operation version in one immediate transaction. Existing Batch Operation scalar and schema-v9 dependency snapshots remain unchanged.
+
+The Windows required-Machine dropdown is populated from the union of `processType`, `axisType`, and `capabilities` returned by the registered Machine catalog. It also offers a blank Any choice and preserves a selected legacy value. This is a client option list, not a new Server enum; the submitted token continues to use the string contract above.
 
 The reorder command contains every current operation exactly once:
 
@@ -400,7 +415,7 @@ The reorder command contains every current operation exactly once:
 }
 ```
 
-It changes route order only; it does not silently rewrite dependencies. Missing, duplicate, foreign-Case, or stale operation IDs return `409` or `422` without a partial reorder. Timing ownership and multi-link dependency persistence remain blocking decisions, so these fields are Proposed.
+It changes route order only; it does not silently rewrite dependencies. Missing, duplicate, foreign-Case, or stale operation IDs return `409` or `422` without a partial reorder. Aggregate route revision and arbitrary multi-link dependency persistence remain blocking decisions, so this command is Proposed.
 
 ### 6.2 Orders
 
@@ -454,7 +469,7 @@ Implemented Order create request and representation:
 | `GET` | `/api/v1/batches` | Search/filter Production Batches. |
 | `POST` | `/api/v1/batches` | Create Batch, allocation, and route snapshot atomically. |
 | `GET` | `/api/v1/batches/{batchId}` | Read Batch, allocation, and operation summary. |
-| `PATCH` | `/api/v1/batches/{batchId}` | Change approved Batch fields/status. |
+| `PATCH` | `/api/v1/batches/{batchId}` | Change future approved Batch fields; status is Server-owned. |
 | `PUT` | `/api/v1/batches/{batchId}/allocations` | Replace the complete allocation atomically after balancing validation. |
 | `GET` | `/api/v1/batches/{batchId}/operations` | Read concrete Batch Operations. |
 
@@ -468,7 +483,7 @@ Implemented atomic Batch create request:
 {
   "caseId": "opaque-case-id",
   "batchNumber": "B-2026-0087",
-  "status": "planned",
+  "status": "waiting",
   "plannedQuantity": 53,
   "allocations": [
     {
@@ -492,7 +507,7 @@ Implemented Batch representation:
   "batchId": "opaque-batch-id",
   "caseId": "opaque-case-id",
   "batchNumber": "B-2026-0087",
-  "status": "planned",
+  "status": "waiting",
   "plannedQuantity": 53,
   "routeRevision": null,
   "allocations": [
@@ -516,7 +531,9 @@ Implemented Batch representation:
 }
 ```
 
-Creating a Batch and its route-derived Batch Operations is one immediate SQLite transaction. Failure creates neither the Batch nor partial allocations/operations. Every Order allocation must reference an Order under the Batch Case. `plannedQuantity` must exactly equal the sum of `order`, `stock`, and `scrapAllowance` rows. A Batch must include Order demand or stock; scrap alone is rejected. Allocation quantities are positive integers, zero rows are omitted, an Order appears once, and at most one stock and one scrapAllowance row are accepted. These rules support one Order, a partial Order, multiple same-Case Orders, combined stock/scrap, and stock-only creation without making Planner authoritative for warehouse balance.
+Creating a Batch and its route-derived Batch Operations is one immediate SQLite transaction. Failure creates neither the Batch nor partial allocations/operations. The create contract requires `status: "waiting"`; this is a fixed lifecycle assertion, not a user-selectable status, and any other value is rejected. Later status changes are Server-owned. Every Order allocation must reference an Order under the Batch Case. `plannedQuantity` must exactly equal the sum of `order`, `stock`, and `scrapAllowance` rows. A Batch must include Order demand or stock; scrap alone is rejected. Allocation quantities are positive integers, zero rows are omitted, an Order appears once, and at most one stock and one scrapAllowance row are accepted. These rules support one Order, a partial Order, multiple same-Case Orders, combined stock/scrap, and stock-only creation without making Planner authoritative for warehouse balance.
+
+Batch status tokens are exactly `waiting`, `in_production`, and `complete`. A zero-operation Batch stays `waiting`. For a non-empty Batch, all `not_started` operations mean `waiting`; any `in_progress`, `suspended`, or `completed` operation while another remains unfinished means `in_production`; all `completed` means `complete`. The Server recomputes the derived status in the same transaction as an operation execution transition and advances the Batch version only when the status token changes. Apart from the fixed `waiting` assertion on create, clients display status but never choose or update it.
 
 `PUT /allocations` remains Proposed and would replace the complete collection atomically after future cross-Batch lifecycle rules are approved. It must never update ERP stock.
 
@@ -540,7 +557,7 @@ Implemented Batch Operation representation returned by `/batches/{batchId}/opera
 }
 ```
 
-Creation copies every current CaseOperation's identity, route position, name, Machine type, and timing fields. These fields remain unchanged if the CaseOperation later changes. `routeRevision` is currently `null`, and multi-record dependency relationships are not yet persisted or snapshotted; resolving those limitations remains OD-005/OD-010. No scheduling, Machine assignment, or timeline calculation occurs during creation.
+Creation copies every current Case Operation's identity, route position, name, Machine type, timing, dependency type, predecessor source Case Operation ID, and simultaneous-group key. These persisted fields remain unchanged if the Case Operation later changes. Dependency snapshot fields are currently internal Timeline inputs rather than members of the Batch Operation read representation above. The Timeline resolves the predecessor source ID to the corresponding operation within the same Batch and never rereads the mutable Case Operation relationship. `routeRevision` is currently `null`, and arbitrary multi-record dependency relationships remain OD-005/OD-010 work. No scheduling, Machine assignment, or timeline calculation occurs during creation.
 
 ### 6.4 Machines, assignments, and downtime
 
@@ -666,7 +683,7 @@ Start, Suspend, and Finish requests have no body and require the active Edit Mod
 }
 ```
 
-Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. An in-progress operation cannot be moved or unassigned; it must be suspended first, otherwise assignment commands return `409 operation_in_progress`. Suspend retains assignment and position. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Completed operations are omitted from the active Planning Board and cannot be assigned again. Invalid state, missing assignment, non-first start, and already-running Machine failures return stable `409` codes: `invalid_operation_transition`, `operation_not_assigned`, `operation_not_first_in_backlog`, and `machine_operation_already_in_progress`. Reassignment of completed work returns `409 operation_completed`.
+Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. An in-progress operation cannot be moved or unassigned; it must be suspended first, otherwise assignment commands return `409 operation_in_progress`. Suspend retains assignment and position. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish transition recomputes the parent Production Batch status in the same transaction; the Batch row and version change only when that derived token changes. Suspended work remains `in_production`, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again. Invalid state, missing assignment, non-first start, and already-running Machine failures return stable `409` codes: `invalid_operation_transition`, `operation_not_assigned`, `operation_not_first_in_backlog`, and `machine_operation_already_in_progress`. Reassignment of completed work returns `409 operation_completed`.
 
 The implemented Machine master requires an existing Working Calendar. Clients obtain the opaque `workingCalendarId` from `GET /working-calendars`; users are not expected to know or type it. `picturePath` is optional, must be an absolute filesystem path, and is stored as text only. The Server does not require the file to exist during create/update. `GET /machines/{machineId}/picture` returns PNG, JPEG, BMP, or GIF bytes, `404 picture_not_found` for a missing/unavailable path, and `415 picture_format_unsupported` for another extension; errors do not expose the path. `deviceId` is a read-only projection of the optional enabled E-Ink binding administered through the active-editor device-registration API. PATCH requires the Machine ETag and rejects changes that would make assigned operations incompatible. Setting `isActive` false therefore requires an empty backlog. `displayEnabled` does not affect assignment compatibility.
 
@@ -733,6 +750,7 @@ Implemented response shape:
           "batchNumber": "B-1",
           "partNumber": "PN-1",
           "operationNumber": 10,
+          "operationName": "Rough milling",
           "startsAt": "2026-08-11T08:00:00Z",
           "endsAt": "2026-08-11T08:20:00Z",
           "detail": null
@@ -745,11 +763,11 @@ Implemented response shape:
 }
 ```
 
-Interval `type` is `setup`, `production`, `idle`, `reserved`, or `downtime`. Operation metadata is null for Machine-only intervals. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations and missing/invalid timing or calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
+Interval `type` is `setup`, `production`, `idle`, `reserved`, or `downtime`. Operation metadata, including `operationName`, is null for Machine-only intervals. The Windows client uses operation number/name to render a visible marker even when a duration bar is too narrow for its full label. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations and missing/invalid timing or Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
 
 Timeline calculation is read-only with respect to authoritative planning inputs and never changes Machine assignment, backlog position, dependency, quantity, duration input, or Work Finish Date. Locked-simultaneous members have common calculated start/finish; shorter members emit `reserved` intervals through group finish.
 
-**Transitional mapping:** each active Machine's `working_calendars.calendar_json` and `application_settings['timeline.setup_calendar_json']` use `{ "availability": [{ "startsAt": <RFC3339>, "endsAt": <RFC3339> }] }`. Production duration is provisionally `plannedQuantity * cycleSeconds`. Dependencies are read from the current source CaseOperation because dependency snapshots do not yet exist on BatchOperation. Calendar authoring/recurrence, plan revisions/cache/freshness, filters, deadline policy, and immutable dependency snapshots remain open.
+Each active Machine's `working_calendars.calendar_json` may contain the implemented weekly schedule or legacy `{ "availability": [{ "startsAt": <RFC3339>, "endsAt": <RFC3339> }] }`. An optional `application_settings['timeline.setup_calendar_json']` document can further restrict setup availability. If that setting is absent, setup uses the assigned Machine's calendar and the response includes the attention conflict `setup_calendar_defaulted`, explaining that machine-calendar-only setup scheduling is active; operation intervals are still calculated. Production duration is provisionally `plannedQuantity * cycleSeconds`. Dependencies are read only from immutable schema-v9 Batch Operation snapshots. Plan revisions/cache/freshness, filters, deadline policy, and richer calendar authoring remain open.
 
 ### 7.2 Conflicts
 
@@ -1212,6 +1230,6 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
 | E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; admin `/eink/device-registrations` | Implemented device-scoped GET-only data; active-editor create/update registration. |
 
-Case, Order, Batch creation/read, Machine and basic weekly Working Calendar master data, Machine backlog, explicit BatchOperation assignment, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, calendar exception/update policy, Batch lifecycle updates, dependency snapshots/route revision, cross-Batch over-allocation, final timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
+Case and Case Operation create/read/update, Order create/read/update, Batch creation/read/derived lifecycle, Machine and basic weekly Working Calendar master data, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, calendar exception/update policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 
 The contract cannot be frozen until the API, identity, edit-token, data-model, timeline, rendering, package, and telemetry questions in [Implementation plan](implementation-plan.md#open-decisions) are resolved.

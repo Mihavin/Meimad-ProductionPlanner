@@ -21,7 +21,7 @@ public sealed class TimelineViewModelTests
                 "machine-1", "M-1", "Mill",
                 [new TimelineInterval(
                     "setup", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
-                    setupStart, setupEnd, "server detail")])],
+                    "Rough mill", setupStart, setupEnd, "server detail")])],
             [
                 Dependency("dep-1", "batch-1", 10, 20),
                 Dependency("dep-2", "batch-2", 30, 40)
@@ -39,6 +39,7 @@ public sealed class TimelineViewModelTests
 
         Assert.Equal(setupStart, viewModel.Machines[0].Intervals[0].StartsAt);
         Assert.Equal(setupEnd, viewModel.Machines[0].Intervals[0].EndsAt);
+        Assert.Equal("Rough mill", viewModel.Machines[0].Intervals[0].OperationName);
         Assert.Equal("server detail", viewModel.Machines[0].Intervals[0].Detail);
         Assert.Equal("dep-1", Assert.Single(viewModel.SelectedDependencies).DependencyId);
         viewModel.SelectedBatch = viewModel.Batches[1];
@@ -46,6 +47,10 @@ public sealed class TimelineViewModelTests
         Assert.Equal("warning", Assert.Single(viewModel.Conflicts).Severity);
         Assert.Equal(start, api.RequestedFrom);
         Assert.Equal(end, api.RequestedTo);
+
+        viewModel.Invalidate();
+        await viewModel.EnsureLoadedAsync();
+        Assert.Equal(2, api.RequestCount);
     }
 
     private static TimelineDependency Dependency(
@@ -67,10 +72,13 @@ public sealed class TimelineViewModelTests
 
         internal DateTimeOffset RequestedTo { get; private set; }
 
+        internal int RequestCount { get; private set; }
+
         public Task<TimelineSnapshot> GetTimelineAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
         {
             RequestedFrom = from;
             RequestedTo = to;
+            RequestCount++;
             return Task.FromResult(snapshot);
         }
 

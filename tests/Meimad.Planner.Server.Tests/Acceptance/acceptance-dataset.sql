@@ -90,17 +90,17 @@ INSERT INTO case_operations (
     ('case-op-10b', 'case-10', 20, 1, 'Unknown process', 'lathe', NULL, NULL, 'sequential', 'case-op-10a', NULL);
 
 INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity) VALUES
-    ('batch-01', 'case-01', 'B-01-COMBINED', 'planned', 60),
-    ('batch-02a', 'case-02', 'B-02-SPLIT-A', 'planned', 40),
-    ('batch-02b', 'case-02', 'B-02-SPLIT-B', 'planned', 60),
-    ('batch-03', 'case-03', 'B-03-STOCK', 'planned', 30),
-    ('batch-04', 'case-04', 'B-04-MIXED', 'planned', 20),
-    ('batch-05', 'case-05', 'B-05', 'planned', 12),
-    ('batch-06', 'case-06', 'B-06', 'planned', 18),
-    ('batch-07', 'case-07', 'B-07', 'planned', 7),
-    ('batch-08', 'case-08', 'B-08', 'planned', 14),
-    ('batch-09', 'case-09', 'B-09-CONFLICT', 'planned', 4),
-    ('batch-10', 'case-10', 'B-10-CONFLICT', 'planned', 9);
+    ('batch-01', 'case-01', 'B-01-COMBINED', 'waiting', 60),
+    ('batch-02a', 'case-02', 'B-02-SPLIT-A', 'waiting', 40),
+    ('batch-02b', 'case-02', 'B-02-SPLIT-B', 'waiting', 60),
+    ('batch-03', 'case-03', 'B-03-STOCK', 'waiting', 30),
+    ('batch-04', 'case-04', 'B-04-MIXED', 'waiting', 20),
+    ('batch-05', 'case-05', 'B-05', 'waiting', 12),
+    ('batch-06', 'case-06', 'B-06', 'waiting', 18),
+    ('batch-07', 'case-07', 'B-07', 'waiting', 7),
+    ('batch-08', 'case-08', 'B-08', 'waiting', 14),
+    ('batch-09', 'case-09', 'B-09-CONFLICT', 'waiting', 4),
+    ('batch-10', 'case-10', 'B-10-CONFLICT', 'waiting', 9);
 
 INSERT INTO batch_allocations (
     id, production_batch_id, allocation_type, order_id, quantity) VALUES
@@ -123,19 +123,25 @@ INSERT INTO batch_allocations (
 -- Batch Operation snapshots mirror the two Case Operations for each Batch.
 INSERT INTO batch_operations (
     id, production_batch_id, source_case_operation_id, operation_number,
-    route_position, name, required_machine_type, setup_seconds, cycle_seconds, status)
+    route_position, name, required_machine_type, setup_seconds, cycle_seconds,
+    dependency_type, predecessor_source_case_operation_id,
+    simultaneous_group_key, status)
 SELECT 'batch-op-' || substr(pb.id, 7) || '-a', pb.id, co.id, co.operation_number,
        co.route_position, co.name, co.required_machine_type, co.setup_seconds,
-       co.cycle_seconds, 'not_started'
+       co.cycle_seconds, co.dependency_type, co.predecessor_case_operation_id,
+       co.simultaneous_group_key, 'not_started'
 FROM production_batches pb
 JOIN case_operations co ON co.case_id = pb.case_id AND co.route_position = 0;
 
 INSERT INTO batch_operations (
     id, production_batch_id, source_case_operation_id, operation_number,
-    route_position, name, required_machine_type, setup_seconds, cycle_seconds, status)
+    route_position, name, required_machine_type, setup_seconds, cycle_seconds,
+    dependency_type, predecessor_source_case_operation_id,
+    simultaneous_group_key, status)
 SELECT 'batch-op-' || substr(pb.id, 7) || '-b', pb.id, co.id, co.operation_number,
        co.route_position, co.name, co.required_machine_type, co.setup_seconds,
-       co.cycle_seconds, 'not_started'
+       co.cycle_seconds, co.dependency_type, co.predecessor_case_operation_id,
+       co.simultaneous_group_key, 'not_started'
 FROM production_batches pb
 JOIN case_operations co ON co.case_id = pb.case_id AND co.route_position = 1;
 

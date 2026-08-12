@@ -31,6 +31,9 @@ public sealed class TimelineApiTests
             Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "production");
             Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "idle");
             Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "downtime");
+            Assert.Contains(intervals, value =>
+                value.GetProperty("operationId").GetString() == "op-1"
+                && value.GetProperty("operationName").GetString() == "First");
             var dependency = Assert.Single(root.GetProperty("dependencies").EnumerateArray());
             Assert.Equal("SEQUENTIAL", dependency.GetProperty("type").GetString());
             Assert.Equal("batch-1", dependency.GetProperty("batchId").GetString());
@@ -41,10 +44,20 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
-    public async Task Timeline_api_explains_missing_calendar_configuration()
+    public async Task Timeline_defaults_missing_setup_calendar_and_still_projects_operations()
     {
         await RunWithServerAsync(async (application, client) =>
         {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText =
+                    "DELETE FROM application_settings WHERE key = 'timeline.setup_calendar_json';";
+                await command.ExecuteNonQueryAsync();
+            }
+
             using var response = await client.GetAsync(
                 "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -52,7 +65,12 @@ public sealed class TimelineApiTests
             Assert.Contains(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 conflict => conflict.GetProperty("code").GetString()
-                    == "setup_calendar_configuration_missing");
+                    == "setup_calendar_defaulted");
+            Assert.Contains(
+                document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
+                    .EnumerateArray(),
+                interval => interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("type").GetString() == "setup");
         });
     }
 
@@ -121,7 +139,7 @@ public sealed class TimelineApiTests
             VALUES ('case-1', 'PN-1', 'Timeline Part', 'C:\Cases\PN-1');
             INSERT INTO production_batches (
                 id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-1', 'planned', 2);
+            VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 2);
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name,
                 required_machine_type, setup_seconds, cycle_seconds,
@@ -134,10 +152,13 @@ public sealed class TimelineApiTests
             INSERT INTO batch_operations (
                 id, production_batch_id, source_case_operation_id,
                 operation_number, route_position, name, required_machine_type,
-                setup_seconds, cycle_seconds, status)
+                setup_seconds, cycle_seconds, status, dependency_type,
+                predecessor_source_case_operation_id)
             VALUES
-                ('op-1', 'batch-1', 'case-op-1', 10, 0, 'First', 'mill', 1800, 1800, 'not_started'),
-                ('op-2', 'batch-1', 'case-op-2', 20, 1, 'Second', 'mill', 0, 900, 'not_started');
+                ('op-1', 'batch-1', 'case-op-1', 10, 0, 'First', 'mill', 1800, 1800,
+                 'not_started', 'independent', NULL),
+                ('op-2', 'batch-1', 'case-op-2', 20, 1, 'Second', 'mill', 0, 900,
+                 'not_started', 'sequential', 'case-op-1');
             INSERT INTO machine_assignments (
                 id, batch_operation_id, machine_id, backlog_position)
             VALUES

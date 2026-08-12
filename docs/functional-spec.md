@@ -71,14 +71,15 @@ Authentication, authorization roles, and audit requirements for people are not d
 
 - A Case is the permanent master record for a part.
 - A Case is not an Order and has no production quantity by itself.
-- A Case contains Part Number, Name, Revision, Customer, Customer Reference, optional Preview path, Case Working Folder path, material type/specification, raw-material form/dimensions, current working setup time, current cycle time per part, notes, and a route of Case Operations.
+- A Case contains Part Number, Name, Revision, Customer, Customer Reference, optional Preview path, Case Working Folder path, material type/specification, raw-material form/dimensions, notes, and a route of Case Operations. Its current setup and cycle totals are read-only derived summaries of that route.
 - A Case may exist without any Orders.
 - The Case Working Folder is external. The database stores path strings only and no file bytes; an unavailable external path does not invalidate an existing Case. Original engineering files must never be modified.
 - Generated previews or cache files may be placed only under `_MeimadPlanner` within the Case folder.
-- MVP stores current working setup and cycle values, not separate plan/fact history.
-- A Case is active for filtering when it has active demand or active Production Batch context. The source does not define qualifying statuses. The implemented minimal lifecycles treat Order `active` and Production Batch `planned` as active context; Case activity is derived and never manually stored. Additional Batch lifecycle statuses remain TBD.
+- Each Case Operation owns its current working setup and cycle values. The Case summary adds all operation setup values and all operation cycle-per-part values separately, treating a missing operation value as zero; an empty route therefore exposes zero for both totals. These sums are descriptive route totals, not authoritative elapsed Timeline duration. Parallel-capable and Locked-simultaneous timing continues to follow dependency semantics rather than a simple sum.
+- The Windows client presents production-duration inputs and summaries as total-hours `HH:mm:ss` values, where hours may exceed 23. The Server API and SQLite storage remain locale-independent non-negative integer seconds.
+- A Case is active for filtering when it has active Order demand or a Production Batch in `waiting` or `in_production`. A `complete` Batch does not by itself make its Case active. Case activity is derived and never manually stored.
 
-Whether one Case represents a part number across revisions or a part-number/revision pair remains open. Current Case-level timing is implemented; precedence and propagation relative to Case Operation timing must be decided before route/timeline behavior is frozen.
+Whether one Case represents a part number across revisions or a part-number/revision pair remains open. Operation-owned timing and read-only Case totals are resolved for the MVP; existing Batch Operation timing snapshots remain unchanged when the source route is edited.
 
 ### 5.2 Order
 
@@ -95,9 +96,11 @@ Whether one Case represents a part number across revisions or a part-number/revi
 - Batch Operations are created from the Case route and are the units assigned to Machines.
 - Meimad Planner does not own warehouse inventory balance; ERP remains authoritative for stock.
 
-The implemented creation rule limits every Order allocation to the Batch Case and requires `plannedQuantity = Order allocations + stock + scrap allowance`. Allocation rows are positive, scrap cannot be the sole purpose, and stock-only is valid. BatchOperation field snapshots do not follow later CaseOperation edits. Cross-Batch over-allocation/lifecycle behavior, aggregate route revision, and dependency snapshots remain TBD.
+The implemented creation rule limits every Order allocation to the Batch Case and requires `plannedQuantity = Order allocations + stock + scrap allowance`. Allocation rows are positive, scrap cannot be the sole purpose, and stock-only is valid. Batch Operation scalar and dependency snapshots do not follow later Case Operation edits. Cross-Batch over-allocation and aggregate route-revision behavior remain TBD.
 
-Machine master data currently records Number, Name, process type, optional axis type, capability tokens, Working Calendar reference, active state, display-enabled state, an optional external picture path, and a read-only E-Ink binding projection. SQLite stores the picture path only; the Server streams supported image bytes to the Windows client. Manual assignment accepts only an active compatible Machine. Assign, unassign, and explicit moves preserve stable backlog order. The active editor can Start the first queued operation, Suspend an in-progress operation, resume it with Start, or Finish it. Finish records `completed`, removes the active assignment, and compacts the backlog; it never starts or rearranges another operation. The MVP stores current status but no actual-time history. Basic recurring weekly Working Calendar creation/listing is implemented: the Server generates IDs and owns timezone/workday/local-shift validation, while the Windows Machine form selects a calendar by name. Breaks, exceptions, holidays, overnight shifts, and Machine lifecycle beyond active/inactive remain TBD.
+Production Batch status is Server-owned and follows its related Batch Operations. A new Batch is `waiting`, including the valid edge case where its Case route is empty. It becomes `in_production` when any related operation is `in_progress`, `suspended`, or `completed` while at least one operation remains unfinished; suspension therefore does not return a Batch to waiting. It becomes `complete` only when it has at least one operation and every related operation is `completed`. The Server persists this derived status atomically with operation execution changes; users do not edit it directly.
+
+Machine master data currently records Number, Name, process type, optional axis type, capability tokens, Working Calendar reference, active state, display-enabled state, an optional external picture path, and a read-only E-Ink binding projection. SQLite stores the picture path only; the Server streams supported image bytes to the Windows client. Manual assignment accepts only an active compatible Machine. Assign, unassign, and explicit moves preserve stable backlog order. The active editor can Start the first queued operation, Suspend an in-progress operation, resume it with Start, or Finish it. Finish records `completed`, removes the active assignment, compacts the backlog, and atomically updates the parent Batch status; it never starts or rearranges another operation. The MVP stores current status but no actual-time history. Basic recurring weekly Working Calendar creation/listing is implemented: the Server generates IDs and owns timezone/workday/local-shift validation, while the Windows Machine form selects a calendar by name. Breaks, exceptions, holidays, overnight shifts, and Machine lifecycle beyond active/inactive remain TBD.
 
 The Windows client supports Machine editing through the Server's version-checked API. Guarded deletion is available for Cases, Case Operations, Orders, Production Batches, and Machines. The Server rejects deletion while protected relationships exist and never deletes external Case folders, images, original engineering content, or official package files. Production Batch deletion may remove only its own unassigned Batch Operations and explicit allocations as one transaction.
 
@@ -114,7 +117,7 @@ The supported dependency semantics are:
 | Independent | No timing or order relationship is imposed. |
 | Locked simultaneous | Linked operations start and finish together. Group duration is the longest member duration; shorter machines remain reserved until group end. |
 
-The implemented domain representation uses stable dependency records between two Case Operations. `SEQUENTIAL` is directed from prerequisite to dependent. `PARALLEL_CAPABLE` and `INDEPENDENT` create no ordering constraint. `LOCKED_SIMULTANEOUS` is grouped by a stable group key and is treated as one timing-equivalent component for graph validation. Missing/cross-Case/self references, conflicting meanings for one pair, membership in multiple locked groups, sequential ordering inside a locked group, and sequential cycles after locked groups are collapsed are invalid. The pure time engine implements the four timing meanings on transient Batch Operation inputs; persistence, edit/version behavior, dependency snapshot mapping, and richer cross-Machine feasibility remain TBD.
+The implemented domain representation uses stable dependency records between two Case Operations. `SEQUENTIAL` is directed from prerequisite to dependent. `PARALLEL_CAPABLE` and `INDEPENDENT` create no ordering constraint. `LOCKED_SIMULTANEOUS` is grouped by a stable group key and is treated as one timing-equivalent component for graph validation. Missing/cross-Case/self references, conflicting meanings for one pair, membership in multiple locked groups, sequential ordering inside a locked group, and sequential cycles after locked groups are collapsed are invalid. The pure time engine implements the four timing meanings on transient Batch Operation inputs. Schema v9 snapshots dependency type, predecessor source Case Operation ID, and simultaneous-group values into each Batch Operation; the Timeline resolves that source ID only within the same Batch. An authorized, optimistic Case Operation edit therefore affects only future Batches. Route position remains immutable through the edit endpoint; route reordering and richer cross-Machine feasibility remain TBD.
 
 ### 5.5 Machines, assignments, and downtime
 
@@ -148,7 +151,7 @@ All authoritative validation and calculation occurs on the server. A client may 
 
 Implemented pure-domain foundation: the server accepts explicit half-open UTC Machine availability, setup availability, downtime, fixed backlog order, resolved setup/production durations, and dependencies. It calculates earliest-feasible split work intervals, idle available time, downtime display intervals, and locked-simultaneous reservations. Backlog adjacency is never changed. Sequential constrains the dependent start; Parallel-capable and Independent do not; Locked-simultaneous shares projected start/finish and reserves shorter members. Invalid or infeasible inputs return explained conflicts rather than plan mutations.
 
-The engine is wired to a read-only HTTP Timeline projection over persisted assignments, active Machines, explicit UTC calendar JSON, planned downtime, Batch timing snapshots/quantity, and current Case route dependencies. Production duration is provisionally quantity multiplied by cycle time. Missing or invalid inputs become explained conflicts. Recurring calendars/breaks, time-zone/DST conversion, setup-resource capacity, immutable dependency snapshots, rounding, recalculation triggers, plan revisions, the full conflict catalog/severity policy, acknowledgement, and performance targets remain TBD.
+The engine is wired to a read-only HTTP Timeline projection over persisted assignments, active Machines, Working Calendars, planned downtime, immutable Batch timing/dependency snapshots, and Batch quantity. Production duration is provisionally quantity multiplied by cycle time. When no separate setup calendar is configured, setup uses the assigned Machine's availability and the projection returns an attention-level explanation that the fallback is active; it no longer suppresses otherwise schedulable operation intervals. Missing or invalid timing and Machine-calendar inputs remain explained conflicts. Timeline operation intervals include operation name and the Windows client renders a visible operation marker in addition to the colored duration bar. Breaks, setup-resource capacity, rounding, recalculation triggers, plan revisions, the full conflict catalog/severity policy, acknowledgement, and performance targets remain TBD.
 
 ## 8. Single Edit Mode
 
@@ -168,7 +171,7 @@ Every mutation must be rejected unless the caller has the active server-issued e
 
 ## 9. Windows Planning Client
 
-Implemented client decision: the MVP desktop foundation uses WPF on .NET 10. It stores only the Server root URL, a local display name, and stable client ID under Local AppData; reads `/health` and server-owned Edit Mode through HTTP; and disables edit actions whenever authority cannot be confirmed. It implements the API-only Case workspace, a Machine Planning Board with manual drag/drop commands, and a read-only Timeline rendering Server intervals/conflicts plus dependency edges for the selected Batch. Rejected assignments leave the board unchanged and show text feedback. The local name is not authentication. Record-mutation UI beyond Cases/assignments and production login remain later phases.
+Implemented client decision: the MVP desktop foundation uses WPF on .NET 10. It stores only the Server root URL, a local display name, and stable client ID under Local AppData; reads `/health` and server-owned Edit Mode through HTTP; and disables edit actions whenever authority cannot be confirmed. It implements the API-only Case workspace, including optimistic Case Operation editing, a Machine Planning Board with manual drag/drop commands, and a read-only Timeline rendering Server intervals/conflicts plus dependency edges for the selected Batch. Production durations are entered and displayed as total-hours `HH:mm:ss`, while the API continues to exchange seconds. The operation Machine requirement is selected from a dynamic union of registered Machine process, axis, and capability tokens, with a blank Any option and preservation of a selected legacy token. Rejected mutations leave the displayed authoritative state unchanged and show text feedback. The local name is not authentication. Remaining record-mutation UI and production login remain later phases.
 
 ### 9.1 Board view information hierarchy
 
@@ -185,10 +188,10 @@ Implemented client decision: the MVP desktop foundation uses WPF on .NET 10. It 
 
 - Part identity, description, revision, customer, preview, material, and raw-stock description.
 - Working Folder path with an open-folder action.
-- Current setup and cycle values.
+- Read-only current setup and cycle totals derived from the Case Operations, shown as total-hours `HH:mm:ss`.
 - General, Files, Operations, Orders, and Batches sections.
-- Ordered operations with number, name, Machine type, dependency, setup, and cycle.
-- Add and reorder operations while authorized to edit.
+- Ordered operations with number, name, Machine requirement, dependency, setup, and cycle.
+- Add and edit operations while authorized to edit; route position does not change during an edit. Reordering remains a separate future command.
 
 The source prototypes define zones and information hierarchy, not final visual design.
 
