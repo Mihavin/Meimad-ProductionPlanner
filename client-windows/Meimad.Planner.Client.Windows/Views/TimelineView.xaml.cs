@@ -226,21 +226,45 @@ public partial class TimelineView : UserControl
             return;
         }
 
+        // Build endpoints once. Looking them up separately for every dependency used
+        // to scan every machine and every interval twice per arrow.
+        var endpoints = new Dictionary<string, (int Row, DateTimeOffset StartsAt, DateTimeOffset EndsAt)>(
+            StringComparer.Ordinal);
+        for (var row = 0; row < viewModel.Machines.Count; row++)
+        {
+            foreach (var interval in viewModel.Machines[row].Intervals.Where(IsOperationWorkInterval))
+            {
+                if (interval.OperationId is not { Length: > 0 } operationId)
+                {
+                    continue;
+                }
+
+                if (endpoints.TryGetValue(operationId, out var existing))
+                {
+                    endpoints[operationId] = (
+                        existing.Row,
+                        interval.StartsAt < existing.StartsAt ? interval.StartsAt : existing.StartsAt,
+                        interval.EndsAt > existing.EndsAt ? interval.EndsAt : existing.EndsAt);
+                }
+                else
+                {
+                    endpoints.Add(operationId, (row, interval.StartsAt, interval.EndsAt));
+                }
+            }
+        }
+
         foreach (var dependency in viewModel.SelectedDependencies)
         {
-            var from = FindEndpoint(dependency.FromOperationId, isFinish: true);
-            var to = FindEndpoint(dependency.ToOperationId, isFinish: false);
-            if (from is null || to is null)
+            if (!endpoints.TryGetValue(dependency.FromOperationId, out var from)
+                || !endpoints.TryGetValue(dependency.ToOperationId, out var to))
             {
                 continue;
             }
 
-            var (fromRow, fromAt) = from.Value;
-            var (toRow, toAt) = to.Value;
-            var x1 = LabelWidth + chartWidth * (fromAt - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
-            var x2 = LabelWidth + chartWidth * (toAt - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
-            var y1 = HeaderHeight + fromRow * RowHeight + RowHeight / 2;
-            var y2 = HeaderHeight + toRow * RowHeight + RowHeight / 2;
+            var x1 = LabelWidth + chartWidth * (from.EndsAt - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
+            var x2 = LabelWidth + chartWidth * (to.StartsAt - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
+            var y1 = HeaderHeight + from.Row * RowHeight + RowHeight / 2;
+            var y2 = HeaderHeight + to.Row * RowHeight + RowHeight / 2;
             var line = new System.Windows.Shapes.Line
             {
                 X1 = x1,
@@ -254,25 +278,6 @@ public partial class TimelineView : UserControl
             };
             TimelineCanvas.Children.Add(line);
             AddArrowHead(x1, y1, x2, y2, dependency.Summary);
-        }
-
-        (int Row, DateTimeOffset At)? FindEndpoint(string operationId, bool isFinish)
-        {
-            for (var row = 0; row < viewModel.Machines.Count; row++)
-            {
-                var matching = viewModel.Machines[row].Intervals
-                    .Where(interval => interval.OperationId == operationId
-                        && IsOperationWorkInterval(interval))
-                    .ToArray();
-                if (matching.Length > 0)
-                {
-                    return (row, isFinish
-                        ? matching.Max(interval => interval.EndsAt)
-                        : matching.Min(interval => interval.StartsAt));
-                }
-            }
-
-            return null;
         }
     }
 

@@ -276,23 +276,28 @@ internal sealed class TimelineProjectionService
         var calculationStopwatch = Stopwatch.StartNew();
         var calculation = engine.Calculate(calculationInput);
         calculationStopwatch.Stop();
-        var baselineBacklogs = backlogs.Select(backlog => backlog with
-        {
-            Operations = backlog.Operations.Select(operation => operation with
-            {
-                EarliestStart = operationsById[operation.OperationId].Status == "not_started"
-                    ? EarliestForecastStart(operationsById[operation.OperationId], source.Operations, horizonStart)
-                    : operation.EarliestStart
-            }).ToArray()
-        }).ToArray();
+        var requiresMissedStartBaseline = forecastCursor > horizonStart
+            && backlogs.SelectMany(backlog => backlog.Operations).Any(operation =>
+                operationsById[operation.OperationId].Status == "not_started");
         var baselineStopwatch = Stopwatch.StartNew();
-        var baselineStarts = forecastCursor > horizonStart
-            ? engine.Calculate(calculationInput with { MachineBacklogs = baselineBacklogs })
+        var baselineStarts = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        if (requiresMissedStartBaseline)
+        {
+            var baselineBacklogs = backlogs.Select(backlog => backlog with
+            {
+                Operations = backlog.Operations.Select(operation => operation with
+                {
+                    EarliestStart = operationsById[operation.OperationId].Status == "not_started"
+                        ? EarliestForecastStart(operationsById[operation.OperationId], source.Operations, horizonStart)
+                        : operation.EarliestStart
+                }).ToArray()
+            }).ToArray();
+            baselineStarts = engine.Calculate(calculationInput with { MachineBacklogs = baselineBacklogs })
                 .Operations.ToDictionary(
                     operation => operation.OperationId,
                     operation => operation.StartsAt,
-                    StringComparer.Ordinal)
-            : new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+                    StringComparer.Ordinal);
+        }
         baselineStopwatch.Stop();
 
         var intervalsByMachine = calculation.Machines.ToDictionary(
@@ -316,7 +321,7 @@ internal sealed class TimelineProjectionService
             conflict.Message,
             conflict.OperationIds,
             conflict.MachineIds)).ToArray();
-        var missedStartWarnings = forecastCursor > horizonStart
+        var missedStartWarnings = requiresMissedStartBaseline
             ? calculation.Operations
                 .Where(result => operationsById.TryGetValue(result.OperationId, out var operation)
                     && operation.Status == "not_started"

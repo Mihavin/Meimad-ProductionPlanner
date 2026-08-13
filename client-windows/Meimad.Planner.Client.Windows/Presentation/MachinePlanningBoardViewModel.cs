@@ -36,6 +36,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     private string calendarTimeZoneId = "Asia/Jerusalem";
     private CalendarWorkweekOption selectedCalendarWorkweek;
     private CalendarShiftOption selectedCalendarShift;
+    private readonly Stack<ManualPlacementChange> undoHistory = [];
+    private readonly Stack<ManualPlacementChange> redoHistory = [];
 
     internal MachinePlanningBoardViewModel(
         Func<AssignmentOverridePrompt, string?>? requestOverrideReason = null)
@@ -57,6 +59,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public event EventHandler? PlanChanged;
+
+    internal event EventHandler? HistoryChanged;
 
     public ObservableCollection<PlanningOperationViewModel> Pool { get; } = [];
 
@@ -112,6 +116,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             if (SetField(ref isBusy, value))
             {
                 OnPropertyChanged(nameof(CanDrag));
+                OnPropertyChanged(nameof(CanUndo));
+                OnPropertyChanged(nameof(CanRedo));
                 OnPropertyChanged(nameof(CanAddMachine));
                 OnPropertyChanged(nameof(CanAddCalendar));
                 RefreshCommand.RaiseCanExecuteChanged();
@@ -121,6 +127,10 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     }
 
     public bool CanDrag => isEditor && !IsBusy;
+
+    internal bool CanUndo => isEditor && !IsBusy && undoHistory.Count > 0;
+
+    internal bool CanRedo => isEditor && !IsBusy && redoHistory.Count > 0;
 
     public bool CanAddMachine => isEditor && apiClient is not null && !IsBusy;
 
@@ -456,6 +466,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             return;
         }
 
+        var before = PlacementFrom(operation);
+
         if (targetPosition < 0)
         {
             targetPosition = 0;
@@ -535,6 +547,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         await RefreshAsync();
+        RecordPlacementChange(operation.BatchOperationId, before, PlacementFor(operation.BatchOperationId));
         PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -544,6 +557,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             return;
         }
+
+        var before = PlacementFrom(operation);
 
         IsBusy = true;
         try
@@ -569,6 +584,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         await RefreshAsync();
+        RecordPlacementChange(operation.BatchOperationId, before, PlacementFor(operation.BatchOperationId));
         PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -634,6 +650,60 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    internal async Task UndoAsync() =>
+        await ReplayPlacementAsync(undoHistory, redoHistory, undo: true);
+
+    internal async Task RedoAsync() =>
+        await ReplayPlacementAsync(redoHistory, undoHistory, undo: false);
+
+    private async Task ReplayPlacementAsync(
+        Stack<ManualPlacementChange> source,
+        Stack<ManualPlacementChange> destination,
+        bool undo)
+    {
+        if (apiClient is null || !isEditor || IsBusy || source.Count == 0)
+        {
+            return;
+        }
+
+        var change = source.Peek();
+        var target = undo ? change.Before : change.After;
+        IsBusy = true;
+        try
+        {
+            if (target.MachineId is null)
+            {
+                await apiClient.UnassignOperationAsync(change.OperationId, clientId, editGeneration);
+            }
+            else
+            {
+                await apiClient.AssignOrMoveOperationAsync(
+                    change.OperationId,
+                    target.MachineId,
+                    target.BacklogPosition ?? 0,
+                    clientId,
+                    editGeneration);
+            }
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+            AddFeedback("blocking", undo ? "Undo rejected" : "Redo rejected", StatusMessage);
+            return;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        source.Pop();
+        destination.Push(change);
+        RaiseHistoryChanged();
+        await RefreshAsync();
+        StatusMessage = undo ? "Manual placement undone." : "Manual placement redone.";
+        PlanChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private bool TryBeginManualChange(PlanningOperationViewModel operation)
     {
         if (apiClient is null || !isEditor || IsBusy)
@@ -646,6 +716,38 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         return true;
+    }
+
+    private void RecordPlacementChange(
+        string operationId,
+        ManualOperationPlacement before,
+        ManualOperationPlacement? after)
+    {
+        if (after is null || before == after)
+        {
+            return;
+        }
+
+        undoHistory.Push(new ManualPlacementChange(operationId, before, after));
+        redoHistory.Clear();
+        RaiseHistoryChanged();
+    }
+
+    private ManualOperationPlacement PlacementFrom(PlanningOperationViewModel operation) =>
+        new(operation.MachineId, operation.BacklogPosition);
+
+    private ManualOperationPlacement? PlacementFor(string operationId) =>
+        FindOperation(operationId) is { } operation ? PlacementFrom(operation) : null;
+
+    private PlanningOperationViewModel? FindOperation(string operationId) => Pool
+        .Concat(Machines.SelectMany(machine => machine.Backlog))
+        .FirstOrDefault(operation => operation.BatchOperationId == operationId);
+
+    private void RaiseHistoryChanged()
+    {
+        OnPropertyChanged(nameof(CanUndo));
+        OnPropertyChanged(nameof(CanRedo));
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void Apply(PlanningBoardSnapshot snapshot)
@@ -839,6 +941,13 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 internal sealed record CalendarWorkweekOption(string Label, IReadOnlyList<string> Workdays);
 
 internal sealed record CalendarShiftOption(string Label, string StartsAt, string EndsAt);
+
+internal sealed record ManualOperationPlacement(string? MachineId, int? BacklogPosition);
+
+internal sealed record ManualPlacementChange(
+    string OperationId,
+    ManualOperationPlacement Before,
+    ManualOperationPlacement After);
 
 internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
 {

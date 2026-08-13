@@ -7,6 +7,10 @@
         Background="{StaticResource CanvasBrush}"
         Foreground="{StaticResource PrimaryTextBrush}"
         FontFamily="Segoe UI">
+    <Window.InputBindings>
+        <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
+        <KeyBinding Key="X" Modifiers="Control" Command="{Binding RedoCommand}" />
+    </Window.InputBindings>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

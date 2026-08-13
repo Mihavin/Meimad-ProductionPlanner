@@ -31,6 +31,14 @@ Use the server logs to identify database/calculation costs and attach a `TraceLi
 
 5. **Exact-overlap lane layout previously rescanned all intervals for every interval.** This was an O(n²) per-machine scan. It is now grouped once by start/end before drawing, making this part roughly O(n log n) due to group ordering.
 
+6. **Dependency-arrow lookup previously rescanned every displayed interval for each endpoint.** It now builds an operation endpoint map once per render, avoiding repeated full timeline scans for selected-batch arrows.
+
+## Implemented optimizations
+
+- Employee exceptions are now loaded in one indexed query and grouped by resource in memory. The existing `(resource_id, exception_date, id)` index supports the date-filtered lookup.
+- The baseline engine calculation for missed-start warnings now runs only when the Timeline has a later forecast cursor *and* at least one not-started operation. In-progress-only projections no longer pay for a comparison that cannot produce a warning.
+- Exact-overlap lane assignment and dependency-arrow endpoints are precomputed once per machine/render instead of repeatedly scanning the same interval lists.
+
 ## Concrete optimization steps
 
 1. **Batch employee exceptions in one SQL query.** Fetch exceptions for all active resources with one join (or an `IN` list), group them in memory by resource ID, and retain the existing snapshot transaction. Add an index on `(resource_id, exception_date)` if it is not already present. Do this when `resources and exceptions` is material in production traces.

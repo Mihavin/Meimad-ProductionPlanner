@@ -41,6 +41,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
+        MachinePlanningBoard.HistoryChanged += (_, _) => RaiseCommandStates();
         CaseWorkspace.PlanChanged += (_, _) => RefreshTimelineAfterPlanChange();
         MachinePlanningBoard.PlanChanged += (_, _) =>
         {
@@ -65,6 +66,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         RejectTransferCommand = new AsyncCommand(
             () => DecideTransferAsync(release: false),
             CanDecideTransfer);
+        UndoCommand = new AsyncCommand(
+            MachinePlanningBoard.UndoAsync,
+            () => !IsBusy && MachinePlanningBoard.CanUndo);
+        RedoCommand = new AsyncCommand(
+            MachinePlanningBoard.RedoAsync,
+            () => !IsBusy && MachinePlanningBoard.CanRedo);
     }
 
     private void RefreshTimelineAfterPlanChange()
@@ -82,6 +89,10 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public AsyncCommand ApproveTransferCommand { get; }
 
     public AsyncCommand RejectTransferCommand { get; }
+
+    public AsyncCommand UndoCommand { get; }
+
+    public AsyncCommand RedoCommand { get; }
 
     public CaseWorkspaceViewModel CaseWorkspace { get; }
 
@@ -411,6 +422,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         ReleaseEditCommand.RaiseCanExecuteChanged();
         ApproveTransferCommand.RaiseCanExecuteChanged();
         RejectTransferCommand.RaiseCanExecuteChanged();
+        UndoCommand.RaiseCanExecuteChanged();
+        RedoCommand.RaiseCanExecuteChanged();
         Setup.UpdateConnectionCommandStates();
     }
 
