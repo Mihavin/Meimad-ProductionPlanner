@@ -330,6 +330,42 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Sequential_dependency_chain_auto_shifts_all_children_after_a_parent_downtime_delay()
+    {
+        var backlogs = new[]
+        {
+            Backlog("machine-1", [Operation("op-10", 0, 2)]),
+            Backlog("machine-2", [Operation("op-20", 0, 1)]),
+            Backlog("machine-3", [Operation("op-30", 0, 1)])
+        };
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            backlogs,
+            [
+                Calendar("machine-1", Window(8, 17)),
+                Calendar("machine-2", Window(8, 17)),
+                Calendar("machine-3", Window(8, 17))
+            ],
+            SetupCalendar(Window(8, 17)),
+            [new TimelineDowntime("maintenance", "machine-1", Utc(8), Utc(10), "Maintenance")],
+            [
+                new TimelineDependency("10-20", TimelineDependencyType.Sequential, "op-10", "op-20"),
+                new TimelineDependency("20-30", TimelineDependencyType.Sequential, "op-20", "op-30")
+            ]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(Utc(10), result.Operations.Single(value => value.OperationId == "op-10").StartsAt);
+        var child = result.Operations.Single(value => value.OperationId == "op-20");
+        var grandchild = result.Operations.Single(value => value.OperationId == "op-30");
+        Assert.Equal(Utc(12), child.StartsAt);
+        Assert.Equal(Utc(13), grandchild.StartsAt);
+        Assert.Equal("op-10", Assert.Single(child.WaitingIntervals).Detail);
+        Assert.Equal("op-20", Assert.Single(grandchild.WaitingIntervals).Detail);
+        Assert.Equal(
+            ["op-10", "op-20", "op-30"],
+            backlogs.SelectMany(value => value.Operations).Select(value => value.OperationId));
+    }
+
+    [Fact]
     public void Child_with_multiple_sequential_parents_waits_for_the_latest_finish()
     {
         var result = new TimelineCalculationEngine().Calculate(Input(
