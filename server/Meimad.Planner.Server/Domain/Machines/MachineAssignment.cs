@@ -14,4 +14,7 @@ internal sealed record MachineBacklogItem(
     string BatchId,
     int OperationNumber,
     string OperationName,
-    string? RequiredMachineType);
+    string? RequiredMachineType,
+    DateTimeOffset? ActualStart = null,
+    DateTimeOffset? ActualEnd = null,
+    string? ActualMachineId = null);

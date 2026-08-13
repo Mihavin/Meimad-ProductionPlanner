@@ -36,7 +36,10 @@ internal sealed record PlanningBoardOperation(
     string? ActivePauseReason,
     string? PausedBy,
     DateTimeOffset? PauseStartedAt,
-    string? CaseName = null);
+    string? CaseName = null,
+    DateTimeOffset? ActualStart = null,
+    DateTimeOffset? ActualEnd = null,
+    string? ActualMachineId = null);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

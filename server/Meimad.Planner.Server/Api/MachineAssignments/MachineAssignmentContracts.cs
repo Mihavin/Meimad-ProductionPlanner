@@ -42,14 +42,20 @@ internal sealed record MachineBacklogItemResponse(
     string BatchId,
     int OperationNumber,
     string OperationName,
-    string? RequiredMachineType)
+    string? RequiredMachineType,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? ActualMachineId)
 {
     internal static MachineBacklogItemResponse FromDomain(MachineBacklogItem item) => new(
         MachineAssignmentResponse.FromDomain(item.Assignment),
         item.BatchId,
         item.OperationNumber,
         item.OperationName,
-        item.RequiredMachineType);
+        item.RequiredMachineType,
+        item.ActualStart,
+        item.ActualEnd,
+        item.ActualMachineId);
 }
 
 internal sealed record MachineBacklogResponse(
@@ -84,12 +90,18 @@ internal sealed record BatchOperationExecutionResponse(
     string BatchOperationId,
     string MachineId,
     string Status,
-    int Version)
+    int Version,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? ActualMachineId)
 {
     internal static BatchOperationExecutionResponse FromApplication(
         BatchOperationExecutionResult result) => new(
         result.BatchOperationId,
         result.MachineId,
         result.Status,
-        result.Version);
+        result.Version,
+        result.ActualStart,
+        result.ActualEnd,
+        result.ActualMachineId);
 }

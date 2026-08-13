@@ -4,7 +4,7 @@
 - **Current change review date:** 2026-08-13
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.302, Debug and Release
-- **Verdict:** The schema-v22 Server and Windows automated suites pass with 327 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
+- **Verdict:** The schema-v23 Server and Windows automated suites pass with 335 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
 
 ## 0. Schema-v17 change addendum (automated pass; manual checks pending)
 
@@ -25,14 +25,15 @@ Static documentation/code review identifies the following additions in the curre
 - API-level assignment persistence/reload into Timeline, same-Case operations split across Machines, duration derivation without planned timestamps, failed-dependency propagation without false cycle classification, precise missing-worker-role conflict text, structured Timeline-input logging, and replay of a client Timeline read invalidated while in flight.
 - explicit paused-operation Reset to `not_started`, retained assignment/backlog position, closed pause event, derived Batch/Order rollback, structured `operation_reset` audit, and compact client control/refresh behavior.
 - nearest-feasible fixed-backlog Timeline placement with operation-linked Machine/setup/day-shift/resource/downtime/pause/dependency waiting, assigned-but-blocked visibility, no-leapfrog propagation, common resource retry for locked groups, and overlapping-wait renderer lanes.
+- schema v23 authoritative Start/Finish actual timestamps and Machine history, Reset clearing, floating not-started forecasts, fixed in-progress actual start, completed historical blocks, completed-predecessor actual-finish constraints, and forecast/actual Timeline UI metadata.
 
 Current automated result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 233 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 94 | 0 | 0 |
-| **Total** | **327** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 239 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 96 | 0 | 0 |
+| **Total** | **335** | **0** | **0** |
 
 Focused current tests cover schema-v10 through schema-v22 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, strict cross-type assignment confirmation/audit, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
 

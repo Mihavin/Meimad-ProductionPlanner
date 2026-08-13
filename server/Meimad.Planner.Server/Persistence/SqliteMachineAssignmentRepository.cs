@@ -268,7 +268,10 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                    batch_operations.production_batch_id,
                    batch_operations.operation_number,
                    batch_operations.name,
-                   batch_operations.required_machine_type
+                   batch_operations.required_machine_type,
+                   batch_operations.actual_start,
+                   batch_operations.actual_end,
+                   batch_operations.actual_machine_id
             FROM machine_assignments
             JOIN batch_operations
               ON batch_operations.id = machine_assignments.batch_operation_id
@@ -285,7 +288,10 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 reader.GetString(7),
                 reader.GetInt32(8),
                 reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10)));
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : ParseInstant(reader.GetString(11)),
+                reader.IsDBNull(12) ? null : ParseInstant(reader.GetString(12)),
+                reader.IsDBNull(13) ? null : reader.GetString(13)));
         }
 
         return items;
@@ -324,6 +330,25 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             _ => throw new BatchOperationTransitionException(execution.Status, action)
         };
 
+        var actualStart = action switch
+        {
+            BatchOperationExecutionAction.Start => execution.ActualStart ?? now,
+            BatchOperationExecutionAction.Reset => null,
+            _ => execution.ActualStart
+        };
+        var actualEnd = action switch
+        {
+            BatchOperationExecutionAction.Finish => now,
+            BatchOperationExecutionAction.Reset => null,
+            _ => execution.ActualEnd
+        };
+        var actualMachineId = action switch
+        {
+            BatchOperationExecutionAction.Start => execution.ActualMachineId ?? execution.MachineId,
+            BatchOperationExecutionAction.Reset => null,
+            _ => execution.ActualMachineId
+        };
+
         if (action == BatchOperationExecutionAction.Start)
         {
             if (execution.BacklogPosition.Value != 0)
@@ -340,10 +365,21 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             update.Transaction = transaction;
             update.CommandText = """
                 UPDATE batch_operations
-                SET status = $status, version = version + 1, updated_at = $updatedAt
+                SET status = $status,
+                    actual_start = $actualStart,
+                    actual_end = $actualEnd,
+                    actual_machine_id = $actualMachineId,
+                    version = version + 1,
+                    updated_at = $updatedAt
                 WHERE id = $id;
                 """;
             update.Parameters.AddWithValue("$status", targetStatus);
+            update.Parameters.Add("$actualStart", SqliteType.Text).Value =
+                actualStart.HasValue ? FormatInstant(actualStart.Value) : DBNull.Value;
+            update.Parameters.Add("$actualEnd", SqliteType.Text).Value =
+                actualEnd.HasValue ? FormatInstant(actualEnd.Value) : DBNull.Value;
+            update.Parameters.Add("$actualMachineId", SqliteType.Text).Value =
+                actualMachineId is null ? DBNull.Value : actualMachineId;
             update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
             update.Parameters.AddWithValue("$id", batchOperationId);
             await update.ExecuteNonQueryAsync(cancellationToken);
@@ -417,14 +453,24 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 ["batchOperationId"]=batchOperationId,["productionBatchId"]=execution.BatchId,
                 ["machineId"]=execution.MachineId },
             pauseReason?.ReasonType, pauseReason?.Comment,
-            new { status=execution.Status }, new { status=targetStatus,pauseReason }), cancellationToken);
+            new
+            {
+                status = execution.Status,
+                actualStart = execution.ActualStart,
+                actualEnd = execution.ActualEnd,
+                actualMachineId = execution.ActualMachineId
+            },
+            new { status=targetStatus,actualStart,actualEnd,actualMachineId,pauseReason }), cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
         return new BatchOperationExecutionResult(
             batchOperationId,
             execution.MachineId,
             targetStatus,
-            execution.Version + 1);
+            execution.Version + 1,
+            actualStart,
+            actualEnd,
+            actualMachineId);
     }
 
     private static async Task InsertPauseEventAsync(
@@ -485,7 +531,10 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             SELECT batch_operations.status, batch_operations.version,
                    batch_operations.production_batch_id,
                    machine_assignments.id, machine_assignments.machine_id,
-                   machine_assignments.backlog_position
+                   machine_assignments.backlog_position,
+                   batch_operations.actual_start,
+                   batch_operations.actual_end,
+                   batch_operations.actual_machine_id
             FROM batch_operations
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
@@ -504,7 +553,10 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetInt32(5));
+            reader.IsDBNull(5) ? null : reader.GetInt32(5),
+            reader.IsDBNull(6) ? null : ParseInstant(reader.GetString(6)),
+            reader.IsDBNull(7) ? null : ParseInstant(reader.GetString(7)),
+            reader.IsDBNull(8) ? null : reader.GetString(8));
     }
 
     private static async Task UpdateProductionBatchStatusAsync(
@@ -974,5 +1026,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         string BatchId,
         string? AssignmentId,
         string? MachineId,
-        int? BacklogPosition);
+        int? BacklogPosition,
+        DateTimeOffset? ActualStart,
+        DateTimeOffset? ActualEnd,
+        string? ActualMachineId);
 }

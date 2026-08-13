@@ -26,7 +26,29 @@ internal static class TimelineEndpoints
                 context);
         }
 
-        return Results.Ok(await service.CalculateAsync(from, to, cancellationToken));
+        DateTimeOffset? asOf = null;
+        if (context.Request.Query.TryGetValue("asOf", out var asOfValues))
+        {
+            if (!TryReadInstant(asOfValues, out var parsedAsOf))
+            {
+                return PlanningHttpSupport.Error(
+                    StatusCodes.Status400BadRequest,
+                    "invalid_timeline_as_of",
+                    "Optional query parameter 'asOf' must be an RFC 3339 instant.",
+                    context);
+            }
+            asOf = parsedAsOf;
+            if (asOf < from || asOf >= to)
+            {
+                return PlanningHttpSupport.Error(
+                    StatusCodes.Status400BadRequest,
+                    "timeline_as_of_outside_horizon",
+                    "Optional query parameter 'asOf' must fall inside the requested Timeline horizon.",
+                    context);
+            }
+        }
+
+        return Results.Ok(await service.CalculateAsync(from, to, asOf, cancellationToken));
     }
 
     private static bool TryReadInstant(string? value, out DateTimeOffset instant) =>

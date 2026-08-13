@@ -358,6 +358,17 @@ internal interface IPlannerApiClient : IDisposable
         DateTimeOffset to,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Allows deterministic Timeline requests in diagnostics and tests. Normal
+    /// interactive refreshes omit <paramref name="asOf"/> and use Server time.
+    /// </summary>
+    Task<TimelineSnapshot> GetTimelineAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        DateTimeOffset? asOf,
+        CancellationToken cancellationToken = default) =>
+        GetTimelineAsync(from, to, cancellationToken);
+
     Task AssignOrMoveOperationAsync(
         string batchOperationId,
         string machineId,
@@ -1204,11 +1215,21 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         DateTimeOffset from,
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
+        => await GetTimelineAsync(from, to, asOf: null, cancellationToken: cancellationToken);
+
+    public async Task<TimelineSnapshot> GetTimelineAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        DateTimeOffset? asOf,
+        CancellationToken cancellationToken = default)
     {
         var fromValue = Uri.EscapeDataString(from.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         var toValue = Uri.EscapeDataString(to.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        var asOfQuery = asOf.HasValue
+            ? $"&asOf={Uri.EscapeDataString(asOf.Value.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture))}"
+            : string.Empty;
         using var response = await httpClient.GetAsync(
-            $"api/v1/timeline?from={fromValue}&to={toValue}",
+            $"api/v1/timeline?from={fromValue}&to={toValue}{asOfQuery}",
             cancellationToken);
         return await ReadSuccessAsync<TimelineSnapshot>(response, cancellationToken);
     }

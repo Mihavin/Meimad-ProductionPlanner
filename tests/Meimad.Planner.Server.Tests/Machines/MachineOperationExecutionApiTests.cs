@@ -12,6 +12,47 @@ namespace Meimad.Planner.Server.Tests.Machines;
 public sealed class MachineOperationExecutionApiTests
 {
     [Fact]
+    public async Task Start_and_finish_capture_authoritative_actual_times_while_resume_retains_start()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditHeaders(client);
+
+            using var started = await client.PostAsync("/api/v1/batch-operations/op-1/start", null);
+            started.EnsureSuccessStatusCode();
+            using var startedJson = JsonDocument.Parse(await started.Content.ReadAsStringAsync());
+            var actualStart = startedJson.RootElement.GetProperty("actualStart").GetDateTimeOffset();
+            Assert.Equal("machine-1", startedJson.RootElement.GetProperty("actualMachineId").GetString());
+            Assert.Equal(JsonValueKind.Null, startedJson.RootElement.GetProperty("actualEnd").ValueKind);
+
+            Assert.Equal("suspended", await PostActionAsync(client, "op-1", "suspend"));
+            using var resumed = await client.PostAsync("/api/v1/batch-operations/op-1/start", null);
+            resumed.EnsureSuccessStatusCode();
+            using var resumedJson = JsonDocument.Parse(await resumed.Content.ReadAsStringAsync());
+            Assert.Equal(actualStart, resumedJson.RootElement.GetProperty("actualStart").GetDateTimeOffset());
+            Assert.Equal(JsonValueKind.Null, resumedJson.RootElement.GetProperty("actualEnd").ValueKind);
+
+            using var finished = await client.PostAsync("/api/v1/batch-operations/op-1/finish", null);
+            finished.EnsureSuccessStatusCode();
+            using var finishedJson = JsonDocument.Parse(await finished.Content.ReadAsStringAsync());
+            var actualEnd = finishedJson.RootElement.GetProperty("actualEnd").GetDateTimeOffset();
+            Assert.True(actualEnd >= actualStart);
+            Assert.Equal(actualStart, finishedJson.RootElement.GetProperty("actualStart").GetDateTimeOffset());
+            Assert.Equal("machine-1", finishedJson.RootElement.GetProperty("actualMachineId").GetString());
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal(actualStart, DateTimeOffset.Parse((string)(await ScalarAsync(connection,
+                "SELECT actual_start FROM batch_operations WHERE id = 'op-1';"))!));
+            Assert.Equal(actualEnd, DateTimeOffset.Parse((string)(await ScalarAsync(connection,
+                "SELECT actual_end FROM batch_operations WHERE id = 'op-1';"))!));
+            Assert.Equal("machine-1", await ScalarAsync(connection,
+                "SELECT actual_machine_id FROM batch_operations WHERE id = 'op-1';"));
+        });
+    }
+
+    [Fact]
     public async Task Start_suspend_resume_and_finish_advance_machine_backlog()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -174,6 +215,12 @@ public sealed class MachineOperationExecutionApiTests
             await using var connection = await database.OpenConnectionAsync();
             Assert.Equal("not_started", await ScalarAsync(connection,
                 "SELECT status FROM batch_operations WHERE id = 'op-1';"));
+            Assert.IsType<DBNull>(await ScalarAsync(connection,
+                "SELECT actual_start FROM batch_operations WHERE id = 'op-1';"));
+            Assert.IsType<DBNull>(await ScalarAsync(connection,
+                "SELECT actual_end FROM batch_operations WHERE id = 'op-1';"));
+            Assert.IsType<DBNull>(await ScalarAsync(connection,
+                "SELECT actual_machine_id FROM batch_operations WHERE id = 'op-1';"));
             Assert.Equal("assignment-1", await ScalarAsync(connection,
                 "SELECT id FROM machine_assignments WHERE batch_operation_id = 'op-1';"));
             Assert.Equal(0L, (long)(await ScalarAsync(connection,

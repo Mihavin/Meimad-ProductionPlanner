@@ -128,7 +128,10 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                             operation_pause_events.tooling_item_description,
                             operation_pause_events.request_description,
                             operation_pause_events.comment),
-                   cases.name
+                   cases.name,
+                   batch_operations.actual_start,
+                   batch_operations.actual_end,
+                   batch_operations.actual_machine_id
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -175,7 +178,10 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 reader.IsDBNull(21) ? null : $"{reader.GetString(21).Replace('_', ' ')}: {reader.GetString(24)}",
                 GetNullableString(reader, 22),
                 GetNullableString(reader, 23) is { } pausedAt ? DateTimeOffset.Parse(pausedAt) : null,
-                reader.GetString(25)));
+                reader.GetString(25),
+                GetNullableString(reader, 26) is { } actualStart ? DateTimeOffset.Parse(actualStart) : null,
+                GetNullableString(reader, 27) is { } actualEnd ? DateTimeOffset.Parse(actualEnd) : null,
+                GetNullableString(reader, 28)));
         }
 
         return operations;

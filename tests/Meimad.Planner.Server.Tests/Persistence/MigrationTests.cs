@@ -43,7 +43,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(22L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(23L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -104,6 +104,15 @@ public sealed class MigrationTests
         Assert.Equal("weekly_employee_efficiency_report", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 22;";
         Assert.Equal("structured_event_log", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 23;";
+        Assert.Equal("operation_actual_times", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*)
+            FROM pragma_table_info('batch_operations')
+            WHERE name IN ('actual_start', 'actual_end', 'actual_machine_id');
+            """;
+        Assert.Equal(3L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         foreach (var table in EntityTables)
         {
@@ -128,7 +137,52 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(22L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(23L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Actual_time_migration_does_not_fabricate_legacy_history()
+    {
+        await using var fixture = TemporaryDatabase.CreateUnmigrated();
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.CommandText = """
+                CREATE TABLE machines (id TEXT PRIMARY KEY);
+                CREATE TABLE batch_operations (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL);
+                INSERT INTO batch_operations (id, status, updated_at) VALUES
+                    ('legacy-running', 'in_progress', '2026-08-13T08:00:00Z'),
+                    ('legacy-complete', 'completed', '2026-08-13T09:00:00Z');
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        await using (var transaction = connection.BeginTransaction())
+        {
+            await new SchemaV23OperationActualTimesMigration().ApplyAsync(
+                connection, transaction, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        await using var read = connection.CreateCommand();
+        read.CommandText = """
+            SELECT actual_start, actual_end, actual_machine_id
+            FROM batch_operations
+            ORDER BY id;
+            """;
+        await using var reader = await read.ExecuteReaderAsync();
+        var rowCount = 0;
+        while (await reader.ReadAsync())
+        {
+            rowCount++;
+            Assert.True(reader.IsDBNull(0));
+            Assert.True(reader.IsDBNull(1));
+            Assert.True(reader.IsDBNull(2));
+        }
+        Assert.Equal(2, rowCount);
     }
 
     [Fact]
@@ -391,7 +445,11 @@ public sealed class MigrationTests
                 DROP TABLE eink_package_revisions;
                 DROP TABLE edit_requests;
                 ALTER TABLE machines DROP COLUMN picture_reference;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22);
+                DROP INDEX ix_batch_operations_actual_machine_time;
+                ALTER TABLE batch_operations DROP COLUMN actual_machine_id;
+                ALTER TABLE batch_operations DROP COLUMN actual_end;
+                ALTER TABLE batch_operations DROP COLUMN actual_start;
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -526,7 +584,11 @@ public sealed class MigrationTests
                 ALTER TABLE eink_package_revisions DROP COLUMN job_tools_json;
                 ALTER TABLE eink_package_revisions DROP COLUMN expected_machine_tools_json;
                 ALTER TABLE eink_package_revisions DROP COLUMN local_checklist_items_json;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22);
+                DROP INDEX ix_batch_operations_actual_machine_time;
+                ALTER TABLE batch_operations DROP COLUMN actual_machine_id;
+                ALTER TABLE batch_operations DROP COLUMN actual_end;
+                ALTER TABLE batch_operations DROP COLUMN actual_start;
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -657,7 +719,11 @@ public sealed class MigrationTests
                 ALTER TABLE eink_package_revisions DROP COLUMN job_tools_json;
                 ALTER TABLE eink_package_revisions DROP COLUMN expected_machine_tools_json;
                 ALTER TABLE eink_package_revisions DROP COLUMN local_checklist_items_json;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22);
+                DROP INDEX ix_batch_operations_actual_machine_time;
+                ALTER TABLE batch_operations DROP COLUMN actual_machine_id;
+                ALTER TABLE batch_operations DROP COLUMN actual_end;
+                ALTER TABLE batch_operations DROP COLUMN actual_start;
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
@@ -743,7 +809,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 23;";
+            command.CommandText = "PRAGMA user_version = 24;";
             await command.ExecuteNonQueryAsync();
         }
 

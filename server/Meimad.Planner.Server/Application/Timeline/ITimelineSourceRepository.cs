@@ -57,7 +57,10 @@ internal sealed record TimelineSourceOperation(
     string? PriorityOrderNumber,
     string? ActivePauseReason,
     string? PausedBy,
-    DateTimeOffset? PauseStartedAt);
+    DateTimeOffset? PauseStartedAt,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? ActualMachineId);
 
 internal sealed record TimelineSourceResource(
     string ResourceId,

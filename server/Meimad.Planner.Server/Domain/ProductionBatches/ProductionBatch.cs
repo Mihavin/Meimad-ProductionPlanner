@@ -42,4 +42,7 @@ internal sealed record BatchOperation(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false);
+    bool DayShiftOnly = false,
+    DateTimeOffset? ActualStart = null,
+    DateTimeOffset? ActualEnd = null,
+    string? ActualMachineId = null);

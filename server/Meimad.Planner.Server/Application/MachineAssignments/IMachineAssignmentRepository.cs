@@ -68,4 +68,7 @@ internal sealed record BatchOperationExecutionResult(
     string BatchOperationId,
     string MachineId,
     string Status,
-    int Version);
+    int Version,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? ActualMachineId);

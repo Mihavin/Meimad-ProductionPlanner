@@ -181,7 +181,7 @@ public partial class TimelineView : UserControl
                 .ToArray();
             var lane = Array.IndexOf(exactOverlaps, interval);
             var laneHeight = (RowHeight - 6) / Math.Max(1, exactOverlaps.Length);
-            var label = IntervalLabel(interval);
+            var label = $"{interval.TimingLabel}: {IntervalLabel(interval)}";
             var block = new Border
             {
                 Width = width,
@@ -201,6 +201,7 @@ public partial class TimelineView : UserControl
                     Margin = new Thickness(5, 0, 5, 0)
                 }
             };
+            block.ToolTip = IntervalToolTip(interval, label);
             Canvas.SetLeft(block, x);
             Canvas.SetTop(block, y + 3 + lane * laneHeight);
             TimelineCanvas.Children.Add(block);
@@ -323,6 +324,22 @@ public partial class TimelineView : UserControl
         TimelineCanvas.Children.Add(block);
         return block;
     }
+
+    private static string IntervalToolTip(TimelineInterval interval, string label)
+    {
+        var forecast = interval.ForecastStart.HasValue || interval.ForecastEnd.HasValue
+            ? $"\nForecast: {FormatLocal(interval.ForecastStart)} → {FormatLocal(interval.ForecastEnd)}"
+            : string.Empty;
+        var actual = interval.ActualStart.HasValue || interval.ActualEnd.HasValue
+            ? $"\nActual: {FormatLocal(interval.ActualStart)} → {FormatLocal(interval.ActualEnd)}"
+            : string.Empty;
+        var detail = string.IsNullOrWhiteSpace(interval.Detail) ? string.Empty : $"\n{interval.Detail}";
+        return $"{label}\n{interval.TimingLabel}\nDisplayed: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} → {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
+    }
+
+    private static string FormatLocal(DateTimeOffset? value) => value.HasValue
+        ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+        : "—";
 
     private void AddLine(double x1, double y1, double x2, double y2, Color color, double thickness)
     {

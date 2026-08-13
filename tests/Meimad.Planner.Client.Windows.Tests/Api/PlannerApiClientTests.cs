@@ -611,6 +611,27 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Timeline_can_send_an_optional_utc_as_of_time_for_deterministic_calculation()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "readAt": "2026-08-11T10:00:00Z",
+              "horizonStart": "2026-08-11T08:00:00Z",
+              "horizonEnd": "2026-08-12T08:00:00Z",
+              "batches": [], "machines": [], "dependencies": [], "conflicts": []
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        await api.GetTimelineAsync(
+            DateTimeOffset.Parse("2026-08-11T08:00:00Z"),
+            DateTimeOffset.Parse("2026-08-12T08:00:00Z"),
+            DateTimeOffset.Parse("2026-08-11T10:30:00+03:00"));
+
+        Assert.Contains("asOf=2026-08-11T07%3A30%3A00", handler.Requests[0].Path, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Client_assembly_has_no_sqlite_reference()
     {
         var references = typeof(PlannerApiClient).Assembly

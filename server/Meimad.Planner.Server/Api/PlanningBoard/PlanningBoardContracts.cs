@@ -52,7 +52,10 @@ internal sealed record PlanningBoardOperationResponse(
     string? ActivePauseReason,
     string? PausedBy,
     DateTimeOffset? PauseStartedAt,
-    string? CaseName)
+    string? CaseName,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? ActualMachineId)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -81,7 +84,10 @@ internal sealed record PlanningBoardOperationResponse(
         operation.ActivePauseReason,
         operation.PausedBy,
         operation.PauseStartedAt,
-        operation.CaseName);
+        operation.CaseName,
+        operation.ActualStart,
+        operation.ActualEnd,
+        operation.ActualMachineId);
 }
 
 internal sealed record PlanningBoardMachineResponse(

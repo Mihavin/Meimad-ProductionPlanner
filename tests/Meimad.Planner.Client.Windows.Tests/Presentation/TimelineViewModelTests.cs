@@ -27,7 +27,11 @@ public sealed class TimelineViewModelTests
                     new TimelineInterval(
                         "waiting", "machine-1", "op-2", "batch-1", "B-1", "PN-1", 20,
                         "Finish mill", setupEnd, setupEnd.AddHours(1),
-                        "Waiting for OP10 on Machine M-1 to finish.")
+                        "Waiting for OP10 on Machine M-1 to finish."),
+                    new TimelineInterval(
+                        "production", "machine-1", "op-3", "batch-1", "B-1", "PN-1", 30,
+                        "Forecast finish", setupEnd.AddHours(1), setupEnd.AddHours(2), null,
+                        "forecast", "not_started", setupEnd.AddHours(1), setupEnd.AddHours(2))
                 ])],
             [
                 Dependency("dep-1", "batch-1", 10, 20),
@@ -50,6 +54,8 @@ public sealed class TimelineViewModelTests
         Assert.Equal("server detail", viewModel.Machines[0].Intervals[0].Detail);
         Assert.Equal("waiting", viewModel.Machines[0].Intervals[1].Type);
         Assert.Equal("Waiting for OP10 on Machine M-1 to finish.", viewModel.Machines[0].Intervals[1].Detail);
+        Assert.True(viewModel.Machines[0].Intervals[2].IsForecast);
+        Assert.Equal("Forecast — not started", viewModel.Machines[0].Intervals[2].TimingLabel);
         Assert.Equal("dep-1", Assert.Single(viewModel.SelectedDependencies).DependencyId);
         viewModel.SelectedBatch = viewModel.Batches[1];
         Assert.Equal("dep-2", Assert.Single(viewModel.SelectedDependencies).DependencyId);
@@ -62,6 +68,18 @@ public sealed class TimelineViewModelTests
         viewModel.Invalidate();
         await viewModel.EnsureLoadedAsync();
         Assert.Equal(2, api.RequestCount);
+    }
+
+    [Fact]
+    public void Missed_forecast_start_conflict_has_a_user_facing_explanation()
+    {
+        var conflict = new TimelineConflict(
+            "warning-1", "missed_forecast_start", "warning",
+            "Operation was moved to the next available slot.", ["op-1"], ["machine-1"]);
+
+        Assert.True(conflict.IsMissedForecastStart);
+        Assert.Contains("Planned start was missed", conflict.DisplayMessage, StringComparison.Ordinal);
+        Assert.Contains("next available slot", conflict.DisplayMessage, StringComparison.Ordinal);
     }
 
     [Fact]

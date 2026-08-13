@@ -76,7 +76,7 @@ The following order is preserved exactly from the v0.3 functional source:
 
 ### Scope
 
-- Implemented schema versions 1-18 for the planning, Setup, resource, holiday, assignment-override, operation-time, downtime, and structured-pause model. Schema v19 extends immutable official E-Ink revisions with planned setup worker/time, worker-photo reference, job/expected Machine tools, and local checklist seed definitions. Schema v20-v21 add weekly reporting. Schema v22 adds an append-only structured planning-event stream and filtered export API without analytics or planning mutation.
+- Implemented schema versions 1-18 for the planning, Setup, resource, holiday, assignment-override, operation-time, downtime, and structured-pause model. Schema v19 extends immutable official E-Ink revisions with planned setup worker/time, worker-photo reference, job/expected Machine tools, and local checklist seed definitions. Schema v20-v21 add weekly reporting. Schema v22 adds an append-only structured planning-event stream and filtered export API without analytics or planning mutation. Schema v23 separates authoritative operation actual timing/Machine history from recalculated Timeline forecasts.
 - Implemented ordered migration metadata, `user_version`, startup application, and rejection of newer unsupported versions.
 - Implemented transactional migration execution, foreign keys on every Server connection, relationship/backlog indexes, selected uniqueness/check constraints, restrictive planning-record deletion, and version/timestamp storage fields.
 - Added isolated deterministic test databases; no live database is committed.

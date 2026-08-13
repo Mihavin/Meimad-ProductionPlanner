@@ -613,7 +613,31 @@ internal sealed record TimelineInterval(
     string? OperationName,
     DateTimeOffset StartsAt,
     DateTimeOffset EndsAt,
-    string? Detail);
+    string? Detail,
+    string? TimingKind = null,
+    string? OperationStatus = null,
+    DateTimeOffset? ForecastStart = null,
+    DateTimeOffset? ForecastEnd = null,
+    DateTimeOffset? ActualStart = null,
+    DateTimeOffset? ActualEnd = null)
+{
+    /// <summary>
+    /// The server calculation is authoritative. These optional fields let newer
+    /// servers distinguish a floating forecast from recorded shop-floor time,
+    /// while remaining compatible with older Timeline responses.
+    /// </summary>
+    public bool IsForecast => string.Equals(TimingKind, "forecast", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsActual => string.Equals(TimingKind, "actual", StringComparison.OrdinalIgnoreCase);
+
+    public string TimingLabel => IsForecast
+        ? "Forecast — not started"
+        : IsActual
+            ? "Actual"
+            : string.IsNullOrWhiteSpace(OperationStatus)
+                ? "Calculated"
+                : OperationStatus.Replace('_', ' ');
+}
 
 internal sealed record TimelineDependency(
     string DependencyId,
@@ -645,6 +669,13 @@ internal sealed record TimelineConflict(
     IReadOnlyList<string> MachineIds)
 {
     public string SeverityLabel => Severity.ToUpperInvariant();
+
+    public bool IsMissedForecastStart => string.Equals(Code, "missed_forecast_start", StringComparison.OrdinalIgnoreCase);
+
+    public string DisplayMessage => IsMissedForecastStart
+        && !Message.StartsWith("Planned start was missed", StringComparison.OrdinalIgnoreCase)
+            ? $"Planned start was missed. {Message}"
+            : Message;
 }
 
 internal sealed class PlannerApiException : Exception

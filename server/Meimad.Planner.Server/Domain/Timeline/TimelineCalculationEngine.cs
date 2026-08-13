@@ -611,6 +611,16 @@ internal sealed class TimelineCalculationEngine
                 var earliest = predecessors[nodeKey].Count == 0
                     ? horizonStart
                     : predecessors[nodeKey].Max(predecessor => completedFinish[predecessor]);
+                var memberEarliest = node.Members
+                    .Select(operationId => operations[operationId].Operation.EarliestStart)
+                    .Where(value => value.HasValue)
+                    .Select(value => value!.Value.ToUniversalTime())
+                    .DefaultIfEmpty(earliest)
+                    .Max();
+                if (memberEarliest > earliest)
+                {
+                    earliest = memberEarliest;
+                }
                 var scheduled = node.Members.Count == 1
                     ? ScheduleSingle(
                         operations[node.Members[0]],

@@ -32,11 +32,23 @@ internal sealed class TimelineProjectionService
     internal async Task<TimelineProjection> CalculateAsync(
         DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd,
+        CancellationToken cancellationToken = default) =>
+        await CalculateAsync(horizonStart, horizonEnd, null, cancellationToken);
+
+    internal async Task<TimelineProjection> CalculateAsync(
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        DateTimeOffset? asOf,
         CancellationToken cancellationToken = default)
     {
         horizonStart = horizonStart.ToUniversalTime();
         horizonEnd = horizonEnd.ToUniversalTime();
         var source = await repository.ReadAsync(horizonStart, horizonEnd, cancellationToken);
+        var forecastCursor = (asOf ?? source.ReadAt).ToUniversalTime();
+        if (forecastCursor < horizonStart || forecastCursor >= horizonEnd)
+        {
+            forecastCursor = horizonStart;
+        }
         var mappingConflicts = new List<TimelineProjectionConflict>();
         var machinesById = source.Machines.ToDictionary(
             machine => machine.MachineId,
@@ -49,6 +61,11 @@ internal sealed class TimelineProjectionService
                 && operation.MachineId is not null
                 && operation.BacklogPosition.HasValue)
             .ToArray();
+        var actualHistory = source.Operations
+            .Where(operation => operation.ActualStart.HasValue
+                && operation.ActualMachineId is not null
+                && (operation.Status == "completed" || operation.Status == "in_progress"))
+            .ToArray();
 
         logger.LogInformation(
             "Timeline source loaded for {HorizonStart} to {HorizonEnd}: {MachineCount} Machines, {OperationCount} Batch Operations, {AssignedCount} assigned, {ResourceCount} active resources, {DowntimeCount} downtime windows.",
@@ -57,9 +74,10 @@ internal sealed class TimelineProjectionService
         foreach (var operation in assigned)
         {
             logger.LogDebug(
-                "Timeline assigned operation {OperationId} Batch {BatchId} OP{OperationNumber} -> Machine {MachineId} backlog {BacklogPosition}; quantity {PlannedQuantity}, setup {SetupSeconds}, cycle {CycleSeconds}, QA {QaSeconds}, load/unload {LoadUnloadSeconds}.",
+                "Timeline assigned operation {OperationId} Batch {BatchId} OP{OperationNumber} -> Machine {MachineId} backlog {BacklogPosition}; status {Status}, actual {ActualStart} to {ActualEnd}; quantity {PlannedQuantity}, setup {SetupSeconds}, cycle {CycleSeconds}, QA {QaSeconds}, load/unload {LoadUnloadSeconds}.",
                 operation.OperationId, operation.BatchId, operation.OperationNumber,
-                operation.MachineId, operation.BacklogPosition, operation.PlannedQuantity,
+                operation.MachineId, operation.BacklogPosition, operation.Status,
+                operation.ActualStart, operation.ActualEnd, operation.PlannedQuantity,
                 operation.SetupSeconds, operation.CycleSeconds, operation.QaSeconds,
                 operation.LoadUnloadSeconds);
         }
@@ -73,6 +91,19 @@ internal sealed class TimelineProjectionService
                 $"Batch {operation.BatchNumber} OP{operation.OperationNumber} is not assigned to a Machine.",
                 [operation.OperationId],
                 []));
+        }
+
+        foreach (var operation in source.Operations.Where(operation =>
+                     operation.Status == "completed"
+                     && (!operation.ActualStart.HasValue || !operation.ActualEnd.HasValue
+                         || operation.ActualMachineId is null)))
+        {
+            mappingConflicts.Add(Conflict(
+                "actual_history_missing",
+                "attention",
+                $"Batch {operation.BatchNumber} OP{operation.OperationNumber} was completed before authoritative actual timing was recorded.",
+                [operation.OperationId],
+                operation.ActualMachineId is null ? [] : [operation.ActualMachineId]));
         }
 
         var usableOperations = new List<TimelineSourceOperation>();
@@ -194,7 +225,8 @@ internal sealed class TimelineProjectionService
                         operation.LoadUnloadRequiresWorker,
                         operation.DayShiftOnly,
                         operation.PriorityWorkFinishDate,
-                        operation.PriorityOrderNumber))
+                        operation.PriorityOrderNumber,
+                        EarliestForecastStart(operation, source.Operations, forecastCursor)))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number
@@ -215,7 +247,7 @@ internal sealed class TimelineProjectionService
             resourceCalendars.Count(value => value.Role == TimelineResourceRole.SetupWorker),
             resourceCalendars.Count(value => value.Role == TimelineResourceRole.QaWorker),
             resourceCalendars.Count(value => value.Role == TimelineResourceRole.RegularWorker));
-        var calculation = engine.Calculate(new TimelineCalculationInput(
+        var calculationInput = new TimelineCalculationInput(
             horizonStart,
             horizonEnd,
             backlogs,
@@ -229,11 +261,30 @@ internal sealed class TimelineProjectionService
                 downtime.Reason)).ToArray(),
             calculationDependencies.Select(dependency => dependency.Domain).ToArray(),
             resourceCalendars,
-            dayShiftCalendars));
+            dayShiftCalendars);
+        var calculation = engine.Calculate(calculationInput);
+        var baselineBacklogs = backlogs.Select(backlog => backlog with
+        {
+            Operations = backlog.Operations.Select(operation => operation with
+            {
+                EarliestStart = operationsById[operation.OperationId].Status == "not_started"
+                    ? EarliestForecastStart(operationsById[operation.OperationId], source.Operations, horizonStart)
+                    : operation.EarliestStart
+            }).ToArray()
+        }).ToArray();
+        var baselineStarts = forecastCursor > horizonStart
+            ? engine.Calculate(calculationInput with { MachineBacklogs = baselineBacklogs })
+                .Operations.ToDictionary(
+                    operation => operation.OperationId,
+                    operation => operation.StartsAt,
+                    StringComparer.Ordinal)
+            : new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
 
         var intervalsByMachine = calculation.Machines.ToDictionary(
             machine => machine.MachineId,
             StringComparer.Ordinal);
+        var resultsByOperation = calculation.Operations.ToDictionary(
+            operation => operation.OperationId, StringComparer.Ordinal);
         var scheduledOperationIds = calculation.Operations
             .Where(operation => operation.SetupIntervals.Count > 0
                 || (operation.QaIntervals?.Count ?? 0) > 0
@@ -250,20 +301,48 @@ internal sealed class TimelineProjectionService
             conflict.Message,
             conflict.OperationIds,
             conflict.MachineIds)).ToArray();
-        var allConflicts = mappingConflicts.Concat(domainConflicts).ToArray();
+        var missedStartWarnings = forecastCursor > horizonStart
+            ? calculation.Operations
+                .Where(result => operationsById.TryGetValue(result.OperationId, out var operation)
+                    && operation.Status == "not_started"
+                    && baselineStarts.TryGetValue(result.OperationId, out var priorStart)
+                    && priorStart < forecastCursor)
+                .Select(result => Conflict(
+                    "missed_forecast_start",
+                    "attention",
+                    $"Planned start was missed. Batch {operationsById[result.OperationId].BatchNumber} OP{operationsById[result.OperationId].OperationNumber} was recalculated to the next available slot at or after {forecastCursor:O}.",
+                    [result.OperationId],
+                    [result.MachineId]))
+                .ToArray()
+            : [];
+        var overdueWarnings = calculation.Operations
+            .Where(result => operationsById.TryGetValue(result.OperationId, out var operation)
+                && operation.Status == "in_progress"
+                && result.FinishesAt < forecastCursor)
+            .Select(result => Conflict(
+                "in_progress_forecast_overdue",
+                "attention",
+                $"Batch {operationsById[result.OperationId].BatchNumber} OP{operationsById[result.OperationId].OperationNumber} is still in progress after its calculated finish; it was not completed automatically.",
+                [result.OperationId],
+                [result.MachineId]))
+            .ToArray();
+        var allConflicts = mappingConflicts.Concat(domainConflicts)
+            .Concat(missedStartWarnings).Concat(overdueWarnings).ToArray();
         var projectedMachines = source.Machines.Select(machine => new TimelineProjectionMachine(
             machine.MachineId,
             machine.Number,
             machine.Name,
             intervalsByMachine.TryGetValue(machine.MachineId, out var timeline)
                 ? timeline.Intervals.Select(interval => ProjectInterval(
-                    interval, operationsById, machinesById))
+                    interval, operationsById, machinesById, resultsByOperation, forecastCursor))
+                    .Concat(ActualHistoryIntervals(machine.MachineId, actualHistory, horizonStart, horizonEnd, forecastCursor))
                     .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd))
                     .Concat(UnscheduledIntervals(
                         machine.MachineId, assigned, scheduledOperationIds,
                         backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd))
                     .OrderBy(interval => interval.StartsAt).ThenBy(interval => interval.Type).ToArray()
-                : PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd)
+                : ActualHistoryIntervals(machine.MachineId, actualHistory, horizonStart, horizonEnd, forecastCursor)
+                    .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd))
                     .Concat(UnscheduledIntervals(
                         machine.MachineId, assigned, scheduledOperationIds,
                         backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd))
@@ -288,6 +367,21 @@ internal sealed class TimelineProjectionService
         logger.LogInformation(
             "Timeline calculation completed with {ScheduledOperationCount} scheduled operations and {ConflictCount} conflicts.",
             calculation.Operations.Count, projection.Conflicts.Count);
+        foreach (var result in calculation.Operations)
+        {
+            logger.LogDebug(
+                "Timeline forecast operation {OperationId} on Machine {MachineId}: {ForecastStart} to {ForecastEnd}; status {Status}.",
+                result.OperationId, result.MachineId, result.StartsAt, result.FinishesAt,
+                operationsById.GetValueOrDefault(result.OperationId)?.Status);
+        }
+        foreach (var operation in assigned.Where(operation => !scheduledOperationIds.Contains(operation.OperationId)))
+        {
+            logger.LogDebug(
+                "Timeline skipped calculation for assigned operation {OperationId} on Machine {MachineId}; status {Status}; represented as waiting. Conflicts: {ConflictCodes}.",
+                operation.OperationId, operation.MachineId, operation.Status,
+                string.Join(',', allConflicts.Where(conflict => conflict.OperationIds.Contains(operation.OperationId))
+                    .Select(conflict => conflict.Code)));
+        }
         await LogProjectionEventsAsync(projection, cancellationToken);
         return projection;
     }
@@ -514,6 +608,7 @@ internal sealed class TimelineProjectionService
             }
             if (cursor < shift.End) yield return (cursor, shift.End);
         }
+
     }
 
     private static int ParseLocalMinutes(string value, bool allowEndOfDay)
@@ -569,6 +664,24 @@ internal sealed class TimelineProjectionService
 
                     if (predecessor.Status == "completed")
                     {
+                        result.Add(MapDependency(
+                            $"{batch.Key}:{operation.SourceCaseOperationId}",
+                            operation.DependencyType == "sequential"
+                                ? TimelineDependencyType.Sequential
+                                : TimelineDependencyType.ParallelCapable,
+                            predecessor,
+                            operation,
+                            null));
+                        if (operation.DependencyType == "sequential" && !predecessor.ActualEnd.HasValue)
+                        {
+                            conflicts.Add(Conflict(
+                                "actual_finish_missing",
+                                "blocking",
+                                $"Batch {operation.BatchNumber} OP{operation.OperationNumber} cannot use its completed predecessor because the predecessor has no authoritative actual finish.",
+                                [predecessor.OperationId, operation.OperationId],
+                                operation.MachineId is null ? [] : [operation.MachineId]));
+                            blockedOperationIds.Add(operation.OperationId);
+                        }
                         continue;
                     }
 
@@ -686,12 +799,15 @@ internal sealed class TimelineProjectionService
     private static TimelineProjectionInterval ProjectInterval(
         TimelineInterval interval,
         IReadOnlyDictionary<string, TimelineSourceOperation> operations,
-        IReadOnlyDictionary<string, TimelineSourceMachine> machines)
+        IReadOnlyDictionary<string, TimelineSourceMachine> machines,
+        IReadOnlyDictionary<string, TimelineOperationResult> results,
+        DateTimeOffset forecastCursor)
     {
         var operation = interval.OperationId is not null
             && operations.TryGetValue(interval.OperationId, out var found)
                 ? found
                 : null;
+        results.TryGetValue(interval.OperationId ?? string.Empty, out var result);
         return new TimelineProjectionInterval(
             interval.Type.ToString().ToLowerInvariant(),
             interval.MachineId,
@@ -707,8 +823,65 @@ internal sealed class TimelineProjectionService
                 ? interval.Detail?.StartsWith("resource:", StringComparison.Ordinal) == true
                     ? interval.Detail["resource:".Length..]
                     : DependencyWaitingDetail(interval.Detail, operations, machines)
-                : interval.Detail);
+                : interval.Detail,
+            interval.OperationId is null ? null : "forecast",
+            operation?.Status,
+            result?.StartsAt,
+            result?.FinishesAt,
+            operation?.ActualStart,
+            operation?.ActualEnd);
     }
+
+    private static DateTimeOffset EarliestForecastStart(
+        TimelineSourceOperation operation,
+        IReadOnlyList<TimelineSourceOperation> operations,
+        DateTimeOffset forecastCursor)
+    {
+        var earliest = operation.Status == "in_progress" && operation.ActualStart.HasValue
+            ? operation.ActualStart.Value
+            : forecastCursor;
+        if (operation.DependencyType != "sequential"
+            || operation.PredecessorSourceCaseOperationId is null)
+        {
+            return earliest;
+        }
+
+        var completedFinish = operations.FirstOrDefault(candidate =>
+            candidate.BatchId == operation.BatchId
+            && candidate.SourceCaseOperationId == operation.PredecessorSourceCaseOperationId
+            && candidate.Status == "completed")?.ActualEnd;
+        return completedFinish.HasValue && completedFinish.Value > earliest
+            ? completedFinish.Value
+            : earliest;
+    }
+
+    private static TimelineProjectionInterval[] ActualHistoryIntervals(
+        string machineId,
+        IReadOnlyList<TimelineSourceOperation> operations,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        DateTimeOffset asOf) => operations
+        .Where(operation => operation.ActualMachineId == machineId
+            && operation.ActualStart.HasValue
+            && operation.ActualStart < horizonEnd
+            && (operation.ActualEnd ?? asOf) > horizonStart)
+        .Select(operation =>
+        {
+            var startsAt = operation.ActualStart!.Value < horizonStart
+                ? horizonStart : operation.ActualStart.Value;
+            var rawEnd = operation.ActualEnd
+                ?? (asOf > operation.ActualStart.Value ? asOf : operation.ActualStart.Value);
+            var endsAt = rawEnd > horizonEnd ? horizonEnd : rawEnd;
+            return new TimelineProjectionInterval(
+                "production", machineId, operation.OperationId, operation.BatchId,
+                operation.BatchNumber, operation.PartNumber, operation.OperationNumber,
+                operation.OperationName, startsAt, endsAt,
+                operation.Status == "completed" ? "Recorded actual work" : "Actual work elapsed; finish remains forecast",
+                "actual", operation.Status, null, null,
+                operation.ActualStart, operation.ActualEnd);
+        })
+        .Where(interval => interval.EndsAt > interval.StartsAt)
+        .ToArray();
 
     private static TimelineProjectionInterval[] PauseIntervals(
         string machineId, IReadOnlyList<TimelineSourceOperation> operations,

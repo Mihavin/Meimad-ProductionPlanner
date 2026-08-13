@@ -50,7 +50,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         load_unload_requires_worker,
         automatic_loading,
         load_unload_every_n_parts,
-        day_shift_only
+        day_shift_only,
+        actual_start,
+        actual_end,
+        actual_machine_id
         """;
 
     private readonly SqliteDatabase database;
@@ -565,13 +568,17 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         ParseInstant(reader.GetString(11)),
         ParseInstant(reader.GetString(12)),
         reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15) == 1,
-        reader.GetInt32(16) == 1, GetNullableInt32(reader, 17), reader.GetInt32(18) == 1);
+        reader.GetInt32(16) == 1, GetNullableInt32(reader, 17), reader.GetInt32(18) == 1,
+        GetNullableInstant(reader, 19), GetNullableInstant(reader, 20), GetNullableString(reader, 21));
 
     private static string? GetNullableString(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
     private static int? GetNullableInt32(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+
+    private static DateTimeOffset? GetNullableInstant(SqliteDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : ParseInstant(reader.GetString(ordinal));
 
     private static string FormatInstant(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

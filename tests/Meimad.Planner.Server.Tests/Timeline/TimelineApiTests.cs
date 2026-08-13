@@ -202,6 +202,139 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Not_started_forecast_floats_from_as_of_without_changing_status_or_backlog()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+
+            using var originalResponse = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:00:00Z");
+            originalResponse.EnsureSuccessStatusCode();
+            using var original = JsonDocument.Parse(await originalResponse.Content.ReadAsStringAsync());
+            var originalStart = original.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("type").GetString() is "setup" or "production")
+                .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
+
+            using var floatedResponse = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T10:30:00Z");
+            floatedResponse.EnsureSuccessStatusCode();
+            using var floated = JsonDocument.Parse(await floatedResponse.Content.ReadAsStringAsync());
+            var floatedStart = floated.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("type").GetString() is "setup" or "production")
+                .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
+            Assert.True(floatedStart >= DateTimeOffset.Parse("2026-08-11T10:30:00Z"));
+            Assert.True(floatedStart > originalStart);
+            Assert.Contains(floated.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "missed_forecast_start"
+                    && conflict.GetProperty("severity").GetString() == "attention");
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var status = connection.CreateCommand();
+            status.CommandText = "SELECT status FROM batch_operations WHERE id = 'op-1';";
+            Assert.Equal("not_started", await status.ExecuteScalarAsync());
+            Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
+        });
+    }
+
+    [Fact]
+    public async Task Timeline_rejects_invalid_optional_as_of()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=invalid");
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task In_progress_operation_keeps_actual_start_and_exposes_elapsed_actual_time()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE batch_operations
+                    SET status = 'in_progress', actual_start = '2026-08-11T08:30:00Z',
+                        actual_machine_id = 'machine-1'
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T09:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var intervals = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray().ToArray();
+            var actual = Assert.Single(intervals, interval =>
+                interval.GetProperty("operationId").GetString() == "op-1"
+                && interval.GetProperty("timingKind").GetString() == "actual");
+            Assert.Equal("2026-08-11T08:30:00+00:00", actual.GetProperty("actualStart").GetString());
+            Assert.Equal("2026-08-11T09:00:00+00:00", actual.GetProperty("endsAt").GetString());
+            Assert.Contains(intervals, interval =>
+                interval.GetProperty("operationId").GetString() == "op-1"
+                && interval.GetProperty("timingKind").GetString() == "forecast"
+                && interval.GetProperty("forecastStart").GetDateTimeOffset()
+                    == DateTimeOffset.Parse("2026-08-11T08:30:00Z"));
+        });
+    }
+
+    [Fact]
+    public async Task Completed_parent_is_historical_and_child_uses_its_actual_finish()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    DELETE FROM machine_assignments WHERE batch_operation_id = 'op-1';
+                    UPDATE machine_assignments SET backlog_position = 0 WHERE batch_operation_id = 'op-2';
+                    UPDATE batch_operations
+                    SET status = 'completed', actual_start = '2026-08-11T08:00:00Z',
+                        actual_end = '2026-08-11T10:00:00Z', actual_machine_id = 'machine-1'
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T09:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var intervals = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray().ToArray();
+            Assert.Contains(intervals, interval =>
+                interval.GetProperty("operationId").GetString() == "op-1"
+                && interval.GetProperty("timingKind").GetString() == "actual"
+                && interval.GetProperty("actualEnd").GetDateTimeOffset()
+                    == DateTimeOffset.Parse("2026-08-11T10:00:00Z"));
+            Assert.True(intervals.Where(interval =>
+                    interval.GetProperty("operationId").GetString() == "op-2"
+                    && interval.GetProperty("timingKind").GetString() == "forecast")
+                .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset())
+                >= DateTimeOffset.Parse("2026-08-11T10:00:00Z"));
+            Assert.Contains(document.RootElement.GetProperty("dependencies").EnumerateArray(),
+                dependency => dependency.GetProperty("fromOperationId").GetString() == "op-1"
+                    && dependency.GetProperty("toOperationId").GetString() == "op-2");
+        });
+    }
+
+    [Fact]
     public async Task Api_assignments_persist_reload_and_project_same_case_operations_on_different_machines()
     {
         await RunWithServerAsync(async (application, client) =>

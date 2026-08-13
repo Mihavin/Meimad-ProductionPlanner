@@ -82,7 +82,7 @@
                                     </Border.Style>
                                     <StackPanel>
                                         <TextBlock Text="{Binding SeverityLabel}" FontWeight="Bold" />
-                                        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                                        <TextBlock Text="{Binding DisplayMessage}" TextWrapping="Wrap" Margin="0,3,0,0" />
                                         <TextBlock Text="{Binding Code}" Foreground="{StaticResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" />
                                     </StackPanel>
                                 </Border>

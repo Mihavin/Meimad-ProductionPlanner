@@ -24,7 +24,8 @@ internal sealed record TimelineOperationInput(
     bool LoadUnloadRequiresWorker = false,
     bool DayShiftOnly = false,
     DateOnly? PriorityWorkFinishDate = null,
-    string? PriorityOrderNumber = null);
+    string? PriorityOrderNumber = null,
+    DateTimeOffset? EarliestStart = null);
 
 internal static class TimelinePriorityComparer
 {

@@ -67,6 +67,9 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
               ON working_calendars.id = machines.working_calendar_id
             LEFT JOIN machine_types ON machine_types.id = machines.machine_type_id
             WHERE machines.is_active = 1
+               OR EXISTS (
+                    SELECT 1 FROM batch_operations
+                    WHERE batch_operations.actual_machine_id = machines.id)
             ORDER BY machines.number COLLATE NOCASE, machines.id;
             """;
         var values = new List<TimelineSourceMachine>();
@@ -130,7 +133,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    COALESCE(operation_pause_events.problem_description,
                             operation_pause_events.tooling_item_description,
                             operation_pause_events.request_description,
-                            operation_pause_events.comment)
+                            operation_pause_events.comment),
+                   batch_operations.actual_start,
+                   batch_operations.actual_end,
+                   batch_operations.actual_machine_id
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -163,7 +169,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 priorityDate, priorityOrder,
                 reader.IsDBNull(25) ? null : $"{reader.GetString(25).Replace('_', ' ')}: {reader.GetString(28)}",
                 NullableString(reader, 26),
-                NullableString(reader, 27) is { } pauseAt ? Parse(pauseAt) : null));
+                NullableString(reader, 27) is { } pauseAt ? Parse(pauseAt) : null,
+                NullableString(reader, 29) is { } actualStart ? Parse(actualStart) : null,
+                NullableString(reader, 30) is { } actualEnd ? Parse(actualEnd) : null,
+                NullableString(reader, 31)));
         }
 
         return values;

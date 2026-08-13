@@ -31,7 +31,13 @@ internal sealed record TimelineProjectionInterval(
     string? OperationName,
     DateTimeOffset StartsAt,
     DateTimeOffset EndsAt,
-    string? Detail);
+    string? Detail,
+    string? TimingKind = null,
+    string? OperationStatus = null,
+    DateTimeOffset? ForecastStart = null,
+    DateTimeOffset? ForecastEnd = null,
+    DateTimeOffset? ActualStart = null,
+    DateTimeOffset? ActualEnd = null);
 
 internal sealed record TimelineProjectionDependency(
     string DependencyId,

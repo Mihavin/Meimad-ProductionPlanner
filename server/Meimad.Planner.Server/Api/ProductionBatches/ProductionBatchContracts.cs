@@ -95,7 +95,10 @@ internal sealed record BatchOperationResponse(
     bool LoadUnloadRequiresWorker,
     bool AutomaticLoading,
     int? LoadUnloadEveryNParts,
-    bool DayShiftOnly)
+    bool DayShiftOnly,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? ActualMachineId)
 {
     internal static BatchOperationResponse FromDomain(BatchOperation operation) => new(
         operation.BatchOperationId,
@@ -116,7 +119,10 @@ internal sealed record BatchOperationResponse(
         operation.LoadUnloadRequiresWorker,
         operation.AutomaticLoading,
         operation.LoadUnloadEveryNParts,
-        operation.DayShiftOnly);
+        operation.DayShiftOnly,
+        operation.ActualStart,
+        operation.ActualEnd,
+        operation.ActualMachineId);
 }
 
 internal sealed record BatchOperationListResponse(
