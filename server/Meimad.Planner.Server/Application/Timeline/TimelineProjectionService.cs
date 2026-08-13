@@ -34,12 +34,22 @@ internal sealed class TimelineProjectionService
         DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd,
         CancellationToken cancellationToken = default) =>
-        await CalculateAsync(horizonStart, horizonEnd, null, cancellationToken);
+        await CalculateAsync(
+            horizonStart, horizonEnd, null, TimelineCalculationMode.Forward, cancellationToken);
 
     internal async Task<TimelineProjection> CalculateAsync(
         DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd,
         DateTimeOffset? asOf,
+        CancellationToken cancellationToken = default) =>
+        await CalculateAsync(
+            horizonStart, horizonEnd, asOf, TimelineCalculationMode.Forward, cancellationToken);
+
+    internal async Task<TimelineProjection> CalculateAsync(
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        DateTimeOffset? asOf,
+        TimelineCalculationMode mode,
         CancellationToken cancellationToken = default)
     {
         var total = Stopwatch.StartNew();
@@ -65,6 +75,33 @@ internal sealed class TimelineProjectionService
                 && operation.MachineId is not null
                 && operation.BacklogPosition.HasValue)
             .ToArray();
+        var calculationMode = mode;
+        if (mode == TimelineCalculationMode.Backward
+            && assigned.Any(operation => operation.Status == "in_progress"))
+        {
+            calculationMode = TimelineCalculationMode.Forward;
+            mappingConflicts.Add(Conflict(
+                "backward_in_progress_fallback",
+                "attention",
+                "Backward projection was not applied because an operation is already in progress. Actual start time remains authoritative and the current manual forward projection is shown.",
+                assigned.Where(operation => operation.Status == "in_progress")
+                    .Select(operation => operation.OperationId).ToArray(),
+                assigned.Where(operation => operation.Status == "in_progress")
+                    .Select(operation => operation.MachineId!).Distinct().ToArray()));
+        }
+        if (mode == TimelineCalculationMode.Backward)
+        {
+            foreach (var operation in assigned.Where(operation =>
+                         !operation.PriorityWorkFinishDate.HasValue))
+            {
+                mappingConflicts.Add(Conflict(
+                    "backward_deadline_missing",
+                    "attention",
+                    $"Batch {operation.BatchNumber} OP{operation.OperationNumber} has no allocated Order Work Finish Date; the selected Timeline horizon end is used as its visual cutoff.",
+                    [operation.OperationId],
+                    [operation.MachineId!]));
+            }
+        }
         var actualHistory = source.Operations
             .Where(operation => operation.ActualStart.HasValue
                 && operation.ActualMachineId is not null
@@ -230,7 +267,15 @@ internal sealed class TimelineProjectionService
                         operation.DayShiftOnly,
                         operation.PriorityWorkFinishDate,
                         operation.PriorityOrderNumber,
-                        EarliestForecastStart(operation, source.Operations, forecastCursor)))
+                        EarliestForecastStart(operation, source.Operations, forecastCursor),
+                        mode == TimelineCalculationMode.Backward
+                            ? BackwardFinishCutoff(
+                                operation.PriorityWorkFinishDate,
+                                horizonStart,
+                                horizonEnd,
+                                mappingConflicts,
+                                operation)
+                            : null))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number
@@ -272,11 +317,13 @@ internal sealed class TimelineProjectionService
                 downtime.Reason)).ToArray(),
             calculationDependencies.Select(dependency => dependency.Domain).ToArray(),
             resourceCalendars,
-            dayShiftCalendars);
+            dayShiftCalendars,
+            calculationMode);
         var calculationStopwatch = Stopwatch.StartNew();
         var calculation = engine.Calculate(calculationInput);
         calculationStopwatch.Stop();
-        var requiresMissedStartBaseline = forecastCursor > horizonStart
+        var requiresMissedStartBaseline = calculationMode == TimelineCalculationMode.Forward
+            && forecastCursor > horizonStart
             && backlogs.SelectMany(backlog => backlog.Operations).Any(operation =>
                 operationsById[operation.OperationId].Status == "not_started");
         var baselineStopwatch = Stopwatch.StartNew();
@@ -347,32 +394,41 @@ internal sealed class TimelineProjectionService
                 [result.MachineId]))
             .ToArray();
         var allConflicts = mappingConflicts.Concat(domainConflicts)
-            .Concat(missedStartWarnings).Concat(overdueWarnings).ToArray();
+            .Concat(missedStartWarnings).Concat(overdueWarnings)
+            .GroupBy(conflict => conflict.ConflictId, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        var intervalPlanningMode = ModeToken(calculationMode);
         var projectedMachines = source.Machines.Select(machine => new TimelineProjectionMachine(
             machine.MachineId,
             machine.Number,
             machine.Name,
             intervalsByMachine.TryGetValue(machine.MachineId, out var timeline)
                 ? timeline.Intervals.Select(interval => ProjectInterval(
-                    interval, operationsById, machinesById, resultsByOperation, forecastCursor))
-                    .Concat(ActualHistoryIntervals(machine.MachineId, actualHistory, horizonStart, horizonEnd, forecastCursor))
-                    .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd))
+                    interval, operationsById, machinesById, resultsByOperation, forecastCursor, calculationMode))
+                    .Concat(ActualHistoryIntervals(machine.MachineId, actualHistory, horizonStart, horizonEnd, forecastCursor, intervalPlanningMode))
+                    .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd, intervalPlanningMode))
                     .Concat(UnscheduledIntervals(
                         machine.MachineId, assigned, scheduledOperationIds,
-                        backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd))
+                        backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd,
+                        intervalPlanningMode))
                     .OrderBy(interval => interval.StartsAt).ThenBy(interval => interval.Type).ToArray()
-                : ActualHistoryIntervals(machine.MachineId, actualHistory, horizonStart, horizonEnd, forecastCursor)
-                    .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd))
+                : ActualHistoryIntervals(machine.MachineId, actualHistory, horizonStart, horizonEnd, forecastCursor, intervalPlanningMode)
+                    .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd, intervalPlanningMode))
                     .Concat(UnscheduledIntervals(
                         machine.MachineId, assigned, scheduledOperationIds,
-                        backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd))
+                        backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd,
+                        intervalPlanningMode))
                     .OrderBy(interval => interval.StartsAt).ThenBy(interval => interval.Type).ToArray())).ToArray();
         var batches = source.Operations
             .GroupBy(operation => operation.BatchId, StringComparer.Ordinal)
             .Select(group => new TimelineProjectionBatch(
                 group.Key,
                 group.First().BatchNumber,
-                group.First().PartNumber))
+                group.First().PartNumber,
+                group.Where(operation => operation.PriorityWorkFinishDate.HasValue)
+                    .Select(operation => operation.PriorityWorkFinishDate)
+                    .Min()))
             .OrderBy(batch => batch.PartNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(batch => batch.BatchNumber, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -380,6 +436,7 @@ internal sealed class TimelineProjectionService
             source.ReadAt,
             horizonStart,
             horizonEnd,
+            ModeToken(mode),
             batches,
             projectedMachines,
             dependencies.Select(dependency => dependency.Projection).ToArray(),
@@ -405,7 +462,10 @@ internal sealed class TimelineProjectionService
                 string.Join(',', allConflicts.Where(conflict => conflict.OperationIds.Contains(operation.OperationId))
                     .Select(conflict => conflict.Code)));
         }
-        await LogProjectionEventsAsync(projection, cancellationToken);
+        if (mode == TimelineCalculationMode.Forward)
+        {
+            await LogProjectionEventsAsync(projection, cancellationToken);
+        }
         return projection;
     }
 
@@ -841,7 +901,8 @@ internal sealed class TimelineProjectionService
         IReadOnlyDictionary<string, TimelineSourceOperation> operations,
         IReadOnlyDictionary<string, TimelineSourceMachine> machines,
         IReadOnlyDictionary<string, TimelineOperationResult> results,
-        DateTimeOffset forecastCursor)
+        DateTimeOffset forecastCursor,
+        TimelineCalculationMode mode)
     {
         var operation = interval.OperationId is not null
             && operations.TryGetValue(interval.OperationId, out var found)
@@ -869,8 +930,52 @@ internal sealed class TimelineProjectionService
             result?.StartsAt,
             result?.FinishesAt,
             operation?.ActualStart,
-            operation?.ActualEnd);
+            operation?.ActualEnd,
+            ModeToken(mode));
     }
+
+    private DateTimeOffset BackwardFinishCutoff(
+        DateOnly? workFinishDate,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        ICollection<TimelineProjectionConflict> conflicts,
+        TimelineSourceOperation operation)
+    {
+        if (!workFinishDate.HasValue)
+        {
+            return horizonEnd;
+        }
+
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(options.TimeZoneId);
+        var nextMidnight = DateTime.SpecifyKind(
+            workFinishDate.Value.AddDays(1).ToDateTime(TimeOnly.MinValue),
+            DateTimeKind.Unspecified);
+        var target = new DateTimeOffset(nextMidnight, timeZone.GetUtcOffset(nextMidnight))
+            .ToUniversalTime();
+        if (target > horizonEnd)
+        {
+            conflicts.Add(Conflict(
+                "backward_deadline_outside_horizon",
+                "attention",
+                $"Batch {operation.BatchNumber} OP{operation.OperationNumber} is due {workFinishDate:yyyy-MM-dd}, after the selected Timeline horizon; the horizon end is used as its temporary visual cutoff.",
+                [operation.OperationId],
+                [operation.MachineId!]));
+            return horizonEnd;
+        }
+        if (target <= horizonStart)
+        {
+            conflicts.Add(Conflict(
+                "backward_schedule_cannot_fit",
+                "blocking",
+                $"Batch {operation.BatchNumber} OP{operation.OperationNumber} is due {workFinishDate:yyyy-MM-dd}, at or before the selected Timeline horizon.",
+                [operation.OperationId],
+                [operation.MachineId!]));
+        }
+        return target;
+    }
+
+    private static string ModeToken(TimelineCalculationMode mode) =>
+        mode == TimelineCalculationMode.Backward ? "backward" : "manual";
 
     private static DateTimeOffset EarliestForecastStart(
         TimelineSourceOperation operation,
@@ -900,7 +1005,8 @@ internal sealed class TimelineProjectionService
         IReadOnlyList<TimelineSourceOperation> operations,
         DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd,
-        DateTimeOffset asOf) => operations
+        DateTimeOffset asOf,
+        string planningMode) => operations
         .Where(operation => operation.ActualMachineId == machineId
             && operation.ActualStart.HasValue
             && operation.ActualStart < horizonEnd
@@ -918,14 +1024,15 @@ internal sealed class TimelineProjectionService
                 operation.OperationName, startsAt, endsAt,
                 operation.Status == "completed" ? "Recorded actual work" : "Actual work elapsed; finish remains forecast",
                 "actual", operation.Status, null, null,
-                operation.ActualStart, operation.ActualEnd);
+                operation.ActualStart, operation.ActualEnd, planningMode);
         })
         .Where(interval => interval.EndsAt > interval.StartsAt)
         .ToArray();
 
     private static TimelineProjectionInterval[] PauseIntervals(
         string machineId, IReadOnlyList<TimelineSourceOperation> operations,
-        DateTimeOffset horizonStart, DateTimeOffset horizonEnd) => operations
+        DateTimeOffset horizonStart, DateTimeOffset horizonEnd,
+        string planningMode) => operations
         .Where(operation => operation.MachineId == machineId
             && operation.ActivePauseReason is not null
             && operation.PauseStartedAt < horizonEnd)
@@ -935,7 +1042,8 @@ internal sealed class TimelineProjectionService
             operation.OperationName,
             operation.PauseStartedAt!.Value > horizonStart ? operation.PauseStartedAt.Value : horizonStart,
             horizonEnd,
-            $"Operation paused by {operation.PausedBy}: {operation.ActivePauseReason}"))
+            $"Operation paused by {operation.PausedBy}: {operation.ActivePauseReason}",
+            PlanningMode: planningMode))
         .ToArray();
 
     private static TimelineProjectionInterval[] UnscheduledIntervals(
@@ -945,7 +1053,8 @@ internal sealed class TimelineProjectionService
         IReadOnlySet<string> backlogBlockedOperationIds,
         IReadOnlyList<TimelineProjectionConflict> conflicts,
         DateTimeOffset horizonStart,
-        DateTimeOffset horizonEnd) => assigned
+        DateTimeOffset horizonEnd,
+        string planningMode) => assigned
         .Where(operation => operation.MachineId == machineId
             && !scheduledOperationIds.Contains(operation.OperationId)
             && operation.ActivePauseReason is null)
@@ -960,7 +1069,8 @@ internal sealed class TimelineProjectionService
             return new TimelineProjectionInterval(
                 "waiting", machineId, operation.OperationId, operation.BatchId,
                 operation.BatchNumber, operation.PartNumber, operation.OperationNumber,
-                operation.OperationName, horizonStart, horizonEnd, detail);
+                operation.OperationName, horizonStart, horizonEnd, detail,
+                PlanningMode: planningMode);
         })
         .ToArray();
 

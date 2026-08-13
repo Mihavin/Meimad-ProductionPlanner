@@ -589,11 +589,18 @@ internal sealed record TimelineSnapshot(
     IReadOnlyList<TimelineBatch> Batches,
     IReadOnlyList<TimelineMachine> Machines,
     IReadOnlyList<TimelineDependency> Dependencies,
-    IReadOnlyList<TimelineConflict> Conflicts);
+    IReadOnlyList<TimelineConflict> Conflicts,
+    string PlanningMode = "manual");
 
-internal sealed record TimelineBatch(string BatchId, string BatchNumber, string PartNumber)
+internal sealed record TimelineBatch(
+    string BatchId,
+    string BatchNumber,
+    string PartNumber,
+    DateOnly? WorkFinishDate = null)
 {
-    public string DisplayName => $"{PartNumber} / {BatchNumber}";
+    public string DisplayName => WorkFinishDate.HasValue
+        ? $"{PartNumber} / {BatchNumber} • due {WorkFinishDate:yyyy-MM-dd}"
+        : $"{PartNumber} / {BatchNumber}";
 }
 
 internal sealed record TimelineMachine(
@@ -619,7 +626,8 @@ internal sealed record TimelineInterval(
     DateTimeOffset? ForecastStart = null,
     DateTimeOffset? ForecastEnd = null,
     DateTimeOffset? ActualStart = null,
-    DateTimeOffset? ActualEnd = null)
+    DateTimeOffset? ActualEnd = null,
+    string PlanningMode = "manual")
 {
     /// <summary>
     /// The server calculation is authoritative. These optional fields let newer
@@ -637,6 +645,11 @@ internal sealed record TimelineInterval(
             : string.IsNullOrWhiteSpace(OperationStatus)
                 ? "Calculated"
                 : OperationStatus.Replace('_', ' ');
+
+    public string PlanningModeLabel => string.Equals(
+        PlanningMode, "backward", StringComparison.OrdinalIgnoreCase)
+            ? "Backward projection"
+            : "Manual backlog projection";
 }
 
 internal sealed record TimelineDependency(

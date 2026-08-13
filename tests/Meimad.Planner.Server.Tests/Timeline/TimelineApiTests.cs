@@ -11,6 +11,138 @@ namespace Meimad.Planner.Server.Tests.Timeline;
 
 public sealed class TimelineApiTests
 {
+    [Fact]
+    public async Task Backward_mode_uses_order_finish_date_without_writing_or_reordering_plan()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var beforePositions = await ReadPositionsAsync(application.Services);
+            var beforeOperationState = await ReadOperationTimingStateAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            long beforeEvents;
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var count = connection.CreateCommand())
+            {
+                count.CommandText = "SELECT COUNT(*) FROM structured_event_log;";
+                beforeEvents = (long)(await count.ExecuteScalarAsync())!;
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T08:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = document.RootElement;
+            Assert.Equal("backward", root.GetProperty("planningMode").GetString());
+            Assert.Equal("2026-08-12", root.GetProperty("batches")[0]
+                .GetProperty("workFinishDate").GetString());
+
+            var work = root.GetProperty("machines")[0].GetProperty("intervals")
+                .EnumerateArray()
+                .Where(value => value.TryGetProperty("operationId", out var operationId)
+                    && operationId.ValueKind == JsonValueKind.String
+                    && value.GetProperty("type").GetString() is "setup" or "production")
+                .ToArray();
+            var op1Finish = work.Where(value => value.GetProperty("operationId").GetString() == "op-1")
+                .Max(value => value.GetProperty("endsAt").GetDateTimeOffset());
+            var op2Start = work.Where(value => value.GetProperty("operationId").GetString() == "op-2")
+                .Min(value => value.GetProperty("startsAt").GetDateTimeOffset());
+            Assert.True(op2Start >= op1Finish);
+            Assert.Equal(beforePositions, await ReadPositionsAsync(application.Services));
+            Assert.Equal(beforeOperationState,
+                await ReadOperationTimingStateAsync(application.Services));
+
+            await using var verify = await database.OpenConnectionAsync();
+            await using var eventCount = verify.CreateCommand();
+            eventCount.CommandText = "SELECT COUNT(*) FROM structured_event_log;";
+            Assert.Equal(beforeEvents, (long)(await eventCount.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
+    public async Task Timeline_rejects_unknown_visual_mode()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-12T08:00:00Z&mode=persisted");
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("invalid_timeline_mode",
+                document.RootElement.GetProperty("error").GetProperty("code").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task Backward_deadline_before_horizon_is_reported_once_and_waiting_keeps_mode()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE orders SET work_finish_date = '2026-08-10' WHERE id = 'order-1';";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T08:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var conflicts = document.RootElement.GetProperty("conflicts").EnumerateArray().ToArray();
+            Assert.Single(conflicts, conflict =>
+                conflict.GetProperty("code").GetString() == "backward_schedule_cannot_fit"
+                && conflict.GetProperty("operationIds").EnumerateArray()
+                    .Any(value => value.GetString() == "op-1"));
+            Assert.Equal(conflicts.Length, conflicts
+                .Select(conflict => conflict.GetProperty("conflictId").GetString())
+                .Distinct(StringComparer.Ordinal).Count());
+
+            var blockedIntervals = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("operationId").GetString() is "op-1" or "op-2")
+                .ToArray();
+            Assert.NotEmpty(blockedIntervals);
+            Assert.All(blockedIntervals, interval =>
+                Assert.Equal("backward", interval.GetProperty("planningMode").GetString()));
+        });
+    }
+
+    [Fact]
+    public async Task Backward_actual_history_interval_keeps_visual_mode_label()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    DELETE FROM machine_assignments WHERE batch_operation_id = 'op-1';
+                    UPDATE machine_assignments SET backlog_position = 0 WHERE batch_operation_id = 'op-2';
+                    UPDATE batch_operations
+                    SET status = 'completed', actual_start = '2026-08-11T08:00:00Z',
+                        actual_end = '2026-08-11T09:00:00Z', actual_machine_id = 'machine-1'
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T09:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var actual = Assert.Single(document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), interval =>
+                    interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("timingKind").GetString() == "actual");
+            Assert.Equal("backward", actual.GetProperty("planningMode").GetString());
+        });
+    }
+
     [Theory]
     [InlineData("vacation")]
     [InlineData("sick_day")]
@@ -326,6 +458,42 @@ public sealed class TimelineApiTests
                 && interval.GetProperty("timingKind").GetString() == "forecast"
                 && interval.GetProperty("forecastStart").GetDateTimeOffset()
                     == DateTimeOffset.Parse("2026-08-11T08:30:00Z"));
+        });
+    }
+
+    [Fact]
+    public async Task Backward_request_with_in_progress_work_reports_manual_projection_fallback()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE batch_operations
+                    SET status = 'in_progress', actual_start = '2026-08-11T08:30:00Z',
+                        actual_machine_id = 'machine-1'
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T09:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("backward", document.RootElement.GetProperty("planningMode").GetString());
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(), conflict =>
+                conflict.GetProperty("code").GetString() == "backward_in_progress_fallback");
+            var calculated = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("timingKind").GetString() == "forecast")
+                .ToArray();
+            Assert.NotEmpty(calculated);
+            Assert.All(calculated, interval =>
+                Assert.Equal("manual", interval.GetProperty("planningMode").GetString()));
         });
     }
 
@@ -930,6 +1098,32 @@ public sealed class TimelineApiTests
             SELECT batch_operation_id || ':' || backlog_position
             FROM machine_assignments
             ORDER BY backlog_position;
+            """;
+        var result = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            result.Add(reader.GetString(0));
+        }
+
+        return result.ToArray();
+    }
+
+    private static async Task<string[]> ReadOperationTimingStateAsync(IServiceProvider services)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 'operation|' || id || '|' || status || '|'
+                || COALESCE(actual_start, '') || '|' || COALESCE(actual_end, '') || '|'
+                || COALESCE(actual_machine_id, '') || '|' || CAST(version AS TEXT) AS state
+            FROM batch_operations
+            UNION ALL
+            SELECT 'order|' || id || '|' || status || '|'
+                || COALESCE(work_finish_date, '') || '|||' || CAST(version AS TEXT) AS state
+            FROM orders
+            ORDER BY state;
             """;
         var result = new List<string>();
         await using var reader = await command.ExecuteReaderAsync();

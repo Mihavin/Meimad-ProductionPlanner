@@ -355,7 +355,7 @@ public partial class TimelineView : UserControl
         return block;
     }
 
-    private static string IntervalToolTip(TimelineInterval interval, string label)
+    internal static string IntervalToolTip(TimelineInterval interval, string label)
     {
         var forecast = interval.ForecastStart.HasValue || interval.ForecastEnd.HasValue
             ? $"\nForecast: {FormatLocal(interval.ForecastStart)} → {FormatLocal(interval.ForecastEnd)}"
@@ -364,7 +364,7 @@ public partial class TimelineView : UserControl
             ? $"\nActual: {FormatLocal(interval.ActualStart)} → {FormatLocal(interval.ActualEnd)}"
             : string.Empty;
         var detail = string.IsNullOrWhiteSpace(interval.Detail) ? string.Empty : $"\n{interval.Detail}";
-        return $"{label}\n{interval.TimingLabel}\nDisplayed: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} → {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
+        return $"{label}\n{interval.PlanningModeLabel} • visual only\n{interval.TimingLabel}\nDisplayed: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} → {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
     }
 
     private static string FormatLocal(DateTimeOffset? value) => value.HasValue

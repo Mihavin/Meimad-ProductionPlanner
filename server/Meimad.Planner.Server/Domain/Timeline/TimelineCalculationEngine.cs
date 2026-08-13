@@ -106,20 +106,36 @@ internal sealed class TimelineCalculationEngine
             conflicts);
         var invalidNodes = ValidateLockedMachineMembership(nodes, operationEntries, conflicts);
 
-        var scheduledByOperation = ScheduleNodes(
-            nodes,
-            predecessors,
-            operationEntries,
-            machineWindows,
-            setupWindows,
-            resources,
-            machineSkills,
-            dayShiftWindows,
-            horizonStart,
-            input.Downtimes,
-            input.Dependencies,
-            invalidNodes,
-            conflicts);
+        var scheduledByOperation = input.Mode == TimelineCalculationMode.Backward
+            ? ScheduleNodesBackward(
+                nodes,
+                predecessors,
+                operationEntries,
+                machineWindows,
+                setupWindows,
+                resources,
+                machineSkills,
+                dayShiftWindows,
+                horizonStart,
+                horizonEnd,
+                input.Downtimes,
+                input.Dependencies,
+                invalidNodes,
+                conflicts)
+            : ScheduleNodes(
+                nodes,
+                predecessors,
+                operationEntries,
+                machineWindows,
+                setupWindows,
+                resources,
+                machineSkills,
+                dayShiftWindows,
+                horizonStart,
+                input.Downtimes,
+                input.Dependencies,
+                invalidNodes,
+                conflicts);
         var operationResults = backlogEntries
             .Where(entry => scheduledByOperation.ContainsKey(entry.Operation.OperationId))
             .Select(entry => scheduledByOperation[entry.Operation.OperationId])
@@ -683,6 +699,212 @@ internal sealed class TimelineCalculationEngine
             horizonStart);
     }
 
+    private static IReadOnlyDictionary<string, TimelineOperationResult> ScheduleNodesBackward(
+        IReadOnlyDictionary<string, ScheduleNode> nodes,
+        IReadOnlyDictionary<string, HashSet<string>> predecessors,
+        IReadOnlyDictionary<string, BacklogEntry> operations,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        IReadOnlyList<TimelineDowntime> downtimes,
+        IReadOnlyList<TimelineDependency> dependencies,
+        IReadOnlySet<string> invalidNodes,
+        ConflictCollector conflicts)
+    {
+        var successors = nodes.Keys.ToDictionary(
+            key => key,
+            _ => new HashSet<string>(StringComparer.Ordinal),
+            StringComparer.Ordinal);
+        foreach (var (node, requiredPredecessors) in predecessors)
+        {
+            foreach (var predecessor in requiredPredecessors)
+            {
+                successors[predecessor].Add(node);
+            }
+        }
+
+        var failed = invalidNodes.ToHashSet(StringComparer.Ordinal);
+        PropagateBackwardFailure(
+            invalidNodes, failed, successors, nodes, operations, conflicts);
+
+        while (true)
+        {
+            var pending = nodes.Keys.Where(node => !failed.Contains(node))
+                .ToHashSet(StringComparer.Ordinal);
+            var scheduledStarts = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+            var results = new Dictionary<string, TimelineOperationResult>(StringComparer.Ordinal);
+            var occupiedResources = new Dictionary<string, List<ResourceReservation>>(StringComparer.Ordinal);
+            var restart = false;
+
+            while (pending.Count > 0)
+            {
+                var ready = pending
+                    .Where(node => successors[node].All(successor =>
+                        scheduledStarts.ContainsKey(successor) || failed.Contains(successor)))
+                    .OrderBy(value => value, Comparer<string>.Create((left, right) =>
+                        CompareBackwardReadyNodes(left, right, nodes, operations)))
+                    .ToArray();
+                if (ready.Length == 0)
+                {
+                    var cycleOperations = pending.SelectMany(node => nodes[node].Members)
+                        .OrderBy(value => value, StringComparer.Ordinal).ToArray();
+                    conflicts.Add(
+                        "dependency_cycle",
+                        TimelineConflictSeverity.Blocking,
+                        "Backlog order and sequential dependencies contain a cycle; the engine did not reorder them.",
+                        cycleOperations,
+                        cycleOperations.Select(id => operations[id].MachineId).Distinct().ToArray());
+                    break;
+                }
+
+                foreach (var nodeKey in ready)
+                {
+                    var node = nodes[nodeKey];
+                    var scheduledSuccessors = successors[nodeKey]
+                        .Where(scheduledStarts.ContainsKey)
+                        .ToArray();
+                    var latest = scheduledSuccessors.Length == 0
+                        ? horizonEnd
+                        : scheduledSuccessors.Min(successor => scheduledStarts[successor]);
+                    var memberCutoffs = node.Members
+                        .Select(operationId => operations[operationId].Operation.LatestFinish)
+                        .Where(value => value.HasValue)
+                        .Select(value => value!.Value.ToUniversalTime())
+                        .ToArray();
+                    if (memberCutoffs.Length > 0)
+                    {
+                        var due = memberCutoffs.Min();
+                        if (due < latest)
+                        {
+                            latest = due;
+                        }
+                    }
+
+                    var scheduled = node.Members.Count == 1
+                        ? ScheduleSingleBackward(
+                            operations[node.Members[0]], latest, machineWindows, setupWindows,
+                            resources, machineSkills, occupiedResources, dayShiftWindows, downtimes)
+                        : ScheduleLockedGroupBackward(
+                            node, operations, latest, machineWindows, setupWindows,
+                            resources, machineSkills, occupiedResources, dayShiftWindows, downtimes);
+                    pending.Remove(nodeKey);
+                    if (scheduled is null
+                        || scheduled.Results.Any(result => result.StartsAt < horizonStart))
+                    {
+                        failed.Add(nodeKey);
+                        conflicts.Add(
+                            "backward_schedule_cannot_fit",
+                            TimelineConflictSeverity.Blocking,
+                            "The operation cannot fit before its Work Finish Date inside the selected horizon and configured Machine, worker, setup, downtime, and day-shift availability.",
+                            node.Members,
+                            node.Members.Select(id => operations[id].MachineId).ToArray());
+                        PropagateBackwardFailure(
+                            [nodeKey], failed, successors, nodes, operations, conflicts);
+                        restart = true;
+                        break;
+                    }
+
+                    foreach (var result in scheduled.Results)
+                    {
+                        results[result.OperationId] = result;
+                    }
+                    foreach (var reservation in scheduled.ResourceReservations)
+                    {
+                        if (!occupiedResources.TryGetValue(reservation.ResourceId, out var occupied))
+                        {
+                            occupied = [];
+                            occupiedResources.Add(reservation.ResourceId, occupied);
+                        }
+                        occupied.Add(reservation);
+                    }
+                    scheduledStarts[nodeKey] = scheduled.Results.Min(result => result.StartsAt);
+                }
+
+                if (restart)
+                {
+                    break;
+                }
+            }
+
+            if (restart)
+            {
+                continue;
+            }
+
+            return AddDependencyWaitingIntervals(results, dependencies, machineWindows, horizonStart);
+        }
+    }
+
+    private static void PropagateBackwardFailure(
+        IEnumerable<string> roots,
+        ISet<string> failed,
+        IReadOnlyDictionary<string, HashSet<string>> successors,
+        IReadOnlyDictionary<string, ScheduleNode> nodes,
+        IReadOnlyDictionary<string, BacklogEntry> operations,
+        ConflictCollector conflicts)
+    {
+        var queue = new Queue<string>(roots);
+        while (queue.TryDequeue(out var failedNode))
+        {
+            foreach (var successor in successors[failedNode].OrderBy(value => value, StringComparer.Ordinal))
+            {
+                if (!failed.Add(successor))
+                {
+                    continue;
+                }
+
+                var node = nodes[successor];
+                conflicts.Add(
+                    "dependency_unresolved",
+                    TimelineConflictSeverity.Blocking,
+                    "An operation could not be placed backward because a required predecessor or earlier Machine backlog operation failed.",
+                    node.Members,
+                    node.Members.Select(id => operations[id].MachineId).ToArray());
+                queue.Enqueue(successor);
+            }
+        }
+    }
+
+    private static int CompareBackwardReadyNodes(
+        string left,
+        string right,
+        IReadOnlyDictionary<string, ScheduleNode> nodes,
+        IReadOnlyDictionary<string, BacklogEntry> operations)
+    {
+        var leftOperation = nodes[left].Members.Select(id => operations[id].Operation)
+            .OrderBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
+            .ThenBy(value => value.PriorityWorkFinishDate)
+            .ThenBy(value => value.PriorityOrderNumber,
+                Comparer<string?>.Create(TimelinePriorityComparer.CompareOrderNumbers))
+            .First();
+        var rightOperation = nodes[right].Members.Select(id => operations[id].Operation)
+            .OrderBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
+            .ThenBy(value => value.PriorityWorkFinishDate)
+            .ThenBy(value => value.PriorityOrderNumber,
+                Comparer<string?>.Create(TimelinePriorityComparer.CompareOrderNumbers))
+            .First();
+        var due = Nullable.Compare(leftOperation.PriorityWorkFinishDate, rightOperation.PriorityWorkFinishDate);
+        if (!leftOperation.PriorityWorkFinishDate.HasValue && rightOperation.PriorityWorkFinishDate.HasValue) due = 1;
+        else if (leftOperation.PriorityWorkFinishDate.HasValue && !rightOperation.PriorityWorkFinishDate.HasValue) due = -1;
+        if (due != 0) return due;
+
+        var leftDuration = nodes[left].Members.Sum(id => TotalDuration(operations[id].Operation).Ticks);
+        var rightDuration = nodes[right].Members.Sum(id => TotalDuration(operations[id].Operation).Ticks);
+        var duration = leftDuration.CompareTo(rightDuration);
+        if (duration != 0) return duration;
+        var order = TimelinePriorityComparer.CompareOrderNumbers(
+            leftOperation.PriorityOrderNumber, rightOperation.PriorityOrderNumber);
+        return order != 0 ? order : StringComparer.Ordinal.Compare(left, right);
+    }
+
+    private static TimeSpan TotalDuration(TimelineOperationInput operation) =>
+        operation.SetupDuration + operation.QaDuration
+        + operation.LoadUnloadDuration + operation.ProductionDuration;
+
     private static string InsufficientAvailabilityMessage(
         ScheduleNode node,
         IReadOnlyDictionary<string, BacklogEntry> operations,
@@ -812,6 +1034,255 @@ internal sealed class TimelineCalculationEngine
         return scheduled is null
             ? null
             : new ScheduledNode([scheduled.Result], scheduled.Result.FinishesAt, scheduled.ResourceReservations);
+    }
+
+    private static ScheduledNode? ScheduleSingleBackward(
+        BacklogEntry entry,
+        DateTimeOffset latest,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
+        IReadOnlyList<TimelineDowntime> downtimes)
+    {
+        if (!machineWindows.TryGetValue(entry.MachineId, out var availability))
+        {
+            return null;
+        }
+
+        var scheduled = ScheduleMemberBackward(
+            entry, latest, availability, setupWindows, resources,
+            machineSkills.GetValueOrDefault(entry.MachineId, []), occupiedResources,
+            dayShiftWindows, downtimes);
+        return scheduled is null
+            ? null
+            : new ScheduledNode([scheduled.Result], scheduled.Result.FinishesAt,
+                scheduled.ResourceReservations);
+    }
+
+    private static ScheduledNode? ScheduleLockedGroupBackward(
+        ScheduleNode node,
+        IReadOnlyDictionary<string, BacklogEntry> operations,
+        DateTimeOffset latest,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
+        IReadOnlyList<TimelineDowntime> downtimes)
+    {
+        var members = node.Members.Select(id => operations[id]).ToArray();
+        if (members.Select(member => member.MachineId).Distinct(StringComparer.Ordinal).Count()
+            != members.Length)
+        {
+            return null;
+        }
+
+        var commonFinish = latest;
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var backwardResults = new List<TimelineOperationResult>();
+            var localOccupied = occupiedResources.ToDictionary(
+                pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
+            foreach (var member in members)
+            {
+                if (!machineWindows.TryGetValue(member.MachineId, out var availability))
+                {
+                    return null;
+                }
+                var scheduled = ScheduleMemberBackward(
+                    member, commonFinish, availability, setupWindows, resources,
+                    machineSkills.GetValueOrDefault(member.MachineId, []), localOccupied,
+                    dayShiftWindows, downtimes);
+                if (scheduled is null)
+                {
+                    return null;
+                }
+                backwardResults.Add(scheduled.Result);
+                foreach (var reservation in scheduled.ResourceReservations)
+                {
+                    if (!localOccupied.TryGetValue(reservation.ResourceId, out var occupied))
+                    {
+                        occupied = [];
+                        localOccupied.Add(reservation.ResourceId, occupied);
+                    }
+                    occupied.Add(reservation);
+                }
+            }
+
+            var candidateStart = backwardResults.Min(result => result.StartsAt);
+            var forward = ScheduleLockedGroup(
+                node, operations, candidateStart, machineWindows, setupWindows,
+                resources, machineSkills, occupiedResources, dayShiftWindows, downtimes);
+            if (forward is not null && forward.FinishesAt <= latest)
+            {
+                return forward;
+            }
+
+            if (candidateStart >= commonFinish)
+            {
+                return null;
+            }
+            commonFinish = candidateStart;
+        }
+
+        return null;
+    }
+
+    private static ScheduledMember? ScheduleMemberBackward(
+        BacklogEntry entry,
+        DateTimeOffset latest,
+        IReadOnlyList<InstantWindow> machineAvailability,
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyList<string> machineSkills,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
+        IReadOnlyList<TimelineDowntime> downtimes)
+    {
+        var productionAvailability = entry.Operation.DayShiftOnly
+            ? dayShiftWindows.TryGetValue(entry.MachineId, out var dayWindows)
+                ? Intersect(machineAvailability, dayWindows)
+                : []
+            : machineAvailability;
+        var reservations = new List<ResourceReservation>();
+
+        var production = AllocateBackward(entry.Operation.ProductionDuration, latest, productionAvailability);
+        if (production is null) return null;
+        var productionStart = AllocationStart(production, latest);
+
+        ResourcePhase? loadPhase = null;
+        Allocation? loadUnload;
+        if (entry.Operation.LoadUnloadRequiresWorker)
+        {
+            loadPhase = AllocateResourcePhaseBackward(
+                entry.Operation.LoadUnloadDuration, productionStart, machineAvailability,
+                TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
+            loadUnload = loadPhase?.Allocation;
+            if (loadPhase is not null) AddReservation(reservations, loadPhase, entry.Operation);
+        }
+        else
+        {
+            loadUnload = AllocateBackward(entry.Operation.LoadUnloadDuration, productionStart, machineAvailability);
+        }
+        if (loadUnload is null) return null;
+
+        var qaLatest = AllocationStart(loadUnload, productionStart);
+        var qaPhase = AllocateResourcePhaseBackward(
+            entry.Operation.QaDuration, qaLatest, machineAvailability,
+            TimelineResourceRole.QaWorker, resources, occupiedResources, [], entry.Operation);
+        if (qaPhase is null) return null;
+        AddReservation(reservations, qaPhase, entry.Operation);
+
+        var setupLatest = AllocationStart(qaPhase.Allocation, qaLatest);
+        var setupAvailability = Intersect(machineAvailability, setupWindows);
+        var setupPhase = AllocateResourcePhaseBackward(
+            entry.Operation.SetupDuration, setupLatest, setupAvailability,
+            TimelineResourceRole.SetupWorker, resources, occupiedResources, machineSkills,
+            entry.Operation);
+        if (setupPhase is null) return null;
+        AddReservation(reservations, setupPhase, entry.Operation);
+
+        var startsAt = AllocationStart(setupPhase.Allocation, setupLatest);
+        if (entry.Operation.EarliestStart is { } earliest
+            && startsAt < earliest.ToUniversalTime())
+        {
+            return null;
+        }
+
+        var setupIntervals = ProjectBackwardIntervals(
+            setupPhase.Allocation, TimelineIntervalType.Setup, entry,
+            $"Setup worker: {setupPhase.ResourceId}");
+        var qaIntervals = ProjectBackwardIntervals(
+            qaPhase.Allocation, TimelineIntervalType.Qa, entry,
+            $"QA worker: {qaPhase.ResourceId}");
+        var loadIntervals = ProjectBackwardIntervals(
+            loadUnload, TimelineIntervalType.LoadUnload, entry,
+            entry.Operation.LoadUnloadRequiresWorker
+                ? $"Regular worker: {loadPhase!.ResourceId}"
+                : "Automatic load/unload");
+        var productionIntervals = ProjectBackwardIntervals(
+            production, TimelineIntervalType.Production, entry, null);
+        var work = setupIntervals.Concat(qaIntervals).Concat(loadIntervals)
+            .Concat(productionIntervals).OrderBy(value => value.StartsAt).ToArray();
+        var finish = work.Length == 0 ? latest : work.Max(value => value.EndsAt);
+        var waiting = BackwardWaitingIntervals(entry, startsAt, finish, work, downtimes);
+        var result = new TimelineOperationResult(
+            entry.Operation.OperationId, entry.MachineId, entry.BacklogPosition,
+            startsAt, finish, setupIntervals, productionIntervals, [], waiting,
+            qaIntervals, loadIntervals);
+        return new ScheduledMember(result, reservations);
+    }
+
+    private static ResourcePhase? AllocateResourcePhaseBackward(
+        TimeSpan duration,
+        DateTimeOffset latest,
+        IReadOnlyList<InstantWindow> phaseAvailability,
+        TimelineResourceRole role,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyList<string> requiredSkills,
+        TimelineOperationInput operation)
+    {
+        if (duration == TimeSpan.Zero)
+        {
+            return new ResourcePhase(string.Empty, new Allocation([], latest), null);
+        }
+
+        return resources
+            .Where(resource => resource.Role == role)
+            .Where(resource => role != TimelineResourceRole.SetupWorker
+                || HasRequiredSkill(resource.Skills, requiredSkills))
+            .Select(resource =>
+            {
+                var occupations = occupiedResources.GetValueOrDefault(resource.ResourceId, []);
+                var available = Subtract(
+                    Intersect(phaseAvailability, resource.Availability),
+                    occupations.SelectMany(value => value.Intervals).ToArray());
+                var allocation = AllocateBackward(duration, latest, available);
+                return allocation is null ? null : new ResourcePhase(resource.ResourceId, allocation, null);
+            })
+            .Where(value => value is not null)
+            .Cast<ResourcePhase>()
+            .OrderByDescending(value => value.Allocation.FinishesAt)
+            .ThenByDescending(value => AllocationStart(value.Allocation, latest))
+            .ThenBy(value => value.ResourceId, StringComparer.Ordinal)
+            .FirstOrDefault();
+    }
+
+    private static TimelineInterval[] ProjectBackwardIntervals(
+        Allocation allocation,
+        TimelineIntervalType type,
+        BacklogEntry entry,
+        string? detail) => allocation.Intervals.Select(window => new TimelineInterval(
+            type, entry.MachineId, entry.Operation.OperationId,
+            window.StartsAt, window.EndsAt, detail)).ToArray();
+
+    private static IReadOnlyList<TimelineInterval> BackwardWaitingIntervals(
+        BacklogEntry entry,
+        DateTimeOffset startsAt,
+        DateTimeOffset finishesAt,
+        IReadOnlyList<TimelineInterval> work,
+        IReadOnlyList<TimelineDowntime> downtimes)
+    {
+        if (finishesAt <= startsAt) return [];
+        return Subtract(
+                [new InstantWindow(startsAt, finishesAt)],
+                work.Select(value => new InstantWindow(value.StartsAt, value.EndsAt)).ToArray())
+            .Select(window =>
+            {
+                var downtime = downtimes.FirstOrDefault(value => value.MachineId == entry.MachineId
+                    && value.EndsAt > window.StartsAt && value.StartsAt < window.EndsAt);
+                var detail = downtime is null
+                    ? "resource:Backward placement waiting for configured calendar or worker availability."
+                    : $"resource:Waiting because of {downtime.Reason}.";
+                return new TimelineInterval(
+                    TimelineIntervalType.Waiting, entry.MachineId, entry.Operation.OperationId,
+                    window.StartsAt, window.EndsAt, detail);
+            }).ToArray();
     }
 
     private static ScheduledNode? ScheduleLockedGroup(
@@ -1438,6 +1909,50 @@ internal sealed class TimelineCalculationEngine
 
         return null;
     }
+
+    private static Allocation? AllocateBackward(
+        TimeSpan duration,
+        DateTimeOffset latest,
+        IReadOnlyList<InstantWindow> windows)
+    {
+        if (duration == TimeSpan.Zero)
+        {
+            return new Allocation([], latest);
+        }
+
+        var remainingTicks = duration.Ticks;
+        var intervals = new List<InstantWindow>();
+        for (var index = windows.Count - 1; index >= 0; index--)
+        {
+            var window = windows[index];
+            if (window.StartsAt >= latest)
+            {
+                continue;
+            }
+
+            var end = window.EndsAt < latest ? window.EndsAt : latest;
+            var availableTicks = (end - window.StartsAt).Ticks;
+            if (availableTicks <= 0)
+            {
+                continue;
+            }
+
+            var usedTicks = Math.Min(availableTicks, remainingTicks);
+            var start = end.AddTicks(-usedTicks);
+            intervals.Insert(0, new InstantWindow(start, end));
+            remainingTicks -= usedTicks;
+            latest = start;
+            if (remainingTicks == 0)
+            {
+                return new Allocation(intervals, intervals[^1].EndsAt);
+            }
+        }
+
+        return null;
+    }
+
+    private static DateTimeOffset AllocationStart(Allocation allocation, DateTimeOffset fallback) =>
+        allocation.Intervals.Count == 0 ? fallback : allocation.Intervals[0].StartsAt;
 
     private static DateTimeOffset? FindCommonStart(
         DateTimeOffset earliest,

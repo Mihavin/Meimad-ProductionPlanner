@@ -152,7 +152,7 @@
             </DockPanel>
         </Border>
 
-        <TabControl Grid.Row="2" Margin="12,8,12,6">
+        <TabControl x:Name="WorkspaceTabs" Grid.Row="2" Margin="12,8,12,6">
             <TabItem Header="Cases">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
@@ -161,7 +161,7 @@
             <TabItem Header="Planning Board">
                 <views:MachinePlanningBoardView DataContext="{Binding MachinePlanningBoard}" Margin="5" />
             </TabItem>
-            <TabItem Header="Timeline">
+            <TabItem x:Name="TimelineTab" Header="Timeline">
                 <Grid Margin="5">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />

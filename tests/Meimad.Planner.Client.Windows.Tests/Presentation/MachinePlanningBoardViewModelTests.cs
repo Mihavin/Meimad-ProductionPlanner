@@ -137,6 +137,37 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public async Task Viewer_can_request_visual_backward_timeline_without_mutating_plan_or_history()
+    {
+        var assigned = Operation("machine-1", 0);
+        var snapshot = BoardBefore() with
+        {
+            Pool = [],
+            Machines = [Machine([assigned])]
+        };
+        var api = new FakeApiClient(snapshot);
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(3) with
+        {
+            State = ClientEditState.Viewer
+        });
+        await viewModel.EnsureLoadedAsync();
+        BackwardTimelineRequest? request = null;
+        viewModel.BackwardTimelineRequested += (_, value) => request = value;
+
+        var operation = viewModel.Machines.Single().Backlog.Single();
+        viewModel.RequestBackwardTimeline(operation);
+
+        Assert.NotNull(request);
+        Assert.Equal("batch-1", request!.BatchId);
+        Assert.Equal("operation-1", request.BatchOperationId);
+        Assert.Null(api.AssignedOperationId);
+        Assert.False(viewModel.CanUndo);
+        Assert.False(viewModel.CanRedo);
+        Assert.Contains("No plan data will be changed", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Same_machine_drop_position_is_translated_to_final_stable_index()
     {
         var first = Operation("machine-1", 0);

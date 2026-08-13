@@ -9,7 +9,14 @@ internal sealed record TimelineCalculationInput(
     IReadOnlyList<TimelineDowntime> Downtimes,
     IReadOnlyList<TimelineDependency> Dependencies,
     IReadOnlyList<TimelineResourceCalendar>? ResourceCalendars = null,
-    IReadOnlyList<TimelineMachineCalendar>? DayShiftCalendars = null);
+    IReadOnlyList<TimelineMachineCalendar>? DayShiftCalendars = null,
+    TimelineCalculationMode Mode = TimelineCalculationMode.Forward);
+
+internal enum TimelineCalculationMode
+{
+    Forward,
+    Backward
+}
 
 internal sealed record TimelineMachineBacklog(
     string MachineId,
@@ -25,7 +32,8 @@ internal sealed record TimelineOperationInput(
     bool DayShiftOnly = false,
     DateOnly? PriorityWorkFinishDate = null,
     string? PriorityOrderNumber = null,
-    DateTimeOffset? EarliestStart = null);
+    DateTimeOffset? EarliestStart = null,
+    DateTimeOffset? LatestFinish = null);
 
 internal static class TimelinePriorityComparer
 {

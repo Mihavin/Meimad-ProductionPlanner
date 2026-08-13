@@ -60,6 +60,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     public event EventHandler? PlanChanged;
 
+    internal event EventHandler<BackwardTimelineRequest>? BackwardTimelineRequested;
+
     internal event EventHandler? HistoryChanged;
 
     public ObservableCollection<PlanningOperationViewModel> Pool { get; } = [];
@@ -650,6 +652,19 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    internal void RequestBackwardTimeline(PlanningOperationViewModel operation)
+    {
+        if (!operation.CanViewBackward)
+        {
+            return;
+        }
+
+        StatusMessage = $"Opening a visual backward projection for {operation.DisplayTitle}. No plan data will be changed.";
+        BackwardTimelineRequested?.Invoke(
+            this,
+            new BackwardTimelineRequest(operation.BatchId, operation.BatchOperationId));
+    }
+
     internal async Task UndoAsync() =>
         await ReplayPlacementAsync(undoHistory, redoHistory, undo: true);
 
@@ -956,6 +971,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     internal PlanningOperationViewModel(PlanningBoardOperation operation)
     {
         BatchOperationId = operation.BatchOperationId;
+        BatchId = operation.BatchId;
         CaseId = operation.CaseId;
         CaseName = operation.CaseName;
         BatchNumber = operation.BatchNumber;
@@ -979,6 +995,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     }
 
     public string BatchOperationId { get; }
+    public string BatchId { get; }
     public string CaseId { get; }
     public string? CaseName { get; }
     public string BatchNumber { get; }
@@ -1046,6 +1063,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public bool CanFinish => MachineId is not null && Status == "in_progress";
     public bool CanReset => MachineId is not null && Status == "suspended";
     public bool CanMove => Status != "in_progress";
+    public bool CanViewBackward => MachineId is not null && Status != "completed";
 
     private static long? CalculateEstimatedTime(
         int? setupTimeSeconds,
@@ -1078,6 +1096,19 @@ internal sealed record AssignmentOverridePrompt(
     string RequiredMachineType,
     string MachineDisplayName,
     string SelectedMachineType);
+
+internal sealed class BackwardTimelineRequest : EventArgs
+{
+    internal BackwardTimelineRequest(string batchId, string batchOperationId)
+    {
+        BatchId = batchId;
+        BatchOperationId = batchOperationId;
+    }
+
+    internal string BatchId { get; }
+
+    internal string BatchOperationId { get; }
+}
 
 internal sealed class PlanningMachineColumnViewModel : INotifyPropertyChanged
 {

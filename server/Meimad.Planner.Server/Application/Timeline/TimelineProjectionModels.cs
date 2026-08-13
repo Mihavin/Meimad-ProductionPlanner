@@ -4,6 +4,7 @@ internal sealed record TimelineProjection(
     DateTimeOffset ReadAt,
     DateTimeOffset HorizonStart,
     DateTimeOffset HorizonEnd,
+    string PlanningMode,
     IReadOnlyList<TimelineProjectionBatch> Batches,
     IReadOnlyList<TimelineProjectionMachine> Machines,
     IReadOnlyList<TimelineProjectionDependency> Dependencies,
@@ -12,7 +13,8 @@ internal sealed record TimelineProjection(
 internal sealed record TimelineProjectionBatch(
     string BatchId,
     string BatchNumber,
-    string PartNumber);
+    string PartNumber,
+    DateOnly? WorkFinishDate = null);
 
 internal sealed record TimelineProjectionMachine(
     string MachineId,
@@ -37,7 +39,8 @@ internal sealed record TimelineProjectionInterval(
     DateTimeOffset? ForecastStart = null,
     DateTimeOffset? ForecastEnd = null,
     DateTimeOffset? ActualStart = null,
-    DateTimeOffset? ActualEnd = null);
+    DateTimeOffset? ActualEnd = null,
+    string PlanningMode = "manual");
 
 internal sealed record TimelineProjectionDependency(
     string DependencyId,

@@ -846,7 +846,9 @@ The current schema has no durable `planRevision`, so transitional read projectio
 |---|---|---|
 | `from` | Yes | Inclusive RFC 3339 UTC horizon start. |
 | `to` | Yes | Exclusive RFC 3339 UTC horizon end. |
-Only `from` and `to` are implemented. Invalid/missing instants or a non-positive horizon return `400 invalid_timeline_horizon`. Maximum horizon/filter policy remains TBD.
+| `mode` | No | `manual` (default forward/earliest-fit projection) or `backward` (visual-only latest-fit from allocated Order Work Finish Date). |
+| `asOf` | No | RFC 3339 diagnostic calculation cursor inside the requested horizon. |
+Invalid/missing instants or a non-positive horizon return `400 invalid_timeline_horizon`; another mode returns `400 invalid_timeline_mode`. Maximum horizon/filter policy remains TBD.
 
 Implemented response shape:
 
@@ -855,8 +857,9 @@ Implemented response shape:
   "readAt": "2026-08-11T11:10:00Z",
   "horizonStart": "2026-08-11T00:00:00Z",
   "horizonEnd": "2026-08-18T00:00:00Z",
+  "planningMode": "manual",
   "batches": [
-    { "batchId": "batch-1", "batchNumber": "B-1", "partNumber": "PN-1" }
+    { "batchId": "batch-1", "batchNumber": "B-1", "partNumber": "PN-1", "workFinishDate": "2026-08-17" }
   ],
   "machines": [
     {
@@ -888,6 +891,8 @@ Implemented response shape:
 Interval `type` is `setup`, `production`, `waiting`, `idle`, `reserved`, or `downtime`. A `waiting` interval is Machine-available time held by a Sequential predecessor constraint; its detail explains the latest blocking predecessor (for example, `Waiting for OP10 on Machine M01 to finish.`). Operation metadata, including `operationName`, is null for Machine-only intervals. The Windows client uses operation number/name to render a visible marker even when a duration bar is too narrow for its full label. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations, `dependency_predecessor_unassigned`, missing/invalid timing or Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
 
 Timeline calculation is read-only with respect to authoritative planning inputs and never changes Machine assignment, backlog position, dependency, quantity, duration input, or Work Finish Date. It reloads assignments from SQLite on every request and calculates the nearest feasible start/end from setup, QA, applicable load/unload, `cycleSeconds x plannedQuantity`, calendars, resources, dependencies, pause state, and downtime; no `plannedStart` or `plannedEnd` input is accepted or required. Different operations from one Case/Batch may be present in different Machine backlogs, but every later row remains behind earlier stored rows. Machine/setup/day-shift calendars, setup/QA/regular workers, maintenance, breakdown, pause, and sequential-predecessor delays use `type: "waiting"` with human-readable `detail`. An assigned operation blocked by invalid input, an earlier paused/blocked row, or insufficient horizon availability remains present as operation-linked waiting with its structured conflict instead of disappearing into Machine Idle. Sequential edges constrain the child earliest start to calculated predecessor finish. Locked-simultaneous members retry at common Machine/resource availability, share start/finish, and reserve shorter Machines. Missing required worker roles return `insufficient_availability` with the specific role.
+
+Backward mode reverse-traverses those same fixed backlog and Sequential edges and selects the latest feasible phase windows before the earliest allocated Order Work Finish Date, interpreted as the exclusive next midnight in `Timeline:TimeZoneId`. It never post-shifts forward intervals. Production, load/unload, QA, and setup are allocated in reverse but returned chronologically. Equal-date resource contention uses shorter total duration, then naturally smaller Order Number. Missing dates use the selected horizon end with `backward_deadline_missing`; dates after the horizon use its end with `backward_deadline_outside_horizon`; impossible latest-fit placement returns blocking `backward_schedule_cannot_fit`. If actual work is in progress, its recorded start is never moved: the response returns `backward_in_progress_fallback` and shows the manual projection. Backward GET requests do not append observation events to the structured event log.
 
 The endpoint accepts optional RFC3339 `asOf` inside the requested horizon for deterministic diagnostics/tests; normal refreshes omit it and use the Server snapshot time. Operation intervals may include `timingKind`, `operationStatus`, `forecastStart`, `forecastEnd`, `actualStart`, and `actualEnd`. Not-started work floats as a forecast without changing status. In-progress work retains its recorded actual start and is never completed automatically when its forecast is overdue. Completed schema-v23 work is immutable actual history, and sequential children use the predecessor's recorded actual finish. Missing legacy actual history is returned as a structured conflict rather than inferred.
 

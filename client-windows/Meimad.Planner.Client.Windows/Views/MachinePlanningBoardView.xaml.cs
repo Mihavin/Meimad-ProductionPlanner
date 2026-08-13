@@ -72,6 +72,22 @@ public partial class MachinePlanningBoardView : UserControl
     private async void ResetOperation_Click(object sender, RoutedEventArgs e) =>
         await ChangeOperationExecutionAsync(sender, "reset");
 
+    private void ViewBackwardTimeline_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menuItem
+            || ItemsControl.ItemsControlFromItemContainer(menuItem) is not ContextMenu contextMenu
+            || contextMenu.PlacementTarget is not FrameworkElement
+            {
+                DataContext: PlanningOperationViewModel operation
+            }
+            || DataContext is not MachinePlanningBoardViewModel viewModel)
+        {
+            return;
+        }
+
+        viewModel.RequestBackwardTimeline(operation);
+    }
+
     private async Task ChangeOperationExecutionAsync(object sender, string action)
     {
         if (sender is Button { DataContext: PlanningOperationViewModel operation }

@@ -150,6 +150,15 @@
         <DataTemplate x:Key="CompactOperationRowTemplate">
             <Border Background="White" BorderBrush="#D5DAE0" BorderThickness="1"
                     CornerRadius="3" Padding="4" Margin="1,1,1,3">
+                <Border.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="View backward from delivery date"
+                                  ToolTip="Open a visual-only backward Timeline projection. Nothing is saved or reordered."
+                                  IsEnabled="{Binding CanViewBackward}"
+                                  Click="ViewBackwardTimeline_Click"
+                                  AutomationProperties.Name="View backward from delivery date" />
+                    </ContextMenu>
+                </Border.ContextMenu>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="40" />

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Timeline;
+using Meimad.Planner.Server.Domain.Timeline;
 
 namespace Meimad.Planner.Server.Api.Timeline;
 
@@ -48,7 +49,24 @@ internal static class TimelineEndpoints
             }
         }
 
-        return Results.Ok(await service.CalculateAsync(from, to, asOf, cancellationToken));
+        var modeValue = context.Request.Query["mode"].ToString();
+        var mode = modeValue switch
+        {
+            "" or "manual" => TimelineCalculationMode.Forward,
+            "backward" => TimelineCalculationMode.Backward,
+            _ => (TimelineCalculationMode?)null
+        };
+        if (!mode.HasValue)
+        {
+            return PlanningHttpSupport.Error(
+                StatusCodes.Status400BadRequest,
+                "invalid_timeline_mode",
+                "Optional query parameter 'mode' must be 'manual' or 'backward'.",
+                context);
+        }
+
+        return Results.Ok(await service.CalculateAsync(
+            from, to, asOf, mode.Value, cancellationToken));
     }
 
     private static bool TryReadInstant(string? value, out DateTimeOffset instant) =>

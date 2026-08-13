@@ -135,6 +135,7 @@ The implemented domain representation uses stable dependency records between two
 - Orders and Cases must not be put directly into machine backlogs.
 - Capability mismatches, downtime overlaps, dependency violations, missing timing, and Work Finish Date risks should be detected and explained. Their exact severity rules are TBD.
 - When simultaneously ready operations compete for one eligible employee, Timeline calculation grants the resource first to the Batch with the earliest allocated-Order Work Finish Date. If dates are equal, the naturally smaller Order Number wins. The losing Machine receives an explained waiting interval; this transient comparison never reorders either Machine backlog.
+- Timeline offers two read-only visual modes. `Manual` is the existing earliest-fit consequence of the stored manual backlog. `Backward` calculates latest feasible positions from allocated Order Work Finish Date while preserving the exact stored backlog and dependency graph; equal-date contention uses shorter duration and then naturally smaller Order Number. It stores no planned dates and returns explained conflicts when a deadline is absent, outside the horizon, or infeasible.
 - Timeline subtracts planned maintenance and active/restored breakdown intervals from Machine availability. Work may split or move later around the unavailable window, whose typed reason and responsible/reported-by details remain visible; no assignment or stored backlog position changes.
 
 ## 6. Planning workflow

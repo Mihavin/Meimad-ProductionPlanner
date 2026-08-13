@@ -606,8 +606,54 @@ public sealed class PlannerApiClientTests
 
         Assert.Equal("production", result.Machines[0].Intervals[0].Type);
         Assert.Equal("B-1", result.Batches[0].BatchNumber);
+        Assert.Equal("manual", result.PlanningMode);
         Assert.Contains("from=2026-08-11T08%3A00%3A00", handler.Requests[0].Path, StringComparison.Ordinal);
         Assert.Contains("to=2026-08-12T08%3A00%3A00", handler.Requests[0].Path, StringComparison.Ordinal);
+        Assert.Contains("mode=manual", handler.Requests[0].Path, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Timeline_backward_projection_sends_mode_and_reads_due_date_metadata_without_edit_headers()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "readAt": "2026-08-11T10:00:00Z",
+              "horizonStart": "2026-08-11T08:00:00Z",
+              "horizonEnd": "2026-08-20T08:00:00Z",
+              "planningMode": "backward",
+              "batches": [{
+                "batchId":"batch-1","batchNumber":"B-1","partNumber":"PN-1",
+                "workFinishDate":"2026-08-19"
+              }],
+              "machines": [{
+                "machineId":"machine-1","number":"M-1","name":"Mill",
+                "intervals":[{
+                  "type":"production","machineId":"machine-1","operationId":"op-1",
+                  "batchId":"batch-1","batchNumber":"B-1","partNumber":"PN-1",
+                  "operationNumber":10,"operationName":"Mill",
+                  "startsAt":"2026-08-18T08:00:00Z","endsAt":"2026-08-18T09:00:00Z",
+                  "detail":null,"planningMode":"backward"
+                }]
+              }],
+              "dependencies": [], "conflicts": []
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var result = await api.GetTimelineAsync(
+            DateTimeOffset.Parse("2026-08-11T08:00:00Z"),
+            DateTimeOffset.Parse("2026-08-20T08:00:00Z"),
+            DateTimeOffset.Parse("2026-08-11T10:30:00+03:00"),
+            "backward");
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Contains("mode=backward", request.Path, StringComparison.Ordinal);
+        Assert.Contains("asOf=2026-08-11T07%3A30%3A00", request.Path, StringComparison.Ordinal);
+        Assert.Null(request.ClientId);
+        Assert.Null(request.Generation);
+        Assert.Equal("backward", result.PlanningMode);
+        Assert.Equal(new DateOnly(2026, 8, 19), result.Batches[0].WorkFinishDate);
+        Assert.Equal("Backward projection", result.Machines[0].Intervals[0].PlanningModeLabel);
     }
 
     [Fact]

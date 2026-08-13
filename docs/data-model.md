@@ -364,6 +364,8 @@ Its outputs are per-operation projected start/finish plus split setup, QA, load/
 
 The engine converts supplied instants to UTC, merges overlapping availability, subtracts downtime, and may split work across windows. It never writes SQLite, mutates input collections, or reorders a persisted backlog. The mapper expands weekly local Machine and employee schedules and subtracts breaks, full/partial employee exceptions, and opted-in cached holidays. Setup resource eligibility requires a skill matching the Machine number/name/type/axis/effective capability, or `*`; QA and regular-worker phases are role-based. Individual employee reservations make contention deterministic. The calculated resource ID appears only in interval detail and is not stored as a planning assignment.
 
+The transient model supports `manual` and `backward` calculation modes. Manual is the existing forward earliest-fit consequence projection. Backward adds a nullable latest-finish cutoff derived from allocated Order Work Finish Date and allocates the same phases/resources reverse-topologically. Mode, calculated dates, and conflicts are response data only: schema v23 gains no persisted planned-start, planned-end, planning-mode, or replan record.
+
 ## 10. E-Ink server-side support
 
 The following are logical support records, not planning authority:

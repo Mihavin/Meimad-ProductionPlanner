@@ -3,8 +3,8 @@
 - **Baseline verification date:** 2026-08-11
 - **Current change review date:** 2026-08-13
 - **Repository:** `Meimad-ProductionPlanner`
-- **Baseline runtime tested:** .NET SDK 10.0.302, Debug and Release
-- **Verdict:** The schema-v23 Server and Windows automated suites pass with 335 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
+- **Baseline runtime tested:** .NET SDK 10.0.303, Release
+- **Verdict:** The schema-v23 Server and Windows automated suites pass with 369 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
 
 ## 0. Schema-v17 change addendum (automated pass; manual checks pending)
 
@@ -26,21 +26,22 @@ Static documentation/code review identifies the following additions in the curre
 - explicit paused-operation Reset to `not_started`, retained assignment/backlog position, closed pause event, derived Batch/Order rollback, structured `operation_reset` audit, and compact client control/refresh behavior.
 - nearest-feasible fixed-backlog Timeline placement with operation-linked Machine/setup/day-shift/resource/downtime/pause/dependency waiting, assigned-but-blocked visibility, no-leapfrog propagation, common resource retry for locked groups, and overlapping-wait renderer lanes.
 - schema v23 authoritative Start/Finish actual timestamps and Machine history, Reset clearing, floating not-started forecasts, fixed in-progress actual start, completed historical blocks, completed-predecessor actual-finish constraints, and forecast/actual Timeline UI metadata.
+- read-only `manual` and `backward` Timeline modes, reverse dependency/backlog latest-fit placement from Order Work Finish Date, deterministic earlier-date/shorter-duration/natural-Order contention, delivery warnings, Windows mode/navigation controls, and API evidence that backward reads do not change assignments or append structured events.
 
 Current automated result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 239 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 96 | 0 | 0 |
-| **Total** | **335** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 263 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 106 | 0 | 0 |
+| **Total** | **369** | **0** | **0** |
 
-Focused current tests cover schema-v10 through schema-v22 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, strict cross-type assignment confirmation/audit, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
+Focused current tests cover schema-v10 through schema-v23 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, strict cross-type assignment confirmation/audit, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, visual backward dependency/backlog placement, locked-group start/reservation semantics, no-leapfrog failure propagation, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
 
 Current Release command:
 
 ```powershell
-dotnet test .\server\Meimad.Planner.Server.slnx -c Release --artifacts-path .qa\release-0.1.2-tests
+dotnet test .\server\Meimad.Planner.Server.slnx -c Release --artifacts-path .qa\visual-backward-verified
 ```
 
 ## 1. Scope and method
@@ -102,7 +103,7 @@ The dataset deliberately does not simulate device-local checklist/comments. Focu
 | Edit token concurrency | **Core pass / operational gap** | Immediate transactions, singleton token, unique pending request, generation invalidation, Release, Reject, voluntary release, and configured no-response transfer pass concurrency tests. Caller headers are not authenticated, and heartbeat/disconnect, notification, cancellation, audit, and history retention policies remain open. |
 | Batch allocation / Order lifecycle | **Automated pass / policy gap** | Historical allocation tests and current aggregate Order-lifecycle tests pass for multi-Order, split/partial/full completion, atomic Batch create/delete/operation recomputation, cancelled-allocation rejection/preservation/resume, server-owned status, and quantity/status edit guards. Cross-Batch over-allocation and later reallocation/cancellation policy remain undefined. |
 | Machine assignment ordering | **Automated pass** | Compatible assign/move/unassign, stable contiguous ordering, running-head displacement rejection, linked Machine Type capabilities, unsafe type-update/rename protection, and explicitly warned/reasoned/audited cross-type overrides are covered by the passing Server and Windows suites. Inactive Machines remain non-overridable. No automatic Machine choice, route change, or scheduling is present. |
-| Time calculation | **Automated pass / model gap** | Deterministic tests cover recurring/local calendars, individual employee contention and setup skill eligibility, break/absence/holiday subtraction, setup/QA/manual phases, downtime, dependencies, reservations, cycles, and insufficient availability without writes/reordering. Persisted worker assignment, qualification expiry, in-progress work, performance targets, and broader DST-edge coverage remain open. |
+| Time calculation | **Automated pass / model gap** | Deterministic tests cover manual forward and visual-only backward latest-fit modes, fixed backlog/dependency chains, recurring/local calendars, individual employee contention and setup skill eligibility, breaks/absence/holidays, setup/QA/manual phases, downtime, locked reservations, cycles, deadline conflicts, and unchanged persisted assignments/event log. Persisted worker assignment, qualification expiry, performance targets, and broader DST-edge coverage remain open. |
 | Conflicts | **Partial pass** | Timeline/TV return deterministic, explained conflicts such as missing timing, invalid Machine calendars, cycles, invalid dependencies, same-Machine simultaneous work, and insufficient availability. A missing separate setup calendar now produces an attention explanation and Machine-calendar-only scheduling rather than suppressing operations. There is no standalone conflict API, persisted conflict identity/history, due-date-risk rule, acknowledgement policy, or complete severity catalog. |
 | Backups | **Database pass / system gap** | Online snapshot, timestamped unique file, count retention, integrity/FK checks, isolated restore, active-DB protection, corruption rejection, and concurrent-write tests pass. Official E-Ink package bytes and external Case folders are outside the SQLite backup and have no coordinated backup/restore policy. Scheduling, encryption, access control, RPO, and RTO remain open. |
 | TV Dashboard read-only behavior | **Automated pass / visual and security gap** | Projection and UI are GET-only; POST returns 405. Static regression tests require status-only markup, no form/input/button, no Server URL/host text, hidden viewport overflow, dynamic grid fitting, connection-dot states, conditional refresh, and no job/urgent rendering. Last-known status is retained on failure. TV authentication and physical 1080p/4K kiosk/read-distance acceptance remain unverified. |

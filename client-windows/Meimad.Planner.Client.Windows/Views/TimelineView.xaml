@@ -15,6 +15,15 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
                     <StackPanel Margin="0,0,8,0">
+                        <TextBlock Text="Projection" FontWeight="SemiBold" />
+                        <ComboBox x:Name="TimelinePlanningModeSelector"
+                                  ItemsSource="{Binding PlanningModes}"
+                                  SelectedItem="{Binding SelectedPlanningMode}"
+                                  DisplayMemberPath="Label"
+                                  Width="118" MinHeight="27" Margin="0,3,0,0"
+                                  AutomationProperties.Name="Timeline projection mode" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,8,0">
                         <TextBlock Text="From (UTC)" FontWeight="SemiBold" />
                         <DatePicker SelectedDate="{Binding FromDate}" Width="135" Margin="0,3,0,0" />
                     </StackPanel>
@@ -28,6 +37,9 @@
                     <TextBlock Text="TIMELINE" FontSize="17" FontWeight="Bold" />
                     <TextBlock Text="Read-only rendering of the Server calculation. This screen cannot schedule or rearrange work."
                                Foreground="{StaticResource MutedTextBrush}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PlanningModeBanner}" Margin="0,3,0,0"
+                               FontWeight="SemiBold" TextWrapping="Wrap"
+                               AutomationProperties.Name="{Binding PlanningModeBanner}" />
                     <TextBlock Text="{Binding StatusMessage}" Margin="0,4,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
                 </StackPanel>
             </DockPanel>

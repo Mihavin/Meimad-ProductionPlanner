@@ -191,6 +191,39 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("operation-1", api.AssignedOperationId);
     }
 
+    [Fact]
+    public async Task Backlog_context_request_opens_shared_backward_projection_without_edit_mutation()
+    {
+        var operation = new PlanningBoardOperation(
+            "operation-1", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
+            "mill", 60, 30, "not_started", "machine-1", 0, 2, ["SO-1"], 120);
+        var machine = new PlanningBoardMachine(
+            "machine-1", "M-1", "Mill 1", "mill", "3-axis", [], true, [operation]);
+        var api = new FakeApiClient
+        {
+            Health = Healthy(),
+            EditMode = Editor() with { State = ClientEditState.Viewer },
+            Board = new PlanningBoardSnapshot(
+                DateTimeOffset.UtcNow, "available", "Calculated", [], [], [machine])
+        };
+        using var viewModel = new MainWindowViewModel(
+            new FakeSettingsStore(Settings),
+            new FakeApiClientFactory(api));
+        await viewModel.InitializeAsync();
+        var navigationRequested = false;
+        viewModel.TimelineViewRequested += (_, _) => navigationRequested = true;
+
+        viewModel.MachinePlanningBoard.RequestBackwardTimeline(
+            viewModel.MachinePlanningBoard.Machines.Single().Backlog.Single());
+        await Task.Yield();
+
+        Assert.True(navigationRequested);
+        Assert.Equal("backward", viewModel.Timeline.SelectedPlanningMode.Token);
+        Assert.Contains("backward", api.TimelineModes, StringComparer.Ordinal);
+        Assert.Null(api.AssignedOperationId);
+        Assert.False(viewModel.MachinePlanningBoard.CanUndo);
+    }
+
     private static ServerHealth Healthy() => new(
         "healthy", "Meimad Planner Server", "0.1.0", DateTimeOffset.UtcNow);
 
@@ -341,13 +374,23 @@ public sealed class MainWindowViewModelTests
             DateTimeOffset from,
             DateTimeOffset to,
             CancellationToken cancellationToken = default)
+            => GetTimelineAsync(from, to, "manual", cancellationToken);
+
+        public Task<TimelineSnapshot> GetTimelineAsync(
+            DateTimeOffset from,
+            DateTimeOffset to,
+            string planningMode,
+            CancellationToken cancellationToken = default)
         {
             TimelineRequestCount++;
+            TimelineModes.Add(planningMode);
             return Task.FromResult(new TimelineSnapshot(
-                DateTimeOffset.UtcNow, from, to, [], [], [], []));
+                DateTimeOffset.UtcNow, from, to, [], [], [], [], planningMode));
         }
 
         public int TimelineRequestCount { get; private set; }
+
+        public List<string> TimelineModes { get; } = [];
 
         public Task AssignOrMoveOperationAsync(
             string batchOperationId,

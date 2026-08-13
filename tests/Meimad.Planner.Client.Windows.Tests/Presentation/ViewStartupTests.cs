@@ -30,6 +30,8 @@ public sealed class ViewStartupTests
         var editModeButtonWasCompactAndStateful = false;
         var operationActionsWereCompactPlayerIcons = false;
         var operationRowWasDenseAndComplete = false;
+        var backwardContextActionWasReadOnlyAndVisible = false;
+        var timelineModeSelectorWasSharedAndAccessible = false;
         string? timelineStatusAfterClose = null;
         var thread = new Thread(() =>
         {
@@ -150,6 +152,11 @@ public sealed class ViewStartupTests
                     && rowText.Contains("Qty 4")
                     && rowText.Contains("Time 00:03:00")
                     && Descendants<Ellipse>(operationCard).Any(ellipse => ellipse.Width <= 8 && ellipse.ToolTip is not null);
+                var operationBorder = Assert.IsType<Border>(operationCard);
+                var backwardItem = Assert.IsType<MenuItem>(Assert.Single(operationBorder.ContextMenu!.Items));
+                backwardContextActionWasReadOnlyAndVisible =
+                    Equals(backwardItem.Header, "View backward from delivery date")
+                    && backwardItem.ToolTip?.ToString()?.Contains("visual-only", StringComparison.Ordinal) == true;
 
                 var openMethod = typeof(MainWindow).GetMethod(
                     "OpenTimelineWindow_Click",
@@ -167,6 +174,11 @@ public sealed class ViewStartupTests
                     && ReferenceEquals(
                         timelineViewModel,
                         Descendants<TimelineView>(timelineWindow).Single().DataContext);
+                var modeSelector = Descendants<ComboBox>(timelineWindow).Single(combo =>
+                    AutomationProperties.GetName(combo) == "Timeline projection mode");
+                timelineModeSelectorWasSharedAndAccessible = modeSelector.Items.Count == 2
+                    && ReferenceEquals(modeSelector.SelectedItem, timelineViewModel.SelectedPlanningMode)
+                    && timelineViewModel.PlanningModeBanner.Contains("stored Machine backlog order", StringComparison.OrdinalIgnoreCase);
                 timelineWindowWasReadOnlyAndSecondMonitorReady = timelineWindow.ResizeMode == ResizeMode.CanResizeWithGrip
                     && timelineWindow.ShowInTaskbar
                     && Descendants<UIElement>(timelineWindow).All(element => !element.AllowDrop);
@@ -222,6 +234,8 @@ public sealed class ViewStartupTests
         Assert.True(editModeButtonWasCompactAndStateful);
         Assert.True(operationActionsWereCompactPlayerIcons);
         Assert.True(operationRowWasDenseAndComplete);
+        Assert.True(backwardContextActionWasReadOnlyAndVisible);
+        Assert.True(timelineModeSelectorWasSharedAndAccessible);
         Assert.Contains("plan changed", timelineStatusAfterClose, StringComparison.OrdinalIgnoreCase);
     }
 

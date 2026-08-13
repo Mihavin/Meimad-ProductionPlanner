@@ -12,6 +12,95 @@ public sealed class TimelineViewModelTests
         var viewModel = new TimelineViewModel();
 
         Assert.Equal(30, (viewModel.ToDate!.Value.Date - viewModel.FromDate!.Value.Date).TotalDays);
+        Assert.Equal("manual", viewModel.SelectedPlanningMode.Token);
+        Assert.Contains("stored Machine backlog order", viewModel.PlanningModeBanner, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Backward_mode_is_a_read_only_server_projection_with_due_date_warnings()
+    {
+        var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
+        var end = start.AddDays(10);
+        var snapshot = new TimelineSnapshot(
+            start, start, end,
+            [new TimelineBatch("batch-1", "B-1", "PN-1", new DateOnly(2026, 8, 19))],
+            [new TimelineMachine("machine-1", "M-1", "Mill", [])],
+            [],
+            [new TimelineConflict(
+                "warning-1", "backward_deadline_missing", "attention",
+                "Another operation has no delivery date.", ["op-2"], ["machine-1"])],
+            "backward");
+        var api = new FakeApiClient(snapshot);
+        var viewModel = new TimelineViewModel
+        {
+            FromDate = start.UtcDateTime,
+            ToDate = end.UtcDateTime,
+            SelectedPlanningMode = new(
+                "backward", "Backward",
+                "Visual calculation from allocated Order Work Finish Dates. Nothing is saved or reordered.")
+        };
+        viewModel.AttachSession(api);
+
+        await viewModel.RefreshAsync();
+
+        Assert.Equal("backward", api.RequestedModes.Single());
+        Assert.Equal(new DateOnly(2026, 8, 19), viewModel.Batches.Single().WorkFinishDate);
+        Assert.Contains("visual projection", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No dates or backlog positions were saved", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Backward_in_progress_fallback_status_says_manual_projection_is_shown()
+    {
+        var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
+        var end = start.AddDays(10);
+        var snapshot = new TimelineSnapshot(
+            start, start, end, [],
+            [new TimelineMachine("machine-1", "M-1", "Mill", [])], [],
+            [new TimelineConflict(
+                "fallback", "backward_in_progress_fallback", "attention",
+                "Actual work is fixed.", ["op-1"], ["machine-1"])],
+            "backward");
+        var viewModel = new TimelineViewModel
+        {
+            FromDate = start.UtcDateTime,
+            ToDate = end.UtcDateTime,
+            SelectedPlanningMode = new(
+                "backward", "Backward",
+                "Visual calculation from allocated Order Work Finish Dates. Nothing is saved or reordered.")
+        };
+        viewModel.AttachSession(new FakeApiClient(snapshot));
+
+        await viewModel.RefreshAsync();
+
+        Assert.Contains("Manual visual projection is shown", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("actual start remains fixed", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Mode_change_during_refresh_discards_stale_manual_response()
+    {
+        var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
+        var end = start.AddDays(10);
+        var manual = Snapshot("Stale manual", start, end);
+        var backward = Snapshot("Current backward", start, end) with { PlanningMode = "backward" };
+        var api = new FakeApiClient(manual, backward, pauseFirstRequest: true);
+        var viewModel = new TimelineViewModel
+        {
+            FromDate = start.UtcDateTime,
+            ToDate = end.UtcDateTime
+        };
+        viewModel.AttachSession(api);
+
+        var refresh = viewModel.RefreshAsync();
+        await api.FirstRequestStarted.Task;
+        viewModel.SelectedPlanningMode = viewModel.PlanningModes.Single(mode => mode.Token == "backward");
+        api.ReleaseFirstRequest.SetResult();
+        await refresh;
+
+        Assert.Equal(["manual", "backward"], api.RequestedModes);
+        Assert.Equal("Current backward", viewModel.Machines.Single().Name);
+        Assert.Equal("backward", viewModel.SelectedPlanningMode.Token);
     }
 
     [Fact]
@@ -113,6 +202,20 @@ public sealed class TimelineViewModelTests
     }
 
     [Fact]
+    public void Backward_interval_tooltip_is_explicitly_visual_only()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var interval = new TimelineInterval(
+            "production", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), null, PlanningMode: "backward");
+
+        var tooltip = TimelineView.IntervalToolTip(interval, TimelineView.IntervalLabel(interval));
+
+        Assert.Contains("Backward projection", tooltip, StringComparison.Ordinal);
+        Assert.Contains("visual only", tooltip, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Invalidation_during_refresh_reloads_the_new_server_projection()
     {
         var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
@@ -199,10 +302,20 @@ public sealed class TimelineViewModelTests
 
         internal int RequestCount { get; private set; }
 
+        internal List<string> RequestedModes { get; } = [];
+
         public async Task<TimelineSnapshot> GetTimelineAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
+            => await GetTimelineAsync(from, to, "manual", cancellationToken);
+
+        public async Task<TimelineSnapshot> GetTimelineAsync(
+            DateTimeOffset from,
+            DateTimeOffset to,
+            string planningMode,
+            CancellationToken cancellationToken = default)
         {
             RequestedFrom = from;
             RequestedTo = to;
+            RequestedModes.Add(planningMode);
             RequestCount++;
             if (RequestCount == 1 && pauseFirstRequest)
             {
