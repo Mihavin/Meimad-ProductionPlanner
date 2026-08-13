@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -97,6 +98,7 @@ public partial class TimelineView : UserControl
 
     private void RenderTimeline()
     {
+        var stopwatch = Stopwatch.StartNew();
         TimelineCanvas.Children.Clear();
         if (viewModel is null
             || viewModel.HorizonEnd <= viewModel.HorizonStart
@@ -105,6 +107,7 @@ public partial class TimelineView : UserControl
             TimelineCanvas.Width = Math.Max(700, ActualWidth - 60);
             TimelineCanvas.Height = 100;
             AddText("No calculated Machine intervals in this range.", 12, 35, 15, Brushes.DimGray);
+            Trace.WriteLine($"Timeline render completed in {stopwatch.Elapsed.TotalMilliseconds:F1} ms (empty projection).");
             return;
         }
 
@@ -119,6 +122,12 @@ public partial class TimelineView : UserControl
         {
             DrawMachineRow(viewModel.Machines[row], row, chartWidth, duration);
         }
+
+        stopwatch.Stop();
+        Trace.WriteLine(
+            $"Timeline render completed in {stopwatch.Elapsed.TotalMilliseconds:F1} ms " +
+            $"({viewModel.Machines.Count} machines, {viewModel.Machines.Sum(machine => machine.Intervals.Count)} intervals, " +
+            $"{TimelineCanvas.Children.Count} visual elements).");
     }
 
     private void DrawTimeGrid(DateTimeOffset start, DateTimeOffset end, double chartWidth)
@@ -158,6 +167,13 @@ public partial class TimelineView : UserControl
             .Where(interval => interval.EndsAt > viewModel!.HorizonStart
                 && interval.StartsAt < viewModel.HorizonEnd)
             .ToArray();
+        var exactOverlapGroups = visibleIntervals
+            .GroupBy(interval => (interval.StartsAt, interval.EndsAt))
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(candidate => candidate.OperationNumber)
+                    .ThenBy(candidate => candidate.OperationId, StringComparer.Ordinal)
+                    .ToArray());
         foreach (var interval in visibleIntervals)
         {
             var clippedStart = interval.StartsAt < viewModel!.HorizonStart
@@ -173,12 +189,7 @@ public partial class TimelineView : UserControl
 
             var x = LabelWidth + chartWidth * (clippedStart - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
             var width = Math.Max(8, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
-            var exactOverlaps = visibleIntervals.Where(candidate =>
-                    candidate.StartsAt == interval.StartsAt
-                    && candidate.EndsAt == interval.EndsAt)
-                .OrderBy(candidate => candidate.OperationNumber)
-                .ThenBy(candidate => candidate.OperationId, StringComparer.Ordinal)
-                .ToArray();
+            var exactOverlaps = exactOverlapGroups[(interval.StartsAt, interval.EndsAt)];
             var lane = Array.IndexOf(exactOverlaps, interval);
             var laneHeight = (RowHeight - 6) / Math.Max(1, exactOverlaps.Length);
             var label = $"{interval.TimingLabel}: {IntervalLabel(interval)}";

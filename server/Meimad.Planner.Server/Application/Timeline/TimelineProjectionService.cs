@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Text.Json;
 using Meimad.Planner.Server.Domain.Timeline;
 using Meimad.Planner.Server.Configuration;
@@ -41,9 +42,12 @@ internal sealed class TimelineProjectionService
         DateTimeOffset? asOf,
         CancellationToken cancellationToken = default)
     {
+        var total = Stopwatch.StartNew();
         horizonStart = horizonStart.ToUniversalTime();
         horizonEnd = horizonEnd.ToUniversalTime();
+        var sourceRead = Stopwatch.StartNew();
         var source = await repository.ReadAsync(horizonStart, horizonEnd, cancellationToken);
+        sourceRead.Stop();
         var forecastCursor = (asOf ?? source.ReadAt).ToUniversalTime();
         if (forecastCursor < horizonStart || forecastCursor >= horizonEnd)
         {
@@ -269,7 +273,9 @@ internal sealed class TimelineProjectionService
             calculationDependencies.Select(dependency => dependency.Domain).ToArray(),
             resourceCalendars,
             dayShiftCalendars);
+        var calculationStopwatch = Stopwatch.StartNew();
         var calculation = engine.Calculate(calculationInput);
+        calculationStopwatch.Stop();
         var baselineBacklogs = backlogs.Select(backlog => backlog with
         {
             Operations = backlog.Operations.Select(operation => operation with
@@ -279,6 +285,7 @@ internal sealed class TimelineProjectionService
                     : operation.EarliestStart
             }).ToArray()
         }).ToArray();
+        var baselineStopwatch = Stopwatch.StartNew();
         var baselineStarts = forecastCursor > horizonStart
             ? engine.Calculate(calculationInput with { MachineBacklogs = baselineBacklogs })
                 .Operations.ToDictionary(
@@ -286,6 +293,7 @@ internal sealed class TimelineProjectionService
                     operation => operation.StartsAt,
                     StringComparer.Ordinal)
             : new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        baselineStopwatch.Stop();
 
         var intervalsByMachine = calculation.Machines.ToDictionary(
             machine => machine.MachineId,
@@ -371,9 +379,12 @@ internal sealed class TimelineProjectionService
             projectedMachines,
             dependencies.Select(dependency => dependency.Projection).ToArray(),
             allConflicts);
+        total.Stop();
         logger.LogInformation(
-            "Timeline calculation completed with {ScheduledOperationCount} scheduled operations and {ConflictCount} conflicts.",
-            calculation.Operations.Count, projection.Conflicts.Count);
+            "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",
+            total.ElapsedMilliseconds, sourceRead.ElapsedMilliseconds, calculationStopwatch.ElapsedMilliseconds,
+            baselineStopwatch.ElapsedMilliseconds, calculation.Operations.Count,
+            projectedMachines.Sum(machine => machine.Intervals.Count), projection.Conflicts.Count);
         foreach (var result in calculation.Operations)
         {
             logger.LogDebug(
@@ -517,7 +528,9 @@ internal sealed class TimelineProjectionService
 
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
         var shifts = ReadLocalWindows(scheduleWindows, "Weekly working windows", allowEmpty: false);
-        var breaks = ReadLocalWindows(schedule.BreakWindows ?? [], "Weekly break windows", allowEmpty: true);
+        var breaks = AlignBreaksToOvernightShift(
+            shifts,
+            ReadLocalWindows(schedule.BreakWindows ?? [], "Weekly break windows", allowEmpty: true));
         ValidateBreaks(shifts, breaks);
         var exceptions = (schedule.Exceptions ?? []).ToDictionary(
             value => DateOnly.ParseExact(value.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture));
@@ -535,7 +548,8 @@ internal sealed class TimelineProjectionService
             if (exceptions.TryGetValue(DateOnly.FromDateTime(date), out var exception))
             {
                 dateShifts = ReadLocalWindows(exception.Windows ?? [], "Exception working windows", allowEmpty: true);
-                dateBreaks = ReadLocalWindows(exception.BreakWindows ?? [], "Exception break windows", allowEmpty: true);
+                dateBreaks = AlignBreaksToOvernightShift(dateShifts,
+                    ReadLocalWindows(exception.BreakWindows ?? [], "Exception break windows", allowEmpty: true));
                 ValidateBreaks(dateShifts, dateBreaks);
             }
             else if (holiday is not null
@@ -585,12 +599,26 @@ internal sealed class TimelineProjectionService
         {
             var start = ParseLocalMinutes(window.StartsAtLocal, false);
             var end = ParseLocalMinutes(window.EndsAtLocal, true);
-            if (end <= start) throw new InvalidOperationException($"{label} contain an overnight or empty window.");
+            if (end == start) throw new InvalidOperationException($"{label} contain an empty window.");
+            if (end < start) end += 24 * 60;
             return (Start: start, End: end);
         }).OrderBy(window => window.Start).ToArray();
+        if (result.Length > 1 && result.Any(window => window.End > 24 * 60))
+            throw new InvalidOperationException($"{label} combine an overnight window with other windows.");
         if (result.Skip(1).Zip(result, (next, prior) => next.Start < prior.End).Any(overlap => overlap))
             throw new InvalidOperationException($"{label} overlap.");
         return result;
+    }
+
+    private static (int Start, int End)[] AlignBreaksToOvernightShift(
+        IReadOnlyList<(int Start, int End)> shifts,
+        IReadOnlyList<(int Start, int End)> breaks)
+    {
+        var overnight = shifts.SingleOrDefault(shift => shift.End > 24 * 60);
+        if (overnight == default) return breaks.ToArray();
+        return breaks.Select(pause => pause.Start < overnight.Start
+            ? (pause.Start + 24 * 60, pause.End + 24 * 60)
+            : pause).ToArray();
     }
 
     private static void ValidateBreaks(

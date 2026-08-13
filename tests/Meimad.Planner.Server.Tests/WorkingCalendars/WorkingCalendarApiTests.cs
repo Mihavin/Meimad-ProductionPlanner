@@ -89,6 +89,31 @@ public sealed class WorkingCalendarApiTests
     }
 
     [Fact]
+    public async Task Editor_can_create_an_overnight_employee_calendar()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            using var create = await client.PostAsJsonAsync("/api/v1/working-calendars", new
+            {
+                name = "Night setup team",
+                timeZoneId = "Asia/Jerusalem",
+                workdays = new[] { "sunday", "monday", "tuesday", "wednesday", "thursday" },
+                windows = new[] { new { startsAtLocal = "17:00", endsAtLocal = "07:00" } },
+                usages = new[] { "setup_worker" }
+            });
+
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+            using var calendar = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
+            var window = Assert.Single(calendar.RootElement.GetProperty("windows").EnumerateArray());
+            Assert.Equal("17:00", window.GetProperty("startsAtLocal").GetString());
+            Assert.Equal("07:00", window.GetProperty("endsAtLocal").GetString());
+            Assert.Equal("setup_worker", Assert.Single(calendar.RootElement.GetProperty("usages").EnumerateArray()).GetString());
+        });
+    }
+
+    [Fact]
     public async Task Weekly_calendar_supports_multiple_non_overlapping_working_windows()
     {
         await RunWithServerAsync(async (application, client) =>

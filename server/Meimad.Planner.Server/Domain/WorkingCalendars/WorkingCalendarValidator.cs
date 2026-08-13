@@ -76,9 +76,9 @@ internal static class WorkingCalendarValidator
         }
         var startsAt = ParseTime(values.ShiftStartsAtLocal, "shiftStartsAtLocal", false, issues);
         var endsAt = ParseTime(values.ShiftEndsAtLocal, "shiftEndsAtLocal", true, issues);
-        if (startsAt.HasValue && endsAt.HasValue && endsAt.Value <= startsAt.Value)
-            issues.Add(new("shiftEndsAtLocal", "shift_order_invalid", "shiftEndsAtLocal must be later than shiftStartsAtLocal; overnight shifts are not yet supported."));
-        return startsAt.HasValue && endsAt.HasValue && endsAt > startsAt
+        if (startsAt.HasValue && endsAt.HasValue && endsAt.Value == startsAt.Value)
+            issues.Add(new("shiftEndsAtLocal", "shift_order_invalid", "shiftEndsAtLocal must differ from shiftStartsAtLocal."));
+        return startsAt.HasValue && endsAt.HasValue && endsAt != startsAt
             ? [new WorkingCalendarWindow(FormatMinutes(startsAt.Value), endsAt.Value == 1440 ? "24:00" : FormatMinutes(endsAt.Value))]
             : [];
     }
@@ -102,14 +102,19 @@ internal static class WorkingCalendarValidator
             var start = ParseTime(value?.StartsAtLocal, $"{field}[{index}].startsAtLocal", false, issues);
             var end = ParseTime(value?.EndsAtLocal, $"{field}[{index}].endsAtLocal", true, issues);
             if (!start.HasValue || !end.HasValue) continue;
-            if (end <= start)
+            if (end == start)
             {
-                issues.Add(new($"{field}[{index}].endsAtLocal", "window_order_invalid", "A window must end after it starts; overnight windows are not supported."));
+                issues.Add(new($"{field}[{index}].endsAtLocal", "window_order_invalid", "A window end must differ from its start."));
                 continue;
             }
 
             normalized.Add((start.Value, end.Value, new WorkingCalendarWindow(
                 FormatMinutes(start.Value), end.Value == 1440 ? "24:00" : FormatMinutes(end.Value))));
+        }
+
+        if (normalized.Count > 1 && normalized.Any(value => value.End <= value.Start))
+        {
+            issues.Add(new(field, "overnight_window_combination_unsupported", "Use one overnight window per Calendar. Split/combined night windows are not supported."));
         }
 
         normalized.Sort((left, right) => left.Start.CompareTo(right.Start));
@@ -192,10 +197,21 @@ internal static class WorkingCalendarValidator
         {
             var breakStart = LocalMinutes(breaks[index].StartsAtLocal);
             var breakEnd = LocalMinutes(breaks[index].EndsAtLocal);
-            if (!workingWindows.Any(window => LocalMinutes(window.StartsAtLocal) <= breakStart
-                    && LocalMinutes(window.EndsAtLocal) >= breakEnd))
+            if (breakEnd <= breakStart) breakEnd += 1440;
+            if (!workingWindows.Any(window =>
+                ContainsBreak(window, breakStart, breakEnd)))
                 issues.Add(new($"{field}[{index}]", "break_outside_working_window", "Each break must be fully contained in one working window."));
         }
+    }
+
+    private static bool ContainsBreak(WorkingCalendarWindow window, int breakStart, int breakEnd)
+    {
+        var workStart = LocalMinutes(window.StartsAtLocal);
+        var workEnd = LocalMinutes(window.EndsAtLocal);
+        if (workEnd <= workStart) workEnd += 1440;
+        if (workStart <= breakStart && workEnd >= breakEnd) return true;
+        // A 01:00 break belongs to the next-day portion of a 17:00–07:00 shift.
+        return workEnd > 1440 && workStart <= breakStart + 1440 && workEnd >= breakEnd + 1440;
     }
 
     private static int LocalMinutes(string value)

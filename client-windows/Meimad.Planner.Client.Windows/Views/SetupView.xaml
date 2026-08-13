@@ -134,7 +134,7 @@
                                 <TextBlock Text="Working windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />
                                 <TextBox Text="{Binding CalendarWindowsText, UpdateSourceTrigger=PropertyChanged}"
                                          AcceptsReturn="True" MinHeight="58" VerticalScrollBarVisibility="Auto"
-                                         ToolTip="For example: 06:00-10:00 then 10:30-18:00. Windows are shared by the selected workdays." />
+                                         ToolTip="For example: 06:00-10:00 then 10:30-18:00, or one overnight shift such as 17:00-07:00. Windows are shared by the selected workdays." />
                             </StackPanel>
                             <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}">
                                 <TextBlock Text="Lunch / break windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />

@@ -202,6 +202,44 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Timeline_expands_an_overnight_employee_calendar_across_midnight()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE working_calendars
+                SET time_zone_id = 'UTC',
+                    calendar_json = '{"weeklySchedule":{"workdays":["monday"],"windows":[{"startsAtLocal":"17:00","endsAtLocal":"07:00"}]}}'
+                WHERE id = 'calendar-1';
+                UPDATE application_settings
+                SET value = '{"availability":[{"startsAt":"2026-08-10T17:00:00Z","endsAt":"2026-08-11T07:00:00Z"}]}'
+                WHERE key = 'timeline.setup_calendar_json';
+                UPDATE production_batches SET planned_quantity = 20 WHERE id = 'batch-1';
+                DELETE FROM machine_assignments WHERE batch_operation_id = 'op-2';
+                """;
+            await command.ExecuteNonQueryAsync();
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-10T16:00:00Z&to=2026-08-11T09:00:00Z&asOf=2026-08-10T16:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var production = document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
+                .EnumerateArray().Where(value => value.GetProperty("operationId").GetString() == "op-1"
+                    && value.GetProperty("type").GetString() == "production").ToArray();
+            Assert.NotEmpty(production);
+            Assert.Equal("2026-08-10T17:30:00+00:00", production[0].GetProperty("startsAt").GetString());
+            Assert.True(production[^1].GetProperty("endsAt").GetDateTimeOffset()
+                > DateTimeOffset.Parse("2026-08-11T00:00:00Z"));
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                value => value.GetProperty("code").GetString() == "calendar_configuration_invalid");
+        });
+    }
+
+    [Fact]
     public async Task Not_started_forecast_floats_from_as_of_without_changing_status_or_backlog()
     {
         await RunWithServerAsync(async (application, client) =>

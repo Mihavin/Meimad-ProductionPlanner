@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Domain.Timeline;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -10,11 +12,16 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
 {
     private readonly SqliteDatabase database;
     private readonly TimeProvider timeProvider;
+    private readonly ILogger<SqliteTimelineSourceRepository> logger;
 
-    public SqliteTimelineSourceRepository(SqliteDatabase database, TimeProvider timeProvider)
+    public SqliteTimelineSourceRepository(
+        SqliteDatabase database,
+        TimeProvider timeProvider,
+        ILogger<SqliteTimelineSourceRepository> logger)
     {
         this.database = database;
         this.timeProvider = timeProvider;
+        this.logger = logger;
     }
 
     public async Task<TimelineSourceSnapshot> ReadAsync(
@@ -22,23 +29,42 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         DateTimeOffset horizonEnd,
         CancellationToken cancellationToken)
     {
+        var total = Stopwatch.StartNew();
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: true);
+        var phase = Stopwatch.StartNew();
         var machines = await ReadMachinesAsync(connection, transaction, cancellationToken);
+        var machinesElapsed = phase.ElapsedMilliseconds;
+        phase.Restart();
         var operations = await ReadOperationsAsync(connection, transaction, cancellationToken);
+        var operationsElapsed = phase.ElapsedMilliseconds;
+        phase.Restart();
         var downtimes = await ReadDowntimesAsync(
             connection,
             transaction,
             horizonStart,
             horizonEnd,
             cancellationToken);
+        var downtimesElapsed = phase.ElapsedMilliseconds;
+        phase.Restart();
         var setupCalendar = await ReadSetupCalendarAsync(
             connection,
             transaction,
             cancellationToken);
+        var setupCalendarElapsed = phase.ElapsedMilliseconds;
+        phase.Restart();
         var holidays = await ReadHolidaysAsync(connection, transaction, horizonStart, horizonEnd, cancellationToken);
+        var holidaysElapsed = phase.ElapsedMilliseconds;
+        phase.Restart();
         var resources = await ReadResourcesAsync(connection, transaction, horizonStart, horizonEnd, cancellationToken);
+        var resourcesElapsed = phase.ElapsedMilliseconds;
         await transaction.CommitAsync(cancellationToken);
+        total.Stop();
+        logger.LogInformation(
+            "Timeline database read completed in {TotalMilliseconds} ms: machines {MachinesMilliseconds} ms ({MachineCount}), operations {OperationsMilliseconds} ms ({OperationCount}), downtimes {DowntimesMilliseconds} ms ({DowntimeCount}), setup calendar {SetupCalendarMilliseconds} ms, holidays {HolidaysMilliseconds} ms ({HolidayCount}), resources and exceptions {ResourcesMilliseconds} ms ({ResourceCount}).",
+            total.ElapsedMilliseconds, machinesElapsed, machines.Count, operationsElapsed, operations.Count,
+            downtimesElapsed, downtimes.Count, setupCalendarElapsed, holidaysElapsed, holidays.Count,
+            resourcesElapsed, resources.Count);
         return new TimelineSourceSnapshot(
             timeProvider.GetUtcNow(),
             machines,
@@ -304,29 +330,54 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         }
         await reader.DisposeAsync();
 
+        // Read every active resource's relevant exceptions in one indexed query. The
+        // previous per-resource query was an N+1 pattern that made Timeline loading
+        // slower as the employee directory grew.
+        var exceptionsByResource = new Dictionary<string, List<TimelineSourceResourceException>>(
+            StringComparer.Ordinal);
+        await using var exceptions = connection.CreateCommand();
+        exceptions.Transaction = transaction;
+        exceptions.CommandText = """
+            SELECT employee_calendar_exceptions.resource_id,
+                   employee_calendar_exceptions.exception_date,
+                   employee_calendar_exceptions.is_full_day,
+                   employee_calendar_exceptions.starts_at_local,
+                   employee_calendar_exceptions.ends_at_local
+            FROM employee_calendar_exceptions
+            JOIN employee_resources
+              ON employee_resources.id = employee_calendar_exceptions.resource_id
+            WHERE employee_resources.is_active = 1
+              AND employee_calendar_exceptions.exception_date >= $from
+              AND employee_calendar_exceptions.exception_date <= $to
+            ORDER BY employee_calendar_exceptions.resource_id,
+                     employee_calendar_exceptions.exception_date,
+                     employee_calendar_exceptions.starts_at_local,
+                     employee_calendar_exceptions.id;
+            """;
+        exceptions.Parameters.AddWithValue("$from", horizonStart.UtcDateTime.AddDays(-2).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        exceptions.Parameters.AddWithValue("$to", horizonEnd.UtcDateTime.AddDays(2).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        await using var exceptionReader = await exceptions.ExecuteReaderAsync(cancellationToken);
+        while (await exceptionReader.ReadAsync(cancellationToken))
+        {
+            var resourceId = exceptionReader.GetString(0);
+            if (!exceptionsByResource.TryGetValue(resourceId, out var values))
+            {
+                values = [];
+                exceptionsByResource.Add(resourceId, values);
+            }
+
+            values.Add(new TimelineSourceResourceException(
+                DateOnly.ParseExact(exceptionReader.GetString(1), "yyyy-MM-dd", CultureInfo.InvariantCulture),
+                exceptionReader.GetInt32(2) == 1,
+                NullableString(exceptionReader, 3), NullableString(exceptionReader, 4)));
+        }
+
         for (var index = 0; index < resources.Count; index++)
         {
-            await using var exceptions = connection.CreateCommand();
-            exceptions.Transaction = transaction;
-            exceptions.CommandText = """
-                SELECT exception_date, is_full_day, starts_at_local, ends_at_local
-                FROM employee_calendar_exceptions
-                WHERE resource_id = $resource AND exception_date >= $from AND exception_date <= $to
-                ORDER BY exception_date, starts_at_local, id;
-                """;
-            exceptions.Parameters.AddWithValue("$resource", resources[index].ResourceId);
-            exceptions.Parameters.AddWithValue("$from", horizonStart.UtcDateTime.AddDays(-2).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-            exceptions.Parameters.AddWithValue("$to", horizonEnd.UtcDateTime.AddDays(2).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-            var values = new List<TimelineSourceResourceException>();
-            await using var exceptionReader = await exceptions.ExecuteReaderAsync(cancellationToken);
-            while (await exceptionReader.ReadAsync(cancellationToken))
+            resources[index] = resources[index] with
             {
-                values.Add(new TimelineSourceResourceException(
-                    DateOnly.ParseExact(exceptionReader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture),
-                    exceptionReader.GetInt32(1) == 1,
-                    NullableString(exceptionReader, 2), NullableString(exceptionReader, 3)));
-            }
-            resources[index] = resources[index] with { Exceptions = values };
+                Exceptions = exceptionsByResource.GetValueOrDefault(resources[index].ResourceId) ?? []
+            };
         }
         return resources;
     }

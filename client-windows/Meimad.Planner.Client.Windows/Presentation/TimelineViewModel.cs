@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using Meimad.Planner.Client.Windows.Api;
@@ -157,8 +158,18 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             IsBusy = true;
             try
             {
+                var requestStopwatch = Stopwatch.StartNew();
                 var snapshot = await apiClient.GetTimelineAsync(from, to);
+                requestStopwatch.Stop();
+                var applyStopwatch = Stopwatch.StartNew();
                 Apply(snapshot);
+                applyStopwatch.Stop();
+                Trace.WriteLine(
+                    $"Timeline refresh: API {requestStopwatch.Elapsed.TotalMilliseconds:F1} ms, " +
+                    $"view-model apply {applyStopwatch.Elapsed.TotalMilliseconds:F1} ms " +
+                    $"({snapshot.Machines.Count} machines, " +
+                    $"{snapshot.Machines.Sum(machine => machine.Intervals.Count)} intervals, " +
+                    $"{snapshot.Conflicts.Count} conflicts).");
                 hasLoaded = requestedVersion == invalidationVersion;
                 var hasInsufficientHorizon = snapshot.Conflicts.Any(conflict =>
                     string.Equals(conflict.Code, "insufficient_availability", StringComparison.Ordinal));
