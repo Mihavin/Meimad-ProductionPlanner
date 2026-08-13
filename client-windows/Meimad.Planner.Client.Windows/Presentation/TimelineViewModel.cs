@@ -134,32 +134,47 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
 
     internal async Task RefreshAsync()
     {
-        if (!CanRefresh())
+        if (apiClient is null || !FromDate.HasValue || !ToDate.HasValue
+            || ToDate.Value.Date <= FromDate.Value.Date)
         {
             StatusMessage = "Choose a valid UTC date range with the end after the start.";
             return;
         }
 
+        if (IsBusy)
+        {
+            return;
+        }
+
         var from = new DateTimeOffset(DateTime.SpecifyKind(FromDate!.Value.Date, DateTimeKind.Utc));
         var to = new DateTimeOffset(DateTime.SpecifyKind(ToDate!.Value.Date, DateTimeKind.Utc));
-        var requestedVersion = invalidationVersion;
-        IsBusy = true;
-        try
+        while (apiClient is not null)
         {
-            var snapshot = await apiClient!.GetTimelineAsync(from, to);
-            Apply(snapshot);
-            hasLoaded = requestedVersion == invalidationVersion;
-            StatusMessage = hasLoaded
-                ? $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}."
-                : "The plan changed during calculation. The Timeline will be recalculated from the Server.";
-        }
-        catch (Exception exception) when (IsExpected(exception))
-        {
-            StatusMessage = FriendlyMessage(exception);
-        }
-        finally
-        {
-            IsBusy = false;
+            var requestedVersion = invalidationVersion;
+            IsBusy = true;
+            try
+            {
+                var snapshot = await apiClient.GetTimelineAsync(from, to);
+                Apply(snapshot);
+                hasLoaded = requestedVersion == invalidationVersion;
+                StatusMessage = hasLoaded
+                    ? $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}."
+                    : "The plan changed during calculation. Recalculating from the Server.";
+            }
+            catch (Exception exception) when (IsExpected(exception))
+            {
+                StatusMessage = FriendlyMessage(exception);
+                return;
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+
+            if (hasLoaded)
+            {
+                return;
+            }
         }
     }
 

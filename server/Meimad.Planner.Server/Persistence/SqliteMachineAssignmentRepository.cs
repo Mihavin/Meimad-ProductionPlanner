@@ -319,6 +319,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 when execution.Status == "in_progress" => "suspended",
             BatchOperationExecutionAction.Finish
                 when execution.Status == "in_progress" => "completed",
+            BatchOperationExecutionAction.Reset
+                when execution.Status == "suspended" => "not_started",
             _ => throw new BatchOperationTransitionException(execution.Status, action)
         };
 
@@ -352,9 +354,11 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             await InsertPauseEventAsync(connection, transaction, batchOperationId,
                 pauseReason!, pausedBy, now, cancellationToken);
         }
-        else if (action == BatchOperationExecutionAction.Start && execution.Status == "suspended")
+        else if ((action == BatchOperationExecutionAction.Start && execution.Status == "suspended")
+                 || action == BatchOperationExecutionAction.Reset)
         {
-            await ClosePauseEventAsync(connection, transaction, batchOperationId, now, cancellationToken);
+            await ClosePauseEventAsync(
+                connection, transaction, batchOperationId, action, now, cancellationToken);
         }
 
         if (action == BatchOperationExecutionAction.Finish)
@@ -404,6 +408,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             BatchOperationExecutionAction.Start => "operation_started",
             BatchOperationExecutionAction.Suspend => "operation_paused",
             BatchOperationExecutionAction.Finish => "operation_finished",
+            BatchOperationExecutionAction.Reset => "operation_reset",
             _ => throw new ArgumentOutOfRangeException(nameof(action))
         };
         await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
@@ -451,7 +456,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
 
     private static async Task ClosePauseEventAsync(
         SqliteConnection connection, SqliteTransaction transaction, string operationId,
-        DateTimeOffset now, CancellationToken token)
+        BatchOperationExecutionAction action, DateTimeOffset now, CancellationToken token)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -464,7 +469,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Parameters.AddWithValue("$at", FormatInstant(now));
         if (await command.ExecuteNonQueryAsync(token) != 1)
         {
-            throw new BatchOperationTransitionException("suspended_without_active_pause", BatchOperationExecutionAction.Start);
+            throw new BatchOperationTransitionException("suspended_without_active_pause", action);
         }
     }
 

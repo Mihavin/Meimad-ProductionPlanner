@@ -60,7 +60,8 @@ internal enum BatchOperationExecutionAction
 {
     Start,
     Suspend,
-    Finish
+    Finish,
+    Reset
 }
 
 internal sealed record BatchOperationExecutionResult(

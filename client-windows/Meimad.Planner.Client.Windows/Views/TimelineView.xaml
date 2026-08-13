@@ -39,7 +39,7 @@
                 <TextBlock Text="LEGEND" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0" />
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#FBC02D" /><TextBlock Text="SETUP" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#1E88E5" /><TextBlock Text="PRODUCTION" Margin="5,0,0,0" /></StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#7E57C2" /><TextBlock Text="WAITING FOR DEPENDENCY" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#7E57C2" /><TextBlock Text="WAITING" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#9E9E9E" /><TextBlock Text="IDLE" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#C62828" /><TextBlock Text="DOWNTIME" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal"><Border Width="12" Height="12" Background="#F57C00" /><TextBlock Text="RESERVED" Margin="5,0,0,0" /></StackPanel>

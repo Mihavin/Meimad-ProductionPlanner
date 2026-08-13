@@ -154,7 +154,11 @@ public partial class TimelineView : UserControl
         machineLabelBlock.ToolTip = machineLabel;
         AddLine(0, y + RowHeight, TimelineCanvas.Width, y + RowHeight, Color.FromRgb(220, 224, 229), 1);
 
-        foreach (var interval in machine.Intervals)
+        var visibleIntervals = machine.Intervals
+            .Where(interval => interval.EndsAt > viewModel!.HorizonStart
+                && interval.StartsAt < viewModel.HorizonEnd)
+            .ToArray();
+        foreach (var interval in visibleIntervals)
         {
             var clippedStart = interval.StartsAt < viewModel!.HorizonStart
                 ? viewModel.HorizonStart
@@ -169,11 +173,19 @@ public partial class TimelineView : UserControl
 
             var x = LabelWidth + chartWidth * (clippedStart - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
             var width = Math.Max(8, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
+            var exactOverlaps = visibleIntervals.Where(candidate =>
+                    candidate.StartsAt == interval.StartsAt
+                    && candidate.EndsAt == interval.EndsAt)
+                .OrderBy(candidate => candidate.OperationNumber)
+                .ThenBy(candidate => candidate.OperationId, StringComparer.Ordinal)
+                .ToArray();
+            var lane = Array.IndexOf(exactOverlaps, interval);
+            var laneHeight = (RowHeight - 6) / Math.Max(1, exactOverlaps.Length);
             var label = IntervalLabel(interval);
             var block = new Border
             {
                 Width = width,
-                Height = RowHeight - 6,
+                Height = laneHeight,
                 Background = IntervalBrush(interval.Type),
                 BorderBrush = Brushes.White,
                 BorderThickness = new Thickness(1),
@@ -190,7 +202,7 @@ public partial class TimelineView : UserControl
                 }
             };
             Canvas.SetLeft(block, x);
-            Canvas.SetTop(block, y + 3);
+            Canvas.SetTop(block, y + 3 + lane * laneHeight);
             TimelineCanvas.Children.Add(block);
         }
     }

@@ -151,6 +151,53 @@ public sealed class MachineOperationExecutionApiTests
         });
     }
 
+    [Fact]
+    public async Task Reset_returns_paused_operation_to_not_started_and_closes_pause()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditHeaders(client);
+
+            Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
+            using (var resetWhileRunning = await client.PostAsync(
+                       "/api/v1/batch-operations/op-1/reset", null))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, resetWhileRunning.StatusCode);
+                Assert.Equal("invalid_operation_transition", await ErrorCodeAsync(resetWhileRunning));
+            }
+
+            Assert.Equal("suspended", await PostActionAsync(client, "op-1", "suspend"));
+            Assert.Equal("not_started", await PostActionAsync(client, "op-1", "reset"));
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal("not_started", await ScalarAsync(connection,
+                "SELECT status FROM batch_operations WHERE id = 'op-1';"));
+            Assert.Equal("assignment-1", await ScalarAsync(connection,
+                "SELECT id FROM machine_assignments WHERE batch_operation_id = 'op-1';"));
+            Assert.Equal(0L, (long)(await ScalarAsync(connection,
+                "SELECT backlog_position FROM machine_assignments WHERE batch_operation_id = 'op-1';"))!);
+            Assert.Equal("closed", await ScalarAsync(connection,
+                "SELECT status FROM operation_pause_events WHERE batch_operation_id = 'op-1';"));
+            Assert.NotNull(await ScalarAsync(connection,
+                "SELECT pause_ended_at FROM operation_pause_events WHERE batch_operation_id = 'op-1';"));
+            Assert.Equal("waiting", await ScalarAsync(connection,
+                "SELECT status FROM production_batches WHERE id = 'batch-1';"));
+
+            using var events = await client.GetAsync("/api/v1/event-log?limit=20");
+            events.EnsureSuccessStatusCode();
+            using var eventJson = JsonDocument.Parse(await events.Content.ReadAsStringAsync());
+            var reset = Assert.Single(eventJson.RootElement.GetProperty("items").EnumerateArray(),
+                value => value.GetProperty("eventType").GetString() == "operation_reset");
+            Assert.Equal("planner", reset.GetProperty("user").GetString());
+            Assert.Equal("suspended", reset.GetProperty("beforeData").GetProperty("status").GetString());
+            Assert.Equal("not_started", reset.GetProperty("afterData").GetProperty("status").GetString());
+
+            Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
+        });
+    }
+
     public static TheoryData<object, string> ValidPauseReasons => new()
     {
         { new { reasonType = "additional_qa", problemDescription = "Surface requires reinspection", comment = "Hold" }, "additional_qa" },

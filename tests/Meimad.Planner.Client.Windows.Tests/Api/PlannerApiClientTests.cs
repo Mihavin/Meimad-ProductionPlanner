@@ -287,6 +287,13 @@ public sealed class PlannerApiClientTests
               "status":"in_progress",
               "version":2
             }
+            """), Json(HttpStatusCode.OK, """
+            {
+              "batchOperationId":"operation-1",
+              "machineId":"machine-1",
+              "status":"not_started",
+              "version":3
+            }
             """));
         using var api = CreateClient(handler);
 
@@ -298,6 +305,11 @@ public sealed class PlannerApiClientTests
         Assert.Equal("/api/v1/batch-operations/operation%2F1/start", handler.Requests[0].Path);
         Assert.Equal("windows-01", handler.Requests[0].ClientId);
         Assert.Equal("21", handler.Requests[0].Generation);
+
+        var reset = await api.ChangeOperationExecutionAsync(
+            "operation/1", "reset", "windows-01", 21);
+        Assert.Equal("not_started", reset.Status);
+        Assert.Equal("/api/v1/batch-operations/operation%2F1/reset", handler.Requests[1].Path);
     }
 
     [Fact]

@@ -106,11 +106,29 @@
                                     Click="FinishOperation_Click" Margin="0" Tag="M 1,1 H 11 V 11 H 1 Z">
                                 <Button.Style>
                                     <Style TargetType="Button" BasedOn="{StaticResource PlayerButton}">
-                                        <Setter Property="Margin" Value="0" />
+                                        <Setter Property="Margin" Value="0,0,5,0" />
                                         <Style.Triggers>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
                                                     <Condition Binding="{Binding CanFinish}" Value="True" />
+                                                    <Condition Binding="{Binding DataContext.CanDrag, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="IsEnabled" Value="True" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="Reset" ToolTip="Reset paused operation to Not started" AutomationProperties.Name="Reset operation"
+                                    Click="ResetOperation_Click" Margin="0"
+                                    Tag="M 10,2 V 0 L 12,3 L 10,6 V 4 C 6,1 2,3 2,6 C 2,9 5,11 8,10 L 9,12 C 4,14 0,11 0,6 C 0,1 6,-2 10,2 Z">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PlayerButton}">
+                                        <Setter Property="Margin" Value="0" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding CanReset}" Value="True" />
                                                     <Condition Binding="{Binding DataContext.CanDrag, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="IsEnabled" Value="True" />
@@ -209,9 +227,22 @@
                                     Click="FinishOperation_Click" Tag="M 1,1 H 11 V 11 H 1 Z">
                                 <Button.Style>
                                     <Style TargetType="Button" BasedOn="{StaticResource PlayerButton}">
-                                        <Setter Property="Width" Value="24"/><Setter Property="MinHeight" Value="21"/><Setter Property="Margin" Value="0"/>
+                                        <Setter Property="Width" Value="24"/><Setter Property="MinHeight" Value="21"/><Setter Property="Margin" Value="0,0,3,0"/>
                                         <Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions>
                                             <Condition Binding="{Binding CanFinish}" Value="True" />
+                                            <Condition Binding="{Binding DataContext.CanDrag, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                        </MultiDataTrigger.Conditions><Setter Property="IsEnabled" Value="True" /></MultiDataTrigger></Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="Reset" ToolTip="Reset paused operation to Not started" AutomationProperties.Name="Reset operation"
+                                    Click="ResetOperation_Click"
+                                    Tag="M 10,2 V 0 L 12,3 L 10,6 V 4 C 6,1 2,3 2,6 C 2,9 5,11 8,10 L 9,12 C 4,14 0,11 0,6 C 0,1 6,-2 10,2 Z">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PlayerButton}">
+                                        <Setter Property="Width" Value="24"/><Setter Property="MinHeight" Value="21"/><Setter Property="Margin" Value="0"/>
+                                        <Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding CanReset}" Value="True" />
                                             <Condition Binding="{Binding DataContext.CanDrag, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
                                         </MultiDataTrigger.Conditions><Setter Property="IsEnabled" Value="True" /></MultiDataTrigger></Style.Triggers>
                                     </Style>

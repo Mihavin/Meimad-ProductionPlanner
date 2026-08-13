@@ -935,6 +935,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         && Status is "not_started" or "suspended";
     public bool CanSuspend => MachineId is not null && Status == "in_progress";
     public bool CanFinish => MachineId is not null && Status == "in_progress";
+    public bool CanReset => MachineId is not null && Status == "suspended";
     public bool CanMove => Status != "in_progress";
 
     private static long? CalculateEstimatedTime(

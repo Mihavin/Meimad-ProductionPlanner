@@ -44,8 +44,15 @@ public sealed class TimelineCalculationEngineTests
         var machine = Assert.Single(result.Machines);
         AssertIntervals(
             machine.Intervals.Where(interval => interval.Type == TimelineIntervalType.Idle).ToArray(),
-            (TimelineIntervalType.Idle, Utc(8), Utc(9)),
             (TimelineIntervalType.Idle, Utc(14), Utc(17)));
+        Assert.Contains(result.Operations[0].WaitingIntervals, interval =>
+            interval.StartsAt == Utc(8)
+            && interval.EndsAt == Utc(9)
+            && interval.Detail!.Contains("setup calendar", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Operations[0].WaitingIntervals, interval =>
+            interval.StartsAt == Utc(10)
+            && interval.EndsAt == Utc(10, 30)
+            && interval.Detail!.Contains("maintenance", StringComparison.OrdinalIgnoreCase));
         var downtime = Assert.Single(machine.Intervals, interval =>
             interval.Type == TimelineIntervalType.Downtime);
         Assert.Equal(Utc(10), downtime.StartsAt);
@@ -96,6 +103,67 @@ public sealed class TimelineCalculationEngineTests
             Assert.Single(result.Operations).ProductionIntervals,
             (TimelineIntervalType.Production, Utc(8), Utc(9)),
             (TimelineIntervalType.Production, Utc(10), Utc(11)));
+        Assert.Contains(Assert.Single(result.Operations).WaitingIntervals, interval =>
+            interval.StartsAt == Utc(9)
+            && interval.EndsAt == Utc(10)
+            && interval.Detail!.Contains("Service", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Starts_immediately_when_machine_and_resources_are_available()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [Operation("op-now", 1, 1)])],
+            [new TimelineMachineCalendar("machine-1", [Window(8, 17)], ["milling"])],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup-1", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        var operation = Assert.Single(result.Operations);
+        Assert.Equal(Utc(8), operation.StartsAt);
+        Assert.Equal(Utc(10), operation.FinishesAt);
+        Assert.Empty(operation.WaitingIntervals);
+    }
+
+    [Theory]
+    [InlineData("Planned maintenance: spindle service", "maintenance")]
+    [InlineData("Breakdown: hydraulic alarm", "breakdown")]
+    public void Initial_downtime_moves_operation_to_nearest_available_time_with_reason(
+        string reason,
+        string expectedReason)
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [Operation("op-delayed", 0, 1)])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)),
+            [new TimelineDowntime("down-1", "machine-1", Utc(8), Utc(10), reason)],
+            []));
+
+        Assert.Empty(result.Conflicts);
+        var operation = Assert.Single(result.Operations);
+        Assert.Equal(Utc(10), operation.StartsAt);
+        var wait = Assert.Single(operation.WaitingIntervals);
+        Assert.Equal(Utc(8), wait.StartsAt);
+        Assert.Equal(Utc(10), wait.EndsAt);
+        Assert.Contains(expectedReason, wait.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Non_working_machine_time_is_visible_before_nearest_shift_start()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [Operation("op-next-shift", 0, 1)])],
+            [Calendar("machine-1", Window(12, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var operation = Assert.Single(result.Operations);
+        Assert.Equal(Utc(12), operation.StartsAt);
+        Assert.Contains(operation.WaitingIntervals, interval =>
+            interval.StartsAt == Utc(8)
+            && interval.EndsAt == Utc(12)
+            && interval.Detail!.Contains("machine working calendar", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]
@@ -167,6 +235,33 @@ public sealed class TimelineCalculationEngineTests
         AssertIntervals(
             shortOperation.ReservedIntervals,
             (TimelineIntervalType.Reserved, Utc(9, 30), Utc(11)));
+    }
+
+    [Fact]
+    public void Locked_simultaneous_group_retries_at_common_worker_availability()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-a", [Operation("op-a", 1, 1)]),
+                Backlog("machine-b", [Operation("op-b", 1, 2)])
+            ],
+            [
+                new TimelineMachineCalendar("machine-a", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-b", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [],
+            [new TimelineDependency("locked", TimelineDependencyType.LockedSimultaneous,
+                "op-a", "op-b", "group")],
+            [
+                new TimelineResourceCalendar("setup-a", TimelineResourceRole.SetupWorker,
+                    [Window(10, 17)], ["milling"]),
+                new TimelineResourceCalendar("setup-b", TimelineResourceRole.SetupWorker,
+                    [Window(10, 17)], ["milling"])
+            ]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.All(result.Operations, operation => Assert.Equal(Utc(10), operation.StartsAt));
+        Assert.All(result.Operations, operation => Assert.Equal(Utc(13), operation.FinishesAt));
     }
 
     [Fact]
@@ -460,6 +555,31 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Day_shift_only_constrains_production_but_allows_setup_before_day_shift()
+    {
+        var operation = new TimelineOperationInput(
+            "op-day-setup", TimeSpan.FromHours(1), TimeSpan.FromHours(1), DayShiftOnly: true);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [new TimelineMachineCalendar("machine-1", [Window(8, 17)], ["milling"])],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])],
+            [Calendar("machine-1", Window(12, 17))]));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.SetupIntervals,
+            (TimelineIntervalType.Setup, Utc(8), Utc(9)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(12), Utc(13)));
+        Assert.Contains(scheduled.WaitingIntervals, interval =>
+            interval.StartsAt == Utc(9)
+            && interval.EndsAt == Utc(12)
+            && interval.Detail!.Contains("day-shift", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Worker_required_load_unload_waits_for_regular_worker_availability()
     {
         var operation = new TimelineOperationInput(
@@ -530,7 +650,26 @@ public sealed class TimelineCalculationEngineTests
         Assert.All(operation.SetupIntervals,
             interval => Assert.Contains("skilled", interval.Detail, StringComparison.Ordinal));
         Assert.Contains(operation.WaitingIntervals,
-            interval => interval.StartsAt == Utc(8) && interval.EndsAt == Utc(10));
+            interval => interval.StartsAt == Utc(8)
+                && interval.EndsAt == Utc(10)
+                && interval.Detail!.Contains("setup worker", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Missing_required_qa_role_is_explained_in_the_conflict()
+    {
+        var operation = new TimelineOperationInput(
+            "op-qa", TimeSpan.Zero, TimeSpan.FromHours(1),
+            QaDuration: TimeSpan.FromHours(1));
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], [],
+            [Resource("setup", TimelineResourceRole.SetupWorker, Window(8, 17))]));
+
+        var conflict = Assert.Single(result.Conflicts,
+            value => value.Code == "insufficient_availability");
+        Assert.Contains("no active QA worker", conflict.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

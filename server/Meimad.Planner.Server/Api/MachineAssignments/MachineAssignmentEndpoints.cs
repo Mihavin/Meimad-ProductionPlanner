@@ -14,6 +14,7 @@ internal static class MachineAssignmentEndpoints
         operations.MapPost("/{batchOperationId}/start", StartAsync);
         operations.MapPost("/{batchOperationId}/suspend", SuspendAsync);
         operations.MapPost("/{batchOperationId}/finish", FinishAsync);
+        operations.MapPost("/{batchOperationId}/reset", ResetAsync);
     }
 
     private static async Task<IResult> AssignOrMoveAsync(
@@ -140,6 +141,19 @@ internal static class MachineAssignmentEndpoints
         ChangeExecutionStatusAsync(
             batchOperationId,
             BatchOperationExecutionAction.Finish,
+            null,
+            context,
+            service,
+            cancellationToken);
+
+    private static Task<IResult> ResetAsync(
+        string batchOperationId,
+        HttpContext context,
+        MachineAssignmentService service,
+        CancellationToken cancellationToken) =>
+        ChangeExecutionStatusAsync(
+            batchOperationId,
+            BatchOperationExecutionAction.Reset,
             null,
             context,
             service,

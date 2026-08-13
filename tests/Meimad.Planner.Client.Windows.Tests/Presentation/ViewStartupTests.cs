@@ -131,12 +131,13 @@ public sealed class ViewStartupTests
                 playerWindow.Show();
                 playerWindow.UpdateLayout();
                 var playerButtons = Descendants<Button>(operationCard).ToArray();
-                operationActionsWereCompactPlayerIcons = playerButtons.Length == 3
+                operationActionsWereCompactPlayerIcons = playerButtons.Length == 4
                     && playerButtons.All(button => button.Width <= 24 && button.MinHeight <= 21)
                     && playerButtons.All(button => button.ToolTip is not null)
                     && playerButtons.All(button => Descendants<System.Windows.Shapes.Path>(button).Any())
                     && playerButtons.Single(button => AutomationProperties.GetName(button) == "Start operation").IsEnabled == false
-                    && playerButtons.Single(button => AutomationProperties.GetName(button) == "Pause operation").IsEnabled == false;
+                    && playerButtons.Single(button => AutomationProperties.GetName(button) == "Pause operation").IsEnabled == false
+                    && playerButtons.Single(button => AutomationProperties.GetName(button) == "Reset operation").IsEnabled == false;
                 var rowText = Descendants<TextBlock>(operationCard).Select(text => text.Text).ToArray();
                 var operationThumbnail = Assert.Single(Descendants<Image>(operationCard));
                 var thumbnailHost = Assert.IsType<Border>(VisualTreeHelper.GetParent(operationThumbnail));

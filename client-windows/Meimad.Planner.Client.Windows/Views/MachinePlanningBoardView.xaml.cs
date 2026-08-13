@@ -69,6 +69,9 @@ public partial class MachinePlanningBoardView : UserControl
     private async void FinishOperation_Click(object sender, RoutedEventArgs e) =>
         await ChangeOperationExecutionAsync(sender, "finish");
 
+    private async void ResetOperation_Click(object sender, RoutedEventArgs e) =>
+        await ChangeOperationExecutionAsync(sender, "reset");
+
     private async Task ChangeOperationExecutionAsync(object sender, string action)
     {
         if (sender is Button { DataContext: PlanningOperationViewModel operation }
@@ -78,6 +81,17 @@ public partial class MachinePlanningBoardView : UserControl
                 && MessageBox.Show(
                     $"Finish {operation.DisplayTitle}? This removes it from the active Machine backlog.",
                     "Finish operation",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            if (action == "reset"
+                && MessageBox.Show(
+                    $"Reset {operation.DisplayTitle} to Not started? Its machine assignment and backlog position will be kept.",
+                    "Reset operation",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning,
                     MessageBoxResult.No) != MessageBoxResult.Yes)

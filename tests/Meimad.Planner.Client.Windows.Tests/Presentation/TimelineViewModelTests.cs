@@ -64,6 +64,36 @@ public sealed class TimelineViewModelTests
         Assert.Equal(2, api.RequestCount);
     }
 
+    [Fact]
+    public async Task Invalidation_during_refresh_reloads_the_new_server_projection()
+    {
+        var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
+        var end = start.AddDays(2);
+        var first = Snapshot("Old projection", start, end);
+        var latest = Snapshot("Assigned operation", start, end);
+        var api = new FakeApiClient(first, latest, pauseFirstRequest: true);
+        var viewModel = new TimelineViewModel
+        {
+            FromDate = start.UtcDateTime,
+            ToDate = end.UtcDateTime
+        };
+        viewModel.AttachSession(api);
+
+        var refresh = viewModel.RefreshAsync();
+        await api.FirstRequestStarted.Task;
+        viewModel.Invalidate();
+        api.ReleaseFirstRequest.SetResult();
+        await refresh;
+
+        Assert.Equal(2, api.RequestCount);
+        Assert.Equal("Assigned operation", viewModel.Machines[0].Name);
+        Assert.Contains("loaded", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TimelineSnapshot Snapshot(string machineName, DateTimeOffset start, DateTimeOffset end) => new(
+        DateTimeOffset.UtcNow, start, end, [],
+        [new TimelineMachine("machine-1", "M-1", machineName, [])], [], []);
+
     private static TimelineDependency Dependency(
         string id,
         string batchId,
@@ -76,8 +106,24 @@ public sealed class TimelineViewModelTests
     private sealed class FakeApiClient : IPlannerApiClient
     {
         private readonly TimelineSnapshot snapshot;
+        private readonly TimelineSnapshot? nextSnapshot;
+        private readonly bool pauseFirstRequest;
 
-        internal FakeApiClient(TimelineSnapshot snapshot) => this.snapshot = snapshot;
+        internal FakeApiClient(
+            TimelineSnapshot snapshot,
+            TimelineSnapshot? nextSnapshot = null,
+            bool pauseFirstRequest = false)
+        {
+            this.snapshot = snapshot;
+            this.nextSnapshot = nextSnapshot;
+            this.pauseFirstRequest = pauseFirstRequest;
+        }
+
+        internal TaskCompletionSource FirstRequestStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseFirstRequest { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal DateTimeOffset RequestedFrom { get; private set; }
 
@@ -85,12 +131,17 @@ public sealed class TimelineViewModelTests
 
         internal int RequestCount { get; private set; }
 
-        public Task<TimelineSnapshot> GetTimelineAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
+        public async Task<TimelineSnapshot> GetTimelineAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
         {
             RequestedFrom = from;
             RequestedTo = to;
             RequestCount++;
-            return Task.FromResult(snapshot);
+            if (RequestCount == 1 && pauseFirstRequest)
+            {
+                FirstRequestStarted.SetResult();
+                await ReleaseFirstRequest.Task.WaitAsync(cancellationToken);
+            }
+            return RequestCount > 1 && nextSnapshot is not null ? nextSnapshot : snapshot;
         }
 
         public Task<ServerHealth> GetHealthAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();

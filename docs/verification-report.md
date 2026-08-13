@@ -4,7 +4,7 @@
 - **Current change review date:** 2026-08-13
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.302, Debug and Release
-- **Verdict:** The schema-v22 Server and Windows automated suites pass with 311 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
+- **Verdict:** The schema-v22 Server and Windows automated suites pass with 327 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
 
 ## 0. Schema-v17 change addendum (automated pass; manual checks pending)
 
@@ -22,14 +22,17 @@ Static documentation/code review identifies the following additions in the curre
 - individual employee contention, setup Machine-skill matching, calendar/break/exception-aware worker reservations, and visible resource-waiting explanations without backlog mutation.
 - deterministic resource priority by earliest allocated-Order Work Finish Date and naturally smaller Order Number, with the deciding reason retained in the delayed interval and no persisted backlog mutation.
 - schema v17 planned-maintenance and open-breakdown storage/API lifecycle, optimistic maintenance edit/Restore, Setup Machine Availability UI, and reason-preserving Timeline/TV downtime projection.
+- API-level assignment persistence/reload into Timeline, same-Case operations split across Machines, duration derivation without planned timestamps, failed-dependency propagation without false cycle classification, precise missing-worker-role conflict text, structured Timeline-input logging, and replay of a client Timeline read invalidated while in flight.
+- explicit paused-operation Reset to `not_started`, retained assignment/backlog position, closed pause event, derived Batch/Order rollback, structured `operation_reset` audit, and compact client control/refresh behavior.
+- nearest-feasible fixed-backlog Timeline placement with operation-linked Machine/setup/day-shift/resource/downtime/pause/dependency waiting, assigned-but-blocked visibility, no-leapfrog propagation, common resource retry for locked groups, and overlapping-wait renderer lanes.
 
 Current automated result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 219 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 92 | 0 | 0 |
-| **Total** | **311** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 233 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 94 | 0 | 0 |
+| **Total** | **327** | **0** | **0** |
 
 Focused current tests cover schema-v10 through schema-v22 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, strict cross-type assignment confirmation/audit, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
 
@@ -176,7 +179,7 @@ Result:
 
 The same full solution also passed in Debug with 226 passed (165 Server and 61 Windows Client), 0 failed, and 0 skipped. The acceptance test itself passed in isolation before both full-suite runs.
 
-Coverage includes startup/health, configuration validation, migrations through schema v9, foreign-key/orphan rejection, Case/Order persistence and API behavior, read-only Case timing sums, transactional Case Operation creation/edit and graph/reference validation, preservation of prior Batch scalar/dependency snapshots, complete Windows Case/Operation/Order/Batch/Machine creation/edit presentation, version-checked Machine editing, confirmation-protected guarded deletion commands, deletion relationship blockers and route compaction, explicit combined/stock/scrap Batch allocation payloads, derived Batch lifecycle transitions, path-only Machine picture persistence/delivery, dependency graph semantics, Batch allocation adversarial cases, Machine assignment ordering, atomic Start/Suspend/Finish transitions and invalid/concurrent requests, Edit Mode races, deterministic time calculation and setup-calendar fallback, Timeline operation markers, TV/E-Ink read-only surfaces, job-package generation/integrity, backup/restore verification, Windows API models, and Windows presentation/view-model behavior.
+Coverage includes startup/health, configuration validation, migrations through schema v9, foreign-key/orphan rejection, Case/Order persistence and API behavior, read-only Case timing sums, transactional Case Operation creation/edit and graph/reference validation, preservation of prior Batch scalar/dependency snapshots, complete Windows Case/Operation/Order/Batch/Machine creation/edit presentation, version-checked Machine editing, confirmation-protected guarded deletion commands, deletion relationship blockers and route compaction, explicit combined/stock/scrap Batch allocation payloads, derived Batch lifecycle transitions, path-only Machine picture persistence/delivery, dependency graph semantics, Batch allocation adversarial cases, Machine assignment ordering, atomic Start/Suspend/Finish/Reset transitions and invalid/concurrent requests, Edit Mode races, deterministic time calculation and setup-calendar fallback, Timeline operation markers, TV/E-Ink read-only surfaces, job-package generation/integrity, backup/restore verification, Windows API models, and Windows presentation/view-model behavior.
 
 ## 7. Acceptance decision
 

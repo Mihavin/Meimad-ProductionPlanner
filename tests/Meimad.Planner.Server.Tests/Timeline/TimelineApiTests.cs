@@ -202,6 +202,80 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Api_assignments_persist_reload_and_project_same_case_operations_on_different_machines()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    DELETE FROM machine_assignments;
+                    INSERT INTO machines (
+                        id, number, name, machine_type, working_calendar_id, status, is_active)
+                    VALUES ('machine-2', 'M-2', 'Second mill', 'mill', 'calendar-1', 'active', 1);
+                    UPDATE edit_tokens
+                    SET holder_client_id = 'timeline-assignment-client',
+                        holder_user_id = 'timeline-planner', generation = 1,
+                        acquired_at = '2026-08-11T00:00:00Z'
+                    WHERE id = 1;
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+            client.DefaultRequestHeaders.Add(
+                "X-Meimad-Client-Id", "timeline-assignment-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+
+            using var assignFirst = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-1/assignment",
+                new { machineId = "machine-1", backlogPosition = 0 });
+            using var assignSecond = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-2/assignment",
+                new { machineId = "machine-2", backlogPosition = 0 });
+            Assert.Equal(HttpStatusCode.Created, assignFirst.StatusCode);
+            Assert.Equal(HttpStatusCode.Created, assignSecond.StatusCode);
+
+            using var boardResponse = await client.GetAsync("/api/v1/planning-board");
+            boardResponse.EnsureSuccessStatusCode();
+            using var board = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());
+            Assert.Equal("op-1", board.RootElement.GetProperty("machines").EnumerateArray()
+                .Single(value => value.GetProperty("machineId").GetString() == "machine-1")
+                .GetProperty("backlog")[0].GetProperty("batchOperationId").GetString());
+            Assert.Equal("op-2", board.RootElement.GetProperty("machines").EnumerateArray()
+                .Single(value => value.GetProperty("machineId").GetString() == "machine-2")
+                .GetProperty("backlog")[0].GetProperty("batchOperationId").GetString());
+
+            using var timelineResponse = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            timelineResponse.EnsureSuccessStatusCode();
+            using var timeline = JsonDocument.Parse(await timelineResponse.Content.ReadAsStringAsync());
+            var intervals = timeline.RootElement.GetProperty("machines").EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .ToArray();
+            Assert.Contains(intervals, value => value.GetProperty("operationId").GetString() == "op-1");
+            Assert.Contains(intervals, value => value.GetProperty("operationId").GetString() == "op-2");
+            Assert.Equal(TimeSpan.FromMinutes(30), TotalDuration(intervals, "op-1", "setup"));
+            Assert.Equal(TimeSpan.FromHours(1), TotalDuration(intervals, "op-1", "production"));
+            Assert.Equal(TimeSpan.FromMinutes(30), TotalDuration(intervals, "op-2", "production"));
+            Assert.DoesNotContain(timeline.RootElement.GetProperty("conflicts").EnumerateArray(),
+                value => value.GetProperty("code").GetString() == "dependency_cycle");
+
+            await using var verify = await database.OpenConnectionAsync();
+            await using var persisted = verify.CreateCommand();
+            persisted.CommandText = """
+                SELECT batch_operation_id || ':' || machine_id || ':' || backlog_position
+                FROM machine_assignments ORDER BY batch_operation_id;
+                """;
+            var saved = new List<string>();
+            await using var reader = await persisted.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) saved.Add(reader.GetString(0));
+            Assert.Equal(["op-1:machine-1:0", "op-2:machine-2:0"], saved);
+        });
+    }
+
+    [Fact]
     public async Task Timeline_subtracts_breaks_and_applies_dated_calendar_exceptions()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -232,6 +306,12 @@ public sealed class TimelineApiTests
             Assert.NotEmpty(exceptionWork);
             Assert.Equal("2026-08-11T11:00:00+00:00", exceptionWork[0].GetProperty("startsAt").GetString());
             Assert.DoesNotContain(exceptionWork, interval => Overlaps(interval, "2026-08-11T12:00:00Z", "2026-08-11T13:00:00Z"));
+            Assert.Contains(exceptionDocument.RootElement.GetProperty("machines")[0]
+                    .GetProperty("intervals").EnumerateArray(),
+                interval => interval.GetProperty("type").GetString() == "waiting"
+                    && interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("detail").GetString()!
+                        .Contains("machine working calendar", StringComparison.OrdinalIgnoreCase));
 
             using var weeklyResponse = await client.GetAsync(
                 "/api/v1/timeline?from=2026-08-18T08:00:00Z&to=2026-08-18T18:00:00Z");
@@ -375,7 +455,7 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
-    public async Task Timeline_api_reports_unassigned_predecessor_and_does_not_project_the_child()
+    public async Task Timeline_api_reports_unassigned_predecessor_and_projects_child_as_waiting()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -395,10 +475,126 @@ public sealed class TimelineApiTests
             Assert.Contains(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 conflict => conflict.GetProperty("code").GetString() == "dependency_predecessor_unassigned");
-            Assert.DoesNotContain(
+            var waiting = Assert.Single(
                 document.RootElement.GetProperty("machines").EnumerateArray()
                     .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray()),
                 interval => interval.GetProperty("operationId").GetString() == "op-2");
+            Assert.Equal("waiting", waiting.GetProperty("type").GetString());
+            Assert.Contains("not assigned", waiting.GetProperty("detail").GetString(),
+                StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
+    public async Task Paused_operation_and_later_backlog_operation_remain_visible_as_waiting()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE batch_operations SET status = 'suspended' WHERE id = 'op-1';
+                    INSERT INTO operation_pause_events (
+                        id, batch_operation_id, reason_type, comment, paused_by,
+                        pause_started_at, status, version, created_at, updated_at)
+                    VALUES ('pause-timeline', 'op-1', 'other', 'Awaiting supervisor', 'planner',
+                            '2026-08-11T08:15:00Z', 'active', 1,
+                            '2026-08-11T08:15:00Z', '2026-08-11T08:15:00Z');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var waiting = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "waiting")
+                .ToArray();
+            Assert.Contains(waiting, interval =>
+                interval.GetProperty("operationId").GetString() == "op-1"
+                && interval.GetProperty("detail").GetString()!
+                    .Contains("paused by planner", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(waiting, interval =>
+                interval.GetProperty("operationId").GetString() == "op-2"
+                && interval.GetProperty("detail").GetString()!
+                    .Contains("stored Machine backlog order", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
+        });
+    }
+
+    [Fact]
+    public async Task Invalid_head_operation_blocks_later_backlog_without_reordering()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE batch_operations SET setup_seconds = NULL WHERE id = 'op-1';";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var operationIntervals = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("operationId").ValueKind == JsonValueKind.String)
+                .ToArray();
+            Assert.Contains(operationIntervals, interval =>
+                interval.GetProperty("operationId").GetString() == "op-1"
+                && interval.GetProperty("type").GetString() == "waiting"
+                && interval.GetProperty("detail").GetString()!
+                    .Contains("missing setup or cycle", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(operationIntervals, interval =>
+                interval.GetProperty("operationId").GetString() == "op-2"
+                && interval.GetProperty("type").GetString() == "waiting");
+            Assert.DoesNotContain(operationIntervals, interval =>
+                interval.GetProperty("operationId").GetString() == "op-2"
+                && interval.GetProperty("type").GetString() is "setup" or "production");
+            Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
+        });
+    }
+
+    [Fact]
+    public async Task Zero_duration_assigned_operation_is_visible_as_structured_blocked_waiting()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE batch_operations
+                    SET setup_seconds = 0, cycle_seconds = 0, qa_seconds = 0,
+                        load_unload_seconds = 0
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "zero_duration");
+            Assert.Contains(document.RootElement.GetProperty("machines")[0]
+                    .GetProperty("intervals").EnumerateArray(),
+                interval => interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("type").GetString() == "waiting"
+                    && interval.GetProperty("detail").GetString()!
+                        .Contains("no calculable", StringComparison.OrdinalIgnoreCase));
         });
     }
 
@@ -412,6 +608,14 @@ public sealed class TimelineApiTests
         return interval.GetProperty("endsAt").GetDateTimeOffset() > start
             && interval.GetProperty("startsAt").GetDateTimeOffset() < end;
     }
+
+    private static TimeSpan TotalDuration(
+        IEnumerable<JsonElement> intervals, string operationId, string type) =>
+        intervals.Where(value => value.GetProperty("operationId").GetString() == operationId
+                && value.GetProperty("type").GetString() == type)
+            .Aggregate(TimeSpan.Zero, (total, value) => total
+                + (value.GetProperty("endsAt").GetDateTimeOffset()
+                   - value.GetProperty("startsAt").GetDateTimeOffset()));
 
     private static async Task SeedTimelineAsync(IServiceProvider services)
     {

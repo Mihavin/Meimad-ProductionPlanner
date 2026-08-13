@@ -273,6 +273,31 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.Equal("in_progress", viewModel.Machines.Single().Backlog.Single().Status);
         Assert.True(viewModel.Machines.Single().Backlog.Single().CanSuspend);
         Assert.True(viewModel.Machines.Single().Backlog.Single().CanFinish);
+        Assert.False(viewModel.Machines.Single().Backlog.Single().CanReset);
+        Assert.Equal(2, api.BoardReadCount);
+    }
+
+    [Fact]
+    public async Task Editor_resets_paused_operation_through_server_and_refreshes_status()
+    {
+        var paused = Operation("machine-1", 0) with { Status = "suspended" };
+        var before = BoardBefore() with { Pool = [], Machines = [Machine([paused])] };
+        var after = before with
+        {
+            Machines = [Machine([paused with { Status = "not_started" }])]
+        };
+        var api = new FakeApiClient(before) { SnapshotAfterExecution = after };
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(23));
+        await viewModel.EnsureLoadedAsync();
+
+        var operation = viewModel.Machines.Single().Backlog.Single();
+        Assert.True(operation.CanReset);
+        await viewModel.ChangeExecutionStatusAsync(operation, "reset");
+
+        Assert.Equal("operation-1", api.ExecutionOperationId);
+        Assert.Equal("reset", api.ExecutionAction);
+        Assert.Equal("not_started", viewModel.Machines.Single().Backlog.Single().Status);
         Assert.Equal(2, api.BoardReadCount);
     }
 
@@ -305,6 +330,7 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.True(operation.CanStart);
         Assert.False(operation.CanSuspend);
         Assert.False(operation.CanFinish);
+        Assert.True(operation.CanReset);
         Assert.Equal("PN-1 / Widget case", operation.PartCaseText);
         Assert.Equal("OP10 Mill", operation.OperationText);
         Assert.Equal("B-1 / SO-1, SO-2", operation.BatchOrderText);
@@ -540,6 +566,7 @@ public sealed class MachinePlanningBoardViewModelTests
                 "start" => "in_progress",
                 "suspend" => "suspended",
                 "finish" => "completed",
+                "reset" => "not_started",
                 _ => throw new InvalidOperationException()
             };
             return Task.FromResult(new BatchOperationExecution(
