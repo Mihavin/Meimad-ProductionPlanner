@@ -375,10 +375,27 @@
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Last name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceLastName}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Role" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceRoles}" SelectedItem="{Binding ResourceRole}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Assigned calendar" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceCalendars}" SelectedItem="{Binding SelectedResourceCalendar}" DisplayMemberPath="DisplayName"/></StackPanel>
-                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Skills (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceSkillsText}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Email" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceEmail}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Photo path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourcePhotoPath}"/></StackPanel>
                             </UniformGrid>
+                            <StackPanel Style="{StaticResource SetupField}">
+                                <TextBlock Text="Machines this employee knows how to operate" Style="{StaticResource SetupFieldLabel}"/>
+                                <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="8" MinHeight="44" MaxHeight="150">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl ItemsSource="{Binding ResourceMachineSkills}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding DisplayName}"
+                                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                              Margin="0,2"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Border>
+                                <TextBlock Text="Select every Machine this employee is qualified to operate. Machine IDs are stored so renaming a Machine does not remove the qualification."
+                                           Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                            </StackPanel>
                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceNotes}" AcceptsReturn="True" MinHeight="58" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/></StackPanel>
                             <CheckBox Content="Active" IsChecked="{Binding ResourceIsActive}" Margin="0,0,0,12"/>
                             <StackPanel Orientation="Horizontal"><Button Content="Save employee / resource" Command="{Binding SaveResourceCommand}"/><Button Content="Delete" Click="DeleteResource_Click" Margin="0"/></StackPanel>

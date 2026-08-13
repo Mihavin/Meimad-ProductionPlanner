@@ -328,7 +328,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         var typeCapabilities = reader.IsDBNull(8)
             ? []
             : JsonSerializer.Deserialize<string[]>(reader.GetString(8)) ?? [];
-        return new[] { reader.GetString(1), reader.GetString(2), reader.GetString(5) }
+        return new[] { reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(5) }
             .Concat(reader.IsDBNull(6) ? [] : [reader.GetString(6)])
             .Concat(machineCapabilities)
             .Concat(typeCapabilities)

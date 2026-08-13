@@ -434,7 +434,7 @@ public sealed class TimelineApiTests
                 id, employee_number, name, resource_type, first_name, last_name,
                 skills_json, assigned_calendar_id, is_active)
             VALUES
-                ('resource-setup', 'E-SETUP', 'Setup Worker', 'setup_worker', 'Setup', 'Worker', '["mill"]', 'calendar-1', 1),
+                ('resource-setup', 'E-SETUP', 'Setup Worker', 'setup_worker', 'Setup', 'Worker', '["machine-1"]', 'calendar-1', 1),
                 ('resource-qa', 'E-QA', 'QA Worker', 'qa_worker', 'QA', 'Worker', '[]', 'calendar-1', 1),
                 ('resource-regular', 'E-REG', 'Regular Worker', 'regular_worker', 'Regular', 'Worker', '[]', 'calendar-1', 1);
             INSERT INTO cases (id, part_number, name, working_folder_path)

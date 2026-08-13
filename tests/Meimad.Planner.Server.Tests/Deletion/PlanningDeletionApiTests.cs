@@ -78,6 +78,31 @@ public sealed class PlanningDeletionApiTests
     }
 
     [Fact]
+    public async Task Machine_used_as_employee_qualification_is_blocked()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO employee_resources (
+                        id, employee_number, name, resource_type, first_name, last_name,
+                        skills_json, assigned_calendar_id, is_active)
+                    VALUES ('resource-skilled', 'E-SKILL', 'Skilled Employee', 'setup_worker',
+                            'Skilled', 'Employee', '["machine-empty"]', 'cal-1', 1);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await AssertBlockedAsync(client, "/api/v1/machines/machine-empty");
+        });
+    }
+
+    [Fact]
     public async Task Batch_delete_recomputes_every_affected_order_after_last_allocation()
     {
         await RunAsync(async (application, client) =>

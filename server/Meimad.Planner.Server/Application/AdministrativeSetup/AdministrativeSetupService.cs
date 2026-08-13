@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Machines;
 using Meimad.Planner.Server.Application.WorkingCalendars;
 using Meimad.Planner.Server.Domain.AdministrativeSetup;
 
@@ -8,11 +9,12 @@ internal sealed class AdministrativeSetupService
 {
     private readonly IAdministrativeSetupRepository repository;
     private readonly IWorkingCalendarRepository workingCalendars;
+    private readonly IMachineRepository machines;
     private readonly IIsraeliHolidaySource holidaySource;
     private readonly TimeProvider timeProvider;
 
-    public AdministrativeSetupService(IAdministrativeSetupRepository repository, IWorkingCalendarRepository workingCalendars, IIsraeliHolidaySource holidaySource, TimeProvider timeProvider)
-    { this.repository = repository; this.workingCalendars = workingCalendars; this.holidaySource = holidaySource; this.timeProvider = timeProvider; }
+    public AdministrativeSetupService(IAdministrativeSetupRepository repository, IWorkingCalendarRepository workingCalendars, IMachineRepository machines, IIsraeliHolidaySource holidaySource, TimeProvider timeProvider)
+    { this.repository = repository; this.workingCalendars = workingCalendars; this.machines = machines; this.holidaySource = holidaySource; this.timeProvider = timeProvider; }
 
     internal Task<IReadOnlyList<EmployeeResource>> ListResourcesAsync(CancellationToken token = default) => repository.ListResourcesAsync(token);
     internal async Task<IReadOnlyList<EmployeeResource>> ListAvailableResourcesAsync(CancellationToken token = default) =>
@@ -24,6 +26,7 @@ internal sealed class AdministrativeSetupService
             command.EmployeeNumber, command.FirstName, command.LastName, command.ResourceType, command.Skills,
             command.AssignedCalendarId, command.PhotoPath, command.Notes, command.Email, command.IsActive));
         await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
+        await EnsureMachineSkillsAsync(values.Skills!, token);
         var now = timeProvider.GetUtcNow();
         return await repository.CreateResourceAsync(new(Guid.NewGuid().ToString("N"), values.EmployeeNumber!, values.Name, values.ResourceType!, values.Email, values.FirstName!, values.LastName!, values.Skills!, values.AssignedCalendarId!, values.PhotoPath, values.Notes, values.IsActive, 1, now, now), authority, token);
     }
@@ -37,10 +40,27 @@ internal sealed class AdministrativeSetupService
             Select(command.AssignedCalendarId, current.AssignedCalendarId), Select(command.PhotoPath, current.PhotoPath),
             Select(command.Notes, current.Notes), Select(command.Email, current.Email), Select(command.IsActive, current.IsActive) ?? false));
         await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
+        if (command.Skills.IsSpecified) await EnsureMachineSkillsAsync(values.Skills!, token);
         var candidate = current with { EmployeeNumber = values.EmployeeNumber!, Name = values.Name, ResourceType = values.ResourceType!, FirstName = values.FirstName!, LastName = values.LastName!, Skills = values.Skills!, AssignedCalendarId = values.AssignedCalendarId!, PhotoPath = values.PhotoPath, Notes = values.Notes, Email = values.Email, IsActive = values.IsActive, Version = expectedVersion + 1, UpdatedAt = timeProvider.GetUtcNow() };
         return await repository.UpdateResourceAsync(candidate, expectedVersion, authority, token) ?? throw new AdministrativeVersionConflictException("Employee Resource", id, expectedVersion);
     }
     internal Task<bool> DeleteResourceAsync(string id, EditAuthority authority, CancellationToken token = default) => repository.DeleteResourceAsync(id, authority, token);
+
+    private async Task EnsureMachineSkillsAsync(IReadOnlyList<string> machineIds, CancellationToken token)
+    {
+        if (machineIds.Count == 0) return;
+        var knownIds = (await machines.ListAsync(token))
+            .Select(value => value.MachineId)
+            .ToHashSet(StringComparer.Ordinal);
+        var issues = machineIds
+            .Select((machineId, index) => (machineId, index))
+            .Where(value => !knownIds.Contains(value.machineId))
+            .Select(value => new ValidationIssue(
+                $"skills[{value.index}]", "unknown_machine",
+                $"skills[{value.index}] must identify an existing Machine."))
+            .ToArray();
+        if (issues.Length > 0) throw new AdministrativeSetupValidationException(issues);
+    }
 
     internal async Task<IReadOnlyList<EmployeeCalendarException>> ListEmployeeExceptionsAsync(
         string resourceId, DateOnly? from = null, DateOnly? to = null, CancellationToken token = default)

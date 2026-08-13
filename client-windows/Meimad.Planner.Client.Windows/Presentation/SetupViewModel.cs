@@ -84,7 +84,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string resourceFirstName = string.Empty;
     private string resourceLastName = string.Empty;
     private string resourceRole = "regular_worker";
-    private string resourceSkillsText = string.Empty;
     private WorkingCalendar? selectedResourceCalendar;
     private string resourcePhotoPath = string.Empty;
     private string resourceNotes = string.Empty;
@@ -205,6 +204,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public ObservableCollection<PlannerMachineType> MachineTypes { get; } = [];
 
     public ObservableCollection<PlannerResource> Resources { get; } = [];
+    public ObservableCollection<ResourceMachineSkillOption> ResourceMachineSkills { get; } = [];
     public ObservableCollection<EmployeeCalendarException> ResourceExceptions { get; } = [];
 
     public ObservableCollection<IsraeliHoliday> IsraeliHolidays { get; } = [];
@@ -452,7 +452,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         "qa_worker" => QaWorkerCalendars,
         _ => RegularWorkerCalendars
     };
-    public string ResourceSkillsText { get => resourceSkillsText; set => SetField(ref resourceSkillsText, value); }
     public WorkingCalendar? SelectedResourceCalendar { get => selectedResourceCalendar; set => SetField(ref selectedResourceCalendar, value); }
     public string ResourcePhotoPath { get => resourcePhotoPath; set => SetField(ref resourcePhotoPath, value); }
     public string ResourceNotes { get => resourceNotes; set => SetField(ref resourceNotes, value); }
@@ -588,6 +587,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(QaWorkerCalendars));
             OnPropertyChanged(nameof(ResourceCalendars));
             Replace(Machines, await machinesTask);
+            RebuildResourceMachineSkills([]);
             Replace(Downtimes, await downtimesTask);
             Replace(MachineTypes, await machineTypesTask);
             Replace(Resources, await resourcesTask);
@@ -1060,7 +1060,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceFirstName = string.Empty;
         ResourceLastName = string.Empty;
         ResourceRole = "regular_worker";
-        ResourceSkillsText = string.Empty;
+        RebuildResourceMachineSkills([]);
         SelectedResourceCalendar = null;
         ResourcePhotoPath = string.Empty;
         ResourceNotes = string.Empty;
@@ -1086,7 +1086,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
         var savedId = editingResourceId;
         var update = new ResourceUpdate(ResourceEmployeeNumber.Trim(), ResourceFirstName.Trim(), ResourceLastName.Trim(), ResourceRole,
-            ParseTokens(ResourceSkillsText), SelectedResourceCalendar.WorkingCalendarId, NullIfBlank(ResourcePhotoPath),
+            ResourceMachineSkills.Where(value => value.IsSelected).Select(value => value.MachineId).ToArray(),
+            SelectedResourceCalendar.WorkingCalendarId, NullIfBlank(ResourcePhotoPath),
             NullIfBlank(ResourceNotes), NullIfBlank(ResourceEmail), ResourceIsActive);
         var succeeded = false;
         IsBusy = true;
@@ -1468,7 +1469,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceFirstName = value.FirstName;
         ResourceLastName = value.LastName;
         ResourceRole = value.Role;
-        ResourceSkillsText = string.Join(", ", value.Skills);
+        RebuildResourceMachineSkills(value.Skills);
         SelectedResourceCalendar = FindCalendar(value.AssignedCalendarId);
         ResourcePhotoPath = value.PhotoPath ?? string.Empty;
         ResourceNotes = value.Notes ?? string.Empty;
@@ -1720,6 +1721,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     {
         WorkingCalendars.Clear();
         Machines.Clear();
+        ResourceMachineSkills.Clear();
         Downtimes.Clear();
         MachineTypes.Clear();
         Resources.Clear();
@@ -1769,6 +1771,26 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     private static string ResourceEntityTag(PlannerResource value) =>
         $"\"resource:{value.ResourceId}:v{value.Version}\"";
+
+    private void RebuildResourceMachineSkills(IReadOnlyList<string> selectedSkills)
+    {
+        var selected = selectedSkills.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectsEveryMachine = selected.Contains("*");
+        ResourceMachineSkills.Clear();
+        foreach (var machine in Machines)
+        {
+            var legacyTokens = new[] { machine.Number, machine.Name, machine.ProcessType }
+                .Concat(string.IsNullOrWhiteSpace(machine.AxisType) ? [] : [machine.AxisType])
+                .Concat(machine.Capabilities);
+            var isSelected = selectsEveryMachine
+                || selected.Contains(machine.MachineId)
+                || legacyTokens.Any(selected.Contains);
+            ResourceMachineSkills.Add(new ResourceMachineSkillOption(
+                machine.MachineId,
+                machine.IsActive ? machine.DisplayName : $"{machine.DisplayName} (inactive)",
+                isSelected));
+        }
+    }
 
     private static string ResourceExceptionEntityTag(EmployeeCalendarException value) =>
         $"\"employee-exception:{value.ExceptionId}:v{value.Version}\"";
@@ -1831,4 +1853,31 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+internal sealed class ResourceMachineSkillOption : INotifyPropertyChanged
+{
+    private bool isSelected;
+
+    internal ResourceMachineSkillOption(string machineId, string displayName, bool isSelected)
+    {
+        MachineId = machineId;
+        DisplayName = displayName;
+        this.isSelected = isSelected;
+    }
+
+    public string MachineId { get; }
+    public string DisplayName { get; }
+    public bool IsSelected
+    {
+        get => isSelected;
+        set
+        {
+            if (isSelected == value) return;
+            isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

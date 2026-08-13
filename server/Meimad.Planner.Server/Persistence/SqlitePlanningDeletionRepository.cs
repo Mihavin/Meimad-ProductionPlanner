@@ -42,6 +42,9 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             await BlockIfAnyAsync(c, t, "downtimes", "machine_id", id, "Delete the Machine's Downtime records first.", token);
             await BlockIfAnyAsync(c, t, "device_registry", "machine_id", id, "Unbind or delete the Machine's registered device first.", token);
             await BlockIfAnyAsync(c, t, "eink_package_revisions", "machine_id", id, "The Machine is referenced by an official job package.", token);
+            await BlockBySqlAsync(c, t,
+                "SELECT EXISTS(SELECT 1 FROM employee_resources, json_each(employee_resources.skills_json) WHERE json_each.value = $id);",
+                id, "Remove this Machine from Employee qualifications first.", token);
             return await DeleteRowAsync(c, t, "machines", id, token);
         }, token);
 

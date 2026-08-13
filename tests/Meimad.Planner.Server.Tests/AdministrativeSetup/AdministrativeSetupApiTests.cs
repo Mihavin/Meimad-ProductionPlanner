@@ -53,10 +53,11 @@ public sealed class AdministrativeSetupApiTests
         {
             await GrantEditAsync(application.Services);
             AddEditHeaders(client);
-            var calendarId = await CreateCalendarAsync(client, "setup_worker", "regular_worker", "qa_worker");
+            var calendarId = await CreateCalendarAsync(client, "machine", "setup_worker", "regular_worker", "qa_worker");
+            var machineId = await CreateMachineAsync(client, calendarId, "M-SKILL");
 
             using var createResource = await client.PostAsJsonAsync("/api/v1/resources", new
-            { employeeNumber="E-17",firstName="Miriam",lastName="Cohen",role="setup_worker",skills=new[]{"Tool preset", "Setup"},assignedCalendarId=calendarId,photoPath="C:\\photos\\miriam.jpg",notes="Shift lead",email="miriam@example.com",isActive=true });
+            { employeeNumber="E-17",firstName="Miriam",lastName="Cohen",role="setup_worker",skills=new[]{machineId},assignedCalendarId=calendarId,photoPath="C:\\photos\\miriam.jpg",notes="Shift lead",email="miriam@example.com",isActive=true });
             Assert.Equal(HttpStatusCode.Created, createResource.StatusCode);
             using var resourceJson=JsonDocument.Parse(await createResource.Content.ReadAsStringAsync());
             var resourceId=resourceJson.RootElement.GetProperty("resourceId").GetString()!;
@@ -71,14 +72,14 @@ public sealed class AdministrativeSetupApiTests
             using var usageChange = await client.SendAsync(removeSetupUsage);
             Assert.Equal(HttpStatusCode.Conflict, usageChange.StatusCode);
 
-            using var patch=new HttpRequestMessage(HttpMethod.Patch,$"/api/v1/resources/{resourceId}") { Content=JsonContent.Create(new{lastName="Levi",skills=new[]{"setup", "Calibration"},notes="Inactive until further notice",isActive=false}) };
+            using var patch=new HttpRequestMessage(HttpMethod.Patch,$"/api/v1/resources/{resourceId}") { Content=JsonContent.Create(new{lastName="Levi",skills=new[]{machineId},notes="Inactive until further notice",isActive=false}) };
             patch.Headers.IfMatch.Add(new EntityTagHeaderValue(resourceTag));
             using var patched=await client.SendAsync(patch);
             Assert.Equal(HttpStatusCode.OK,patched.StatusCode);
             using var patchedJson=JsonDocument.Parse(await patched.Content.ReadAsStringAsync());
             Assert.Equal("Miriam Levi",patchedJson.RootElement.GetProperty("name").GetString());
             Assert.Equal("C:\\photos\\miriam.jpg",patchedJson.RootElement.GetProperty("photoPath").GetString());
-            Assert.Equal(2, patchedJson.RootElement.GetProperty("skills").GetArrayLength());
+            Assert.Equal(machineId, patchedJson.RootElement.GetProperty("skills")[0].GetString());
             Assert.False(patchedJson.RootElement.GetProperty("isActive").GetBoolean());
 
             using var allResources = await client.GetAsync("/api/v1/resources");
@@ -138,19 +139,25 @@ public sealed class AdministrativeSetupApiTests
     }
 
     [Fact]
-    public async Task Resource_requires_a_matching_assigned_calendar_and_normalizes_skills()
+    public async Task Resource_requires_a_matching_assigned_calendar_and_machine_id_skills()
     {
         await RunAsync(async (application, client) =>
         {
             await GrantEditAsync(application.Services); AddEditHeaders(client);
-            var setupCalendar = await CreateCalendarAsync(client, "setup_worker");
+            var setupCalendar = await CreateCalendarAsync(client, "machine", "setup_worker");
+            var machineId = await CreateMachineAsync(client, setupCalendar, "M-RESOURCE");
             using var invalid = await client.PostAsJsonAsync("/api/v1/resources", new
             { employeeNumber = "E-18", firstName = "Dana", lastName = "Bar", role = "qa_worker", skills = new[] { "Inspection" }, assignedCalendarId = setupCalendar, isActive = true });
             Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
 
             using var duplicateSkill = await client.PostAsJsonAsync("/api/v1/resources", new
-            { employeeNumber = "E-19", firstName = "Dana", lastName = "Bar", role = "setup_worker", skills = new[] { "Inspection", "inspection" }, assignedCalendarId = setupCalendar, isActive = true });
+            { employeeNumber = "E-19", firstName = "Dana", lastName = "Bar", role = "setup_worker", skills = new[] { machineId, machineId }, assignedCalendarId = setupCalendar, isActive = true });
             Assert.Equal(HttpStatusCode.UnprocessableEntity, duplicateSkill.StatusCode);
+
+            using var unknownMachine = await client.PostAsJsonAsync("/api/v1/resources", new
+            { employeeNumber = "E-20", firstName = "Dana", lastName = "Bar", role = "setup_worker", skills = new[] { "missing-machine" }, assignedCalendarId = setupCalendar, isActive = true });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, unknownMachine.StatusCode);
+            Assert.Contains("unknown_machine", await unknownMachine.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         });
     }
 
@@ -261,6 +268,24 @@ public sealed class AdministrativeSetupApiTests
         calendar.EnsureSuccessStatusCode();
         using var json = JsonDocument.Parse(await calendar.Content.ReadAsStringAsync());
         return json.RootElement.GetProperty("workingCalendarId").GetString()!;
+    }
+
+    private static async Task<string> CreateMachineAsync(HttpClient client, string calendarId, string number)
+    {
+        using var response = await client.PostAsJsonAsync("/api/v1/machines", new
+        {
+            number,
+            name = $"Machine {number}",
+            processType = "milling",
+            axisType = "3-axis",
+            capabilities = Array.Empty<string>(),
+            workingCalendarId = calendarId,
+            isActive = true,
+            displayEnabled = true
+        });
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("machineId").GetString()!;
     }
 
     private static void AddEditHeaders(HttpClient client){client.DefaultRequestHeaders.Add("X-Meimad-Client-Id","admin-client");client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation","1");}

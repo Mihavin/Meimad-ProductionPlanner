@@ -569,6 +569,15 @@ internal sealed class TimelineCalculationEngine
                 pending.Remove(nodeKey);
             }
 
+            // Propagate a failed predecessor through the complete dependency chain
+            // before deciding that the remaining graph contains a cycle. Without
+            // this pass, a grandchild can be mislabeled as a cycle merely because
+            // its parent became unresolved in this iteration.
+            if (blocked.Length > 0)
+            {
+                continue;
+            }
+
             var ready = pending
                 .Where(node => predecessors[node].All(completedFinish.ContainsKey))
                 .OrderBy(value => value, Comparer<string>.Create((left, right) =>

@@ -69,7 +69,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Batch Operation | `batch_operations` | Required Batch and source Case Operation; unique route position/operation number per Batch. |
 | Working Calendar | `working_calendars` | Calendar/time-zone storage envelope. |
 | Setup Calendar Setting | `setup_calendar_settings` | Singleton row `id = 1`; optional selected Working Calendar used for setup availability/timezone. |
-| Employee Resource | `employee_resources` | Administrative employee/resource catalog with normalized role, skills JSON, optional photo/notes, and a restrictive assigned Working Calendar reference; active, calendar-assigned rows provide individual capacity to the read-only Timeline calculation. |
+| Employee Resource | `employee_resources` | Administrative employee/resource catalog with normalized role, Machine qualification IDs in `skills_json`, optional photo/notes, and a restrictive assigned Working Calendar reference; active, calendar-assigned rows provide individual capacity to the read-only Timeline calculation. Legacy textual skill tokens remain readable and are normalized to Machine IDs on the next Setup save. |
 | Employee Calendar Exception | `employee_calendar_exceptions` | Employee-owned dated vacation, sick-day, personal-day, unavailable, or custom-note interval; full-day or same-day local partial interval, cascade-deleted only with its employee. |
 | Israeli Holiday | `israeli_holidays` | Local cached/manual dated availability policy, optionally applied by Working Calendars. |
 | Report Email Setting | `report_email_settings` | Singleton sender/recipient/SMTP plus separate weekly material and employee-efficiency schedules. No SMTP password is stored. |

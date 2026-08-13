@@ -340,6 +340,30 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Failed_predecessor_propagates_to_all_descendants_without_false_cycle()
+    {
+        var input = Input(
+            [Backlog("machine-1", [
+                Operation("op-a", 0, 2),
+                Operation("op-b", 0, 1),
+                Operation("op-c", 0, 1)])],
+            [Calendar("machine-1", Window(8, 9))],
+            SetupCalendar(Window(8, 17)),
+            [],
+            [
+                new TimelineDependency("a-to-b", TimelineDependencyType.Sequential, "op-a", "op-b"),
+                new TimelineDependency("b-to-c", TimelineDependencyType.Sequential, "op-b", "op-c")
+            ]);
+
+        var result = new TimelineCalculationEngine().Calculate(input);
+
+        Assert.Empty(result.Operations);
+        Assert.Single(result.Conflicts, value => value.Code == "insufficient_availability");
+        Assert.Equal(2, result.Conflicts.Count(value => value.Code == "dependency_unresolved"));
+        Assert.DoesNotContain(result.Conflicts, value => value.Code == "dependency_cycle");
+    }
+
+    [Fact]
     public void Calculation_is_deterministic_and_does_not_mutate_input_collections()
     {
         var operations = new List<TimelineOperationInput>
