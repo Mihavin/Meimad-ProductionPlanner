@@ -13,7 +13,10 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     private bool hasLoaded;
     private bool isBusy;
     private DateTime? fromDate = DateTime.UtcNow.Date;
-    private DateTime? toDate = DateTime.UtcNow.Date.AddDays(7);
+    // Long CNC batches routinely span multiple working days. A 30-day default
+    // lets the read-only Timeline show dependency chains instead of reporting
+    // the first long predecessor as outside a one-week calculation horizon.
+    private DateTime? toDate = DateTime.UtcNow.Date.AddDays(30);
     private TimelineBatch? selectedBatch;
     private string statusMessage = "Connect to the Server to calculate the Timeline.";
     private DateTimeOffset horizonStart;
@@ -157,8 +160,12 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
                 var snapshot = await apiClient.GetTimelineAsync(from, to);
                 Apply(snapshot);
                 hasLoaded = requestedVersion == invalidationVersion;
+                var hasInsufficientHorizon = snapshot.Conflicts.Any(conflict =>
+                    string.Equals(conflict.Code, "insufficient_availability", StringComparison.Ordinal));
                 StatusMessage = hasLoaded
-                    ? $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}."
+                    ? hasInsufficientHorizon
+                        ? "Some operations do not fit in the selected date range. Extend the To date to see their sequential forecast."
+                        : $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}."
                     : "The plan changed during calculation. Recalculating from the Server.";
             }
             catch (Exception exception) when (IsExpected(exception))

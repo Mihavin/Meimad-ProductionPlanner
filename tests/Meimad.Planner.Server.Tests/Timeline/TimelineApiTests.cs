@@ -588,6 +588,72 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Timeline_api_loads_a_three_operation_chain_and_shifts_every_child_after_its_predecessor()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active)
+                    VALUES
+                        ('machine-2', 'M-2', 'Second mill', 'mill', 'calendar-1', 'active', 1),
+                        ('machine-3', 'M-3', 'Third mill', 'mill', 'calendar-1', 'active', 1);
+                    UPDATE machine_assignments SET machine_id = 'machine-2', backlog_position = 0
+                    WHERE batch_operation_id = 'op-2';
+                    INSERT INTO case_operations (
+                        id, case_id, operation_number, route_position, name, required_machine_type,
+                        setup_seconds, cycle_seconds, dependency_type, predecessor_case_operation_id)
+                    VALUES ('case-op-3', 'case-1', 30, 2, 'Third', 'mill', 0, 900,
+                            'sequential', 'case-op-2');
+                    INSERT INTO batch_operations (
+                        id, production_batch_id, source_case_operation_id, operation_number, route_position,
+                        name, required_machine_type, setup_seconds, cycle_seconds, status,
+                        dependency_type, predecessor_source_case_operation_id)
+                    VALUES ('op-3', 'batch-1', 'case-op-3', 30, 2, 'Third', 'mill', 0, 900,
+                            'not_started', 'sequential', 'case-op-2');
+                    INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                    VALUES ('assignment-3', 'op-3', 'machine-3', 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var intervals = document.RootElement.GetProperty("machines").EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("operationId").GetString() is "op-1" or "op-2" or "op-3")
+                .ToArray();
+            var work = intervals.Where(interval => interval.GetProperty("type").GetString()
+                is "setup" or "qa" or "loadunload" or "production" or "reserved").ToArray();
+            var op1End = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-1")
+                .Max(interval => interval.GetProperty("endsAt").GetDateTimeOffset());
+            var op2Start = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-2")
+                .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
+            var op2End = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-2")
+                .Max(interval => interval.GetProperty("endsAt").GetDateTimeOffset());
+            var op3Start = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-3")
+                .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
+
+            Assert.True(op2Start >= op1End);
+            Assert.True(op3Start >= op2End);
+            Assert.Contains(intervals, value => value.GetProperty("operationId").GetString() == "op-2"
+                && value.GetProperty("type").GetString() == "waiting");
+            Assert.Contains(document.RootElement.GetProperty("dependencies").EnumerateArray(), value =>
+                value.GetProperty("fromOperationId").GetString() == "op-1"
+                && value.GetProperty("toOperationId").GetString() == "op-2");
+            Assert.Contains(document.RootElement.GetProperty("dependencies").EnumerateArray(), value =>
+                value.GetProperty("fromOperationId").GetString() == "op-2"
+                && value.GetProperty("toOperationId").GetString() == "op-3");
+        });
+    }
+
+    [Fact]
     public async Task Timeline_api_reports_unassigned_predecessor_and_projects_child_as_waiting()
     {
         await RunWithServerAsync(async (application, client) =>

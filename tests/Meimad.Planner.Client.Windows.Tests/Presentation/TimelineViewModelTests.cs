@@ -7,6 +7,14 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class TimelineViewModelTests
 {
     [Fact]
+    public void Timeline_defaults_to_a_thirty_day_window_for_multi_day_dependency_chains()
+    {
+        var viewModel = new TimelineViewModel();
+
+        Assert.Equal(30, (viewModel.ToDate!.Value.Date - viewModel.FromDate!.Value.Date).TotalDays);
+    }
+
+    [Fact]
     public async Task View_model_preserves_server_intervals_and_filters_dependencies_by_batch()
     {
         var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
@@ -83,6 +91,28 @@ public sealed class TimelineViewModelTests
     }
 
     [Fact]
+    public void Timeline_view_keeps_dependency_waiting_visible_without_treating_it_as_the_child_operation_start()
+    {
+        var start = DateTimeOffset.Parse("2026-08-11T08:00:00Z");
+        var wait = new TimelineInterval(
+            "waiting", "machine-2", "op-2", "batch-1", "B-1", "PN-1", 20,
+            "Finish", start, start.AddHours(2), "Waiting for OP10 on Machine M-1 to finish.");
+        var production = wait with
+        {
+            Type = "production",
+            StartsAt = start.AddHours(2),
+            EndsAt = start.AddHours(3),
+            Detail = null
+        };
+
+        Assert.False(TimelineView.IsOperationWorkInterval(wait));
+        Assert.True(TimelineView.IsOperationWorkInterval(production));
+        Assert.DoesNotContain("OP20", TimelineView.IntervalLabel(wait), StringComparison.Ordinal);
+        Assert.Contains("Waiting for OP10", TimelineView.IntervalLabel(wait), StringComparison.Ordinal);
+        Assert.Contains("OP20", TimelineView.IntervalLabel(production), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Invalidation_during_refresh_reloads_the_new_server_projection()
     {
         var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
@@ -106,6 +136,26 @@ public sealed class TimelineViewModelTests
         Assert.Equal(2, api.RequestCount);
         Assert.Equal("Assigned operation", viewModel.Machines[0].Name);
         Assert.Contains("loaded", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Short_horizon_with_an_unschedulable_predecessor_explains_how_to_view_the_chain()
+    {
+        var start = DateTimeOffset.Parse("2026-08-13T00:00:00Z");
+        var snapshot = new TimelineSnapshot(
+            start, start, start.AddDays(3), [], [], [],
+            [new TimelineConflict("conflict-1", "insufficient_availability", "blocking",
+                "The operation cannot fit within the horizon.", ["op-1"], ["machine-1"])]);
+        var viewModel = new TimelineViewModel
+        {
+            FromDate = start.UtcDateTime,
+            ToDate = start.AddDays(3).UtcDateTime
+        };
+        viewModel.AttachSession(new FakeApiClient(snapshot));
+
+        await viewModel.RefreshAsync();
+
+        Assert.Contains("Extend the To date", viewModel.StatusMessage, StringComparison.Ordinal);
     }
 
     private static TimelineSnapshot Snapshot(string machineName, DateTimeOffset start, DateTimeOffset end) => new(

@@ -1,0 +1,8 @@
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.csproj.AssemblyReference.cache
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\rpswa.dswa.cache.json
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.GeneratedMSBuildEditorConfig.editorconfig
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.AssemblyInfoInputs.cache
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.AssemblyInfo.cs
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.csproj.CoreCompileInputs.cache
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.MvcApplicationPartsAssemblyInfo.cache
+C:\VisualCodeWork\Meimad-ProductionPlanner\server\Meimad.Planner.Server\.publish-temp\server-obj\Release\net10.0\win-x64\Meimad.Planner.Server.sourcelink.json

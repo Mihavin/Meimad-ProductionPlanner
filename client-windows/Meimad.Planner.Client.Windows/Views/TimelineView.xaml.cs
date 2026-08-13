@@ -250,7 +250,8 @@ public partial class TimelineView : UserControl
             for (var row = 0; row < viewModel.Machines.Count; row++)
             {
                 var matching = viewModel.Machines[row].Intervals
-                    .Where(interval => interval.OperationId == operationId)
+                    .Where(interval => interval.OperationId == operationId
+                        && IsOperationWorkInterval(interval))
                     .ToArray();
                 if (matching.Length > 0)
                 {
@@ -283,13 +284,26 @@ public partial class TimelineView : UserControl
         TimelineCanvas.Children.Add(head);
     }
 
-    private static string IntervalLabel(TimelineInterval interval)
+    internal static string IntervalLabel(TimelineInterval interval)
     {
         var type = interval.Type.ToUpperInvariant();
+        if (string.Equals(interval.Type, "waiting", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(interval.Detail)
+                ? type
+                : $"{type} • {interval.Detail}";
+        }
         return interval.OperationNumber.HasValue
             ? $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd()
             : string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
     }
+
+    internal static bool IsOperationWorkInterval(TimelineInterval interval) =>
+        string.Equals(interval.Type, "setup", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(interval.Type, "qa", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(interval.Type, "loadunload", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(interval.Type, "production", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(interval.Type, "reserved", StringComparison.OrdinalIgnoreCase);
 
     private static Brush IntervalBrush(string type) => type switch
     {

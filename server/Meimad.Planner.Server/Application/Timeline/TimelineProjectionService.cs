@@ -240,6 +240,13 @@ internal sealed class TimelineProjectionService
             .Where(dependency => calculationOperationIds.Contains(dependency.Domain.FromOperationId)
                 && calculationOperationIds.Contains(dependency.Domain.ToOperationId))
             .ToArray();
+        foreach (var dependency in calculationDependencies)
+        {
+            logger.LogDebug(
+                "Timeline loaded {DependencyType} dependency {DependencyId}: {FromOperationId} -> {ToOperationId}.",
+                dependency.Domain.Type, dependency.Domain.DependencyId,
+                dependency.Domain.FromOperationId, dependency.Domain.ToOperationId);
+        }
         logger.LogInformation(
             "Timeline calculation input contains {CalculationOperationCount} operations in {BacklogCount} Machine backlogs and {DependencyCount} dependencies; {ExcludedCount} assigned operations are represented as blocked waiting rather than calculation nodes. Resource roles: setup={SetupWorkers}, QA={QaWorkers}, regular={RegularWorkers}.",
             calculationOperationIds.Count, backlogs.Length, calculationDependencies.Length,
@@ -370,7 +377,7 @@ internal sealed class TimelineProjectionService
         foreach (var result in calculation.Operations)
         {
             logger.LogDebug(
-                "Timeline forecast operation {OperationId} on Machine {MachineId}: {ForecastStart} to {ForecastEnd}; status {Status}.",
+                "Timeline computed operation {OperationId} on Machine {MachineId}: {ForecastStart} to {ForecastEnd}; status {Status}; predecessor constraints were applied before placement.",
                 result.OperationId, result.MachineId, result.StartsAt, result.FinishesAt,
                 operationsById.GetValueOrDefault(result.OperationId)?.Status);
         }
