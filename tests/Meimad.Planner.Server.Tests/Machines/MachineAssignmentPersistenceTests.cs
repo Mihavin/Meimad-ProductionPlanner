@@ -19,13 +19,13 @@ public sealed class MachineAssignmentPersistenceTests
             machineService,
             authority,
             "M-1",
-            "milling",
+            "mill",
             ["mill"]);
         var second = await CreateMachineAsync(
             machineService,
             authority,
             "M-2",
-            "milling",
+            "mill",
             ["mill", "laser"]);
         var assignments = CreateAssignmentService(fixture.Database);
 

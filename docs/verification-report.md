@@ -4,7 +4,7 @@
 - **Current change review date:** 2026-08-13
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.302, Debug and Release
-- **Verdict:** The schema-v22 Server and Windows automated suites pass with 310 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
+- **Verdict:** The schema-v22 Server and Windows automated suites pass with 311 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
 
 ## 0. Schema-v17 change addendum (automated pass; manual checks pending)
 
@@ -27,11 +27,11 @@ Current automated result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 217 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 91 | 0 | 0 |
-| **Total** | **308** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 219 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 92 | 0 | 0 |
+| **Total** | **311** | **0** | **0** |
 
-Focused current tests cover schema-v10 through schema-v21 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
+Focused current tests cover schema-v10 through schema-v22 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, strict cross-type assignment confirmation/audit, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
 
 Current Release command:
 

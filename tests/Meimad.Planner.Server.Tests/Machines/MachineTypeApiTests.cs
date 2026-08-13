@@ -87,7 +87,12 @@ public sealed class MachineTypeApiTests
             using var assign = await client.PutAsJsonAsync("/api/v1/batch-operations/typed-op/assignment", new
             {
                 machineId,
-                backlogPosition = 0
+                backlogPosition = 0,
+                compatibilityOverride = new
+                {
+                    confirmed = true,
+                    reason = "The route capability is available on this different Machine Type."
+                }
             });
             Assert.Equal(HttpStatusCode.Created, assign.StatusCode);
 

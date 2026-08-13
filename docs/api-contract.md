@@ -723,7 +723,7 @@ Implemented assignment command response:
 
 The `PUT` returns `201` for a first assignment or `200` for a move. It changes only the named assignment plus necessary backlog-position normalization as one explicit atomic command and returns the assignment record.
 
-Compatibility normally requires an active Machine and a case-insensitive match between `requiredMachineType` and process type, axis type, or a Machine/linked-type capability; a missing requirement accepts any active Machine. An incompatible active Machine returns `409 machine_type_override_required` without changing the backlog. To proceed, the caller resubmits the same explicit Machine/position with:
+Assignment without an override requires an active Machine and a case-insensitive match between `requiredMachineType` and its process/Machine Type name; a missing requirement accepts any active Machine. Axis and Machine/linked-type capability matches do not suppress the warning when the selected Machine Type differs. A different active Machine Type returns `409 machine_type_override_required` without changing the backlog. To proceed, the caller resubmits the same explicit Machine/position with:
 
 ```json
 {

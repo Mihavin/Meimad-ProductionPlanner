@@ -635,6 +635,21 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Cross_type_warning_preserves_authoritative_server_types()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.Conflict, """
+            {"error":{"code":"machine_type_override_required","message":"Confirm override.","details":[{"requiredMachineType":"3-axis","selectedMachineType":"5-axis milling"}]}}
+            """));
+        using var api = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<PlannerApiException>(() =>
+            api.AssignOrMoveOperationAsync("op-1", "machine-1", 0, "windows-1", 14));
+
+        Assert.Equal("3-axis", exception.RequiredMachineType);
+        Assert.Equal("5-axis milling", exception.SelectedMachineType);
+    }
+
+    [Fact]
     public async Task Setup_resource_holiday_and_report_settings_use_server_routes_etags_and_edit_authority()
     {
         var handler = new RecordingHandler(

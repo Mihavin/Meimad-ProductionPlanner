@@ -431,6 +431,13 @@ public sealed class MachineApiTests
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task<object?> ScalarAsync(SqliteConnection connection, string sql)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return await command.ExecuteScalarAsync();
+    }
+
     private static async Task RunWithServerAsync(Func<WebApplication, HttpClient, Task> test)
     {
         var directoryPath = Path.Combine(

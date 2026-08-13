@@ -73,8 +73,8 @@ public sealed class MachinePlanningBoardViewModelTests
     public async Task Cross_type_drop_prompts_then_resubmits_confirmation_and_reason()
     {
         AssignmentOverridePrompt? shownPrompt = null;
-        var crossTypeOperation = Operation(null, null) with { RequiredMachineType = "3-axis" };
-        var crossTypeMachine = Machine([]) with { ProcessType = "5-axis milling" };
+        var crossTypeOperation = Operation(null, null) with { RequiredMachineType = "stale 2-axis" };
+        var crossTypeMachine = Machine([]) with { ProcessType = "stale 4-axis" };
         var before = BoardBefore() with
         {
             Pool = [crossTypeOperation],
