@@ -103,7 +103,9 @@ internal sealed record GenerateJobPackageRequest(
     IReadOnlyList<JobPackageSourceFileRequest>? Files,
     IReadOnlyList<ToolTableEntryRequest>? ToolTable,
     IReadOnlyList<OffsetEntryRequest>? Offsets,
-    string? Instructions)
+    string? Instructions,
+    IReadOnlyList<ToolTableEntryRequest>? ExpectedMachineTools,
+    IReadOnlyList<LocalChecklistItemRequest>? LocalChecklistItems)
 {
     internal GenerateJobPackageCommand ToCommand() => new(
         BatchOperationId,
@@ -125,7 +127,11 @@ internal sealed record GenerateJobPackageRequest(
             row.Value,
             row.Unit,
             row.Note)).ToArray(),
-        Instructions);
+        Instructions,
+        ExpectedMachineTools?.Select(row => new ToolTableEntry(
+            row.ToolId, row.Description, row.Diameter, row.Length, row.Note)).ToArray(),
+        LocalChecklistItems?.Select(item => new LocalChecklistItem(
+            item.ItemId, item.Label)).ToArray());
 }
 
 internal sealed record JobPackageSourceFileRequest(
@@ -145,6 +151,8 @@ internal sealed record OffsetEntryRequest(
     string Value,
     string? Unit,
     string? Note);
+
+internal sealed record LocalChecklistItemRequest(string ItemId, string Label);
 
 internal sealed record JobPackageResponse(
     string PackageId,
@@ -177,7 +185,13 @@ internal sealed record JobPackageSnapshotResponse(
     int PlannedQuantity,
     string BatchOperationId,
     int OperationNumber,
-    string OperationName)
+    string OperationName,
+    SetupWorkerSnapshot? SetupWorker,
+    DateTimeOffset? PlannedSetupStartsAt,
+    DateTimeOffset? PlannedSetupEndsAt,
+    IReadOnlyList<ToolTableEntry> JobTools,
+    IReadOnlyList<ToolTableEntry> ExpectedMachineTools,
+    IReadOnlyList<LocalChecklistItem> LocalChecklistItems)
 {
     internal static JobPackageSnapshotResponse FromDomain(JobPackageSnapshot value) => new(
         value.MachineId,
@@ -193,7 +207,13 @@ internal sealed record JobPackageSnapshotResponse(
         value.PlannedQuantity,
         value.BatchOperationId,
         value.OperationNumber,
-        value.OperationName);
+        value.OperationName,
+        value.SetupWorker,
+        value.PlannedSetupStartsAt,
+        value.PlannedSetupEndsAt,
+        value.JobTools ?? [],
+        value.ExpectedMachineTools ?? [],
+        value.LocalChecklistItems ?? []);
 }
 
 internal sealed record JobPackageAssetResponse(

@@ -5,61 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <base href="/tv-dashboard/">
-  <title>Meimad Production Floor</title>
-  <meta name="description" content="Read-only factory-floor Machine status dashboard">
+  <title>Meimad Machine Status</title>
+  <meta name="description" content="Read-only factory-floor machine status dashboard">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand-block">
-      <div class="eyebrow">MEIMAD PRODUCTION PLANNER</div>
-      <h1>Factory floor</h1>
-    </div>
-    <section class="summary-strip" aria-label="Factory summary">
-      <div class="summary-item summary-machines"><strong id="machine-count">—</strong><span>Machines</span></div>
-      <div class="summary-item summary-conflicts"><strong id="conflict-count">—</strong><span>Blocking conflicts</span></div>
-      <div class="summary-item summary-urgent"><strong id="urgent-count">—</strong><span>Urgent batches</span></div>
-      <div class="summary-item summary-downtime"><strong id="downtime-count">—</strong><span>In downtime</span></div>
-    </section>
-    <div class="clock-block">
-      <time id="clock" class="clock">—:—:—</time>
-      <div id="date" class="date"></div>
-      <div id="refresh-state" class="refresh-state" role="status">Connecting…</div>
-    </div>
+    <h1>Machine status</h1>
+    <span
+      id="server-status"
+      class="server-status server-status-connecting"
+      role="status"
+      aria-live="polite"
+      aria-label="Connecting"
+      title="Connecting"></span>
   </header>
 
-  <div id="connection-banner" class="connection-banner" role="alert" hidden>
-    <strong>▲ SERVER CONNECTION LOST</strong>
-    <span>Showing the last received planning snapshot.</span>
-  </div>
-
-  <main>
-    <section id="urgent-section" class="urgent-section" aria-labelledby="urgent-heading" hidden>
-      <div class="section-heading">
-        <span class="section-icon">▲</span>
-        <h2 id="urgent-heading">Urgent batches</h2>
-      </div>
-      <div id="urgent-list" class="urgent-list"></div>
-    </section>
-
-    <section aria-labelledby="machines-heading">
-      <div class="machine-list-heading">
-        <h2 id="machines-heading">Machine status</h2>
-        <div class="column-guide" aria-hidden="true">
-          <span>Machine</span><span>Status</span><span>Current job</span><span>Next job</span><span>Conflicts</span><span>Downtime</span>
-        </div>
-      </div>
-      <div id="machine-list" class="machine-list" aria-live="polite">
-        <div class="empty-state">Waiting for Server data…</div>
-      </div>
-    </section>
+  <main id="machine-grid" class="machine-grid" aria-live="polite" aria-busy="true">
+    <div class="empty-state">Waiting for machine status</div>
   </main>
 
-  <footer>
-    <span>READ-ONLY SHOP-FLOOR DISPLAY</span>
-    <span id="generated-at">No snapshot received</span>
-    <span>Auto-refresh enabled</span>
-  </footer>
   <script src="app.js" defer></script>
 </body>
 </html>

@@ -48,7 +48,9 @@ internal sealed class TimelineCalculationEngine
         foreach (var entry in backlogEntries)
         {
             if (entry.Operation.SetupDuration < TimeSpan.Zero
-                || entry.Operation.ProductionDuration < TimeSpan.Zero)
+                || entry.Operation.ProductionDuration < TimeSpan.Zero
+                || entry.Operation.QaDuration < TimeSpan.Zero
+                || entry.Operation.LoadUnloadDuration < TimeSpan.Zero)
             {
                 invalidOperations.Add(entry.Operation.OperationId);
                 conflicts.Add(
@@ -75,6 +77,13 @@ internal sealed class TimelineCalculationEngine
             "setup_calendar",
             null,
             conflicts);
+        var resources = ReadResourceAvailability(input, horizonStart, horizonEnd, conflicts);
+        var machineSkills = input.MachineCalendars
+            .GroupBy(value => value.MachineId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key,
+                group => (IReadOnlyList<string>)(group.First().SkillTokens ?? []),
+                StringComparer.Ordinal);
+        var dayShiftWindows = ReadDayShiftAvailability(input, horizonStart, horizonEnd, conflicts);
         var dependencyModel = BuildDependencies(
             input.Dependencies,
             operationEntries,
@@ -103,7 +112,11 @@ internal sealed class TimelineCalculationEngine
             operationEntries,
             machineWindows,
             setupWindows,
+            resources,
+            machineSkills,
+            dayShiftWindows,
             horizonStart,
+            input.Dependencies,
             invalidNodes,
             conflicts);
         var operationResults = backlogEntries
@@ -249,6 +262,51 @@ internal sealed class TimelineCalculationEngine
         return result;
     }
 
+    private static IReadOnlyList<ResourceAvailability> ReadResourceAvailability(
+        TimelineCalculationInput input,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        ConflictCollector conflicts)
+    {
+        if (input.ResourceCalendars is null)
+        {
+            IReadOnlyList<InstantWindow> unconstrained = [new InstantWindow(horizonStart, horizonEnd)];
+            return Enumerable.Range(0, Math.Max(1, input.MachineBacklogs.Count))
+                .SelectMany(index => new[]
+                {
+                    new ResourceAvailability($"legacy-setup-{index}", TimelineResourceRole.SetupWorker, unconstrained, ["*"]),
+                    new ResourceAvailability($"legacy-qa-{index}", TimelineResourceRole.QaWorker, unconstrained, ["*"]),
+                    new ResourceAvailability($"legacy-regular-{index}", TimelineResourceRole.RegularWorker, unconstrained, ["*"])
+                })
+                .ToArray();
+        }
+        return input.ResourceCalendars
+            .Select(calendar => new ResourceAvailability(
+                calendar.ResourceId,
+                calendar.Role,
+                NormalizeWindows(calendar.Availability, horizonStart, horizonEnd,
+                    $"resource:{calendar.ResourceId}", null, conflicts),
+                calendar.Skills ?? []))
+            .OrderBy(value => value.ResourceId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> ReadDayShiftAvailability(
+        TimelineCalculationInput input,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        ConflictCollector conflicts)
+    {
+        return (input.DayShiftCalendars ?? [])
+            .GroupBy(value => value.MachineId, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<InstantWindow>)Merge(group.SelectMany(calendar => NormalizeWindows(
+                    calendar.Availability, horizonStart, horizonEnd,
+                    $"day_shift:{calendar.MachineId}", calendar.MachineId, conflicts))),
+                StringComparer.Ordinal);
+    }
+
     private static DependencyModel BuildDependencies(
         IReadOnlyList<TimelineDependency> dependencies,
         IReadOnlyDictionary<string, BacklogEntry> operations,
@@ -267,6 +325,12 @@ internal sealed class TimelineCalculationEngine
                     $"Dependency '{dependency.DependencyId}' references an operation that is not present exactly once in the backlogs.",
                     [dependency.FromOperationId, dependency.ToOperationId],
                     []);
+                if (operations.ContainsKey(dependency.ToOperationId)
+                    && (dependency.Type == TimelineDependencyType.Sequential
+                        || dependency.Type == TimelineDependencyType.LockedSimultaneous))
+                {
+                    invalidOperations.Add(dependency.ToOperationId);
+                }
                 continue;
             }
 
@@ -281,6 +345,7 @@ internal sealed class TimelineCalculationEngine
                     $"Operation '{dependency.FromOperationId}' cannot depend on itself.",
                     [dependency.FromOperationId],
                     [operations[dependency.FromOperationId].MachineId]);
+                invalidOperations.Add(dependency.FromOperationId);
                 continue;
             }
 
@@ -469,7 +534,11 @@ internal sealed class TimelineCalculationEngine
         IReadOnlyDictionary<string, BacklogEntry> operations,
         IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
         IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
         DateTimeOffset horizonStart,
+        IReadOnlyList<TimelineDependency> dependencies,
         IReadOnlySet<string> invalidNodes,
         ConflictCollector conflicts)
     {
@@ -479,6 +548,7 @@ internal sealed class TimelineCalculationEngine
         var completedFinish = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         var failed = invalidNodes.ToHashSet(StringComparer.Ordinal);
         var results = new Dictionary<string, TimelineOperationResult>(StringComparer.Ordinal);
+        var occupiedResources = new Dictionary<string, List<ResourceReservation>>(StringComparer.Ordinal);
 
         while (pending.Count > 0)
         {
@@ -501,7 +571,8 @@ internal sealed class TimelineCalculationEngine
 
             var ready = pending
                 .Where(node => predecessors[node].All(completedFinish.ContainsKey))
-                .OrderBy(value => value, StringComparer.Ordinal)
+                .OrderBy(value => value, Comparer<string>.Create((left, right) =>
+                    CompareReadyNodes(left, right, nodes, operations)))
                 .ToArray();
             if (ready.Length == 0)
             {
@@ -534,13 +605,21 @@ internal sealed class TimelineCalculationEngine
                         operations[node.Members[0]],
                         earliest,
                         machineWindows,
-                        setupWindows)
+                        setupWindows,
+                        resources,
+                        machineSkills,
+                        occupiedResources,
+                        dayShiftWindows)
                     : ScheduleLockedGroup(
                         node,
                         operations,
                         earliest,
                         machineWindows,
-                        setupWindows);
+                        setupWindows,
+                        resources,
+                        machineSkills,
+                        occupiedResources,
+                        dayShiftWindows);
                 pending.Remove(nodeKey);
                 if (scheduled is null)
                 {
@@ -548,7 +627,7 @@ internal sealed class TimelineCalculationEngine
                     conflicts.Add(
                         "insufficient_availability",
                         TimelineConflictSeverity.Blocking,
-                        "The operation cannot fit inside the supplied Machine/setup calendars and horizon after downtime.",
+                        "The operation cannot fit inside the supplied Machine, worker, setup, and day-shift availability within the horizon.",
                         node.Members,
                         node.Members.Select(id => operations[id].MachineId).ToArray());
                     continue;
@@ -559,28 +638,123 @@ internal sealed class TimelineCalculationEngine
                     results[result.OperationId] = result;
                 }
 
+                foreach (var reservation in scheduled.ResourceReservations)
+                {
+                    if (!occupiedResources.TryGetValue(reservation.ResourceId, out var occupied))
+                    {
+                        occupied = [];
+                        occupiedResources.Add(reservation.ResourceId, occupied);
+                    }
+                    occupied.Add(reservation);
+                }
+
                 completedFinish[nodeKey] = scheduled.FinishesAt;
             }
         }
 
-        return results;
+        return AddDependencyWaitingIntervals(
+            results,
+            dependencies,
+            machineWindows,
+            horizonStart);
+    }
+
+    private static IReadOnlyDictionary<string, TimelineOperationResult> AddDependencyWaitingIntervals(
+        IReadOnlyDictionary<string, TimelineOperationResult> results,
+        IReadOnlyList<TimelineDependency> dependencies,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
+        DateTimeOffset horizonStart)
+    {
+        var occupiedByMachine = results.Values
+            .GroupBy(result => result.MachineId, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => Merge(group.SelectMany(result => result.SetupIntervals
+                    .Concat(result.QaIntervals ?? [])
+                    .Concat(result.LoadUnloadIntervals ?? [])
+                    .Concat(result.ProductionIntervals)
+                    .Concat(result.ReservedIntervals))
+                    .Select(interval => new InstantWindow(interval.StartsAt, interval.EndsAt))),
+                StringComparer.Ordinal);
+        var sequentialByChild = dependencies
+            .Where(dependency => dependency.Type == TimelineDependencyType.Sequential)
+            .Where(dependency => results.ContainsKey(dependency.FromOperationId)
+                && results.ContainsKey(dependency.ToOperationId))
+            .GroupBy(dependency => dependency.ToOperationId, StringComparer.Ordinal);
+        var withWaiting = new Dictionary<string, TimelineOperationResult>(results, StringComparer.Ordinal);
+
+        foreach (var group in sequentialByChild)
+        {
+            var child = results[group.Key];
+            var predecessors = group
+                .Select(dependency => results[dependency.FromOperationId])
+                .ToArray();
+            var dependencyFinish = predecessors.Max(result => result.FinishesAt);
+            if (dependencyFinish <= horizonStart
+                || !machineWindows.TryGetValue(child.MachineId, out var availability))
+            {
+                continue;
+            }
+
+            var waitEnd = dependencyFinish < child.StartsAt ? dependencyFinish : child.StartsAt;
+            if (waitEnd <= horizonStart)
+            {
+                continue;
+            }
+
+            var waitWindows = Subtract(
+                Intersect(availability, [new InstantWindow(horizonStart, waitEnd)]),
+                occupiedByMachine.GetValueOrDefault(child.MachineId, []));
+            if (waitWindows.Count == 0)
+            {
+                continue;
+            }
+
+            var predecessorIds = predecessors
+                .Where(result => result.FinishesAt == dependencyFinish)
+                .Select(result => result.OperationId)
+                .OrderBy(id => id, StringComparer.Ordinal)
+                .ToArray();
+            var waiting = waitWindows.Select(window => new TimelineInterval(
+                TimelineIntervalType.Waiting,
+                child.MachineId,
+                child.OperationId,
+                window.StartsAt,
+                window.EndsAt,
+                string.Join("|", predecessorIds))).ToArray();
+            withWaiting[child.OperationId] = child with
+            {
+                WaitingIntervals = child.WaitingIntervals.Concat(waiting)
+                    .OrderBy(value => value.StartsAt)
+                    .ThenBy(value => value.Detail, StringComparer.Ordinal)
+                    .ToArray()
+            };
+        }
+
+        return withWaiting;
     }
 
     private static ScheduledNode? ScheduleSingle(
         BacklogEntry entry,
         DateTimeOffset earliest,
         IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
-        IReadOnlyList<InstantWindow> setupWindows)
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows)
     {
         if (!machineWindows.TryGetValue(entry.MachineId, out var availability))
         {
             return null;
         }
 
-        var result = ScheduleMember(entry, earliest, availability, setupWindows);
-        return result is null
+        var scheduled = ScheduleMember(entry, earliest, availability, setupWindows,
+            resources, machineSkills.GetValueOrDefault(entry.MachineId, []), occupiedResources,
+            dayShiftWindows);
+        return scheduled is null
             ? null
-            : new ScheduledNode([result], result.FinishesAt);
+            : new ScheduledNode([scheduled.Result], scheduled.Result.FinishesAt, scheduled.ResourceReservations);
     }
 
     private static ScheduledNode? ScheduleLockedGroup(
@@ -588,7 +762,11 @@ internal sealed class TimelineCalculationEngine
         IReadOnlyDictionary<string, BacklogEntry> operations,
         DateTimeOffset earliest,
         IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
-        IReadOnlyList<InstantWindow> setupWindows)
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows)
     {
         var members = node.Members.Select(id => operations[id]).ToArray();
         if (members.Select(member => member.MachineId).Distinct(StringComparer.Ordinal).Count()
@@ -622,19 +800,36 @@ internal sealed class TimelineCalculationEngine
         }
 
         var results = new List<TimelineOperationResult>();
+        var reservations = new List<ResourceReservation>();
+        var localOccupied = occupiedResources.ToDictionary(
+            pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
         foreach (var member in members)
         {
-            var result = ScheduleMember(
+            var scheduled = ScheduleMember(
                 member,
                 commonStart.Value,
                 machineWindows[member.MachineId],
-                setupWindows);
-            if (result is null || result.StartsAt != commonStart.Value)
+                setupWindows,
+                resources,
+                machineSkills.GetValueOrDefault(member.MachineId, []),
+                localOccupied,
+                dayShiftWindows);
+            if (scheduled is null || scheduled.Result.StartsAt != commonStart.Value)
             {
                 return null;
             }
 
-            results.Add(result);
+            results.Add(scheduled.Result);
+            reservations.AddRange(scheduled.ResourceReservations);
+            foreach (var reservation in scheduled.ResourceReservations)
+            {
+                if (!localOccupied.TryGetValue(reservation.ResourceId, out var occupied))
+                {
+                    occupied = [];
+                    localOccupied.Add(reservation.ResourceId, occupied);
+                }
+                occupied.Add(reservation);
+            }
         }
 
         var groupFinish = results.Max(result => result.FinishesAt);
@@ -658,47 +853,119 @@ internal sealed class TimelineCalculationEngine
                 ReservedIntervals = reserved
             };
         }).ToArray();
-        return new ScheduledNode(final, groupFinish);
+        return new ScheduledNode(final, groupFinish, reservations);
     }
 
-    private static TimelineOperationResult? ScheduleMember(
+    private static ScheduledMember? ScheduleMember(
         BacklogEntry entry,
         DateTimeOffset earliest,
         IReadOnlyList<InstantWindow> machineAvailability,
-        IReadOnlyList<InstantWindow> setupWindows)
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyList<string> machineSkills,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows)
     {
-        var setupAvailability = Intersect(machineAvailability, setupWindows);
-        var setup = Allocate(entry.Operation.SetupDuration, earliest, setupAvailability);
-        if (setup is null)
+        var operationAvailability = entry.Operation.DayShiftOnly
+            ? dayShiftWindows.TryGetValue(entry.MachineId, out var dayWindows)
+                ? Intersect(machineAvailability, dayWindows)
+                : []
+            : machineAvailability;
+        var reservations = new List<ResourceReservation>();
+        var waitingIntervals = new List<TimelineInterval>();
+
+        var setupBaseAvailability = Intersect(operationAvailability, setupWindows);
+        var setupPhase = AllocateResourcePhase(
+            entry.Operation.SetupDuration, earliest, setupBaseAvailability,
+            TimelineResourceRole.SetupWorker, resources, occupiedResources, machineSkills,
+            entry.Operation);
+        if (setupPhase is null)
+        {
+            return null;
+        }
+        AddReservation(reservations, setupPhase, entry.Operation);
+        waitingIntervals.AddRange(ResourceWaiting(
+            entry, earliest, setupPhase.Allocation, setupBaseAvailability,
+            setupPhase.WaitingDetail ?? "Waiting for a skilled setup worker."));
+
+        var qaPhase = AllocateResourcePhase(
+            entry.Operation.QaDuration, setupPhase.Allocation.FinishesAt, operationAvailability,
+            TimelineResourceRole.QaWorker, resources, occupiedResources, [], entry.Operation);
+        if (qaPhase is null)
+        {
+            return null;
+        }
+        AddReservation(reservations, qaPhase, entry.Operation);
+        waitingIntervals.AddRange(ResourceWaiting(
+            entry, setupPhase.Allocation.FinishesAt, qaPhase.Allocation,
+            operationAvailability, qaPhase.WaitingDetail ?? "Waiting for a QA worker."));
+
+        ResourcePhase? loadPhase = null;
+        Allocation? loadUnload;
+        if (entry.Operation.LoadUnloadRequiresWorker)
+        {
+            loadPhase = AllocateResourcePhase(
+                entry.Operation.LoadUnloadDuration, qaPhase.Allocation.FinishesAt, operationAvailability,
+                TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
+            loadUnload = loadPhase?.Allocation;
+            if (loadPhase is not null)
+            {
+                AddReservation(reservations, loadPhase, entry.Operation);
+                waitingIntervals.AddRange(ResourceWaiting(
+                    entry, qaPhase.Allocation.FinishesAt, loadPhase.Allocation,
+                    operationAvailability,
+                    loadPhase.WaitingDetail ?? "Waiting for a regular worker for load/unload."));
+            }
+        }
+        else
+        {
+            loadUnload = Allocate(
+                entry.Operation.LoadUnloadDuration,
+                qaPhase.Allocation.FinishesAt,
+                operationAvailability);
+        }
+        if (loadUnload is null)
         {
             return null;
         }
 
         var production = Allocate(
             entry.Operation.ProductionDuration,
-            setup.FinishesAt,
-            machineAvailability);
+            loadUnload.FinishesAt,
+            operationAvailability);
         if (production is null)
         {
             return null;
         }
 
-        var startsAt = setup.Intervals.FirstOrDefault()?.StartsAt
+        var startsAt = setupPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
+            ?? qaPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
+            ?? loadUnload.Intervals.FirstOrDefault()?.StartsAt
             ?? production.Intervals.FirstOrDefault()?.StartsAt
             ?? earliest;
-        var setupIntervals = setup.Intervals.Select(window => new TimelineInterval(
+        var setupIntervals = setupPhase.Allocation.Intervals.Select(window => new TimelineInterval(
             TimelineIntervalType.Setup,
             entry.MachineId,
             entry.Operation.OperationId,
             window.StartsAt,
-            window.EndsAt)).ToArray();
+            window.EndsAt,
+            $"Setup worker: {setupPhase.ResourceId}")).ToArray();
         var productionIntervals = production.Intervals.Select(window => new TimelineInterval(
             TimelineIntervalType.Production,
             entry.MachineId,
             entry.Operation.OperationId,
             window.StartsAt,
             window.EndsAt)).ToArray();
-        return new TimelineOperationResult(
+        var qaIntervals = qaPhase.Allocation.Intervals.Select(window => new TimelineInterval(
+            TimelineIntervalType.Qa, entry.MachineId, entry.Operation.OperationId,
+            window.StartsAt, window.EndsAt, $"QA worker: {qaPhase.ResourceId}")).ToArray();
+        var loadUnloadIntervals = loadUnload.Intervals.Select(window => new TimelineInterval(
+            TimelineIntervalType.LoadUnload, entry.MachineId, entry.Operation.OperationId,
+            window.StartsAt, window.EndsAt,
+            entry.Operation.LoadUnloadRequiresWorker
+                ? $"Regular worker: {loadPhase!.ResourceId}"
+                : "Automatic load/unload")).ToArray();
+        var result = new TimelineOperationResult(
             entry.Operation.OperationId,
             entry.MachineId,
             entry.BacklogPosition,
@@ -706,7 +973,178 @@ internal sealed class TimelineCalculationEngine
             production.FinishesAt,
             setupIntervals,
             productionIntervals,
-            []);
+            [],
+            waitingIntervals,
+            qaIntervals,
+            loadUnloadIntervals);
+        return new ScheduledMember(result, reservations);
+    }
+
+    private static ResourcePhase? AllocateResourcePhase(
+        TimeSpan duration,
+        DateTimeOffset earliest,
+        IReadOnlyList<InstantWindow> phaseAvailability,
+        TimelineResourceRole role,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
+        IReadOnlyList<string> requiredSkills,
+        TimelineOperationInput operation)
+    {
+        if (duration == TimeSpan.Zero)
+        {
+            return new ResourcePhase(string.Empty, new Allocation([], earliest), null);
+        }
+
+        return resources
+            .Where(resource => resource.Role == role)
+            .Where(resource => role != TimelineResourceRole.SetupWorker
+                || HasRequiredSkill(resource.Skills, requiredSkills))
+            .Select(resource =>
+            {
+                var occupations = occupiedResources.GetValueOrDefault(resource.ResourceId, []);
+                var available = Subtract(
+                    Intersect(phaseAvailability, resource.Availability),
+                    occupations.SelectMany(value => value.Intervals).ToArray());
+                var allocation = Allocate(duration, earliest, available);
+                return allocation is null ? null : new ResourcePhase(
+                    resource.ResourceId, allocation,
+                    ResourcePriorityWaitingDetail(role, operation, earliest, allocation, occupations));
+            })
+            .Where(value => value is not null)
+            .Cast<ResourcePhase>()
+            .OrderBy(value => value.Allocation.Intervals[0].StartsAt)
+            .ThenBy(value => value.Allocation.FinishesAt)
+            .ThenBy(value => value.ResourceId, StringComparer.Ordinal)
+            .FirstOrDefault();
+    }
+
+    private static bool HasRequiredSkill(
+        IReadOnlyList<string> employeeSkills,
+        IReadOnlyList<string> machineSkills)
+    {
+        if (employeeSkills.Any(value => string.Equals(value.Trim(), "*", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        return employeeSkills.Any(employeeSkill => machineSkills.Any(machineSkill =>
+            string.Equals(employeeSkill.Trim(), machineSkill.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static int CompareReadyNodes(
+        string left,
+        string right,
+        IReadOnlyDictionary<string, ScheduleNode> nodes,
+        IReadOnlyDictionary<string, BacklogEntry> operations)
+    {
+        var comparer = Comparer<TimelineOperationInput>.Create(CompareOperationPriorities);
+        var leftPriority = nodes[left].Members.Select(id => operations[id].Operation)
+            .OrderBy(value => value, comparer).First();
+        var rightPriority = nodes[right].Members.Select(id => operations[id].Operation)
+            .OrderBy(value => value, comparer).First();
+        var comparison = CompareOperationPriorities(leftPriority, rightPriority);
+        return comparison != 0 ? comparison : StringComparer.Ordinal.Compare(left, right);
+    }
+
+    private static int CompareOperationPriorities(
+        TimelineOperationInput left,
+        TimelineOperationInput right)
+    {
+        var dueComparison = Nullable.Compare(left.PriorityWorkFinishDate, right.PriorityWorkFinishDate);
+        if (!left.PriorityWorkFinishDate.HasValue && right.PriorityWorkFinishDate.HasValue) dueComparison = 1;
+        else if (left.PriorityWorkFinishDate.HasValue && !right.PriorityWorkFinishDate.HasValue) dueComparison = -1;
+        if (dueComparison != 0) return dueComparison;
+
+        var orderComparison = TimelinePriorityComparer.CompareOrderNumbers(
+            left.PriorityOrderNumber, right.PriorityOrderNumber);
+        return orderComparison != 0
+            ? orderComparison
+            : StringComparer.Ordinal.Compare(left.OperationId, right.OperationId);
+    }
+
+    private static string? ResourcePriorityWaitingDetail(
+        TimelineResourceRole role,
+        TimelineOperationInput operation,
+        DateTimeOffset earliest,
+        Allocation allocation,
+        IReadOnlyList<ResourceReservation> occupations)
+    {
+        if (allocation.Intervals.Count == 0) return null;
+        var blockers = occupations
+            .Where(value => value.Intervals.Any(interval =>
+                interval.EndsAt > earliest && interval.StartsAt < allocation.FinishesAt))
+            .OrderBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
+            .ThenBy(value => value.PriorityWorkFinishDate)
+            .ThenBy(value => value.PriorityOrderNumber,
+                Comparer<string?>.Create(TimelinePriorityComparer.CompareOrderNumbers))
+            .ThenBy(value => value.OperationId, StringComparer.Ordinal)
+            .ToArray();
+        if (blockers.Length == 0) return null;
+
+        var winner = blockers[0];
+        var roleLabel = role switch
+        {
+            TimelineResourceRole.SetupWorker => "a skilled setup worker",
+            TimelineResourceRole.QaWorker => "a QA worker",
+            TimelineResourceRole.RegularWorker => "a regular worker for load/unload",
+            _ => "a worker"
+        };
+        if (winner.PriorityWorkFinishDate.HasValue
+            && (!operation.PriorityWorkFinishDate.HasValue
+                || winner.PriorityWorkFinishDate < operation.PriorityWorkFinishDate))
+        {
+            return $"Waiting for {roleLabel}; operation '{winner.OperationId}' received the resource first because its Work Finish Date {winner.PriorityWorkFinishDate:yyyy-MM-dd} is earlier.";
+        }
+
+        if (winner.PriorityWorkFinishDate == operation.PriorityWorkFinishDate
+            && TimelinePriorityComparer.CompareOrderNumbers(
+                winner.PriorityOrderNumber, operation.PriorityOrderNumber) < 0)
+        {
+            return $"Waiting for {roleLabel}; Work Finish Dates are equal, so smaller Order number {winner.PriorityOrderNumber} received the resource first.";
+        }
+
+        return $"Waiting for {roleLabel}; operation '{winner.OperationId}' received the resource first under the deterministic priority tie-break.";
+    }
+
+    private static void AddReservation(
+        ICollection<ResourceReservation> reservations,
+        ResourcePhase phase,
+        TimelineOperationInput operation)
+    {
+        if (phase.ResourceId.Length > 0 && phase.Allocation.Intervals.Count > 0)
+        {
+            reservations.Add(new ResourceReservation(
+                phase.ResourceId,
+                phase.Allocation.Intervals,
+                operation.OperationId,
+                operation.PriorityWorkFinishDate,
+                operation.PriorityOrderNumber));
+        }
+    }
+
+    private static IReadOnlyList<TimelineInterval> ResourceWaiting(
+        BacklogEntry entry,
+        DateTimeOffset requestedAt,
+        Allocation allocation,
+        IReadOnlyList<InstantWindow> phaseBaseAvailability,
+        string detail)
+    {
+        if (allocation.Intervals.Count == 0 || allocation.FinishesAt <= requestedAt)
+        {
+            return [];
+        }
+
+        var waitable = Intersect(
+            phaseBaseAvailability,
+            [new InstantWindow(requestedAt, allocation.FinishesAt)]);
+        var waits = Subtract(waitable, allocation.Intervals);
+        return waits.Select(window => new TimelineInterval(
+            TimelineIntervalType.Waiting,
+            entry.MachineId,
+            entry.Operation.OperationId,
+            window.StartsAt,
+            window.EndsAt,
+            $"resource:{detail}")).ToArray();
     }
 
     private static IReadOnlyList<TimelineMachineResult> BuildMachineResults(
@@ -721,14 +1159,19 @@ internal sealed class TimelineCalculationEngine
                      .GroupBy(value => value.MachineId, StringComparer.Ordinal)
                      .Select(group => group.First()))
         {
-            var operationIntervals = operationResults
+            var machineOperations = operationResults
                 .Where(operation => string.Equals(
                     operation.MachineId,
                     backlog.MachineId,
                     StringComparison.Ordinal))
+                .ToArray();
+            var operationIntervals = machineOperations
                 .SelectMany(operation => operation.SetupIntervals
+                    .Concat(operation.QaIntervals ?? [])
+                    .Concat(operation.LoadUnloadIntervals ?? [])
                     .Concat(operation.ProductionIntervals)
-                    .Concat(operation.ReservedIntervals))
+                    .Concat(operation.ReservedIntervals)
+                    .Concat(operation.WaitingIntervals))
                 .ToArray();
             var occupied = Merge(operationIntervals.Select(interval => new InstantWindow(
                 interval.StartsAt,
@@ -747,15 +1190,28 @@ internal sealed class TimelineCalculationEngine
                     value.MachineId,
                     backlog.MachineId,
                     StringComparison.Ordinal))
-                .Select(value => Clip(value.StartsAt, value.EndsAt, horizonStart, horizonEnd) is { } window
-                    ? new TimelineInterval(
+                .Select(value =>
+                {
+                    if (Clip(value.StartsAt, value.EndsAt, horizonStart, horizonEnd) is not { } window)
+                        return null;
+                    var delayed = machineOperations.FirstOrDefault(operation =>
+                    {
+                        var work = operation.SetupIntervals
+                            .Concat(operation.QaIntervals ?? [])
+                            .Concat(operation.LoadUnloadIntervals ?? [])
+                            .Concat(operation.ProductionIntervals)
+                            .ToArray();
+                        return work.Any(interval => interval.EndsAt <= window.StartsAt)
+                            && work.Any(interval => interval.StartsAt >= window.EndsAt);
+                    });
+                    return new TimelineInterval(
                         TimelineIntervalType.Downtime,
                         backlog.MachineId,
-                        null,
+                        delayed?.OperationId,
                         window.StartsAt,
                         window.EndsAt,
-                        value.Reason)
-                    : null)
+                        delayed is null ? value.Reason : $"Operation delayed by {value.Reason}");
+                })
                 .Where(value => value is not null)
                 .Cast<TimelineInterval>();
             var intervals = operationIntervals
@@ -1030,7 +1486,30 @@ internal sealed class TimelineCalculationEngine
 
     private sealed record ScheduledNode(
         IReadOnlyList<TimelineOperationResult> Results,
-        DateTimeOffset FinishesAt);
+        DateTimeOffset FinishesAt,
+        IReadOnlyList<ResourceReservation> ResourceReservations);
+
+    private sealed record ScheduledMember(
+        TimelineOperationResult Result,
+        IReadOnlyList<ResourceReservation> ResourceReservations);
+
+    private sealed record ResourceAvailability(
+        string ResourceId,
+        TimelineResourceRole Role,
+        IReadOnlyList<InstantWindow> Availability,
+        IReadOnlyList<string> Skills);
+
+    private sealed record ResourcePhase(
+        string ResourceId,
+        Allocation Allocation,
+        string? WaitingDetail);
+
+    private sealed record ResourceReservation(
+        string ResourceId,
+        IReadOnlyList<InstantWindow> Intervals,
+        string OperationId,
+        DateOnly? PriorityWorkFinishDate,
+        string? PriorityOrderNumber);
 
     private sealed record Allocation(
         IReadOnlyList<InstantWindow> Intervals,

@@ -127,7 +127,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                        SELECT 1
                        FROM orders
                        WHERE orders.case_id = cases.id
-                         AND orders.status = 'active')
+                          AND orders.status IN ('active', 'in_production'))
                    OR EXISTS(
                        SELECT 1
                         FROM production_batches
@@ -158,7 +158,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 SELECT {Projection},
                        EXISTS(
                            SELECT 1 FROM orders
-                           WHERE orders.case_id = cases.id AND orders.status = 'active')
+                            WHERE orders.case_id = cases.id
+                              AND orders.status IN ('active', 'in_production'))
                        OR EXISTS(
                             SELECT 1 FROM production_batches
                             WHERE production_batches.case_id = cases.id
@@ -207,7 +208,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             SELECT id, case_id, operation_number, route_position, name,
                    required_machine_type, setup_seconds, cycle_seconds,
                    dependency_type, predecessor_case_operation_id, simultaneous_group_key,
-                   version, created_at, updated_at
+                   version, created_at, updated_at,
+                   qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                   automatic_loading, load_unload_every_n_parts, day_shift_only
             FROM case_operations
             WHERE case_id = $caseId
             ORDER BY route_position, operation_number, id;
@@ -231,7 +234,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 GetNullableString(reader, 10),
                 reader.GetInt32(11),
                 ParseInstant(reader.GetString(12)),
-                ParseInstant(reader.GetString(13))));
+                ParseInstant(reader.GetString(13)),
+                reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16) == 1,
+                reader.GetInt32(17) == 1, GetNullableInt32(reader, 18), reader.GetInt32(19) == 1));
         }
 
         return items;
@@ -282,7 +287,13 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             operation.SimultaneousGroupKey,
             1,
             operation.CreatedAt,
-            operation.CreatedAt);
+            operation.CreatedAt,
+            operation.QaTimeAfterSetupSeconds,
+            operation.LoadUnloadTimeSeconds,
+            operation.LoadUnloadRequiresWorker,
+            operation.AutomaticLoading,
+            operation.LoadUnloadEveryNParts,
+            operation.DayShiftOnly);
 
         ValidateGraph(operation.CaseId, [.. current, candidate]);
 
@@ -293,12 +304,16 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 id, case_id, operation_number, route_position, name,
                 required_machine_type, setup_seconds, cycle_seconds,
                 dependency_type, predecessor_case_operation_id, simultaneous_group_key,
-                version, created_at, updated_at)
+                version, created_at, updated_at,
+                qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                automatic_loading, load_unload_every_n_parts, day_shift_only)
             VALUES (
                 $id, $caseId, $operationNumber, $routePosition, $name,
                 $requiredMachineType, $setupSeconds, $cycleSeconds,
                 $dependencyType, $predecessorId, $groupKey,
-                1, $createdAt, $createdAt);
+                1, $createdAt, $createdAt,
+                $qaSeconds, $loadUnloadSeconds, $loadUnloadRequiresWorker,
+                $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly);
             """;
         command.Parameters.AddWithValue("$id", candidate.CaseOperationId);
         command.Parameters.AddWithValue("$caseId", candidate.CaseId);
@@ -313,6 +328,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             ToDependencyStorageToken(operation.DependencyType));
         AddNullableText(command, "$predecessorId", candidate.PredecessorCaseOperationId);
         AddNullableText(command, "$groupKey", candidate.SimultaneousGroupKey);
+        command.Parameters.AddWithValue("$qaSeconds", candidate.QaTimeAfterSetupSeconds);
+        command.Parameters.AddWithValue("$loadUnloadSeconds", candidate.LoadUnloadTimeSeconds);
+        command.Parameters.AddWithValue("$loadUnloadRequiresWorker", candidate.LoadUnloadRequiresWorker ? 1 : 0);
+        command.Parameters.AddWithValue("$automaticLoading", candidate.AutomaticLoading ? 1 : 0);
+        AddNullableInteger(command, "$loadUnloadEveryNParts", candidate.LoadUnloadEveryNParts);
+        command.Parameters.AddWithValue("$dayShiftOnly", candidate.DayShiftOnly ? 1 : 0);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(candidate.CreatedAt));
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -364,7 +385,13 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 Select(
                     command.PredecessorCaseOperationId,
                     current.PredecessorCaseOperationId),
-                Select(command.SimultaneousGroupKey, current.SimultaneousGroupKey)));
+                Select(command.SimultaneousGroupKey, current.SimultaneousGroupKey),
+                Select(command.QaTimeAfterSetupSeconds, current.QaTimeAfterSetupSeconds),
+                Select(command.LoadUnloadTimeSeconds, current.LoadUnloadTimeSeconds),
+                Select(command.LoadUnloadRequiresWorker, current.LoadUnloadRequiresWorker),
+                Select(command.AutomaticLoading, current.AutomaticLoading),
+                Select(command.LoadUnloadEveryNParts, current.LoadUnloadEveryNParts),
+                Select(command.DayShiftOnly, current.DayShiftOnly)));
         var candidate = current with
         {
             OperationNumber = values.OperationNumber,
@@ -375,6 +402,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             DependencyType = values.DependencyType.ToContractToken(),
             PredecessorCaseOperationId = values.PredecessorCaseOperationId,
             SimultaneousGroupKey = values.SimultaneousGroupKey,
+            QaTimeAfterSetupSeconds = values.QaTimeAfterSetupSeconds,
+            LoadUnloadTimeSeconds = values.LoadUnloadTimeSeconds,
+            LoadUnloadRequiresWorker = values.LoadUnloadRequiresWorker,
+            AutomaticLoading = values.AutomaticLoading,
+            LoadUnloadEveryNParts = values.LoadUnloadEveryNParts,
+            DayShiftOnly = values.DayShiftOnly,
             Version = expectedVersion + 1,
             UpdatedAt = updatedAt
         };
@@ -396,6 +429,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 dependency_type = $dependencyType,
                 predecessor_case_operation_id = $predecessorId,
                 simultaneous_group_key = $groupKey,
+                qa_seconds = $qaSeconds,
+                load_unload_seconds = $loadUnloadSeconds,
+                load_unload_requires_worker = $loadUnloadRequiresWorker,
+                automatic_loading = $automaticLoading,
+                load_unload_every_n_parts = $loadUnloadEveryNParts,
+                day_shift_only = $dayShiftOnly,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND case_id = $caseId AND version = $expectedVersion;
@@ -412,6 +451,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             ToDependencyStorageToken(values.DependencyType));
         AddNullableText(update, "$predecessorId", candidate.PredecessorCaseOperationId);
         AddNullableText(update, "$groupKey", candidate.SimultaneousGroupKey);
+        update.Parameters.AddWithValue("$qaSeconds", candidate.QaTimeAfterSetupSeconds);
+        update.Parameters.AddWithValue("$loadUnloadSeconds", candidate.LoadUnloadTimeSeconds);
+        update.Parameters.AddWithValue("$loadUnloadRequiresWorker", candidate.LoadUnloadRequiresWorker ? 1 : 0);
+        update.Parameters.AddWithValue("$automaticLoading", candidate.AutomaticLoading ? 1 : 0);
+        AddNullableInteger(update, "$loadUnloadEveryNParts", candidate.LoadUnloadEveryNParts);
+        update.Parameters.AddWithValue("$dayShiftOnly", candidate.DayShiftOnly ? 1 : 0);
         update.Parameters.AddWithValue("$version", candidate.Version);
         update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
         update.Parameters.AddWithValue("$updatedAt", FormatInstant(candidate.UpdatedAt));
@@ -534,7 +579,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             SELECT id, case_id, operation_number, route_position, name,
                    required_machine_type, setup_seconds, cycle_seconds,
                    dependency_type, predecessor_case_operation_id, simultaneous_group_key,
-                   version, created_at, updated_at
+                   version, created_at, updated_at,
+                   qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                   automatic_loading, load_unload_every_n_parts, day_shift_only
             FROM case_operations
             WHERE case_id = $caseId
             ORDER BY route_position, operation_number, id;
@@ -558,7 +605,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 GetNullableString(reader, 10),
                 reader.GetInt32(11),
                 ParseInstant(reader.GetString(12)),
-                ParseInstant(reader.GetString(13))));
+                ParseInstant(reader.GetString(13)),
+                reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16) == 1,
+                reader.GetInt32(17) == 1, GetNullableInt32(reader, 18), reader.GetInt32(19) == 1));
         }
 
         return items;

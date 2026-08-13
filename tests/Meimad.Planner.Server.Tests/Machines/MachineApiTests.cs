@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Meimad.Planner.Server.Persistence;
@@ -11,6 +12,47 @@ namespace Meimad.Planner.Server.Tests.Machines;
 
 public sealed class MachineApiTests
 {
+    [Fact]
+    public async Task Empty_machine_can_be_edited_and_deactivated_but_assigned_machine_cannot()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            var emptyId = await CreateMachineAsync(client, "M-EMPTY", "mill", []);
+            using var empty = await client.GetAsync($"/api/v1/machines/{emptyId}");
+            using var deactivate = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{emptyId}")
+            { Content = JsonContent.Create(new { name = "Edited Empty Machine", isActive = false }) };
+            deactivate.Headers.IfMatch.Add(new EntityTagHeaderValue(empty.Headers.ETag!.Tag));
+            using var deactivated = await client.SendAsync(deactivate);
+            Assert.Equal(HttpStatusCode.OK, deactivated.StatusCode);
+            using var deactivatedJson = JsonDocument.Parse(await deactivated.Content.ReadAsStringAsync());
+            Assert.Equal("Edited Empty Machine", deactivatedJson.RootElement.GetProperty("name").GetString());
+            Assert.False(deactivatedJson.RootElement.GetProperty("isActive").GetBoolean());
+
+            var assignedId = await CreateMachineAsync(client, "M-ASSIGNED", "mill", []);
+            using var assignment = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-a/assignment",
+                new { machineId = assignedId, backlogPosition = 0 });
+            assignment.EnsureSuccessStatusCode();
+            using var assigned = await client.GetAsync($"/api/v1/machines/{assignedId}");
+            using var unsafeDeactivate = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{assignedId}")
+            { Content = JsonContent.Create(new { isActive = false }) };
+            unsafeDeactivate.Headers.IfMatch.Add(new EntityTagHeaderValue(assigned.Headers.ETag!.Tag));
+            using var blocked = await client.SendAsync(unsafeDeactivate);
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            using var blockedJson = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+            Assert.Equal("assigned_operation_incompatible", blockedJson.RootElement.GetProperty("error").GetProperty("code").GetString());
+
+            using var unchanged = await client.GetAsync($"/api/v1/machines/{assignedId}");
+            using var unchangedJson = JsonDocument.Parse(await unchanged.Content.ReadAsStringAsync());
+            Assert.True(unchangedJson.RootElement.GetProperty("isActive").GetBoolean());
+            Assert.Equal(1, unchangedJson.RootElement.GetProperty("backlogCount").GetInt32());
+        });
+    }
+
     [Fact]
     public async Task Machine_catalog_and_assignment_commands_work_over_http()
     {
@@ -30,6 +72,15 @@ public sealed class MachineApiTests
                 "/api/v1/batch-operations/op-a/assignment",
                 new { machineId, backlogPosition = 0 });
             Assert.Equal(HttpStatusCode.Created, assignA.StatusCode);
+            using var compatibleAudit = await client.GetAsync(
+                "/api/v1/batch-operations/op-a/assignment-overrides");
+            compatibleAudit.EnsureSuccessStatusCode();
+            using (var compatibleAuditJson = JsonDocument.Parse(
+                await compatibleAudit.Content.ReadAsStringAsync()))
+            {
+                Assert.Empty(
+                    compatibleAuditJson.RootElement.GetProperty("items").EnumerateArray());
+            }
             using var assignB = await client.PutAsJsonAsync(
                 "/api/v1/batch-operations/op-b/assignment",
                 new { machineId, backlogPosition = 1 });
@@ -47,6 +98,14 @@ public sealed class MachineApiTests
             var items = backlogDocument.RootElement.GetProperty("items");
             Assert.Equal("op-b", items[0].GetProperty("assignment").GetProperty("batchOperationId").GetString());
             Assert.Equal("op-a", items[1].GetProperty("assignment").GetProperty("batchOperationId").GetString());
+
+            using var reorderEvents = await client.GetAsync("/api/v1/event-log?eventType=manual_backlog_reorder");
+            reorderEvents.EnsureSuccessStatusCode();
+            using var reorderJson = JsonDocument.Parse(await reorderEvents.Content.ReadAsStringAsync());
+            var reorder = Assert.Single(reorderJson.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("op-b", reorder.GetProperty("relatedEntityIds").GetProperty("batchOperationId").GetString());
+            Assert.Equal(1, reorder.GetProperty("beforeData").GetProperty("backlogPosition").GetInt32());
+            Assert.Equal(0, reorder.GetProperty("afterData").GetProperty("backlogPosition").GetInt32());
 
             using var boardResponse = await client.GetAsync("/api/v1/planning-board");
             Assert.Equal(HttpStatusCode.OK, boardResponse.StatusCode);
@@ -78,23 +137,128 @@ public sealed class MachineApiTests
     }
 
     [Fact]
-    public async Task Assignment_api_rejects_incompatible_machine_without_mutating_backlog()
+    public async Task Cross_type_assignment_requires_reason_then_logs_confirmed_override()
     {
         await RunWithServerAsync(async (application, client) =>
         {
             await SeedCalendarAndOperationsAsync(application.Services);
             await GrantEditModeAsync(application.Services);
             AddEditHeaders(client);
-            var machineId = await CreateMachineAsync(client, "M-MILL", "mill", []);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE case_operations SET required_machine_type = '3-axis'
+                    WHERE id = 'case-op-laser';
+                    UPDATE batch_operations SET required_machine_type = '3-axis'
+                    WHERE id = 'op-laser';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
 
-            using var response = await client.PutAsJsonAsync(
+            var machineId = await CreateMachineAsync(
+                client, "M-5AXIS", "5-axis milling", ["3-axis"]);
+
+            using var warning = await client.PutAsJsonAsync(
                 "/api/v1/batch-operations/op-laser/assignment",
                 new { machineId, backlogPosition = 0 });
-            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, warning.StatusCode);
+            using (var warningJson = JsonDocument.Parse(await warning.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(
+                    "machine_type_override_required",
+                    warningJson.RootElement.GetProperty("error").GetProperty("code").GetString());
+            }
 
             using var backlog = await client.GetAsync($"/api/v1/machines/{machineId}/backlog");
             using var document = JsonDocument.Parse(await backlog.Content.ReadAsStringAsync());
             Assert.Empty(document.RootElement.GetProperty("items").EnumerateArray());
+
+            using var missingReason = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-laser/assignment",
+                new
+                {
+                    machineId,
+                    backlogPosition = 0,
+                    compatibilityOverride = new { confirmed = true, reason = "  " }
+                });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, missingReason.StatusCode);
+            using (var missingReasonJson = JsonDocument.Parse(
+                await missingReason.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(
+                    "reason_required",
+                    missingReasonJson.RootElement.GetProperty("error").GetProperty("details")[0]
+                        .GetProperty("code").GetString());
+            }
+
+            const string reason = "Use the 5-axis spindle while the 3-axis Machine is under maintenance.";
+            using var confirmed = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-laser/assignment",
+                new
+                {
+                    machineId,
+                    backlogPosition = 0,
+                    compatibilityOverride = new { confirmed = true, reason }
+                });
+            Assert.Equal(HttpStatusCode.Created, confirmed.StatusCode);
+
+            using var assignedBacklog = await client.GetAsync($"/api/v1/machines/{machineId}/backlog");
+            using var assignedDocument = JsonDocument.Parse(
+                await assignedBacklog.Content.ReadAsStringAsync());
+            Assert.Equal(
+                "op-laser",
+                assignedDocument.RootElement.GetProperty("items")[0]
+                    .GetProperty("assignment").GetProperty("batchOperationId").GetString());
+
+            using var audit = await client.GetAsync(
+                "/api/v1/batch-operations/op-laser/assignment-overrides");
+            audit.EnsureSuccessStatusCode();
+            using var auditJson = JsonDocument.Parse(await audit.Content.ReadAsStringAsync());
+            var entry = Assert.Single(auditJson.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("3-axis", entry.GetProperty("requiredMachineType").GetString());
+            Assert.Equal("5-axis milling", entry.GetProperty("selectedMachineType").GetString());
+            Assert.Equal(reason, entry.GetProperty("reason").GetString());
+            Assert.Equal("machine-api-client", entry.GetProperty("confirmedByClientId").GetString());
+            Assert.Equal("machine-api-user", entry.GetProperty("confirmedByUserId").GetString());
+            Assert.NotEqual(default, entry.GetProperty("confirmedAt").GetDateTimeOffset());
+
+            using var events = await client.GetAsync("/api/v1/event-log?eventType=cross_machine_type_override");
+            events.EnsureSuccessStatusCode();
+            using var eventsJson = JsonDocument.Parse(await events.Content.ReadAsStringAsync());
+            var logged = Assert.Single(eventsJson.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("machine-api-user", logged.GetProperty("user").GetString());
+            Assert.Equal("machine_type_incompatible", logged.GetProperty("reasonCode").GetString());
+            Assert.Equal("op-laser", logged.GetProperty("relatedEntityIds").GetProperty("batchOperationId").GetString());
+            Assert.Equal(reason, logged.GetProperty("comment").GetString());
+            Assert.Equal("3-axis", logged.GetProperty("beforeData").GetProperty("requiredMachineType").GetString());
+
+            await using (var verificationConnection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("3-axis", await ScalarAsync(verificationConnection,
+                    "SELECT required_machine_type FROM case_operations WHERE id='case-op-laser';"));
+                Assert.Equal("3-axis", await ScalarAsync(verificationConnection,
+                    "SELECT required_machine_type FROM batch_operations WHERE id='op-laser';"));
+                await using var timelineSetup = verificationConnection.CreateCommand();
+                timelineSetup.CommandText = """
+                    UPDATE working_calendars SET time_zone_id='UTC',
+                      calendar_json='{"availability":[{"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T18:00:00Z"}],"usages":["machine","setup_worker"]}'
+                    WHERE id='calendar-1';
+                    UPDATE setup_calendar_settings SET working_calendar_id='calendar-1',legacy_fallback_enabled=0 WHERE id=1;
+                    UPDATE batch_operations SET setup_seconds=0,cycle_seconds=3600 WHERE id='op-laser';
+                    """;
+                await timelineSetup.ExecuteNonQueryAsync();
+            }
+            using var timeline = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            timeline.EnsureSuccessStatusCode();
+            using var timelineJson = JsonDocument.Parse(await timeline.Content.ReadAsStringAsync());
+            Assert.Contains(timelineJson.RootElement.GetProperty("machines").EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray()), interval =>
+                    interval.GetProperty("operationId").ValueKind == JsonValueKind.String
+                    && interval.GetProperty("operationId").GetString() == "op-laser"
+                    && interval.GetProperty("type").GetString() == "production");
         });
     }
 

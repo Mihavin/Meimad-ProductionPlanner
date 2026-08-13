@@ -44,7 +44,13 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         status,
         version,
         created_at,
-        updated_at
+        updated_at,
+        qa_seconds,
+        load_unload_seconds,
+        load_unload_requires_worker,
+        automatic_loading,
+        load_unload_every_n_parts,
+        day_shift_only
         """;
 
     private readonly SqliteDatabase database;
@@ -94,6 +100,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             connection,
             transaction,
             batch,
+            cancellationToken);
+        await SqliteOrderLifecycle.RecomputeForBatchAsync(
+            connection,
+            transaction,
+            batch.BatchId,
+            batch.UpdatedAt,
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return batch with { Operations = operations };
@@ -245,7 +257,9 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                 SELECT id, operation_number, route_position, name,
                        required_machine_type, setup_seconds, cycle_seconds,
                        dependency_type, predecessor_case_operation_id,
-                       simultaneous_group_key
+                       simultaneous_group_key,
+                       qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                       automatic_loading, load_unload_every_n_parts, day_shift_only
                 FROM case_operations
                 WHERE case_id = $caseId
                 ORDER BY route_position, operation_number, id;
@@ -268,7 +282,9 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                         ProductionBatchValidator.BatchOperationNotStartedStatus,
                         1,
                         batch.CreatedAt,
-                        batch.CreatedAt),
+                        batch.CreatedAt,
+                        reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12) == 1,
+                        reader.GetInt32(13) == 1, GetNullableInt32(reader, 14), reader.GetInt32(15) == 1),
                     reader.GetString(7),
                     GetNullableString(reader, 8),
                     GetNullableString(reader, 9)));
@@ -286,12 +302,16 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                     operation_number, route_position, name, required_machine_type,
                     setup_seconds, cycle_seconds, status, version, created_at, updated_at,
                     dependency_type, predecessor_source_case_operation_id,
-                    simultaneous_group_key)
+                    simultaneous_group_key,
+                    qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                    automatic_loading, load_unload_every_n_parts, day_shift_only)
                 VALUES (
                     $id, $batchId, $sourceId,
                     $operationNumber, $routePosition, $name, $requiredMachineType,
                     $setupSeconds, $cycleSeconds, $status, $version, $createdAt, $updatedAt,
-                    $dependencyType, $predecessorSourceId, $simultaneousGroupKey);
+                    $dependencyType, $predecessorSourceId, $simultaneousGroupKey,
+                    $qaSeconds, $loadUnloadSeconds, $loadUnloadRequiresWorker,
+                    $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly);
                 """;
             insertCommand.Parameters.AddWithValue("$id", operation.BatchOperationId);
             insertCommand.Parameters.AddWithValue("$batchId", operation.BatchId);
@@ -314,6 +334,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             insertCommand.Parameters.AddWithValue("$version", operation.Version);
             insertCommand.Parameters.AddWithValue("$createdAt", FormatInstant(operation.CreatedAt));
             insertCommand.Parameters.AddWithValue("$updatedAt", FormatInstant(operation.UpdatedAt));
+            insertCommand.Parameters.AddWithValue("$qaSeconds", operation.QaTimeAfterSetupSeconds);
+            insertCommand.Parameters.AddWithValue("$loadUnloadSeconds", operation.LoadUnloadTimeSeconds);
+            insertCommand.Parameters.AddWithValue("$loadUnloadRequiresWorker", operation.LoadUnloadRequiresWorker ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$automaticLoading", operation.AutomaticLoading ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$loadUnloadEveryNParts", operation.LoadUnloadEveryNParts.HasValue ? operation.LoadUnloadEveryNParts.Value : DBNull.Value);
+            insertCommand.Parameters.AddWithValue("$dayShiftOnly", operation.DayShiftOnly ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$dependencyType", snapshot.DependencyType);
             insertCommand.Parameters.AddWithValue(
                 "$predecessorSourceId",
@@ -343,10 +369,15 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = "SELECT case_id FROM orders WHERE id = $orderId;";
+            command.CommandText = "SELECT case_id, status = 'cancelled' FROM orders WHERE id = $orderId;";
             command.Parameters.AddWithValue("$orderId", allocation.OrderId!);
-            var caseId = await command.ExecuteScalarAsync(cancellationToken) as string;
-            references.Add(new OrderAllocationReference(allocation.OrderId!, caseId));
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            references.Add(await reader.ReadAsync(cancellationToken)
+                ? new OrderAllocationReference(
+                    allocation.OrderId!,
+                    reader.GetString(0),
+                    reader.GetBoolean(1))
+                : new OrderAllocationReference(allocation.OrderId!, null));
         }
 
         return references;
@@ -532,7 +563,9 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         reader.GetString(9),
         reader.GetInt32(10),
         ParseInstant(reader.GetString(11)),
-        ParseInstant(reader.GetString(12)));
+        ParseInstant(reader.GetString(12)),
+        reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15) == 1,
+        reader.GetInt32(16) == 1, GetNullableInt32(reader, 17), reader.GetInt32(18) == 1);
 
     private static string? GetNullableString(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

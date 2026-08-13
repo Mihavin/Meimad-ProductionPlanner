@@ -15,15 +15,20 @@
         <SolidColorBrush x:Key="GreyBrush" Color="#9E9E9E" />
 
         <Style TargetType="Button">
-            <Setter Property="Padding" Value="16,9" />
-            <Setter Property="Margin" Value="0,0,8,0" />
-            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="MinHeight" Value="31" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
 
         <Style TargetType="TextBox">
-            <Setter Property="Padding" Value="9,7" />
-            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Padding" Value="7,4" />
+            <Setter Property="MinHeight" Value="31" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="MinHeight" Value="31" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
     </Application.Resources>

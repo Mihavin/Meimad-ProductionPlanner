@@ -36,7 +36,8 @@ internal sealed class MachineService
             1,
             now,
             now,
-            values.PicturePath);
+            values.PicturePath,
+            values.MachineTypeId);
         return await repository.CreateAsync(machine, editAuthority, cancellationToken);
     }
 
@@ -67,7 +68,8 @@ internal sealed class MachineService
             Select(command.WorkingCalendarId, current.WorkingCalendarId),
             Select(command.IsActive, current.IsActive) ?? false,
             Select(command.DisplayEnabled, current.DisplayEnabled) ?? false,
-            Select(command.PicturePath, current.PicturePath)));
+            Select(command.PicturePath, current.PicturePath),
+            Select(command.MachineTypeId, current.MachineTypeId)));
         var updated = current with
         {
             Number = values.Number,
@@ -79,6 +81,7 @@ internal sealed class MachineService
             IsActive = values.IsActive,
             DisplayEnabled = values.DisplayEnabled,
             PicturePath = values.PicturePath,
+            MachineTypeId = values.MachineTypeId,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -99,7 +102,8 @@ internal sealed class MachineService
         command.WorkingCalendarId,
         command.IsActive,
         command.DisplayEnabled,
-        command.PicturePath);
+        command.PicturePath,
+        command.MachineTypeId);
 
     private static T Select<T>(MachineField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;
@@ -117,6 +121,14 @@ internal sealed class WorkingCalendarNotFoundException : Exception
 {
     internal WorkingCalendarNotFoundException(string calendarId)
         : base($"Working Calendar '{calendarId}' was not found.")
+    {
+    }
+}
+
+internal sealed class WorkingCalendarUsageException : Exception
+{
+    internal WorkingCalendarUsageException(string calendarId)
+        : base($"Working Calendar '{calendarId}' is not enabled for Machine usage.")
     {
     }
 }
@@ -141,6 +153,14 @@ internal sealed class MachineBacklogCompatibilityException : Exception
 {
     internal MachineBacklogCompatibilityException(string message)
         : base(message)
+    {
+    }
+}
+
+internal sealed class MachineTypeReferenceNotFoundException : Exception
+{
+    internal MachineTypeReferenceNotFoundException(string machineTypeId)
+        : base($"Machine Type '{machineTypeId}' was not found.")
     {
     }
 }

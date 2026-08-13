@@ -36,6 +36,27 @@ internal static class CaseOperationValidator
             values.CycleTimePerPartSeconds,
             "cycleTimePerPartSeconds",
             issues);
+        ValidateNonNegative(values.QaTimeAfterSetupSeconds, "qaTimeAfterSetupSeconds", issues);
+        ValidateNonNegative(values.LoadUnloadTimeSeconds, "loadUnloadTimeSeconds", issues);
+        if (values.LoadUnloadEveryNParts <= 0)
+        {
+            issues.Add(new CaseOperationValidationIssue(
+                "loadUnloadEveryNParts", "positive_required",
+                "loadUnloadEveryNParts must be greater than zero when supplied."));
+        }
+        if (!values.AutomaticLoading && values.LoadUnloadEveryNParts.HasValue)
+        {
+            issues.Add(new CaseOperationValidationIssue(
+                "loadUnloadEveryNParts", "automatic_loading_required",
+                "loadUnloadEveryNParts is only valid for automatic loading."));
+        }
+        if (values.AutomaticLoading && values.LoadUnloadRequiresWorker
+            && values.LoadUnloadTimeSeconds > 0 && !values.LoadUnloadEveryNParts.HasValue)
+        {
+            issues.Add(new CaseOperationValidationIssue(
+                "loadUnloadEveryNParts", "frequency_required",
+                "Automatic loading with worker time requires an every-N-parts frequency."));
+        }
 
         if (!CaseOperationDependencyTypes.TryParseContractToken(
                 values.DependencyType?.Trim(),
@@ -97,7 +118,13 @@ internal static class CaseOperationValidator
             values.CycleTimePerPartSeconds,
             dependencyType,
             predecessorId,
-            groupKey);
+            groupKey,
+            values.QaTimeAfterSetupSeconds,
+            values.LoadUnloadTimeSeconds,
+            values.LoadUnloadRequiresWorker,
+            values.AutomaticLoading,
+            values.LoadUnloadEveryNParts,
+            values.DayShiftOnly);
     }
 
     private static string? RequiredText(
@@ -160,7 +187,13 @@ internal sealed record CaseOperationCreateValues(
     int? CycleTimePerPartSeconds,
     string? DependencyType,
     string? PredecessorCaseOperationId,
-    string? SimultaneousGroupKey);
+    string? SimultaneousGroupKey,
+    int QaTimeAfterSetupSeconds = 0,
+    int LoadUnloadTimeSeconds = 0,
+    bool LoadUnloadRequiresWorker = false,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null,
+    bool DayShiftOnly = false);
 
 internal sealed record ValidatedCaseOperationCreateValues(
     string CaseId,
@@ -171,7 +204,13 @@ internal sealed record ValidatedCaseOperationCreateValues(
     int? CycleTimePerPartSeconds,
     CaseOperationDependencyType DependencyType,
     string? PredecessorCaseOperationId,
-    string? SimultaneousGroupKey);
+    string? SimultaneousGroupKey,
+    int QaTimeAfterSetupSeconds,
+    int LoadUnloadTimeSeconds,
+    bool LoadUnloadRequiresWorker,
+    bool AutomaticLoading,
+    int? LoadUnloadEveryNParts,
+    bool DayShiftOnly);
 
 internal sealed record CaseOperationValidationIssue(string Field, string Code, string Message);
 

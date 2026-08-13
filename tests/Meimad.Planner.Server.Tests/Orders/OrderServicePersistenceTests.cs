@@ -32,8 +32,8 @@ public sealed class OrderServicePersistenceTests
                 OrderField<string?>.Unspecified,
                 OrderField<int?>.Specified(60),
                 OrderField<string?>.Unspecified,
-                OrderField<string?>.Specified("complete"),
-                OrderField<string?>.Specified("Completed demand")),
+                OrderField<string?>.Specified("cancelled"),
+                OrderField<string?>.Specified("Cancelled demand")),
             editAuthority);
 
         var reopenedDatabase = new SqliteDatabase(
@@ -46,9 +46,9 @@ public sealed class OrderServicePersistenceTests
         Assert.Equal("WO-1042", reopened.OrderNumber);
         Assert.Equal(60, reopened.Quantity);
         Assert.Equal(new DateOnly(2026, 8, 20), reopened.WorkFinishDate);
-        Assert.Equal("complete", reopened.Status.ToContractToken());
+        Assert.Equal("cancelled", reopened.Status.ToContractToken());
         Assert.False(reopened.Status.IsActiveDemand());
-        Assert.Equal("Completed demand", reopened.Notes);
+        Assert.Equal("Cancelled demand", reopened.Notes);
         Assert.Equal(2, updated.Version);
 
         var listed = await reopenedService.ListByCaseAsync("case-1");

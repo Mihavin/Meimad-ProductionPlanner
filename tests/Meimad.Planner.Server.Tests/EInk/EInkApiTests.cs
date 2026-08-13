@@ -250,6 +250,11 @@ public sealed class EInkApiTests
                 is_active, display_enabled)
             VALUES ('machine-eink-1', 'M-EINK-1', 'E-Ink Mill', 'mill',
                     'calendar-eink', 'active', 1, 1);
+            INSERT INTO employee_resources (
+                id, employee_number, name, resource_type, first_name, last_name,
+                skills_json, assigned_calendar_id, is_active)
+            VALUES ('resource-eink-setup', 'E-EINK-SETUP', 'Setup Worker', 'setup_worker',
+                    'Setup', 'Worker', '["mill"]', 'calendar-eink', 1);
             INSERT INTO cases (id, part_number, name, working_folder_path)
             VALUES ('case-eink', 'PN-EINK', 'E-Ink Part', 'C:\Cases\PN-EINK');
             INSERT INTO production_batches (

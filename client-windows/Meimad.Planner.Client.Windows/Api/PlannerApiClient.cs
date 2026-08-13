@@ -85,6 +85,15 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<PlannerOrder> UpdateOrderAsync(
+        string orderId,
+        OrderUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<ProductionBatch>> ListBatchesAsync(
         string caseId,
         CancellationToken cancellationToken = default);
@@ -125,6 +134,21 @@ internal interface IPlannerApiClient : IDisposable
     Task DeleteBatchAsync(string batchId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task DeleteMachineAsync(string machineId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    Task<IReadOnlyList<MachineDowntime>> ListDowntimesAsync(
+        string? machineId = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<MachineDowntime>>([]);
+    Task<MachineDowntime> CreateDowntimeAsync(
+        MachineDowntimeCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<MachineDowntimeResource> UpdatePlannedMaintenanceAsync(
+        string downtimeId, PlannedMaintenanceUpdate update, string entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    Task<MachineDowntimeResource> RestoreBreakdownAsync(
+        string downtimeId, BreakdownRestore restore, string entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<WorkingCalendar>>([]);
@@ -134,6 +158,191 @@ internal interface IPlannerApiClient : IDisposable
         string clientId,
         long editGeneration,
         CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<WorkingCalendarResource> GetWorkingCalendarAsync(
+        string workingCalendarId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<WorkingCalendarResource> UpdateWorkingCalendarAsync(
+        string workingCalendarId,
+        WorkingCalendarUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeleteWorkingCalendarAsync(
+        string workingCalendarId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<SetupCalendarSelection> GetSetupCalendarAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new SetupCalendarSelection(null, null));
+
+    Task<SetupCalendarSelection> SetSetupCalendarAsync(
+        string workingCalendarId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task ClearSetupCalendarAsync(
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<PlannerMachineType>> ListMachineTypesAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerMachineType>>([]);
+
+    Task<MachineTypeResource> GetMachineTypeAsync(
+        string machineTypeId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<PlannerMachineType> CreateMachineTypeAsync(
+        MachineTypeCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<MachineTypeResource> UpdateMachineTypeAsync(
+        string machineTypeId,
+        MachineTypeUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeleteMachineTypeAsync(
+        string machineTypeId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerResource>>([]);
+
+    Task<PlannerResource> CreateResourceAsync(
+        ResourceCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<ResourceResource> GetResourceAsync(
+        string resourceId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<ResourceResource> UpdateResourceAsync(
+        string resourceId,
+        ResourceUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeleteResourceAsync(
+        string resourceId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<EmployeeCalendarException>> ListEmployeeExceptionsAsync(
+        string resourceId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<EmployeeCalendarException>>([]);
+
+    Task<EmployeeCalendarException> CreateEmployeeExceptionAsync(
+        string resourceId, EmployeeCalendarExceptionCreate create,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<EmployeeCalendarExceptionResource> UpdateEmployeeExceptionAsync(
+        string resourceId, string exceptionId, EmployeeCalendarExceptionUpdate update,
+        string entityTag, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task DeleteEmployeeExceptionAsync(
+        string resourceId, string exceptionId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<EmployeeAvailability> GetEmployeeAvailabilityAsync(
+        string resourceId, DateTimeOffset from, DateTimeOffset to,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<IReadOnlyList<IsraeliHoliday>> ListIsraeliHolidaysAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<IsraeliHoliday>>([]);
+
+    Task<IsraeliHoliday> CreateIsraeliHolidayAsync(
+        IsraeliHolidayCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IsraeliHolidayResource> GetIsraeliHolidayAsync(
+        string israeliHolidayId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IsraeliHolidayResource> UpdateIsraeliHolidayAsync(
+        string israeliHolidayId,
+        IsraeliHolidayUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeleteIsraeliHolidayAsync(
+        string israeliHolidayId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IsraeliHolidaySyncResult> SynchronizeIsraeliHolidaysAsync(
+        IsraeliHolidaySyncRequest request, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<ReportEmailSettingsResource> GetReportEmailSettingsAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ReportEmailSettingsResource(
+            new ReportEmailSettings(null, [], null, null, true, false, null, "Asia/Jerusalem", 0, DateTimeOffset.MinValue),
+            "\"report-email-settings:1:v0\""));
+
+    Task<ReportEmailSettingsResource> UpdateReportEmailSettingsAsync(
+        ReportEmailSettingsUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<WeeklyMaterialReport> SendWeeklyMaterialReportAsync(
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<WeeklyEmployeeEfficiencyReport> SendWeeklyEmployeeEfficiencyReportAsync(
+        string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
     Task<byte[]?> GetMachinePictureAsync(
@@ -157,6 +366,16 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration,
         CancellationToken cancellationToken = default);
 
+    Task AssignOrMoveOperationAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        string clientId,
+        long editGeneration,
+        MachineAssignmentCompatibilityOverride compatibilityOverride,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task UnassignOperationAsync(
         string batchOperationId,
         string clientId,
@@ -169,6 +388,11 @@ internal interface IPlannerApiClient : IDisposable
         string clientId,
         long editGeneration,
         CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<BatchOperationExecution> PauseOperationAsync(
+        string batchOperationId, OperationPauseRequest pause, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 }
 
@@ -403,6 +627,27 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<PlannerOrder>(response, cancellationToken);
     }
 
+    public async Task<PlannerOrder> UpdateOrderAsync(
+        string orderId,
+        OrderUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/orders/{Uri.EscapeDataString(orderId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerOrder>(response, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ProductionBatch>> ListBatchesAsync(
         string caseId,
         CancellationToken cancellationToken = default) =>
@@ -504,6 +749,53 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public Task DeleteMachineAsync(string machineId, string clientId, long generation, CancellationToken token = default) =>
         DeleteAsync($"api/v1/machines/{Uri.EscapeDataString(machineId)}", clientId, generation, token);
 
+    public async Task<IReadOnlyList<MachineDowntime>> ListDowntimesAsync(
+        string? machineId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var path = "api/v1/downtimes";
+        if (!string.IsNullOrWhiteSpace(machineId))
+            path += $"?machineId={Uri.EscapeDataString(machineId)}";
+        return await ReadListAsync<MachineDowntime>(path, cancellationToken);
+    }
+
+    public async Task<MachineDowntime> CreateDowntimeAsync(
+        MachineDowntimeCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/downtimes", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<MachineDowntime>(response, cancellationToken);
+    }
+
+    public async Task<MachineDowntimeResource> UpdatePlannedMaintenanceAsync(
+        string downtimeId, PlannedMaintenanceUpdate update, string entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch,
+            $"api/v1/downtimes/{Uri.EscapeDataString(downtimeId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new(await ReadSuccessAsync<MachineDowntime>(response, cancellationToken), RequiredEntityTag(response));
+    }
+
+    public async Task<MachineDowntimeResource> RestoreBreakdownAsync(
+        string downtimeId, BreakdownRestore restore, string entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/downtimes/{Uri.EscapeDataString(downtimeId)}/restore", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(restore);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new(await ReadSuccessAsync<MachineDowntime>(response, cancellationToken), RequiredEntityTag(response));
+    }
+
     private async Task DeleteAsync(string path, string clientId, long generation, CancellationToken token)
     {
         using var request = CreateRequest(HttpMethod.Delete, path, clientId);
@@ -529,6 +821,355 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(create);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<WorkingCalendar>(response, cancellationToken);
+    }
+
+    public async Task<WorkingCalendarResource> GetWorkingCalendarAsync(
+        string workingCalendarId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/working-calendars/{Uri.EscapeDataString(workingCalendarId)}",
+            cancellationToken);
+        return new WorkingCalendarResource(
+            await ReadSuccessAsync<WorkingCalendar>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<WorkingCalendarResource> UpdateWorkingCalendarAsync(
+        string workingCalendarId,
+        WorkingCalendarUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/working-calendars/{Uri.EscapeDataString(workingCalendarId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new WorkingCalendarResource(
+            await ReadSuccessAsync<WorkingCalendar>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public Task DeleteWorkingCalendarAsync(
+        string workingCalendarId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync(
+            $"api/v1/working-calendars/{Uri.EscapeDataString(workingCalendarId)}",
+            clientId,
+            editGeneration,
+            cancellationToken);
+
+    public async Task<SetupCalendarSelection> GetSetupCalendarAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/setup-calendar", cancellationToken);
+        return await ReadSuccessAsync<SetupCalendarSelection>(response, cancellationToken);
+    }
+
+    public async Task<SetupCalendarSelection> SetSetupCalendarAsync(
+        string workingCalendarId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/setup-calendar", clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new SetupCalendarUpdate(workingCalendarId));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<SetupCalendarSelection>(response, cancellationToken);
+    }
+
+    public Task ClearSetupCalendarAsync(
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync("api/v1/setup-calendar", clientId, editGeneration, cancellationToken);
+
+    public async Task<IReadOnlyList<PlannerMachineType>> ListMachineTypesAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<PlannerMachineType>("api/v1/machine-types", cancellationToken);
+
+    public async Task<MachineTypeResource> GetMachineTypeAsync(
+        string machineTypeId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machine-types/{Uri.EscapeDataString(machineTypeId)}",
+            cancellationToken);
+        return new MachineTypeResource(
+            await ReadSuccessAsync<PlannerMachineType>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<PlannerMachineType> CreateMachineTypeAsync(
+        MachineTypeCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/machine-types", clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerMachineType>(response, cancellationToken);
+    }
+
+    public async Task<MachineTypeResource> UpdateMachineTypeAsync(
+        string machineTypeId,
+        MachineTypeUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/machine-types/{Uri.EscapeDataString(machineTypeId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new MachineTypeResource(
+            await ReadSuccessAsync<PlannerMachineType>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public Task DeleteMachineTypeAsync(
+        string machineTypeId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync(
+            $"api/v1/machine-types/{Uri.EscapeDataString(machineTypeId)}",
+            clientId,
+            editGeneration,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<PlannerResource>("api/v1/resources", cancellationToken);
+
+    public async Task<PlannerResource> CreateResourceAsync(
+        ResourceCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/resources", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerResource>(response, cancellationToken);
+    }
+
+    public async Task<ResourceResource> GetResourceAsync(
+        string resourceId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/resources/{Uri.EscapeDataString(resourceId)}", cancellationToken);
+        return new ResourceResource(
+            await ReadSuccessAsync<PlannerResource>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<ResourceResource> UpdateResourceAsync(
+        string resourceId,
+        ResourceUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch, $"api/v1/resources/{Uri.EscapeDataString(resourceId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new ResourceResource(
+            await ReadSuccessAsync<PlannerResource>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public Task DeleteResourceAsync(
+        string resourceId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/resources/{Uri.EscapeDataString(resourceId)}", clientId, editGeneration, cancellationToken);
+
+    public async Task<IReadOnlyList<EmployeeCalendarException>> ListEmployeeExceptionsAsync(
+        string resourceId,
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<EmployeeCalendarException>(
+            $"api/v1/resources/{Uri.EscapeDataString(resourceId)}/exceptions", cancellationToken);
+
+    public async Task<EmployeeCalendarException> CreateEmployeeExceptionAsync(
+        string resourceId, EmployeeCalendarExceptionCreate create,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/resources/{Uri.EscapeDataString(resourceId)}/exceptions", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<EmployeeCalendarException>(response, cancellationToken);
+    }
+
+    public async Task<EmployeeCalendarExceptionResource> UpdateEmployeeExceptionAsync(
+        string resourceId, string exceptionId, EmployeeCalendarExceptionUpdate update,
+        string entityTag, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch,
+            $"api/v1/resources/{Uri.EscapeDataString(resourceId)}/exceptions/{Uri.EscapeDataString(exceptionId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new(await ReadSuccessAsync<EmployeeCalendarException>(response, cancellationToken), RequiredEntityTag(response));
+    }
+
+    public Task DeleteEmployeeExceptionAsync(
+        string resourceId, string exceptionId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/resources/{Uri.EscapeDataString(resourceId)}/exceptions/{Uri.EscapeDataString(exceptionId)}",
+            clientId, editGeneration, cancellationToken);
+
+    public async Task<EmployeeAvailability> GetEmployeeAvailabilityAsync(
+        string resourceId, DateTimeOffset from, DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/resources/{Uri.EscapeDataString(resourceId)}/availability?from={Uri.EscapeDataString(from.ToString("O"))}&to={Uri.EscapeDataString(to.ToString("O"))}",
+            cancellationToken);
+        return await ReadSuccessAsync<EmployeeAvailability>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<IsraeliHoliday>> ListIsraeliHolidaysAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<IsraeliHoliday>("api/v1/israeli-holidays", cancellationToken);
+
+    public async Task<IsraeliHoliday> CreateIsraeliHolidayAsync(
+        IsraeliHolidayCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/israeli-holidays", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<IsraeliHoliday>(response, cancellationToken);
+    }
+
+    public async Task<IsraeliHolidayResource> GetIsraeliHolidayAsync(
+        string israeliHolidayId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/israeli-holidays/{Uri.EscapeDataString(israeliHolidayId)}", cancellationToken);
+        return new IsraeliHolidayResource(
+            await ReadSuccessAsync<IsraeliHoliday>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<IsraeliHolidayResource> UpdateIsraeliHolidayAsync(
+        string israeliHolidayId,
+        IsraeliHolidayUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch, $"api/v1/israeli-holidays/{Uri.EscapeDataString(israeliHolidayId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new IsraeliHolidayResource(
+            await ReadSuccessAsync<IsraeliHoliday>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public Task DeleteIsraeliHolidayAsync(
+        string israeliHolidayId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/israeli-holidays/{Uri.EscapeDataString(israeliHolidayId)}", clientId, editGeneration, cancellationToken);
+
+    public async Task<IsraeliHolidaySyncResult> SynchronizeIsraeliHolidaysAsync(
+        IsraeliHolidaySyncRequest sync, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request=CreateRequest(HttpMethod.Post,"api/v1/israeli-holidays/sync",clientId);
+        request.Headers.Add(EditGenerationHeader,editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content=JsonContent.Create(sync);
+        using var response=await httpClient.SendAsync(request,cancellationToken);
+        return await ReadSuccessAsync<IsraeliHolidaySyncResult>(response,cancellationToken);
+    }
+
+    public async Task<ReportEmailSettingsResource> GetReportEmailSettingsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/report-email-settings", cancellationToken);
+        return new ReportEmailSettingsResource(
+            await ReadSuccessAsync<ReportEmailSettings>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<ReportEmailSettingsResource> UpdateReportEmailSettingsAsync(
+        ReportEmailSettingsUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/report-email-settings", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new ReportEmailSettingsResource(
+            await ReadSuccessAsync<ReportEmailSettings>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<WeeklyMaterialReport> SendWeeklyMaterialReportAsync(
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/reports/weekly-material-order/send", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<WeeklyMaterialReport>(response, cancellationToken);
+    }
+
+    public async Task<WeeklyEmployeeEfficiencyReport> SendWeeklyEmployeeEfficiencyReportAsync(
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/reports/weekly-employee-efficiency/send", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<WeeklyEmployeeEfficiencyReport>(response, cancellationToken);
     }
 
     public async Task<byte[]?> GetMachinePictureAsync(
@@ -580,6 +1221,42 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         long editGeneration,
         CancellationToken cancellationToken = default)
     {
+        await AssignOrMoveOperationCoreAsync(
+            batchOperationId,
+            machineId,
+            backlogPosition,
+            clientId,
+            editGeneration,
+            compatibilityOverride: null,
+            cancellationToken);
+    }
+
+    public Task AssignOrMoveOperationAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        string clientId,
+        long editGeneration,
+        MachineAssignmentCompatibilityOverride compatibilityOverride,
+        CancellationToken cancellationToken = default) =>
+        AssignOrMoveOperationCoreAsync(
+            batchOperationId,
+            machineId,
+            backlogPosition,
+            clientId,
+            editGeneration,
+            compatibilityOverride,
+            cancellationToken);
+
+    private async Task AssignOrMoveOperationCoreAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        string clientId,
+        long editGeneration,
+        MachineAssignmentCompatibilityOverride? compatibilityOverride,
+        CancellationToken cancellationToken)
+    {
         using var request = CreateRequest(
             HttpMethod.Put,
             $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/assignment",
@@ -587,7 +1264,12 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Headers.Add(
             EditGenerationHeader,
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        request.Content = JsonContent.Create(new { machineId, backlogPosition });
+        request.Content = JsonContent.Create(new
+        {
+            machineId,
+            backlogPosition,
+            compatibilityOverride
+        });
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
@@ -623,6 +1305,21 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Headers.Add(
             EditGenerationHeader,
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<BatchOperationExecution>(response, cancellationToken);
+    }
+
+    public async Task<BatchOperationExecution> PauseOperationAsync(
+        string batchOperationId, OperationPauseRequest pause, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/suspend",
+            clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(pause, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<BatchOperationExecution>(response, cancellationToken);
     }
@@ -700,7 +1397,19 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         throw new PlannerApiException(
             response.StatusCode,
             error?.Error?.Code ?? "server_error",
-            error?.Error?.Message ?? $"Server returned HTTP {(int)response.StatusCode}.");
+            error?.Error?.Message ?? $"Server returned HTTP {(int)response.StatusCode}.",
+            DetailString(error?.Error?.Details, "requiredMachineType"),
+            DetailString(error?.Error?.Details, "selectedMachineType"));
+    }
+
+    private static string? DetailString(IReadOnlyList<JsonElement>? details, string propertyName)
+    {
+        foreach (var detail in details ?? [])
+            if (detail.ValueKind == JsonValueKind.Object
+                && detail.TryGetProperty(propertyName, out var value)
+                && value.ValueKind == JsonValueKind.String)
+                return value.GetString();
+        return null;
     }
 
     private static void AddQueryParameter(List<string> parameters, string name, string? value)
@@ -787,7 +1496,7 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     private sealed record ErrorEnvelope(ErrorBody? Error);
 
-    private sealed record ErrorBody(string? Code, string? Message);
+    private sealed record ErrorBody(string? Code, string? Message, IReadOnlyList<JsonElement>? Details);
 
     private sealed record ListResponse<T>(IReadOnlyList<T> Items, string? NextCursor);
 }

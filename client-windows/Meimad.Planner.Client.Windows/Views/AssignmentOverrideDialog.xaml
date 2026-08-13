@@ -1,0 +1,46 @@
+<Window x:Class="Meimad.Planner.Client.Windows.Views.AssignmentOverrideDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Confirm cross-type assignment"
+        Width="520" Height="330"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="⚠ Cross-type Machine assignment"
+                   FontSize="18" FontWeight="SemiBold"
+                   Foreground="#9A5A00" />
+        <TextBlock x:Name="WarningText"
+                   Grid.Row="1" Margin="0,12,0,14"
+                   TextWrapping="Wrap" />
+        <StackPanel Grid.Row="2">
+            <TextBlock Text="Reason (required)" FontWeight="SemiBold" />
+            <TextBox x:Name="ReasonTextBox"
+                     Margin="0,6,0,0"
+                     Height="92"
+                     MaxLength="1000"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" />
+            <TextBlock x:Name="ValidationText"
+                       Margin="0,5,0,0"
+                       Foreground="#B42318"
+                       Visibility="Collapsed"
+                       Text="Enter a reason before confirming." />
+        </StackPanel>
+        <StackPanel Grid.Row="3" Margin="0,16,0,0"
+                    Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel" Width="90" Margin="0,0,8,0"
+                    IsCancel="True" />
+            <Button Content="Confirm Override" Width="140"
+                    IsDefault="True" Click="Confirm_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -7,7 +7,9 @@ internal sealed record TimelineCalculationInput(
     IReadOnlyList<TimelineMachineCalendar> MachineCalendars,
     TimelineSetupCalendar SetupCalendar,
     IReadOnlyList<TimelineDowntime> Downtimes,
-    IReadOnlyList<TimelineDependency> Dependencies);
+    IReadOnlyList<TimelineDependency> Dependencies,
+    IReadOnlyList<TimelineResourceCalendar>? ResourceCalendars = null,
+    IReadOnlyList<TimelineMachineCalendar>? DayShiftCalendars = null);
 
 internal sealed record TimelineMachineBacklog(
     string MachineId,
@@ -16,13 +18,69 @@ internal sealed record TimelineMachineBacklog(
 internal sealed record TimelineOperationInput(
     string OperationId,
     TimeSpan SetupDuration,
-    TimeSpan ProductionDuration);
+    TimeSpan ProductionDuration,
+    TimeSpan QaDuration = default,
+    TimeSpan LoadUnloadDuration = default,
+    bool LoadUnloadRequiresWorker = false,
+    bool DayShiftOnly = false,
+    DateOnly? PriorityWorkFinishDate = null,
+    string? PriorityOrderNumber = null);
+
+internal static class TimelinePriorityComparer
+{
+    internal static int CompareOrderNumbers(string? left, string? right)
+    {
+        if (ReferenceEquals(left, right)) return 0;
+        if (left is null) return 1;
+        if (right is null) return -1;
+        var leftIndex = 0;
+        var rightIndex = 0;
+        while (leftIndex < left.Length && rightIndex < right.Length)
+        {
+            if (char.IsDigit(left[leftIndex]) && char.IsDigit(right[rightIndex]))
+            {
+                var leftEnd = leftIndex;
+                while (leftEnd < left.Length && char.IsDigit(left[leftEnd])) leftEnd++;
+                var rightEnd = rightIndex;
+                while (rightEnd < right.Length && char.IsDigit(right[rightEnd])) rightEnd++;
+                var leftDigits = left.AsSpan(leftIndex, leftEnd - leftIndex).TrimStart('0');
+                var rightDigits = right.AsSpan(rightIndex, rightEnd - rightIndex).TrimStart('0');
+                if (leftDigits.Length != rightDigits.Length) return leftDigits.Length.CompareTo(rightDigits.Length);
+                var digitsComparison = leftDigits.CompareTo(rightDigits, StringComparison.Ordinal);
+                if (digitsComparison != 0) return digitsComparison;
+                leftIndex = leftEnd;
+                rightIndex = rightEnd;
+                continue;
+            }
+
+            var comparison = char.ToUpperInvariant(left[leftIndex]).CompareTo(char.ToUpperInvariant(right[rightIndex]));
+            if (comparison != 0) return comparison;
+            leftIndex++;
+            rightIndex++;
+        }
+        return left.Length.CompareTo(right.Length);
+    }
+}
 
 internal sealed record TimelineMachineCalendar(
     string MachineId,
-    IReadOnlyList<TimelineWindow> Availability);
+    IReadOnlyList<TimelineWindow> Availability,
+    IReadOnlyList<string>? SkillTokens = null);
 
 internal sealed record TimelineSetupCalendar(IReadOnlyList<TimelineWindow> Availability);
+
+internal sealed record TimelineResourceCalendar(
+    string ResourceId,
+    TimelineResourceRole Role,
+    IReadOnlyList<TimelineWindow> Availability,
+    IReadOnlyList<string>? Skills = null);
+
+internal enum TimelineResourceRole
+{
+    SetupWorker,
+    QaWorker,
+    RegularWorker
+}
 
 internal sealed record TimelineWindow(DateTimeOffset StartsAt, DateTimeOffset EndsAt);
 
@@ -63,7 +121,10 @@ internal sealed record TimelineOperationResult(
     DateTimeOffset FinishesAt,
     IReadOnlyList<TimelineInterval> SetupIntervals,
     IReadOnlyList<TimelineInterval> ProductionIntervals,
-    IReadOnlyList<TimelineInterval> ReservedIntervals);
+    IReadOnlyList<TimelineInterval> ReservedIntervals,
+    IReadOnlyList<TimelineInterval> WaitingIntervals,
+    IReadOnlyList<TimelineInterval>? QaIntervals = null,
+    IReadOnlyList<TimelineInterval>? LoadUnloadIntervals = null);
 
 internal sealed record TimelineMachineResult(
     string MachineId,
@@ -72,7 +133,10 @@ internal sealed record TimelineMachineResult(
 internal enum TimelineIntervalType
 {
     Setup,
+    Qa,
+    LoadUnload,
     Production,
+    Waiting,
     Idle,
     Reserved,
     Downtime

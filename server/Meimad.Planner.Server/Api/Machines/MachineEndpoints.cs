@@ -211,6 +211,16 @@ internal static class MachineEndpoints
                 "invalid_working_calendar",
                 exception.Message,
                 httpContext),
+            WorkingCalendarUsageException => PlanningHttpSupport.Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "invalid_working_calendar_usage",
+                exception.Message,
+                httpContext),
+            MachineTypeReferenceNotFoundException => PlanningHttpSupport.Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "invalid_machine_type",
+                exception.Message,
+                httpContext),
             MachineNumberConflictException => PlanningHttpSupport.Error(
                 StatusCodes.Status409Conflict,
                 "machine_number_conflict",

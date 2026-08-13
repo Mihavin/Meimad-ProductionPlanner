@@ -23,7 +23,20 @@ internal sealed record PlanningBoardOperation(
     int? CycleTimePerPartSeconds,
     string Status,
     string? MachineId,
-    int? BacklogPosition);
+    int? BacklogPosition,
+    int PlannedQuantity,
+    IReadOnlyList<string> OrderReferences,
+    long? EstimatedTimeSeconds,
+    int QaTimeAfterSetupSeconds,
+    int LoadUnloadTimeSeconds,
+    bool LoadUnloadRequiresWorker,
+    bool AutomaticLoading,
+    int? LoadUnloadEveryNParts,
+    bool DayShiftOnly,
+    string? ActivePauseReason,
+    string? PausedBy,
+    DateTimeOffset? PauseStartedAt,
+    string? CaseName = null);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

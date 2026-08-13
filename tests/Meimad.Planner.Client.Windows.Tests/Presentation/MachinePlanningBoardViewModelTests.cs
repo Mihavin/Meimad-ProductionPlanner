@@ -20,6 +20,7 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.Empty(viewModel.Machines[0].Backlog);
         Assert.Contains("Unavailable", viewModel.ConflictCalculationStatus, StringComparison.Ordinal);
         Assert.True(viewModel.CanDrag);
+        Assert.Equal(1, api.PreviewReadCount);
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
-    public async Task Incompatible_drop_shows_blocking_feedback_and_keeps_board_unchanged()
+    public async Task Incompatible_drop_without_confirmed_reason_keeps_board_unchanged()
     {
         var api = new FakeApiClient(BoardBefore())
         {
@@ -62,10 +63,59 @@ public sealed class MachinePlanningBoardViewModelTests
 
         Assert.Single(viewModel.Pool);
         Assert.Empty(viewModel.Machines.Single().Backlog);
-        Assert.Equal("blocking", viewModel.Feedback[0].Severity);
-        Assert.Equal("Incompatible Machine", viewModel.Feedback[0].Title);
-        Assert.Contains("kept the board unchanged", viewModel.Feedback[0].Message, StringComparison.Ordinal);
+        Assert.Equal("warning", viewModel.Feedback[0].Severity);
+        Assert.Equal("Assignment override cancelled", viewModel.Feedback[0].Title);
+        Assert.Contains("reason is required", viewModel.Feedback[0].Message, StringComparison.Ordinal);
         Assert.Equal(1, api.BoardReadCount);
+    }
+
+    [Fact]
+    public async Task Cross_type_drop_prompts_then_resubmits_confirmation_and_reason()
+    {
+        AssignmentOverridePrompt? shownPrompt = null;
+        var crossTypeOperation = Operation(null, null) with { RequiredMachineType = "3-axis" };
+        var crossTypeMachine = Machine([]) with { ProcessType = "5-axis milling" };
+        var before = BoardBefore() with
+        {
+            Pool = [crossTypeOperation],
+            Machines = [crossTypeMachine]
+        };
+        var after = before with
+        {
+            Pool = [],
+            Machines = [crossTypeMachine with
+            {
+                Backlog = [crossTypeOperation with { MachineId = "machine-1", BacklogPosition = 0 }]
+            }]
+        };
+        var api = new FakeApiClient(before)
+        {
+            RejectAsIncompatible = true,
+            OverrideRequiredMachineType = "3-axis",
+            OverrideSelectedMachineType = "5-axis milling",
+            SnapshotAfterAssignment = after
+        };
+        var viewModel = new MachinePlanningBoardViewModel(prompt =>
+        {
+            shownPrompt = prompt;
+            return "Approved because the 3-axis Machine is unavailable.";
+        });
+        viewModel.AttachSession(api, "windows-1", EditorStatus(4));
+        await viewModel.EnsureLoadedAsync();
+
+        await viewModel.AssignOrMoveAsync(
+            viewModel.Pool.Single(), viewModel.Machines.Single(), 0);
+
+        Assert.NotNull(shownPrompt);
+        Assert.Equal("3-axis", shownPrompt!.RequiredMachineType);
+        Assert.Equal("5-axis milling", shownPrompt.SelectedMachineType);
+        Assert.True(api.LastCompatibilityOverride?.Confirmed);
+        Assert.Equal(
+            "Approved because the 3-axis Machine is unavailable.",
+            api.LastCompatibilityOverride?.Reason);
+        Assert.Empty(viewModel.Pool);
+        Assert.Single(viewModel.Machines.Single().Backlog);
+        Assert.Equal("Cross-type assignment confirmed", viewModel.Feedback[0].Title);
     }
 
     [Fact]
@@ -226,6 +276,73 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.Equal(2, api.BoardReadCount);
     }
 
+    [Fact]
+    public void Compact_operation_row_exposes_quantity_orders_time_status_and_valid_actions()
+    {
+        var operation = new PlanningOperationViewModel(new PlanningBoardOperation(
+            "operation-compact",
+            "batch-1",
+            "B-1",
+            "case-1",
+            "PN-1",
+            10,
+            "Mill",
+            "mill",
+            600,
+            120,
+            "suspended",
+            "machine-1",
+            0,
+            4,
+            ["SO-1", "SO-2"]) with { CaseName = "Widget case" });
+
+        Assert.Equal("Qty 4", operation.PlannedQuantityText);
+        Assert.Equal("SO-1, SO-2", operation.OrderReferencesText);
+        Assert.Equal(1_080, operation.EstimatedTimeSeconds);
+        Assert.Equal("Time 00:18:00", operation.EstimatedTimeText);
+        Assert.Equal("Paused", operation.StatusText);
+        Assert.False(string.IsNullOrWhiteSpace(operation.StatusGlyph));
+        Assert.True(operation.CanStart);
+        Assert.False(operation.CanSuspend);
+        Assert.False(operation.CanFinish);
+        Assert.Equal("PN-1 / Widget case", operation.PartCaseText);
+        Assert.Equal("OP10 Mill", operation.OperationText);
+        Assert.Equal("B-1 / SO-1, SO-2", operation.BatchOrderText);
+    }
+
+    [Fact]
+    public void Compact_operation_row_prefers_server_calculated_time_and_handles_missing_values()
+    {
+        var serverCalculated = new PlanningOperationViewModel(new PlanningBoardOperation(
+            "operation-calculated", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
+            null, 600, 120, "in_progress", "machine-1", 0,
+            4, [], 999));
+        var unavailable = new PlanningOperationViewModel(new PlanningBoardOperation(
+            "operation-missing", "batch-1", "B-1", "case-1", "PN-1", 20, "Inspect",
+            null, null, null, "not_started", null, null));
+
+        Assert.Equal("Time 00:16:39", serverCalculated.EstimatedTimeText);
+        Assert.Equal("Stock / no Order", serverCalculated.OrderReferencesText);
+        Assert.Equal("In progress", serverCalculated.StatusText);
+        Assert.True(serverCalculated.CanSuspend);
+        Assert.True(serverCalculated.CanFinish);
+        Assert.Equal("Time unavailable", unavailable.EstimatedTimeText);
+        Assert.Equal("Not started", unavailable.StatusText);
+        Assert.False(unavailable.CanStart);
+    }
+
+    [Theory]
+    [InlineData("not_started")]
+    [InlineData("suspended")]
+    public void Start_or_resume_is_enabled_only_for_the_head_of_the_machine_backlog(string status)
+    {
+        var head = new PlanningOperationViewModel(Operation("machine-1", 0) with { Status = status });
+        var later = new PlanningOperationViewModel(Operation("machine-1", 1) with { Status = status });
+
+        Assert.True(head.CanStart);
+        Assert.False(later.CanStart);
+    }
+
     private static PlanningBoardSnapshot BoardBefore() => new(
         DateTimeOffset.Parse("2026-08-11T10:00:00Z"),
         "unavailable",
@@ -286,12 +403,16 @@ public sealed class MachinePlanningBoardViewModelTests
 
         internal PlanningBoardSnapshot? SnapshotAfterAssignment { get; init; }
         internal bool RejectAsIncompatible { get; init; }
+        internal string? OverrideRequiredMachineType { get; init; }
+        internal string? OverrideSelectedMachineType { get; init; }
+        internal MachineAssignmentCompatibilityOverride? LastCompatibilityOverride { get; private set; }
         internal string? AssignedOperationId { get; private set; }
         internal string? TargetMachineId { get; private set; }
         internal int TargetPosition { get; private set; }
         internal string? ClientId { get; private set; }
         internal long Generation { get; private set; }
         internal int BoardReadCount { get; private set; }
+        internal int PreviewReadCount { get; private set; }
         internal MachineCreate? CreatedMachine { get; private set; }
         internal WorkingCalendarCreate? CreatedCalendar { get; private set; }
         internal PlanningBoardSnapshot? SnapshotAfterExecution { get; init; }
@@ -354,11 +475,36 @@ public sealed class MachinePlanningBoardViewModelTests
             if (RejectAsIncompatible)
             {
                 throw new PlannerApiException(
-                    HttpStatusCode.UnprocessableEntity,
-                    "incompatible_machine",
-                    "The operation is not compatible with this Machine.");
+                    HttpStatusCode.Conflict,
+                    "machine_type_override_required",
+                    "Confirm the cross-type assignment and provide a reason.",
+                    OverrideRequiredMachineType,
+                    OverrideSelectedMachineType);
             }
 
+            if (SnapshotAfterAssignment is not null)
+            {
+                snapshot = SnapshotAfterAssignment;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task AssignOrMoveOperationAsync(
+            string batchOperationId,
+            string machineId,
+            int backlogPosition,
+            string clientId,
+            long editGeneration,
+            MachineAssignmentCompatibilityOverride compatibilityOverride,
+            CancellationToken cancellationToken = default)
+        {
+            AssignedOperationId = batchOperationId;
+            TargetMachineId = machineId;
+            TargetPosition = backlogPosition;
+            ClientId = clientId;
+            Generation = editGeneration;
+            LastCompatibilityOverride = compatibilityOverride;
             if (SnapshotAfterAssignment is not null)
             {
                 snapshot = SnapshotAfterAssignment;
@@ -530,7 +676,11 @@ public sealed class MachinePlanningBoardViewModelTests
 
         public Task<byte[]?> GetCasePreviewAsync(
             string caseId,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            PreviewReadCount++;
+            return Task.FromResult<byte[]?>(null);
+        }
 
         public void Dispose()
         {

@@ -57,8 +57,14 @@ public partial class MachinePlanningBoardView : UserControl
     private async void StartOperation_Click(object sender, RoutedEventArgs e) =>
         await ChangeOperationExecutionAsync(sender, "start");
 
-    private async void SuspendOperation_Click(object sender, RoutedEventArgs e) =>
-        await ChangeOperationExecutionAsync(sender, "suspend");
+    private async void SuspendOperation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: PlanningOperationViewModel operation }
+            || DataContext is not MachinePlanningBoardViewModel viewModel) return;
+        var dialog = new OperationPauseDialog { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() == true && dialog.Value is not null)
+            await viewModel.ChangeExecutionStatusAsync(operation, "suspend", dialog.Value);
+    }
 
     private async void FinishOperation_Click(object sender, RoutedEventArgs e) =>
         await ChangeOperationExecutionAsync(sender, "finish");

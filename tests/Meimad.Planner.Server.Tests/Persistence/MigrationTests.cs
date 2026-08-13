@@ -17,8 +17,16 @@ public sealed class MigrationTests
         "batch_operations",
         "machines",
         "machine_assignments",
+        "machine_assignment_overrides",
+        "operation_pause_events",
         "downtimes",
         "working_calendars",
+        "machine_types",
+        "setup_calendar_settings",
+        "employee_resources",
+        "employee_calendar_exceptions",
+        "israeli_holidays",
+        "report_email_settings",
         "edit_tokens",
         "edit_requests",
         "application_settings",
@@ -35,7 +43,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(9L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(22L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -67,6 +75,36 @@ public sealed class MigrationTests
             "batch_lifecycle_and_dependency_snapshots",
             await migrationCommand.ExecuteScalarAsync());
 
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 10;";
+        Assert.Equal(
+            "setup_machine_types_and_order_lifecycle",
+            await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 11;";
+        Assert.Equal("administrative_setup", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 12;";
+        Assert.Equal("employee_resource_details", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 13;";
+        Assert.Equal("employee_calendar_exceptions", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 14;";
+        Assert.Equal("israeli_holiday_cache", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 15;";
+        Assert.Equal("machine_assignment_overrides", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 16;";
+        Assert.Equal("operation_time_model", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 17;";
+        Assert.Equal("machine downtime lifecycle", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 18;";
+        Assert.Equal("structured operation pause events", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 19;";
+        Assert.Equal("eink_setup_package_definition", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 20;";
+        Assert.Equal("weekly_material_order_report", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 21;";
+        Assert.Equal("weekly_employee_efficiency_report", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 22;";
+        Assert.Equal("structured_event_log", await migrationCommand.ExecuteScalarAsync());
+
         foreach (var table in EntityTables)
         {
             await AssertTimestampColumnsAsync(connection, table);
@@ -90,7 +128,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(9L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(22L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -314,6 +352,33 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                ALTER TABLE case_operations DROP COLUMN qa_seconds;
+                ALTER TABLE case_operations DROP COLUMN load_unload_seconds;
+                ALTER TABLE case_operations DROP COLUMN load_unload_requires_worker;
+                ALTER TABLE case_operations DROP COLUMN automatic_loading;
+                ALTER TABLE case_operations DROP COLUMN load_unload_every_n_parts;
+                ALTER TABLE case_operations DROP COLUMN day_shift_only;
+                ALTER TABLE batch_operations DROP COLUMN qa_seconds;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_seconds;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_requires_worker;
+                ALTER TABLE batch_operations DROP COLUMN automatic_loading;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_every_n_parts;
+                ALTER TABLE batch_operations DROP COLUMN day_shift_only;
+                DROP TABLE operation_pause_events;
+                DROP TABLE machine_assignment_overrides;
+                DROP TABLE israeli_holiday_sync_state;
+                DROP TABLE structured_event_log;
+                DROP TABLE weekly_employee_efficiency_deliveries;
+                DROP TABLE employee_work_measurements;
+                DROP TABLE weekly_material_report_deliveries;
+                DROP TABLE report_email_settings;
+                DROP TABLE israeli_holidays;
+                DROP TABLE employee_calendar_exceptions;
+                DROP TABLE employee_resources;
+                DROP TABLE setup_calendar_settings;
+                DROP INDEX ix_machines_machine_type_id;
+                ALTER TABLE machines DROP COLUMN machine_type_id;
+                DROP TABLE machine_types;
                 DROP INDEX ix_batch_operations_predecessor_snapshot;
                 ALTER TABLE batch_operations DROP COLUMN simultaneous_group_key;
                 ALTER TABLE batch_operations DROP COLUMN predecessor_source_case_operation_id;
@@ -326,7 +391,7 @@ public sealed class MigrationTests
                 DROP TABLE eink_package_revisions;
                 DROP TABLE edit_requests;
                 ALTER TABLE machines DROP COLUMN picture_reference;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9);
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -421,11 +486,47 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                ALTER TABLE case_operations DROP COLUMN qa_seconds;
+                ALTER TABLE case_operations DROP COLUMN load_unload_seconds;
+                ALTER TABLE case_operations DROP COLUMN load_unload_requires_worker;
+                ALTER TABLE case_operations DROP COLUMN automatic_loading;
+                ALTER TABLE case_operations DROP COLUMN load_unload_every_n_parts;
+                ALTER TABLE case_operations DROP COLUMN day_shift_only;
+                ALTER TABLE batch_operations DROP COLUMN qa_seconds;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_seconds;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_requires_worker;
+                ALTER TABLE batch_operations DROP COLUMN automatic_loading;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_every_n_parts;
+                ALTER TABLE batch_operations DROP COLUMN day_shift_only;
+                DROP TABLE operation_pause_events;
+                DROP TABLE machine_assignment_overrides;
+                DROP TABLE israeli_holiday_sync_state;
+                DROP TABLE structured_event_log;
+                DROP TABLE weekly_employee_efficiency_deliveries;
+                DROP TABLE employee_work_measurements;
+                DROP TABLE weekly_material_report_deliveries;
+                DROP TABLE report_email_settings;
+                DROP TABLE israeli_holidays;
+                DROP TABLE employee_calendar_exceptions;
+                DROP TABLE employee_resources;
+                DROP TABLE setup_calendar_settings;
+                DROP INDEX ix_machines_machine_type_id;
+                ALTER TABLE machines DROP COLUMN machine_type_id;
+                DROP TABLE machine_types;
                 DROP INDEX ix_batch_operations_predecessor_snapshot;
                 ALTER TABLE batch_operations DROP COLUMN simultaneous_group_key;
                 ALTER TABLE batch_operations DROP COLUMN predecessor_source_case_operation_id;
                 ALTER TABLE batch_operations DROP COLUMN dependency_type;
-                DELETE FROM schema_migrations WHERE version = 9;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_id;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_first_name;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_last_name;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_photo_file_id;
+                ALTER TABLE eink_package_revisions DROP COLUMN planned_setup_starts_at;
+                ALTER TABLE eink_package_revisions DROP COLUMN planned_setup_ends_at;
+                ALTER TABLE eink_package_revisions DROP COLUMN job_tools_json;
+                ALTER TABLE eink_package_revisions DROP COLUMN expected_machine_tools_json;
+                ALTER TABLE eink_package_revisions DROP COLUMN local_checklist_items_json;
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -513,13 +614,136 @@ public sealed class MigrationTests
     }
 
     [Fact]
+    public async Task Version_ten_backfills_machine_types_setup_settings_and_order_lifecycle()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                ALTER TABLE case_operations DROP COLUMN qa_seconds;
+                ALTER TABLE case_operations DROP COLUMN load_unload_seconds;
+                ALTER TABLE case_operations DROP COLUMN load_unload_requires_worker;
+                ALTER TABLE case_operations DROP COLUMN automatic_loading;
+                ALTER TABLE case_operations DROP COLUMN load_unload_every_n_parts;
+                ALTER TABLE case_operations DROP COLUMN day_shift_only;
+                ALTER TABLE batch_operations DROP COLUMN qa_seconds;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_seconds;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_requires_worker;
+                ALTER TABLE batch_operations DROP COLUMN automatic_loading;
+                ALTER TABLE batch_operations DROP COLUMN load_unload_every_n_parts;
+                ALTER TABLE batch_operations DROP COLUMN day_shift_only;
+                DROP TABLE operation_pause_events;
+                DROP TABLE machine_assignment_overrides;
+                DROP TABLE israeli_holiday_sync_state;
+                DROP TABLE structured_event_log;
+                DROP TABLE weekly_employee_efficiency_deliveries;
+                DROP TABLE employee_work_measurements;
+                DROP TABLE weekly_material_report_deliveries;
+                DROP TABLE report_email_settings;
+                DROP TABLE israeli_holidays;
+                DROP TABLE employee_calendar_exceptions;
+                DROP TABLE employee_resources;
+                DROP TABLE setup_calendar_settings;
+                DROP INDEX ix_machines_machine_type_id;
+                ALTER TABLE machines DROP COLUMN machine_type_id;
+                DROP TABLE machine_types;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_id;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_first_name;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_last_name;
+                ALTER TABLE eink_package_revisions DROP COLUMN setup_worker_photo_file_id;
+                ALTER TABLE eink_package_revisions DROP COLUMN planned_setup_starts_at;
+                ALTER TABLE eink_package_revisions DROP COLUMN planned_setup_ends_at;
+                ALTER TABLE eink_package_revisions DROP COLUMN job_tools_json;
+                ALTER TABLE eink_package_revisions DROP COLUMN expected_machine_tools_json;
+                ALTER TABLE eink_package_revisions DROP COLUMN local_checklist_items_json;
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22);
+                PRAGMA user_version = 9;
+
+                INSERT INTO working_calendars (id, name, time_zone_id)
+                VALUES ('v10-calendar', 'V10 day', 'UTC');
+                INSERT INTO machines (
+                    id, number, name, machine_type, working_calendar_id, status, is_active)
+                VALUES
+                    ('v10-machine-1', 'V10-1', 'V10 One', 'Five axis', 'v10-calendar', 'active', 1),
+                    ('v10-machine-2', 'V10-2', 'V10 Two', 'five AXIS', 'v10-calendar', 'active', 1);
+                INSERT INTO cases (id, part_number, name, working_folder_path)
+                VALUES ('v10-case', 'PN-V10', 'V10 case', 'C:\Cases\PN-V10');
+                INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
+                VALUES
+                    ('v10-case-op-running', 'v10-case', 10, 0, 'Running'),
+                    ('v10-case-op-complete', 'v10-case', 20, 1, 'Complete');
+                INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status)
+                VALUES
+                    ('v10-order-active', 'v10-case', 'SO-ACTIVE', 2, '2026-09-01', 'active'),
+                    ('v10-order-running', 'v10-case', 'SO-RUNNING', 2, '2026-09-01', 'complete'),
+                    ('v10-order-complete', 'v10-case', 'SO-COMPLETE', 2, '2026-09-01', 'active'),
+                    ('v10-order-cancelled', 'v10-case', 'SO-CANCELLED', 1, '2026-09-01', 'cancelled');
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                VALUES
+                    ('v10-batch-running', 'v10-case', 'B-RUNNING', 'in_production', 2),
+                    ('v10-batch-complete', 'v10-case', 'B-COMPLETE', 'complete', 2),
+                    ('v10-batch-cancelled', 'v10-case', 'B-CANCELLED', 'complete', 1);
+                INSERT INTO batch_allocations (
+                    id, production_batch_id, allocation_type, order_id, quantity)
+                VALUES
+                    ('v10-allocation-running', 'v10-batch-running', 'order', 'v10-order-running', 2),
+                    ('v10-allocation-complete', 'v10-batch-complete', 'order', 'v10-order-complete', 2),
+                    ('v10-allocation-cancelled', 'v10-batch-cancelled', 'order', 'v10-order-cancelled', 1);
+                INSERT INTO batch_operations (
+                    id, production_batch_id, source_case_operation_id,
+                    operation_number, route_position, name, status)
+                VALUES
+                    ('v10-op-running', 'v10-batch-running', 'v10-case-op-running', 10, 0, 'Running', 'suspended'),
+                    ('v10-op-complete', 'v10-batch-complete', 'v10-case-op-complete', 20, 0, 'Complete', 'completed'),
+                    ('v10-op-cancelled', 'v10-batch-cancelled', 'v10-case-op-complete', 20, 0, 'Complete', 'completed');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var migrator = new DatabaseMigrator(fixture.Database, NullLogger<DatabaseMigrator>.Instance);
+        await migrator.MigrateAsync();
+
+        await using var reopened = await fixture.Database.OpenConnectionAsync();
+        await using var assertion = reopened.CreateCommand();
+        assertion.CommandText = """
+            SELECT COUNT(DISTINCT machine_type_id)
+            FROM machines
+            WHERE id IN ('v10-machine-1', 'v10-machine-2');
+            """;
+        Assert.Equal(1L, (long)(await assertion.ExecuteScalarAsync())!);
+
+        assertion.CommandText = "SELECT COUNT(*) FROM setup_calendar_settings WHERE id = 1 AND working_calendar_id IS NULL AND legacy_fallback_enabled = 1;";
+        Assert.Equal(1L, (long)(await assertion.ExecuteScalarAsync())!);
+
+        assertion.CommandText = """
+            SELECT id, status
+            FROM orders
+            WHERE id LIKE 'v10-order-%'
+            ORDER BY id;
+            """;
+        var statuses = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using (var reader = await assertion.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) statuses.Add(reader.GetString(0), reader.GetString(1));
+        }
+        Assert.Equal("active", statuses["v10-order-active"]);
+        Assert.Equal("cancelled", statuses["v10-order-cancelled"]);
+        Assert.Equal("complete", statuses["v10-order-complete"]);
+        Assert.Equal("in_production", statuses["v10-order-running"]);
+
+        assertion.CommandText = "PRAGMA foreign_key_check;";
+        Assert.Null(await assertion.ExecuteScalarAsync());
+    }
+
+    [Fact]
     public async Task Newer_database_version_is_rejected()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 10;";
+            command.CommandText = "PRAGMA user_version = 23;";
             await command.ExecuteNonQueryAsync();
         }
 

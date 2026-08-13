@@ -89,7 +89,13 @@ internal sealed record BatchOperationResponse(
     string Status,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    int QaTimeAfterSetupSeconds,
+    int LoadUnloadTimeSeconds,
+    bool LoadUnloadRequiresWorker,
+    bool AutomaticLoading,
+    int? LoadUnloadEveryNParts,
+    bool DayShiftOnly)
 {
     internal static BatchOperationResponse FromDomain(BatchOperation operation) => new(
         operation.BatchOperationId,
@@ -104,7 +110,13 @@ internal sealed record BatchOperationResponse(
         operation.Status,
         operation.Version,
         operation.CreatedAt,
-        operation.UpdatedAt);
+        operation.UpdatedAt,
+        operation.QaTimeAfterSetupSeconds,
+        operation.LoadUnloadTimeSeconds,
+        operation.LoadUnloadRequiresWorker,
+        operation.AutomaticLoading,
+        operation.LoadUnloadEveryNParts,
+        operation.DayShiftOnly);
 }
 
 internal sealed record BatchOperationListResponse(

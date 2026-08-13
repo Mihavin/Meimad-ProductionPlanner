@@ -1,6 +1,6 @@
 # Data Model
 
-- **Status:** Logical model plus SQLite schema version 9; Case/Order/Batch/Machine/assignment/Edit Mode/E-Ink package-generation/read slices, Case Operation create/edit graph persistence/API, immutable Batch dependency snapshots, and derived Batch lifecycle are implemented
+- **Status:** Logical model plus SQLite schema version 22; Case/Order/Batch/Machine/Machine-Type/Calendar/assignment/Edit Mode/E-Ink package-generation/read slices, immutable Batch dependency snapshots, derived Batch and Order lifecycles, cross-type assignment audit, employee-efficiency reporting, structured planning-event export, and isolated administrative Setup records are implemented
 - **Authority:** Server-owned SQLite in MVP
 
 This document separates source-required concepts from proposed implementation fields. Logical names use English `camelCase`; implemented SQL names are recorded separately and do not freeze future API JSON.
@@ -33,6 +33,8 @@ erDiagram
     MACHINE ||--o{ MACHINE_ASSIGNMENT : queues
     MACHINE ||--o{ DOWNTIME : blocks
     MACHINE }o--|| WORKING_CALENDAR : follows
+    MACHINE }o--o| MACHINE_TYPE : classifies
+    SETUP_CALENDAR_SETTING }o--o| WORKING_CALENDAR : selects
     MACHINE o|--o{ DEVICE_REGISTRATION : binds
     MACHINE ||--o{ EINK_PACKAGE_REVISION : targets
     PRODUCTION_BATCH ||--o{ EINK_PACKAGE_REVISION : contextualizes
@@ -43,7 +45,7 @@ Each Production Batch has one required Case and may allocate only Orders belongi
 
 ## 3. Shared technical fields
 
-The source does not specify IDs, concurrency, timestamps, or audit. Schema v1 implements opaque IDs, positive `version`, and UTC-text `created_at` / `updated_at` fields on every entity table. Case, Order, Machine, and Case Operation services increment `version` through optimistic updates; Batch creation initializes the Batch, allocations, and operation snapshots at version 1. Operation execution advances the affected operation version and atomically advances the Batch version when its derived lifecycle status changes. Equivalent update behavior for other entities remains unimplemented. Actor and archive fields remain proposed:
+The source does not specify IDs, concurrency, timestamps, or audit. Schema v1 implements opaque IDs, positive `version`, and UTC-text `created_at` / `updated_at` fields on every entity table. Case, Order, Machine, Machine Type, Working Calendar, and Case Operation services increment `version` through optimistic updates; Batch creation initializes the Batch, allocations, and operation snapshots at version 1. Operation execution advances the affected operation version and atomically advances the Batch and linked Order versions when their derived lifecycle statuses change. Equivalent update behavior for other entities remains unimplemented. Actor and archive fields remain proposed:
 
 | Field | Purpose |
 |---|---|
@@ -66,8 +68,18 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Batch Allocation | `batch_allocations` | Required Batch; `order`, `stock`, or `scrap_allowance`; only Order allocations carry an Order ID. |
 | Batch Operation | `batch_operations` | Required Batch and source Case Operation; unique route position/operation number per Batch. |
 | Working Calendar | `working_calendars` | Calendar/time-zone storage envelope. |
+| Setup Calendar Setting | `setup_calendar_settings` | Singleton row `id = 1`; optional selected Working Calendar used for setup availability/timezone. |
+| Employee Resource | `employee_resources` | Administrative employee/resource catalog with normalized role, skills JSON, optional photo/notes, and a restrictive assigned Working Calendar reference; active, calendar-assigned rows provide individual capacity to the read-only Timeline calculation. |
+| Employee Calendar Exception | `employee_calendar_exceptions` | Employee-owned dated vacation, sick-day, personal-day, unavailable, or custom-note interval; full-day or same-day local partial interval, cascade-deleted only with its employee. |
+| Israeli Holiday | `israeli_holidays` | Local cached/manual dated availability policy, optionally applied by Working Calendars. |
+| Report Email Setting | `report_email_settings` | Singleton sender/recipient/SMTP plus separate weekly material and employee-efficiency schedules. No SMTP password is stored. |
+| Employee Work Measurement | `employee_work_measurements` | Employee/date planned and actual seconds, optional source reference/notes, recorder identity, and timestamp. Reporting input only; not payroll. |
+| Structured Event | `structured_event_log` | Append-only planning decision/detection stream with event type/time/user, related IDs, reason/comment, and optional before/after JSON. |
+| Weekly Material Report Delivery | `weekly_material_report_deliveries` | Successful automatic-send marker keyed by target week, preventing repeat scheduled mail. Manual sends are not markers. |
+| Machine Type | `machine_types` | Reusable unique name and normalized capability-token catalog. |
 | Machine | `machines` | Required Working Calendar; unique machine number. |
 | Machine Assignment | `machine_assignments` | Required Batch Operation and Machine; one assignment per Batch Operation and one backlog position per Machine. |
+| Machine Assignment Override | `machine_assignment_overrides` | Immutable audit snapshot for an explicitly confirmed cross-type assignment; deliberately retains textual IDs/types if later planning records are deleted. |
 | Downtime | `downtimes` | Required Machine; end must sort after start. |
 | Edit Token | `edit_tokens` | Singleton row `id = 1`; one nullable holder and monotonically increasing generation. |
 | Edit Transfer Request | `edit_requests` | Durable request/outcome; a partial unique index permits only one `pending` row. |
@@ -76,7 +88,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | E-Ink Package Revision | `eink_package_revisions` | Required Batch Operation; unique revision per Operation; immutable Machine/Case/Batch/Operation snapshot after publication. |
 | E-Ink Package File | `eink_package_files` | Required package revision; asset role, stable file ID, safe logical/storage-relative paths, length, media type, order, and SHA-256; no bytes/BLOB. |
 
-All relationships use SQLite foreign keys. Planning relationships use restrictive deletion; deleting a Machine clears an optional device binding. Schema v1 adds relationship and backlog indexes. Case, Order, Batch, Machine, Machine Assignment, Single Edit Mode, and E-Ink device/package generation/read repositories/services/APIs are implemented through schema v9. Automatic scheduling, package approval/retention, downtime behavior, and cascade-delete behavior are not implemented.
+All planning relationships use SQLite foreign keys and restrictive deletion; deleting a Machine clears an optional device binding. Schema v1 adds relationship and backlog indexes. Case, Order, Batch, Machine, Machine Type, Working Calendar, Machine Assignment, Single Edit Mode, E-Ink device/package generation/read, and isolated administrative Setup repositories/services/APIs are implemented through schema v17. Schema v14 extends cached holiday policy, schema v15 adds immutable cross-type assignment override snapshots, schema v16 adds extended Case/Batch Operation timing and worker/day-shift policy, and schema v17 adds planned-maintenance/breakdown lifecycle with open-ended active breakdowns. Automatic scheduling, package approval/retention, recurrence/cancellation for downtime, and planning-record cascade-delete behavior are not implemented.
 
 Schema v2 adds Case-specific `customer`, `material_type`, `material_specification`, `raw_material_form`, `raw_material_dimensions`, and `notes` columns. Existing v1 `material` and `raw_stock` values are copied into the new specification/dimensions columns during upgrade. `preview_reference` stores only the optional Preview path; `working_folder_path` stores only the required external Case Working Folder path. The Case repository stores no file bytes and the table contains no BLOB column.
 
@@ -93,6 +105,8 @@ Schema v7 adds the package's publication-time Machine ID/number/name, Case/part 
 Schema v8 adds the optional Machine `picture_reference` path. The path remains external Server-readable metadata and SQLite stores no image bytes.
 
 Schema v9 adds immutable dependency snapshots to `batch_operations`: dependency type, optional predecessor source Case Operation ID, and optional simultaneous-group key. Existing rows are backfilled from their source Case Operation relationships. New Batches copy these fields atomically with the existing scalar snapshots; the Timeline resolves the predecessor source ID to the corresponding operation inside that same Batch. The migration also normalizes legacy Production Batch lifecycle values into `waiting`, `in_production`, or `complete` from their related Batch Operation statuses; a Batch with no operations is `waiting`.
+
+Schema v10 adds `machine_types`, links `machines.machine_type_id` to it with restrictive deletion, and creates one catalog entry for each case-insensitive legacy `machines.machine_type` value during upgrade. The legacy physical value remains as the compatibility/process-type token; a linked Machine Type rename updates it for linked Machines. The new `setup_calendar_settings` singleton stores the optional dedicated Setup Calendar ID with a restrictive foreign key to `working_calendars`. Schema v10 also normalizes allocated Order statuses to `active`, `in_production`, or `complete` from allocation and Batch Operation facts while preserving legacy `cancelled` rows during migration. A linked Order becomes complete only when allocated quantity covers its demand, every allocated Batch has operations, and every such operation is completed.
 
 ## 4. Core master and demand entities
 
@@ -116,7 +130,7 @@ Schema v9 adds immutable dependency snapshots to `batch_operations`: dependency 
 | `currentCycleTimePerPartSeconds` | Implemented, read-only derived | Non-negative integer-second sum of all Case Operation cycle-per-part values; null operation values contribute zero and an empty route returns `0`. It is not projected elapsed duration. |
 | `notes` | Implemented, optional | Plain text; maximum 8,000 characters. |
 
-Derived `isActive` is not stored or editable. It is true when the Case has at least one Order with status `active` or one Production Batch with status `waiting` or `in_production`.
+Derived `isActive` is not stored or editable. It is true when the Case has at least one Order with status `active` or `in_production`, or one Production Batch with status `waiting` or `in_production`.
 
 A Case may be created and persisted with no Orders or Operations. The Case service trims text, rejects missing Part Number/Name/Working Folder, requires absolute filesystem paths, and deliberately does not call the filesystem to prove a path exists. Original engineering files and external folders are never written by Case create/update. Legacy physical Case timing columns are retained for migration compatibility but are no longer mutation inputs or the source of the read projection.
 
@@ -129,11 +143,19 @@ A Case may be created and persisted with no Orders or Operations. The Case servi
 | `orderNumber` | Implemented, required | Trimmed human Order number, maximum 200 characters. Uniqueness scope remains TBD. |
 | `quantity` | Implemented, required | Positive 32-bit integer demand quantity; unit remains TBD. |
 | `workFinishDate` | Implemented, required | ISO `YYYY-MM-DD` calendar date with no time or zone. Planning cutoff semantics remain TBD. |
-| `status` | Implemented, required | Exact tokens `active`, `complete`, or `cancelled`; only `active` contributes active demand. |
+| `status` | Implemented, conditionally Server-derived | Exact tokens `active`, `in_production`, `complete`, or legacy/manual `cancelled`; `active` and `in_production` contribute active demand. New/unallocated demand accepts only `active` or `cancelled`; production tokens are Server-owned once allocations exist. |
 | `notes` | Implemented, optional | Plain text; maximum 8,000 characters. |
 | `version`, `createdAt`, `updatedAt` | Implemented | Optimistic positive version and locale-independent UTC timestamps. |
 
 An Order is demand, not production. It has no Machine or Machine Assignment field and is never assigned to a Machine. Only a later Batch Operation can be scheduled. Order create/update requires the current Edit Mode generation inside the same SQLite write transaction; PATCH is optimistic. The parent cannot be changed by PATCH.
+
+For a non-cancelled or explicitly resumed allocated Order, status is calculated from all Batch Allocations and operations related to that Order:
+
+- `complete` requires allocated quantity greater than or equal to Order quantity, at least one allocation, at least one Batch Operation in every allocated Batch, and every operation in every allocated Batch `completed`;
+- otherwise `in_production` requires at least one allocated Batch Operation whose status is not `not_started`;
+- otherwise the status is `active`.
+
+Batch creation, safe Batch deletion, and Start/Suspend/Finish recompute all affected Orders in the same write transaction. An Order split across Batches and a Batch combining Orders therefore use the same aggregate rule. Create/PATCH reject manual `in_production` or `complete` for unallocated demand (`order_status_server_owned`). Optimistic PATCH also rejects a quantity below the already allocated total (`order_quantity_below_allocated`) and rejects an explicitly submitted linked status inconsistent with calculated production facts (`order_status_derived`). Batch creation rejects allocation to a cancelled Order (`cancelled_order`). Legacy already-linked `cancelled` remains readable and preserved by automatic recomputation until an explicit matching status assertion resumes derivation; the fuller cancellation/reallocation policy remains open.
 
 ## 5. Production entities
 
@@ -222,8 +244,9 @@ Implemented Batch Operation scalar and dependency snapshots do not change when t
 | `number` | Implemented required human number; globally unique, maximum 200 characters. |
 | `name` | Implemented required display name. |
 | `processType` | Implemented required broad process token; physically `machine_type`. |
+| `machineTypeId` | Implemented optional schema-v10 reference to a reusable Machine Type. Existing Machines are linked during migration. A linked type name is mirrored into `processType` for compatibility. |
 | `axisType` | Implemented optional axis/capability token. |
-| `capabilities` | Implemented normalized unique string list, maximum 100 entries. |
+| `capabilities` | Implemented normalized unique Machine-specific string list, maximum 100 entries. Linked Machine Type capabilities also participate in compatibility. |
 | `workingCalendarId` | Implemented required reference to an existing Working Calendar created/listed through the Server API. |
 | `isActive` | Implemented boolean. Inactive Machines reject new/moved assignments. |
 | `displayEnabled` | Implemented boolean controlling whether operational displays should include the Machine. |
@@ -231,11 +254,24 @@ Implemented Batch Operation scalar and dependency snapshots do not change when t
 | `deviceId` | Implemented read projection from the optional enabled E-Ink device binding. Active-editor binding/revocation/rotation is implemented through the device-registration API. |
 | `backlogCount` | Implemented derived count, never manually stored. |
 
-### 7.2 Working Calendar
+### 7.2 Machine Type
 
-Working Calendar storage, active-editor creation, read listing, and Machine reference validation are implemented. An ID is an opaque Server-generated value; users select a named Calendar and do not type IDs. A newly authored record stores `name`, `time_zone_id`, and a `calendar_json.weeklySchedule` containing lowercase workday tokens plus `shiftStartsAtLocal` and `shiftEndsAtLocal` in `HH:mm` form (`24:00` is permitted only as the end of day). The current rule requires at least one unique valid workday and one continuous shift with end later than start; overnight shifts are rejected. The timeline expands these local weekly windows for the requested horizon using the stored timezone. Existing explicit UTC `availability` documents remain readable. Breaks, holidays, dated exceptions, overtime, and calendar update/archive rules remain **Proposed**.
+| Logical field | Implementation status and notes |
+|---|---|
+| `machineTypeId` | Implemented stable Server-generated ID. |
+| `name` | Implemented required case-insensitively unique display/compatibility name. |
+| `capabilities` | Implemented normalized unique reusable string list, maximum 100 entries. |
+| `version`, timestamps | Implemented optimistic version and UTC timestamps. |
 
-### 7.3 Machine Assignment
+Machine Type create/read/list/optimistic update/guarded delete are Server-owned. A rename propagates the new name to the legacy `machines.machine_type` compatibility token on linked Machines. Before changing a type's name or capabilities, the repository verifies that every currently assigned Batch Operation on each linked Machine remains compatible; an unsafe change is rejected atomically. A rename is also blocked while a Case Operation or unfinished Batch Operation directly requires the old type name, because those immutable snapshots otherwise could become unassignable. Deletion is blocked while any Machine, Case Operation, or Batch Operation references the type.
+
+### 7.3 Working Calendar
+
+Working Calendar storage, active-editor creation, read/list, optimistic update, guarded deletion, and Machine reference validation are implemented. An ID is an opaque Server-generated value; users select a named Calendar and do not type IDs. A newly authored record stores `name`, `time_zone_id`, root `usages`, root `useIsraeliHolidays`, and a `calendar_json.weeklySchedule` containing lowercase workday tokens, working windows, contained breaks, and dated exceptions. Calendar-specific dated exceptions take precedence over cached holidays. For opted-in calendars, `non_working` closes the date, `working` preserves the recurring schedule, and `partial_working` replaces it with the holiday's local range. Timeline and resource expansion read this cache in the same local SQLite workflow and perform no provider request. Existing explicit UTC availability documents remain readable and are unaffected by the weekly-calendar holiday overlay. Overnight/overtime policy and archive rules remain **Proposed**.
+
+The singleton `setup_calendar_settings` row contains an optional `working_calendar_id`, a `legacy_fallback_enabled` upgrade marker, version, and timestamps. Setting or explicitly clearing it requires Edit Mode and disables the legacy fallback. When selected, the Timeline reads both that Calendar's JSON and timezone. When explicitly cleared, Timeline setup uses each assigned Machine's availability and emits `setup_calendar_defaulted`. The older `application_settings['timeline.setup_calendar_json']` value remains a read-only upgrade fallback only until the first managed selection or explicit clear; new management uses the stable selected Calendar ID.
+
+### 7.4 Machine Assignment
 
 | Logical field | Implementation status and notes |
 |---|---|
@@ -245,21 +281,25 @@ Working Calendar storage, active-editor creation, read listing, and Machine refe
 | `backlogPosition` | Implemented contiguous zero-based integer, explicitly chosen by the planner. |
 | `manualConstraint` | Proposed future-friendly structure; do not add before scope is approved. |
 
-Compatibility is structural: an active Machine is compatible when a Batch Operation's optional `requiredMachineType` equals the Machine process type, axis type, or one capability, using case-insensitive comparison. A missing required type permits any active Machine. The Windows Case Operation editor builds its dropdown from the union of those tokens across registered Machines, adds a blank Any option, and preserves a selected legacy token even if it is no longer advertised by a Machine. The dropdown is presentation assistance, not a new authoritative enum; the Server continues to validate the submitted token and assignments. Assignment, same-Machine move, cross-Machine move, and unassign are atomic; affected lists are normalized to positions `0..n-1`, and unrelated relative order is stable. Machine changes that would invalidate current assignments are rejected. Assignment commands do not calculate or persist timeline dates, no Machine is chosen automatically, and no other assignment is moved except for positional normalization explicitly caused by the command; the separate Timeline read calculates consequences on demand.
+Compatibility is structural: an active Machine is normally compatible when a Batch Operation's optional `requiredMachineType` equals the Machine process type, axis type, a Machine-specific capability, or a linked Machine Type capability, using case-insensitive comparison. A missing required type permits any active Machine. A cross-type request does not write immediately: the Server returns `machine_type_override_required`, and the active editor must resubmit explicit confirmation plus a nonblank reason. The assignment and immutable override row are then committed atomically. The override records Batch Operation ID, Machine ID, original required type, selected Machine process/type, reason, confirming client/user IDs, and UTC confirmation time. It never makes an inactive Machine assignable and never changes the route requirement. The Windows Case Operation editor builds its dropdown from the union of registered tokens, while the assignment dialog is only presentation; Server validation remains authoritative. Assignment, same-Machine move, cross-Machine move, and unassign are atomic; affected lists are normalized to positions `0..n-1`, unrelated relative order is stable, and no proposal may displace an existing `in_progress` operation from position zero. Machine and Machine Type changes that would invalidate current assignments are rejected. Assignment commands do not calculate or persist timeline dates, no Machine is chosen automatically, and no other assignment is moved except for positional normalization explicitly caused by the command; the separate Timeline read calculates consequences on demand. For employee contention only, each Batch Operation projection carries the earliest Work Finish Date among its allocated Orders and the naturally smallest Order Number tied on that date. These are transient priority inputs, not persisted backlog positions.
 
 Deletion is deliberately restrictive. Cases must have no child Orders, Operations, or Batches. Case Operations cannot be referenced by another route row or Batch snapshot; successful deletion compacts route positions. Orders cannot be allocated. A Batch cannot have assignments or official packages; deleting an eligible Batch removes only its own allocation and BatchOperation rows. Machines cannot have assignments, downtime, device bindings, or official-package references. No deletion command touches an external Case folder, picture, engineering file, cache, or official package file.
 
-### 7.4 Downtime
+### 7.5 Downtime
 
 | Logical field | Notes |
 |---|---|
 | `downtimeId` | Stable ID. |
 | `machineId` | Blocked Machine. |
-| `startsAt`, `endsAt` | Planned unavailable interval. |
-| `reason` | Maintenance or other explanation. |
-| `status` | Proposed lifecycle; exact values TBD. |
+| `downtimeType` | `planned_maintenance` or `breakdown`. |
+| `startsAt`, `endsAt` | UTC unavailable interval. Planned maintenance requires both; an active breakdown has null `endsAt` until Restore. |
+| `reason` | Required operator-visible explanation. |
+| `plannedBy` | Required for planned maintenance. |
+| `reportedBy`, `repairNote` | Reporter is required for breakdown; repair note is optional on Restore. |
+| `status` | `planned`, `active`, or `restored`, constrained by type/end-time invariants. |
+| `version`, timestamps | Optimistic mutation and audit timestamps. |
 
-Overlap behavior, recurrence, priority, partial availability, and edit-token requirements are TBD.
+Schema v17 migrates legacy fixed-end rows to planned maintenance attributed to `Legacy record`. Writes require active Edit Mode; planned edits and breakdown Restore require a matching ETag. Overlapping intervals are permitted and unioned by Timeline availability subtraction; each source interval remains visible with its reason. Recurrence, cancellation, and dedicated maintenance-role authorization remain TBD.
 
 ## 8. Edit coordination
 
@@ -301,6 +341,8 @@ These records are calculated from authoritative input and may initially be trans
 
 Conflict acknowledgement and history are not source-defined; do not add them without a decision.
 
+The implemented Machine Board operation projection also includes the Production Batch planned quantity, a sorted distinct list of allocated Order Numbers, and nullable estimated seconds. Estimated seconds is `setupSeconds + (cycleSeconds x plannedQuantity)` using wide checked arithmetic and is null when setup/cycle input is missing or arithmetic cannot be represented. This is a card summary of current inputs, not a persisted schedule, projected finish, or actual duration.
+
 ### 9.2 Implemented TV Dashboard projection
 
 The TV projection is transient and not persisted. It contains only active, display-enabled Machine identity, process type, first and second unfinished backlog Operations, current/upcoming downtime, calculated conflict summaries, and active-Order due-date urgency. It omits Working Folder paths, previews/packages, customer details, credentials, edit authority, and mutation links. “Current” provisionally means the first unfinished stored backlog item; urgency provisionally means Work Finish Date within the configured UTC cutoff (48 hours by default). Both definitions remain server-owned pending shop-floor execution and local-date decisions.
@@ -316,9 +358,9 @@ The domain-only calculation model is transient and is not stored in SQLite. Its 
 - planned Machine downtime intervals; and
 - dependency records using Sequential, Parallel-capable, Independent, or Locked simultaneous semantics.
 
-Its outputs are per-operation projected start/finish plus split setup, production, and reservation intervals; per-Machine setup/production/idle/reserved/downtime intervals; and deterministic conflicts with code, severity, affected operation IDs, affected Machine IDs, and explanation. Operation intervals carry Batch/part identity plus operation number and name for accessible presentation. Idle means supplied Machine-available time not occupied by calculated work/reservation; off-calendar time is not labeled idle. A configured setup calendar is an availability constraint, not a serialized shared-resource capacity model.
+Its outputs are per-operation projected start/finish plus split setup, QA, load/unload, production, dependency/resource-waiting, and reservation intervals; per-Machine work/waiting/idle/reserved/downtime intervals; and deterministic conflicts. Each worker phase selects one eligible employee calendar and reserves its calculated intervals for the remainder of that projection, preventing overlapping use by another operation. Resource waiting details explain the required role; dependency waiting identifies the predecessor. A configured Setup Calendar is an additional setup constraint, while setup-worker head count comes from individual employee resources.
 
-The engine converts supplied instants to UTC, merges overlapping availability, subtracts downtime, and may split work across windows. It never writes SQLite or mutates input collections. The application mapper expands weekly local Machine schedules using their stored timezone and also reads legacy explicit UTC `availability` arrays. If `timeline.setup_calendar_json` is present, it additionally constrains setup; if absent, setup uses each assigned Machine's availability and the attention conflict `setup_calendar_defaulted` identifies the fallback. It maps planned downtime, derives each operation's production duration provisionally as `ProductionBatch.planned_quantity × BatchOperation.cycle_seconds`, and maps dependency edges exclusively from the schema-v9 Batch Operation snapshots.
+The engine converts supplied instants to UTC, merges overlapping availability, subtracts downtime, and may split work across windows. It never writes SQLite, mutates input collections, or reorders a persisted backlog. The mapper expands weekly local Machine and employee schedules and subtracts breaks, full/partial employee exceptions, and opted-in cached holidays. Setup resource eligibility requires a skill matching the Machine number/name/type/axis/effective capability, or `*`; QA and regular-worker phases are role-based. Individual employee reservations make contention deterministic. The calculated resource ID appears only in interval detail and is not stored as a planning assignment.
 
 ## 10. E-Ink server-side support
 
@@ -337,8 +379,9 @@ The following are logical support records, not planning authority:
 
 - Implemented opaque package ID and caller-named textual revision, unique for one Batch Operation and immutable after insertion.
 - Required publication-time Machine, Case/part, Production Batch, planned quantity, and Batch Operation snapshots plus optional tool-cart context.
+- Schema v19 adds immutable planned setup start/finish, selected setup worker identity and packaged-photo reference, official job tools, optional expected-on-Machine tools, and local checklist seed items. Missing legacy/optional data reads as null or an empty list.
 - Files have a constrained asset role, stable ID, normalized non-traversing logical path, Server-local storage-relative path, media type, byte length, modified timestamp, display order, and lowercase SHA-256.
-- The generator optionally copies an in-folder Case preview, copies allow-listed NC/text source files relative to the Case Working Folder, and emits canonical JSON tool-table/offset assets and UTF-8 official instructions. It never modifies source files and never accepts device-local checklist/comment state.
+- The generator optionally copies an in-folder Case preview and selected setup-worker photo, copies allow-listed NC/text source files relative to the Case Working Folder, and emits canonical JSON tool-table/offset assets and UTF-8 official instructions. It never modifies source files and accepts checklist definitions only—not device-local completion/comment state.
 - Files are staged under a unique package directory. The Server validates Edit Mode before reading sources, then revalidates Edit Mode and the Case/Batch/Operation/assignment/Machine versions in the same transaction that publishes metadata. Failure removes staged output.
 - The current device read service selects the latest published revision for the first unfinished assigned backlog Operation only when its publication Machine matches the current Machine, then exposes only that exact revision.
 
@@ -369,14 +412,17 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 8. Locked-simultaneous members share projected start and finish, and every member Machine stays reserved for the longest duration.
 9. Case timing totals equal the separate sums of current Case Operation setup and cycle values, with null treated as zero; these totals never replace dependency-aware Timeline calculation.
 10. Production Batch status is `waiting`, `in_production`, or `complete` according to its Batch Operation statuses and changes atomically with execution.
-11. A Batch Operation's schema-v9 dependency snapshot is immutable when its source Case Operation is edited.
-12. There is at most one active editor generation.
-13. A planning mutation with a stale or absent edit generation is rejected atomically.
-14. The Server never changes backlog order or assignments merely to clear a conflict.
-15. Working-folder-generated files remain under `_MeimadPlanner`; original engineering files are not modified.
-16. Schema v7 package metadata is immutable after publication; corrections create a distinct revision and never overwrite an official package.
-17. Device credentials can read only their assigned resource scope.
-18. Device operational data cannot mutate or satisfy planning entities or conflicts.
+11. A non-cancelled or explicitly resumed allocated Order's `active` / `in_production` / `complete` status follows all related Batch Operations and allocation coverage and changes atomically with Batch creation/deletion and execution; a zero-operation Batch cannot satisfy completion. A legacy already-linked cancelled row stays cancelled until explicitly resumed.
+12. Order quantity cannot be edited below its current aggregate allocated quantity, and a submitted linked-Order status cannot contradict the derived result.
+13. A Batch Operation's dependency snapshot is immutable when its source Case Operation is edited.
+14. Linked Machine Type and Working Calendar deletion is restrictive; unsafe Machine/Type compatibility changes are rejected.
+15. There is at most one active editor generation.
+16. A planning mutation with a stale or absent edit generation is rejected atomically.
+17. The Server never changes backlog order or assignments merely to clear a conflict.
+18. Working-folder-generated files remain under `_MeimadPlanner`; original engineering files are not modified.
+19. Schema v7 package metadata is immutable after publication; corrections create a distinct revision and never overwrite an official package.
+20. Device credentials can read only their assigned resource scope.
+21. Device operational data cannot mutate or satisfy planning entities or conflicts.
 
 ## 13. Explicitly not modeled in MVP
 
@@ -390,11 +436,11 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 9.
+- Ordered server-owned migrations are implemented through version 13.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-Schema v9 and the implemented slices are the current persistence/domain contracts. Remaining blocking model decisions in [Implementation plan](implementation-plan.md#open-decisions) must be resolved before affected repositories and APIs are implemented; later changes require new migrations and must never rewrite an applied migration in a deployed system.
+Schema v16 and the implemented slices are the current persistence/domain contracts. Schema v16 adds non-negative QA/load-unload timing, automatic-loading frequency, regular-worker requirement, and day-shift-only fields to Case Operations and immutable Batch Operation snapshots with zero/false defaults. Remaining blocking model decisions in [Implementation plan](implementation-plan.md#open-decisions) must be resolved before affected repositories and APIs are implemented; later changes require new migrations and must never rewrite an applied migration in a deployed system.

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.JobPackages;
 
@@ -29,15 +30,18 @@ internal sealed class JobPackageService
     private readonly IJobPackageRepository repository;
     private readonly EInkOptions options;
     private readonly TimeProvider timeProvider;
+    private readonly TimelineProjectionService timelineService;
 
     public JobPackageService(
         IJobPackageRepository repository,
         EInkOptions options,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        TimelineProjectionService timelineService)
     {
         this.repository = repository;
         this.options = options;
         this.timeProvider = timeProvider;
+        this.timelineService = timelineService;
     }
 
     internal async Task<JobPackage> GenerateAsync(
@@ -56,6 +60,10 @@ internal sealed class JobPackageService
             options.MaximumGeneratedTextCharacters);
         var sourceFiles = NormalizeSourceFiles(command.Files);
         var toolTable = NormalizeToolTable(command.ToolTable);
+        var expectedMachineTools = NormalizeToolTable(
+            command.ExpectedMachineTools,
+            "expectedMachineTools");
+        var localChecklistItems = NormalizeChecklist(command.LocalChecklistItems);
         var offsets = NormalizeOffsets(command.Offsets);
 
         var context = await repository.ReadGenerationContextAsync(
@@ -67,6 +75,11 @@ internal sealed class JobPackageService
         {
             throw new JobPackageOperationNotAssignedException(operationId);
         }
+
+        var setupPlan = await ReadSetupPlanAsync(operationId, cancellationToken);
+        var setupWorker = setupPlan.ResourceId is null
+            ? null
+            : await repository.ReadSetupWorkerAsync(setupPlan.ResourceId, cancellationToken);
 
         var packageId = Guid.NewGuid().ToString("N");
         var publishedAt = timeProvider.GetUtcNow();
@@ -87,6 +100,7 @@ internal sealed class JobPackageService
                 toolTable,
                 offsets,
                 instructions,
+                setupWorker?.PhotoPath,
                 publishedAt,
                 cancellationToken);
             if (assets.Count == 0)
@@ -98,12 +112,29 @@ internal sealed class JobPackageService
 
             Directory.Move(stagingPath, finalPath);
             publishedToDisk = true;
+            var setupWorkerPhoto = assets.SingleOrDefault(asset =>
+                asset.LogicalPath.StartsWith("worker/setup-worker-photo.", StringComparison.Ordinal));
+            var officialSnapshot = context.Snapshot with
+            {
+                SetupWorker = setupWorker is null
+                    ? null
+                    : new SetupWorkerSnapshot(
+                        setupWorker.ResourceId,
+                        setupWorker.FirstName,
+                        setupWorker.LastName,
+                        setupWorkerPhoto?.FileId),
+                PlannedSetupStartsAt = setupPlan.StartsAt,
+                PlannedSetupEndsAt = setupPlan.EndsAt,
+                JobTools = toolTable,
+                ExpectedMachineTools = expectedMachineTools,
+                LocalChecklistItems = localChecklistItems
+            };
             var package = new JobPackage(
                 packageId,
                 revision,
                 toolCartId,
                 publishedAt,
-                context.Snapshot,
+                officialSnapshot,
                 assets);
             await repository.PublishAsync(
                 package,
@@ -128,12 +159,31 @@ internal sealed class JobPackageService
         IReadOnlyList<ToolTableEntry> toolTable,
         IReadOnlyList<OffsetEntry> offsets,
         string? instructions,
+        string? setupWorkerPhotoPath,
         DateTimeOffset publishedAt,
         CancellationToken cancellationToken)
     {
         var assets = new List<JobPackageAsset>();
         var logicalPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long totalBytes = 0;
+
+        if (!string.IsNullOrWhiteSpace(setupWorkerPhotoPath))
+        {
+            var photoPath = Path.GetFullPath(setupWorkerPhotoPath);
+            EnsureExtension(photoPath, PreviewExtensions, "setupWorker.photoPath");
+            var extension = Path.GetExtension(photoPath).ToLowerInvariant();
+            assets.Add(await WriteSourceAssetAsync(
+                packageId,
+                stagingPath,
+                photoPath,
+                $"worker/setup-worker-photo{extension}",
+                JobPackageAssetType.Other,
+                assets.Count,
+                publishedAt,
+                logicalPaths,
+                cancellationToken));
+            totalBytes = AddAndValidateTotal(totalBytes, assets[^1].ByteLength);
+        }
 
         if (includePreview && !string.IsNullOrWhiteSpace(context.PreviewPath))
         {
@@ -349,23 +399,80 @@ internal sealed class JobPackageService
     }
 
     private static IReadOnlyList<ToolTableEntry> NormalizeToolTable(
-        IReadOnlyList<ToolTableEntry>? values)
+        IReadOnlyList<ToolTableEntry>? values,
+        string field = "toolTable")
     {
         values ??= [];
         if (values.Count > 500)
         {
             throw new JobPackageValidationException(
-                "toolTable",
+                field,
                 "A package tool table may contain at most 500 rows.");
         }
 
         return values.Select((value, index) => new ToolTableEntry(
-            JobPackageValidator.RequiredIdentifier(value.ToolId, $"toolTable[{index}].toolId", 80),
-            JobPackageValidator.RequiredIdentifier(value.Description, $"toolTable[{index}].description", 240),
-            JobPackageValidator.OptionalText(value.Diameter, $"toolTable[{index}].diameter", 80),
-            JobPackageValidator.OptionalText(value.Length, $"toolTable[{index}].length", 80),
-            JobPackageValidator.OptionalText(value.Note, $"toolTable[{index}].note", 500)))
+            JobPackageValidator.RequiredIdentifier(value.ToolId, $"{field}[{index}].toolId", 80),
+            JobPackageValidator.RequiredIdentifier(value.Description, $"{field}[{index}].description", 240),
+            JobPackageValidator.OptionalText(value.Diameter, $"{field}[{index}].diameter", 80),
+            JobPackageValidator.OptionalText(value.Length, $"{field}[{index}].length", 80),
+            JobPackageValidator.OptionalText(value.Note, $"{field}[{index}].note", 500)))
         .ToArray();
+    }
+
+    private static IReadOnlyList<LocalChecklistItem> NormalizeChecklist(
+        IReadOnlyList<LocalChecklistItem>? values)
+    {
+        values ??= [];
+        if (values.Count > 100)
+        {
+            throw new JobPackageValidationException(
+                "localChecklistItems",
+                "A local checklist may contain at most 100 items.");
+        }
+
+        var normalized = values.Select((value, index) => new LocalChecklistItem(
+            JobPackageValidator.RequiredIdentifier(
+                value.ItemId, $"localChecklistItems[{index}].itemId", 80),
+            JobPackageValidator.RequiredIdentifier(
+                value.Label, $"localChecklistItems[{index}].label", 240))).ToArray();
+        if (normalized.Select(value => value.ItemId).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+            != normalized.Length)
+        {
+            throw new JobPackageValidationException(
+                "localChecklistItems",
+                "Local checklist item IDs must be unique.");
+        }
+
+        return normalized;
+    }
+
+    private async Task<SetupPlan> ReadSetupPlanAsync(
+        string operationId,
+        CancellationToken cancellationToken)
+    {
+        var now = timeProvider.GetUtcNow();
+        var horizonStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var timeline = await timelineService.CalculateAsync(
+            horizonStart,
+            horizonStart.AddDays(31),
+            cancellationToken);
+        var intervals = timeline.Machines
+            .SelectMany(machine => machine.Intervals)
+            .Where(interval => interval.OperationId == operationId && interval.Type == "setup")
+            .OrderBy(interval => interval.StartsAt)
+            .ToArray();
+        if (intervals.Length == 0)
+        {
+            return new SetupPlan(null, null, null);
+        }
+
+        const string prefix = "Setup worker: ";
+        var resourceId = intervals.Select(interval => interval.Detail)
+            .FirstOrDefault(detail => detail?.StartsWith(prefix, StringComparison.Ordinal) == true);
+        return new SetupPlan(
+            resourceId?[prefix.Length..],
+            intervals[0].StartsAt,
+            intervals.Max(interval => interval.EndsAt));
     }
 
     private static IReadOnlyList<OffsetEntry> NormalizeOffsets(
@@ -484,6 +591,11 @@ internal sealed class JobPackageService
         JobPackageAssetType AssetType,
         string SourceRelativePath,
         string LogicalPath);
+
+    private sealed record SetupPlan(
+        string? ResourceId,
+        DateTimeOffset? StartsAt,
+        DateTimeOffset? EndsAt);
 }
 
 internal sealed class JobPackageOperationNotFoundException : Exception

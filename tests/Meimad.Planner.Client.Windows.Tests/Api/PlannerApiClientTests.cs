@@ -8,6 +8,41 @@ namespace Meimad.Planner.Client.Windows.Tests.Api;
 public sealed class PlannerApiClientTests
 {
     [Fact]
+    public async Task Machine_downtime_client_uses_list_create_edit_and_restore_routes_with_authority()
+    {
+        const string downtime = """
+            {"downtimeId":"down-1","machineId":"machine-1","downtimeType":"breakdown",
+             "startsAt":"2026-08-11T10:00:00Z","endsAt":null,"reason":"Hydraulic leak",
+             "plannedBy":null,"repairNote":null,"reportedBy":"Operator","status":"active",
+             "version":1,"createdAt":"2026-08-11T10:00:00Z","updatedAt":"2026-08-11T10:00:00Z"}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, $$"""{"items":[{{downtime}}],"nextCursor":null}"""),
+            Json(HttpStatusCode.Created, downtime),
+            JsonWithEntityTag(HttpStatusCode.OK, downtime.Replace("\"breakdown\"", "\"planned_maintenance\"").Replace("\"plannedBy\":null", "\"plannedBy\":\"Planner\""), "\"downtime:down-1:v2\""),
+            JsonWithEntityTag(HttpStatusCode.OK, downtime.Replace("\"endsAt\":null", "\"endsAt\":\"2026-08-11T11:00:00Z\"").Replace("\"status\":\"active\"", "\"status\":\"restored\""), "\"downtime:down-1:v2\""));
+        using var api = CreateClient(handler);
+
+        Assert.Single(await api.ListDowntimesAsync("machine-1"));
+        await api.CreateDowntimeAsync(new("breakdown", "machine-1",
+            DateTimeOffset.Parse("2026-08-11T10:00:00Z"), null, "Hydraulic leak", null, "Operator"),
+            "client-1", 7);
+        await api.UpdatePlannedMaintenanceAsync("down-1", new("machine-1",
+            DateTimeOffset.Parse("2026-08-11T09:00:00Z"), DateTimeOffset.Parse("2026-08-11T10:00:00Z"),
+            "Service", "Planner"), "\"downtime:down-1:v1\"", "client-1", 7);
+        await api.RestoreBreakdownAsync("down-1", new(DateTimeOffset.Parse("2026-08-11T11:00:00Z"), "Repaired"),
+            "\"downtime:down-1:v1\"", "client-1", 7);
+
+        Assert.Equal("/api/v1/downtimes?machineId=machine-1", handler.Requests[0].Path);
+        Assert.Equal("/api/v1/downtimes", handler.Requests[1].Path);
+        Assert.Equal("7", handler.Requests[1].Generation);
+        Assert.Equal(HttpMethod.Patch, handler.Requests[2].Method);
+        Assert.Equal("\"downtime:down-1:v1\"", handler.Requests[2].IfMatch);
+        Assert.Equal("/api/v1/downtimes/down-1/restore", handler.Requests[3].Path);
+        Assert.Contains("\"repairNote\":\"Repaired\"", handler.Requests[3].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Reads_health_and_edit_state_over_http_only()
     {
         var handler = new RecordingHandler(
@@ -278,7 +313,11 @@ public sealed class PlannerApiClientTests
             new WorkingCalendarCreate(
                 "Extended shift", "Asia/Jerusalem",
                 ["sunday", "monday", "tuesday", "wednesday", "thursday"],
-                "06:00", "22:00"),
+                null, null,
+                [new WorkingCalendarWindow("06:00", "22:00")],
+                [new WorkingCalendarWindow("12:00", "12:30")],
+                [new WorkingCalendarException("2026-09-13", [], [], "Closed")],
+                ["machine", "setup_worker"]),
             "windows-01",
             19);
 
@@ -288,7 +327,9 @@ public sealed class PlannerApiClientTests
         Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
         Assert.Equal("windows-01", handler.Requests[1].ClientId);
         Assert.Equal("19", handler.Requests[1].Generation);
-        Assert.Contains("\"shiftEndsAtLocal\":\"22:00\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"breakWindows\":[{\"startsAtLocal\":\"12:00\",\"endsAtLocal\":\"12:30\"}]", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"exceptions\":[{\"date\":\"2026-09-13\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"usages\":[\"machine\",\"setup_worker\"]", handler.Requests[1].Body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -342,6 +383,67 @@ public sealed class PlannerApiClientTests
         Assert.Contains("\"allocationType\":\"order\",\"orderId\":\"order-2\",\"quantity\":7", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.Contains("\"allocationType\":\"stock\",\"orderId\":null,\"quantity\":2", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.Contains("\"allocationType\":\"scrapAllowance\",\"orderId\":null,\"quantity\":1", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Order_update_sends_patch_etag_edit_authority_and_complete_editable_fields()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "orderId":"order/1","caseId":"case-1","orderNumber":"SO-1-REVISED",
+              "quantity":8,"workFinishDate":"2026-09-01","status":"in_production",
+              "notes":"Planner revision","version":2
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var updated = await api.UpdateOrderAsync(
+            "order/1",
+            new OrderUpdate(
+                "SO-1-REVISED",
+                8,
+                "2026-09-01",
+                "in_production",
+                "Planner revision"),
+            "\"order:order/1:v1\"",
+            "windows-01",
+            27);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.Equal("/api/v1/orders/order%2F1", request.Path);
+        Assert.Equal("windows-01", request.ClientId);
+        Assert.Equal("27", request.Generation);
+        Assert.Equal("\"order:order/1:v1\"", request.IfMatch);
+        Assert.Contains("\"orderNumber\":\"SO-1-REVISED\"", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"quantity\":8", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"workFinishDate\":\"2026-09-01\"", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"status\":\"in_production\"", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"notes\":\"Planner revision\"", request.Body, StringComparison.Ordinal);
+        Assert.Equal(2, updated.Version);
+    }
+
+    [Fact]
+    public async Task Order_update_omits_null_status_to_preserve_server_derived_lifecycle_authority()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "orderId":"order-1","caseId":"case-1","orderNumber":"SO-1",
+              "quantity":8,"workFinishDate":"2026-09-01","status":"in_production",
+              "notes":null,"version":2
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        await api.UpdateOrderAsync(
+            "order-1",
+            new OrderUpdate("SO-1", 8, "2026-09-01", null, null),
+            "\"order:order-1:v1\"",
+            "windows-01",
+            27);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.DoesNotContain("\"status\"", request.Body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -426,7 +528,14 @@ public sealed class PlannerApiClientTests
                   "conflictCalculationStatus": "unavailable",
                   "conflictCalculationMessage": "The pure time engine is not connected to the planning-board projection yet.",
                   "conflicts": [],
-                  "pool": [],
+                  "pool": [{
+                    "batchOperationId":"op-compact","batchId":"batch-1","batchNumber":"B-1",
+                    "caseId":"case-1","caseName":"Widget case","partNumber":"PN-1","operationNumber":10,
+                    "operationName":"Mill","requiredMachineType":"mill",
+                    "setupTimeSeconds":600,"cycleTimePerPartSeconds":120,
+                    "status":"not_started","machineId":null,"backlogPosition":null,
+                    "plannedQuantity":4,"orderReferences":["SO-1"],"estimatedTimeSeconds":1080
+                  }],
                   "machines": []
                 }
                 """),
@@ -439,6 +548,11 @@ public sealed class PlannerApiClientTests
         await api.UnassignOperationAsync("op/1", "windows-1", 12);
 
         Assert.Equal("unavailable", board.ConflictCalculationStatus);
+        var operation = Assert.Single(board.Pool);
+        Assert.Equal(4, operation.PlannedQuantity);
+        Assert.Equal("SO-1", Assert.Single(operation.OrderReferences!));
+        Assert.Equal(1_080, operation.EstimatedTimeSeconds);
+        Assert.Equal("Widget case", operation.CaseName);
         Assert.Equal("/api/v1/planning-board", handler.Requests[0].Path);
         Assert.Equal(HttpMethod.Put, handler.Requests[1].Method);
         Assert.Equal("/api/v1/batch-operations/op%2F1/assignment", handler.Requests[1].Path);
@@ -494,6 +608,114 @@ public sealed class PlannerApiClientTests
 
         Assert.DoesNotContain(references, name =>
             name?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    [Fact]
+    public async Task Cross_type_assignment_sends_explicit_confirmation_and_reason()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.Created, "{}"));
+        using var api = CreateClient(handler);
+
+        await api.AssignOrMoveOperationAsync(
+            "op-1",
+            "machine-5-axis",
+            0,
+            "windows-1",
+            14,
+            new MachineAssignmentCompatibilityOverride(true, "3-axis Machine unavailable"));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Contains("\"compatibilityOverride\":{", request.Body, StringComparison.Ordinal);
+        Assert.Contains("\"confirmed\":true", request.Body, StringComparison.Ordinal);
+        Assert.Contains(
+            "\"reason\":\"3-axis Machine unavailable\"",
+            request.Body,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Setup_resource_holiday_and_report_settings_use_server_routes_etags_and_edit_authority()
+    {
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.Created, """
+                {"resourceId":"resource-1","employeeNumber":"E-1","name":"Dana Bar","firstName":"Dana","lastName":"Bar","role":"regular_worker","skills":["inspection"],"assignedCalendarId":"calendar-1","photoPath":"C:\\photos\\dana.jpg","notes":"QA backup","email":"dana@example.test","isActive":true,"version":1,"createdAt":"2026-08-12T10:00:00Z","updatedAt":"2026-08-12T10:00:00Z"}
+                """),
+            JsonWithEntityTag(HttpStatusCode.OK, """
+                {"israeliHolidayId":"holiday-1","date":"2026-09-15","name":"Rosh Hashanah","version":2,"createdAt":"2026-08-12T10:00:00Z","updatedAt":"2026-08-12T10:00:00Z"}
+                """, "\"israeli-holiday:holiday-1:v2\""),
+            JsonWithEntityTag(HttpStatusCode.OK, """
+                {"senderAddress":"reports@example.test","recipients":["manager@example.test"],"smtpHost":"smtp.example.test","smtpPort":587,"useSsl":true,"dailyReportEnabled":true,"dailyReportTimeLocal":"07:00","timeZoneId":"Asia/Jerusalem","version":3,"updatedAt":"2026-08-12T10:00:00Z"}
+                """, "\"report-email-settings:1:v3\""),
+            Json(HttpStatusCode.OK, """
+                {"succeeded":true,"provider":"hebcal","fromYear":2026,"toYear":2027,"created":12,"updated":3,"preservedManual":2,"lastAttemptAt":"2026-08-12T10:00:00Z","lastSuccessAt":"2026-08-12T10:00:00Z","error":null}
+                """));
+        using var api = CreateClient(handler);
+
+        var resource = await api.CreateResourceAsync(
+            new ResourceCreate("E-1", "Dana", "Bar", "regular_worker", ["inspection"], "calendar-1", "C:\\photos\\dana.jpg", "QA backup", "dana@example.test", true), "windows-1", 31);
+        var holiday = await api.UpdateIsraeliHolidayAsync(
+            "holiday-1", new IsraeliHolidayUpdate("2026-09-15", "Rosh Hashanah"),
+            "\"israeli-holiday:holiday-1:v1\"", "windows-1", 31);
+        var settings = await api.UpdateReportEmailSettingsAsync(
+            new ReportEmailSettingsUpdate("reports@example.test", ["manager@example.test"], "smtp.example.test", 587, true, true, "07:00", "Asia/Jerusalem"),
+            "\"report-email-settings:1:v2\"", "windows-1", 31);
+        var sync = await api.SynchronizeIsraeliHolidaysAsync(new(2026,2027),"windows-1",31);
+
+        Assert.Equal("resource-1", resource.ResourceId);
+        Assert.Equal("\"israeli-holiday:holiday-1:v2\"", holiday.EntityTag);
+        Assert.Equal("\"report-email-settings:1:v3\"", settings.EntityTag);
+        Assert.True(sync.Succeeded);
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/resources", handler.Requests[0].Path);
+        Assert.Equal("31", handler.Requests[0].Generation);
+        Assert.Equal(HttpMethod.Patch, handler.Requests[1].Method);
+        Assert.Equal("/api/v1/israeli-holidays/holiday-1", handler.Requests[1].Path);
+        Assert.Equal("\"israeli-holiday:holiday-1:v1\"", handler.Requests[1].IfMatch);
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+        Assert.Equal("/api/v1/report-email-settings", handler.Requests[2].Path);
+        Assert.Equal("\"report-email-settings:1:v2\"", handler.Requests[2].IfMatch);
+        Assert.Contains("\"recipients\":[\"manager@example.test\"]", handler.Requests[2].Body, StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Post,handler.Requests[3].Method);
+        Assert.Equal("/api/v1/israeli-holidays/sync",handler.Requests[3].Path);
+        Assert.Contains("\"fromYear\":2026",handler.Requests[3].Body,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Employee_exception_and_availability_routes_use_typed_contracts()
+    {
+        const string exceptionJson = """
+            {"exceptionId":"exception-1","resourceId":"resource-1","date":"2026-08-18","exceptionType":"unavailable","isFullDay":false,"startsAtLocal":"10:00","endsAtLocal":"12:00","note":"Appointment","version":1,"createdAt":"2026-08-12T10:00:00Z","updatedAt":"2026-08-12T10:00:00Z"}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, $$"""{"items":[{{exceptionJson}}],"nextCursor":null}"""),
+            Json(HttpStatusCode.Created, exceptionJson),
+            JsonWithEntityTag(HttpStatusCode.OK, exceptionJson.Replace("\"version\":1", "\"version\":2"), "\"employee-exception:exception-1:v2\""),
+            Json(HttpStatusCode.OK, $$"""{"resourceId":"resource-1","isActive":true,"assignedCalendarId":"calendar-1","timeZoneId":"UTC","windows":[{"startsAt":"2026-08-18T06:00:00Z","endsAt":"2026-08-18T10:00:00Z"}],"exceptions":[{{exceptionJson}}]}"""),
+            new HttpResponseMessage(HttpStatusCode.NoContent));
+        using var api = CreateClient(handler);
+
+        var listed = await api.ListEmployeeExceptionsAsync("resource-1");
+        var created = await api.CreateEmployeeExceptionAsync("resource-1",
+            new("2026-08-18", "unavailable", false, "10:00", "12:00", "Appointment"),
+            "windows-1", 33);
+        var updated = await api.UpdateEmployeeExceptionAsync("resource-1", "exception-1",
+            new("2026-08-18", "unavailable", false, "10:00", "12:00", "Medical appointment"),
+            "\"employee-exception:exception-1:v1\"", "windows-1", 33);
+        var availability = await api.GetEmployeeAvailabilityAsync("resource-1",
+            DateTimeOffset.Parse("2026-08-18T00:00:00Z"), DateTimeOffset.Parse("2026-08-19T00:00:00Z"));
+        await api.DeleteEmployeeExceptionAsync("resource-1", "exception-1", "windows-1", 33);
+
+        Assert.Single(listed);
+        Assert.Equal("unavailable", created.ExceptionType);
+        Assert.Equal("\"employee-exception:exception-1:v2\"", updated.EntityTag);
+        Assert.Single(availability.Windows);
+        Assert.Equal("/api/v1/resources/resource-1/exceptions", handler.Requests[0].Path);
+        Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
+        Assert.Equal("33", handler.Requests[1].Generation);
+        Assert.Equal("\"employee-exception:exception-1:v1\"", handler.Requests[2].IfMatch);
+        Assert.StartsWith("/api/v1/resources/resource-1/availability?from=", handler.Requests[3].Path, StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Delete, handler.Requests[4].Method);
     }
 
     private static PlannerApiClient CreateClient(HttpMessageHandler handler) => new(

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.EInk;
 using Microsoft.Data.Sqlite;
 
@@ -7,6 +8,7 @@ namespace Meimad.Planner.Server.Persistence;
 
 internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SqliteDatabase database;
 
     public SqliteEInkDeviceRepository(SqliteDatabase database)
@@ -196,7 +198,10 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
                    machine_id, machine_number, machine_name,
                    case_id, part_number, part_name, part_revision, customer,
                    production_batch_id, batch_number, planned_quantity,
-                   operation_number, operation_name
+                   operation_number, operation_name,
+                   setup_worker_id, setup_worker_first_name, setup_worker_last_name,
+                   setup_worker_photo_file_id, planned_setup_starts_at, planned_setup_ends_at,
+                   job_tools_json, expected_machine_tools_json, local_checklist_items_json
             FROM eink_package_revisions
             WHERE batch_operation_id = $operationId
               AND (machine_id IS NULL OR machine_id = $machineId)
@@ -237,7 +242,16 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
                     reader.GetInt32(14),
                     operationId,
                     reader.GetInt32(15),
-                    reader.GetString(16));
+                    reader.GetString(16),
+                    NullableString(reader, 17),
+                    NullableString(reader, 18),
+                    NullableString(reader, 19),
+                    NullableString(reader, 20),
+                    NullableInstant(reader, 21),
+                    NullableInstant(reader, 22),
+                    Deserialize<EInkToolSource>(reader.GetString(23)),
+                    Deserialize<EInkToolSource>(reader.GetString(24)),
+                    Deserialize<EInkChecklistItemSource>(reader.GetString(25)));
         }
 
         var files = await ReadPackageFilesAsync(
@@ -291,6 +305,12 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
 
     private static string? NullableString(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    private static DateTimeOffset? NullableInstant(SqliteDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : ParseInstant(reader.GetString(ordinal));
+
+    private static IReadOnlyList<T> Deserialize<T>(string json) =>
+        JsonSerializer.Deserialize<T[]>(json, JsonOptions) ?? [];
 
     private sealed record DeviceRow(
         string DeviceId,

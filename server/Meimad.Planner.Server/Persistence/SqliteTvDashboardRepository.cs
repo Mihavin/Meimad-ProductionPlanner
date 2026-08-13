@@ -116,12 +116,16 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
         command.Transaction = transaction;
         command.CommandText = """
             SELECT downtimes.id, downtimes.machine_id, downtimes.starts_at,
-                   downtimes.ends_at, downtimes.reason
+                   COALESCE(downtimes.ends_at, '9999-12-31T23:59:59.9999999+00:00'),
+                   CASE downtimes.downtime_type
+                     WHEN 'breakdown' THEN 'Breakdown: ' || downtimes.reason
+                     ELSE 'Planned maintenance: ' || downtimes.reason
+                   END
             FROM downtimes
             JOIN machines ON machines.id = downtimes.machine_id
             WHERE machines.is_active = 1
               AND machines.display_enabled = 1
-              AND lower(downtimes.status) NOT IN ('cancelled', 'complete')
+              AND downtimes.status IN ('planned', 'active', 'restored')
             ORDER BY downtimes.starts_at, downtimes.id;
             """;
         var values = new List<TvSourceDowntime>();
@@ -152,7 +156,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
               ON batch_allocations.production_batch_id = production_batches.id
              AND batch_allocations.allocation_type = 'order'
             JOIN orders ON orders.id = batch_allocations.order_id
-            WHERE orders.status = 'active'
+            WHERE orders.status IN ('active', 'in_production')
             ORDER BY orders.work_finish_date, production_batches.id;
             """;
         var values = new List<TvSourceBatchDueDate>();

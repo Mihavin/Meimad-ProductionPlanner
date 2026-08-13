@@ -14,8 +14,6 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private IPlannerApiClient? apiClient;
     private ClientSettings? activeSettings;
     private EditModeStatus? editStatus;
-    private string serverAddress = ClientSettings.DefaultServerAddress;
-    private string localUserName = "Planner";
     private string clientId = string.Empty;
     private string healthLevel = "offline";
     private string healthHeadline = "Not connected";
@@ -23,28 +21,38 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private string modeLevel = "offline";
     private string modeHeadline = "View Mode unavailable";
     private string modeDetail = "Connect to read the server-owned Edit Mode state.";
-    private string localIdentityText = "Local user: not loaded";
     private bool isBusy;
     private bool hasPendingTransfer;
     private string pendingTransferText = string.Empty;
 
     internal MainWindowViewModel(
         IClientSettingsStore settingsStore,
-        IPlannerApiClientFactory apiClientFactory)
+        IPlannerApiClientFactory apiClientFactory,
+        Func<AssignmentOverridePrompt, string?>? requestAssignmentOverrideReason = null)
     {
         this.settingsStore = settingsStore;
         this.apiClientFactory = apiClientFactory;
+        Setup = new SetupViewModel(
+            ConnectAsync,
+            SaveConnectionAsync,
+            RefreshAsync,
+            () => !IsBusy,
+            () => !IsBusy && apiClient is not null);
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
-        MachinePlanningBoard = new MachinePlanningBoardViewModel();
+        MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
-        CaseWorkspace.PlanChanged += (_, _) => Timeline.Invalidate();
+        CaseWorkspace.PlanChanged += (_, _) => RefreshTimelineAfterPlanChange();
         MachinePlanningBoard.PlanChanged += (_, _) =>
         {
             CaseWorkspace.InvalidateSelectedDetails();
-            Timeline.Invalidate();
+            RefreshTimelineAfterPlanChange();
         };
-        ConnectCommand = new AsyncCommand(ConnectAsync, () => !IsBusy);
-        RefreshCommand = new AsyncCommand(RefreshAsync, () => !IsBusy && apiClient is not null);
+        Setup.ConfigurationChanged += (_, _) =>
+        {
+            CaseWorkspace.InvalidateSelectedDetails();
+            RefreshTimelineAfterPlanChange();
+            _ = MachinePlanningBoard.RefreshAsync();
+        };
         RequestEditCommand = new AsyncCommand(
             RequestEditAsync,
             () => !IsBusy && editStatus?.State == ClientEditState.Viewer && HealthLevel == "healthy");
@@ -59,11 +67,13 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             CanDecideTransfer);
     }
 
+    private void RefreshTimelineAfterPlanChange()
+    {
+        Timeline.Invalidate();
+        _ = Timeline.EnsureLoadedAsync();
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
-
-    public AsyncCommand ConnectCommand { get; }
-
-    public AsyncCommand RefreshCommand { get; }
 
     public AsyncCommand RequestEditCommand { get; }
 
@@ -79,17 +89,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public TimelineViewModel Timeline { get; }
 
-    public string ServerAddress
-    {
-        get => serverAddress;
-        set => SetField(ref serverAddress, value);
-    }
-
-    public string LocalUserName
-    {
-        get => localUserName;
-        set => SetField(ref localUserName, value);
-    }
+    public SetupViewModel Setup { get; }
 
     public string ClientId
     {
@@ -131,12 +131,6 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         get => modeDetail;
         private set => SetField(ref modeDetail, value);
-    }
-
-    public string LocalIdentityText
-    {
-        get => localIdentityText;
-        private set => SetField(ref localIdentityText, value);
     }
 
     public bool IsBusy
@@ -182,15 +176,20 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     internal async Task ConnectAsync()
     {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        SetConnecting("Connecting to Server");
         await RunBusyAsync(async () =>
         {
-            var settings = ClientSettings.Create(ServerAddress, LocalUserName, ClientId);
-            await settingsStore.SaveAsync(settings);
-            ApplySettings(settings);
-            ReplaceApiClient(settings.ServerBaseUri);
+            await SaveConnectionCoreAsync();
             await RefreshCoreAsync();
         });
     }
+
+    internal Task SaveConnectionAsync() => RunBusyAsync(SaveConnectionCoreAsync);
 
     internal async Task RefreshAsync()
     {
@@ -199,6 +198,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        SetConnecting("Refreshing Server connection");
         await RunBusyAsync(RefreshCoreAsync);
     }
 
@@ -266,7 +266,9 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             : "attention";
         HealthHeadline = $"Connected — {health.Status}";
         HealthDetail = $"{health.Service} {health.Version} • Server UTC {health.ServerTimeUtc:yyyy-MM-dd HH:mm:ss}";
+        Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
         ApplyEditStatus(editStatus);
+        await Setup.EnsureLoadedAsync();
         await CaseWorkspace.EnsureLoadedAsync();
         await MachinePlanningBoard.EnsureLoadedAsync();
         await Timeline.EnsureLoadedAsync();
@@ -294,13 +296,36 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private async Task SaveConnectionCoreAsync()
+    {
+        var settings = ClientSettings.Create(Setup.ServerAddress, Setup.LocalUserName, ClientId);
+        await settingsStore.SaveAsync(settings);
+        ApplySettings(settings);
+        ReplaceApiClient(settings.ServerBaseUri);
+        HealthLevel = "attention";
+        HealthHeadline = "Connection not verified";
+        HealthDetail = "Settings saved. Connect or refresh to verify the configured Server.";
+        ModeLevel = "offline";
+        ModeHeadline = "View Mode unavailable";
+        ModeDetail = "Planning changes remain disabled until the Server confirms Edit Mode.";
+        editStatus = null;
+        Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
+        RaiseCommandStates();
+    }
+
     private void ApplySettings(ClientSettings settings)
     {
         activeSettings = settings;
-        ServerAddress = settings.ServerBaseUri.AbsoluteUri;
-        LocalUserName = settings.LocalUserName;
+        Setup.ApplyConnectionSettings(settings.ServerBaseUri.AbsoluteUri, settings.LocalUserName);
         ClientId = settings.ClientId;
-        LocalIdentityText = $"Local user: {settings.LocalUserName} • Client: {settings.ClientId}";
+    }
+
+    private void SetConnecting(string headline)
+    {
+        HealthLevel = "attention";
+        HealthHeadline = headline;
+        HealthDetail = "Waiting for the configured Server to respond.";
+        Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
     }
 
     private void ApplyEditStatus(EditModeStatus status)
@@ -330,7 +355,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 ModeHeadline = "🔒 View Mode — read only";
                 ModeDetail = status.Holder is null
                     ? "No editor currently holds the token. Request Edit Mode to make changes."
-                    : $"Current editor: {DisplayHolder(status.Holder)}. Request Edit Mode to ask for transfer.";
+                    : $"Edit Mode held by: {DisplayHolder(status.Holder)}. Request Edit Mode to ask for transfer.";
                 break;
         }
 
@@ -338,6 +363,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         CaseWorkspace.AttachSession(apiClient, ClientId, status);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, status);
         Timeline.AttachSession(apiClient);
+        Setup.AttachSession(apiClient, ClientId, status);
     }
 
     private void SetOffline(string headline, string detail)
@@ -351,16 +377,18 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         HasPendingTransfer = false;
         PendingTransferText = string.Empty;
         editStatus = null;
+        Setup.ApplyConnectionStatus(headline, detail);
         CaseWorkspace.AttachSession(apiClient, ClientId, null);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
         Timeline.AttachSession(apiClient);
+        Setup.AttachSession(apiClient, ClientId, null);
         RaiseCommandStates();
     }
 
     private string DisplayHolder(EditModeHolder holder) =>
         string.Equals(holder.ClientId, ClientId, StringComparison.Ordinal)
             ? activeSettings?.LocalUserName ?? holder.UserId
-            : holder.ClientId;
+            : holder.UserId;
 
     private void ReplaceApiClient(Uri serverBaseUri)
     {
@@ -369,6 +397,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         CaseWorkspace.AttachSession(apiClient, ClientId, null);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
         Timeline.AttachSession(apiClient);
+        Setup.AttachSession(apiClient, ClientId, null);
         RaiseCommandStates();
     }
 
@@ -378,12 +407,11 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void RaiseCommandStates()
     {
-        ConnectCommand.RaiseCanExecuteChanged();
-        RefreshCommand.RaiseCanExecuteChanged();
         RequestEditCommand.RaiseCanExecuteChanged();
         ReleaseEditCommand.RaiseCanExecuteChanged();
         ApproveTransferCommand.RaiseCanExecuteChanged();
         RejectTransferCommand.RaiseCanExecuteChanged();
+        Setup.UpdateConnectionCommandStates();
     }
 
     private static bool IsExpected(Exception exception) => exception is

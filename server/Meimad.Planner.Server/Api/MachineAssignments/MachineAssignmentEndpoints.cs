@@ -10,6 +10,7 @@ internal static class MachineAssignmentEndpoints
         var operations = endpoints.MapGroup("/api/v1/batch-operations");
         operations.MapPut("/{batchOperationId}/assignment", AssignOrMoveAsync);
         operations.MapDelete("/{batchOperationId}/assignment", UnassignAsync);
+        operations.MapGet("/{batchOperationId}/assignment-overrides", ListOverridesAsync);
         operations.MapPost("/{batchOperationId}/start", StartAsync);
         operations.MapPost("/{batchOperationId}/suspend", SuspendAsync);
         operations.MapPost("/{batchOperationId}/finish", FinishAsync);
@@ -36,6 +37,11 @@ internal static class MachineAssignmentEndpoints
                 batchOperationId,
                 request.MachineId ?? string.Empty,
                 request.BacklogPosition,
+                request.CompatibilityOverride is null
+                    ? null
+                    : new MachineAssignmentOverrideConfirmation(
+                        request.CompatibilityOverride.Confirmed,
+                        request.CompatibilityOverride.Reason ?? string.Empty),
                 authority!,
                 cancellationToken);
             var response = MachineAssignmentResponse.FromDomain(result.Assignment);
@@ -46,6 +52,26 @@ internal static class MachineAssignmentEndpoints
                 : Results.Ok(response);
         }
         catch (Exception exception) when (TryMapError(exception, httpContext, out var error))
+        {
+            return error!;
+        }
+    }
+
+    private static async Task<IResult> ListOverridesAsync(
+        string batchOperationId,
+        HttpContext context,
+        MachineAssignmentService service,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var values = await service.ListOverridesAsync(batchOperationId, cancellationToken);
+            return Results.Ok(new
+            {
+                items = values.Select(MachineAssignmentOverrideResponse.FromApplication).ToArray()
+            });
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var error))
         {
             return error!;
         }
@@ -84,18 +110,24 @@ internal static class MachineAssignmentEndpoints
         ChangeExecutionStatusAsync(
             batchOperationId,
             BatchOperationExecutionAction.Start,
+            null,
             context,
             service,
             cancellationToken);
 
     private static Task<IResult> SuspendAsync(
         string batchOperationId,
+        SuspendOperationRequest request,
         HttpContext context,
         MachineAssignmentService service,
         CancellationToken cancellationToken) =>
         ChangeExecutionStatusAsync(
             batchOperationId,
             BatchOperationExecutionAction.Suspend,
+            new Domain.Machines.OperationPauseReason(
+                request.ReasonType ?? string.Empty, request.ProblemDescription,
+                request.ToolingItemDescription, request.CustomerContactName,
+                request.RequestDescription, request.Comment),
             context,
             service,
             cancellationToken);
@@ -108,6 +140,7 @@ internal static class MachineAssignmentEndpoints
         ChangeExecutionStatusAsync(
             batchOperationId,
             BatchOperationExecutionAction.Finish,
+            null,
             context,
             service,
             cancellationToken);
@@ -115,6 +148,7 @@ internal static class MachineAssignmentEndpoints
     private static async Task<IResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
+        Domain.Machines.OperationPauseReason? pauseReason,
         HttpContext context,
         MachineAssignmentService service,
         CancellationToken cancellationToken)
@@ -128,7 +162,7 @@ internal static class MachineAssignmentEndpoints
         try
         {
             var result = await service.ChangeExecutionStatusAsync(
-                batchOperationId, action, authority!, cancellationToken);
+                batchOperationId, action, pauseReason, authority!, cancellationToken);
             return Results.Ok(BatchOperationExecutionResponse.FromApplication(result));
         }
         catch (Exception exception) when (TryMapError(exception, context, out var error))
@@ -161,6 +195,19 @@ internal static class MachineAssignmentEndpoints
                 "incompatible_machine",
                 exception.Message,
                 context),
+            MachineAssignmentOverrideRequiredException warning => PlanningHttpSupport.Error(
+                StatusCodes.Status409Conflict,
+                "machine_type_override_required",
+                warning.Message,
+                context,
+                [new
+                {
+                    field = "compatibilityOverride",
+                    code = "confirmation_and_reason_required",
+                    message = warning.Message,
+                    requiredMachineType = warning.RequiredMachineType,
+                    selectedMachineType = warning.SelectedMachineType
+                }]),
             BacklogPositionOutOfRangeException => PlanningHttpSupport.Error(
                 StatusCodes.Status422UnprocessableEntity,
                 "backlog_position_out_of_range",

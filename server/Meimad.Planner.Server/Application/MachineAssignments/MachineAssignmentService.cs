@@ -21,6 +21,21 @@ internal sealed class MachineAssignmentService
         string machineId,
         int backlogPosition,
         EditAuthority editAuthority,
+        CancellationToken cancellationToken = default) =>
+        AssignOrMoveAsync(
+            batchOperationId,
+            machineId,
+            backlogPosition,
+            overrideConfirmation: null,
+            editAuthority,
+            cancellationToken);
+
+    internal Task<AssignmentMutationResult> AssignOrMoveAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        MachineAssignmentOverrideConfirmation? overrideConfirmation,
+        EditAuthority editAuthority,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(batchOperationId))
@@ -47,13 +62,59 @@ internal sealed class MachineAssignmentService
                 "backlogPosition must be zero or greater.");
         }
 
+        if (overrideConfirmation is not null)
+        {
+            if (!overrideConfirmation.Confirmed)
+            {
+                throw new MachineAssignmentValidationException(
+                    "compatibilityOverride.confirmed",
+                    "confirmation_required",
+                    "The incompatible Machine assignment must be explicitly confirmed.");
+            }
+
+            if (string.IsNullOrWhiteSpace(overrideConfirmation.Reason))
+            {
+                throw new MachineAssignmentValidationException(
+                    "compatibilityOverride.reason",
+                    "reason_required",
+                    "A reason is required for an incompatible Machine assignment.");
+            }
+
+            if (overrideConfirmation.Reason.Trim().Length > 1_000)
+            {
+                throw new MachineAssignmentValidationException(
+                    "compatibilityOverride.reason",
+                    "too_long",
+                    "The override reason must be 1,000 characters or fewer.");
+            }
+
+            overrideConfirmation = overrideConfirmation with
+            {
+                Reason = overrideConfirmation.Reason.Trim()
+            };
+        }
+
         return repository.AssignOrMoveAsync(
             batchOperationId.Trim(),
             machineId.Trim(),
             backlogPosition,
+            overrideConfirmation,
             timeProvider.GetUtcNow(),
             editAuthority,
             cancellationToken);
+    }
+
+    internal Task<IReadOnlyList<MachineAssignmentOverrideLog>> ListOverridesAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(batchOperationId))
+        {
+            throw new MachineAssignmentValidationException(
+                "batchOperationId", "required", "batchOperationId is required.");
+        }
+
+        return repository.ListOverridesAsync(batchOperationId.Trim(), cancellationToken);
     }
 
     internal Task<bool> UnassignAsync(
@@ -85,6 +146,14 @@ internal sealed class MachineAssignmentService
         string batchOperationId,
         BatchOperationExecutionAction action,
         EditAuthority editAuthority,
+        CancellationToken cancellationToken = default) =>
+        ChangeExecutionStatusAsync(batchOperationId, action, null, editAuthority, cancellationToken);
+
+    internal Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
+        string batchOperationId,
+        BatchOperationExecutionAction action,
+        OperationPauseReason? pauseReason,
+        EditAuthority editAuthority,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(batchOperationId))
@@ -93,12 +162,62 @@ internal sealed class MachineAssignmentService
                 "batchOperationId", "required", "batchOperationId is required.");
         }
 
+        pauseReason = ValidatePauseReason(action, pauseReason);
         return repository.ChangeExecutionStatusAsync(
             batchOperationId.Trim(),
             action,
+            pauseReason,
             timeProvider.GetUtcNow(),
             editAuthority,
             cancellationToken);
+    }
+
+    private static OperationPauseReason? ValidatePauseReason(
+        BatchOperationExecutionAction action,
+        OperationPauseReason? value)
+    {
+        if (action != BatchOperationExecutionAction.Suspend)
+        {
+            return null;
+        }
+
+        if (value is null)
+        {
+            throw new MachineAssignmentValidationException("pauseReason", "required", "A structured pause reason is required.");
+        }
+
+        static string? Clean(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        value = value with
+        {
+            ReasonType = Clean(value.ReasonType) ?? string.Empty,
+            ProblemDescription = Clean(value.ProblemDescription),
+            ToolingItemDescription = Clean(value.ToolingItemDescription),
+            CustomerContactName = Clean(value.CustomerContactName),
+            RequestDescription = Clean(value.RequestDescription),
+            Comment = Clean(value.Comment)
+        };
+        var required = value.ReasonType switch
+        {
+            OperationPauseReasonTypes.AdditionalQa when value.ProblemDescription is null => "problemDescription",
+            OperationPauseReasonTypes.ToolingProblem when value.ToolingItemDescription is null => "toolingItemDescription",
+            OperationPauseReasonTypes.CustomerRequest when value.CustomerContactName is null => "customerContactName",
+            OperationPauseReasonTypes.CustomerRequest when value.RequestDescription is null => "requestDescription",
+            OperationPauseReasonTypes.Other when value.Comment is null => "comment",
+            OperationPauseReasonTypes.AdditionalQa or OperationPauseReasonTypes.ToolingProblem
+                or OperationPauseReasonTypes.CustomerRequest or OperationPauseReasonTypes.Other => null,
+            _ => "reasonType"
+        };
+        if (required is not null)
+        {
+            throw new MachineAssignmentValidationException(required, "required", $"{required} is required for this pause reason.");
+        }
+
+        if (new[] { value.ProblemDescription, value.ToolingItemDescription, value.CustomerContactName, value.RequestDescription, value.Comment }
+            .Any(text => text?.Length > 2_000))
+        {
+            throw new MachineAssignmentValidationException("pauseReason", "too_long", "Pause text fields must be 2,000 characters or fewer.");
+        }
+        return value;
     }
 }
 
@@ -138,6 +257,24 @@ internal sealed class IncompatibleMachineException : Exception
         : base($"Batch Operation '{batchOperationId}' is not compatible with active Machine '{machineId}'.")
     {
     }
+}
+
+internal sealed class MachineAssignmentOverrideRequiredException : Exception
+{
+    internal MachineAssignmentOverrideRequiredException(
+        string batchOperationId,
+        string machineId,
+        string requiredMachineType,
+        string selectedMachineType)
+        : base($"{batchOperationId} requires '{requiredMachineType}', while Machine '{machineId}' is type '{selectedMachineType}'. Confirm the override and provide a reason to continue.")
+    {
+        RequiredMachineType = requiredMachineType;
+        SelectedMachineType = selectedMachineType;
+    }
+
+    internal string RequiredMachineType { get; }
+
+    internal string SelectedMachineType { get; }
 }
 
 internal sealed class BacklogPositionOutOfRangeException : Exception

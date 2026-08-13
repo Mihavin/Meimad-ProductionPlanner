@@ -5,7 +5,18 @@ using Meimad.Planner.Server.Application.MachineAssignments;
 namespace Meimad.Planner.Server.Api.MachineAssignments;
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed record AssignMachineRequest(string? MachineId, int BacklogPosition);
+internal sealed record AssignMachineRequest(
+    string? MachineId,
+    int BacklogPosition,
+    MachineAssignmentOverrideRequest? CompatibilityOverride);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record MachineAssignmentOverrideRequest(bool Confirmed, string? Reason);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record SuspendOperationRequest(
+    string? ReasonType, string? ProblemDescription, string? ToolingItemDescription,
+    string? CustomerContactName, string? RequestDescription, string? Comment);
 
 internal sealed record MachineAssignmentResponse(
     string MachineAssignmentId,
@@ -44,6 +55,30 @@ internal sealed record MachineBacklogItemResponse(
 internal sealed record MachineBacklogResponse(
     string MachineId,
     IReadOnlyList<MachineBacklogItemResponse> Items);
+
+internal sealed record MachineAssignmentOverrideResponse(
+    string OverrideId,
+    string BatchOperationId,
+    string MachineId,
+    string RequiredMachineType,
+    string SelectedMachineType,
+    string Reason,
+    string ConfirmedByClientId,
+    string ConfirmedByUserId,
+    DateTimeOffset ConfirmedAt)
+{
+    internal static MachineAssignmentOverrideResponse FromApplication(
+        MachineAssignmentOverrideLog value) => new(
+        value.OverrideId,
+        value.BatchOperationId,
+        value.MachineId,
+        value.RequiredMachineType,
+        value.SelectedMachineType,
+        value.Reason,
+        value.ConfirmedByClientId,
+        value.ConfirmedByUserId,
+        value.ConfirmedAt);
+}
 
 internal sealed record BatchOperationExecutionResponse(
     string BatchOperationId,

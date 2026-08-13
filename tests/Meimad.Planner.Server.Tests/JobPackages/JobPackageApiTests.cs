@@ -22,9 +22,11 @@ public sealed class JobPackageApiTests
         await RunAsync(async (application, client, workingFolder, packageRoot) =>
         {
             var previewBytes = new byte[] { 1, 2, 3, 4, 5 };
+            var workerPhotoBytes = new byte[] { 9, 8, 7, 6 };
             var ncBytes = Encoding.UTF8.GetBytes("G90\nG00 X0 Y0\nM30\n");
             var textBytes = Encoding.UTF8.GetBytes("Clamp at station A.\n");
             await SeedAsync(application.Services, workingFolder, previewBytes, ncBytes, textBytes);
+            await File.WriteAllBytesAsync(Path.Combine(workingFolder, "setup-worker.jpg"), workerPhotoBytes);
             AddEditorHeaders(client);
 
             using var response = await client.PostAsJsonAsync(
@@ -38,9 +40,16 @@ public sealed class JobPackageApiTests
             Assert.Equal("M-PKG", root.GetProperty("snapshot").GetProperty("machineNumber").GetString());
             Assert.Equal("PN-PKG", root.GetProperty("snapshot").GetProperty("partNumber").GetString());
             Assert.Equal("B-PKG", root.GetProperty("snapshot").GetProperty("batchNumber").GetString());
-            Assert.Equal(6, root.GetProperty("assets").GetArrayLength());
+            Assert.Equal("Miriam", root.GetProperty("snapshot").GetProperty("setupWorker")
+                .GetProperty("firstName").GetString());
+            Assert.True(root.GetProperty("snapshot").GetProperty("plannedSetupStartsAt").GetDateTimeOffset()
+                < root.GetProperty("snapshot").GetProperty("plannedSetupEndsAt").GetDateTimeOffset());
+            Assert.Single(root.GetProperty("snapshot").GetProperty("jobTools").EnumerateArray());
+            Assert.Single(root.GetProperty("snapshot").GetProperty("expectedMachineTools").EnumerateArray());
+            Assert.Equal(2, root.GetProperty("snapshot").GetProperty("localChecklistItems").GetArrayLength());
+            Assert.Equal(7, root.GetProperty("assets").GetArrayLength());
             Assert.Equal(
-                new[] { "preview", "tool_table", "nc", "text", "offsets", "instructions" },
+                new[] { "other", "preview", "tool_table", "nc", "text", "offsets", "instructions" },
                 root.GetProperty("assets").EnumerateArray()
                     .Select(asset => asset.GetProperty("assetType").GetString()).ToArray());
 
@@ -61,6 +70,22 @@ public sealed class JobPackageApiTests
                 .GetProperty("batch").GetProperty("batchNumber").GetString());
             Assert.Equal(10, manifest.RootElement.GetProperty("metadata")
                 .GetProperty("operation").GetProperty("operationNumber").GetInt32());
+            var metadata = manifest.RootElement.GetProperty("metadata");
+            var setup = metadata.GetProperty("setup");
+            Assert.Equal("Miriam", setup.GetProperty("worker").GetProperty("firstName").GetString());
+            Assert.Equal("Cohen", setup.GetProperty("worker").GetProperty("lastName").GetString());
+            Assert.NotNull(setup.GetProperty("worker").GetProperty("photoDownloadPath").GetString());
+            Assert.Single(metadata.GetProperty("tools").GetProperty("job").EnumerateArray());
+            Assert.Equal("T99", Assert.Single(metadata.GetProperty("tools")
+                .GetProperty("expectedOnMachine").EnumerateArray()).GetProperty("toolId").GetString());
+            Assert.Equal("device_sd", metadata.GetProperty("localChecklist").GetProperty("storage").GetString());
+            Assert.False(metadata.GetProperty("localChecklist").GetProperty("syncToServer").GetBoolean());
+            Assert.True(metadata.GetProperty("localChecklist").GetProperty("commentsSupported").GetBoolean());
+            Assert.Equal(2, metadata.GetProperty("localChecklist").GetProperty("items").GetArrayLength());
+            Assert.Equal("wifi", metadata.GetProperty("tabletPolicy").GetProperty("transport").GetString());
+            Assert.Equal("sd", metadata.GetProperty("tabletPolicy").GetProperty("persistentStorage").GetString());
+            Assert.False(metadata.GetProperty("tabletPolicy").GetProperty("reverseSynchronization").GetBoolean());
+            Assert.False(metadata.GetProperty("tabletPolicy").GetProperty("usbMassStorage").GetBoolean());
 
             foreach (var asset in manifest.RootElement.GetProperty("files").EnumerateArray())
             {
@@ -191,7 +216,16 @@ public sealed class JobPackageApiTests
         {
             new { name = "G54 Z", value = "-125.40", unit = "mm", note = "Fixture top" }
         },
-        instructions = "Verify fixture and dry-run the first cycle."
+        instructions = "Verify fixture and dry-run the first cycle.",
+        expectedMachineTools = new[]
+        {
+            new { toolId = "T99", description = "Probe", diameter = (string?)null, length = (string?)null, note = "Expected loaded" }
+        },
+        localChecklistItems = new[]
+        {
+            new { itemId = "tools-collected", label = "Tools collected from Tool Room" },
+            new { itemId = "machine-verified", label = "Tools on Machine verified" }
+        }
     };
 
     private static void AddEditorHeaders(HttpClient client)
@@ -219,13 +253,33 @@ public sealed class JobPackageApiTests
         await File.WriteAllBytesAsync(Path.Combine(workingFolder, "preview.png"), previewBytes);
         await File.WriteAllBytesAsync(Path.Combine(workingFolder, "programs", "main.nc"), ncBytes);
         await File.WriteAllBytesAsync(Path.Combine(workingFolder, "notes", "setup.txt"), textBytes);
+        var workerPhotoPath = Path.Combine(workingFolder, "setup-worker.jpg");
+        if (!File.Exists(workerPhotoPath))
+        {
+            await File.WriteAllBytesAsync(workerPhotoPath, [9, 8, 7, 6]);
+        }
+        var now = DateTimeOffset.UtcNow;
+        var calendarJson = JsonSerializer.Serialize(new
+        {
+            availability = new[]
+            {
+                new { startsAt = now.UtcDateTime.Date, endsAt = now.UtcDateTime.Date.AddDays(31) }
+            }
+        });
 
         var database = services.GetRequiredService<SqliteDatabase>();
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO working_calendars (id, name, time_zone_id, calendar_json)
-            VALUES ('calendar-package', 'Package calendar', 'UTC', '{}');
+            VALUES ('calendar-package', 'Package calendar', 'UTC', $calendarJson);
+            INSERT INTO application_settings (key, value)
+            VALUES ('timeline.setup_calendar_json', $calendarJson);
+            INSERT INTO employee_resources (
+                id, employee_number, name, resource_type, first_name, last_name,
+                skills_json, assigned_calendar_id, photo_path, is_active)
+            VALUES ('resource-package-setup', 'E-PKG', 'Miriam Cohen', 'setup_worker',
+                    'Miriam', 'Cohen', '["mill"]', 'calendar-package', $workerPhotoPath, 1);
             INSERT INTO machines (
                 id, number, name, machine_type, working_calendar_id, status,
                 is_active, display_enabled)
@@ -243,14 +297,15 @@ public sealed class JobPackageApiTests
             VALUES ('batch-package', 'case-package', 'B-PKG', 'waiting', 12);
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name,
-                required_machine_type)
-            VALUES ('case-operation-package', 'case-package', 10, 0, 'Finish mill', 'mill');
+                required_machine_type, setup_seconds, cycle_seconds)
+            VALUES ('case-operation-package', 'case-package', 10, 0, 'Finish mill', 'mill', 60, 60);
             INSERT INTO batch_operations (
                 id, production_batch_id, source_case_operation_id,
-                operation_number, route_position, name, required_machine_type, status)
+                operation_number, route_position, name, required_machine_type,
+                setup_seconds, cycle_seconds, status)
             VALUES (
                 'operation-package', 'batch-package', 'case-operation-package',
-                10, 0, 'Finish mill', 'mill', 'not_started');
+                10, 0, 'Finish mill', 'mill', 60, 60, 'not_started');
             INSERT INTO machine_assignments (
                 id, batch_operation_id, machine_id, backlog_position)
             VALUES ('assignment-package', 'operation-package', 'machine-package', 0);
@@ -270,6 +325,8 @@ public sealed class JobPackageApiTests
             """;
         command.Parameters.AddWithValue("$workingFolder", workingFolder);
         command.Parameters.AddWithValue("$previewPath", Path.Combine(workingFolder, "preview.png"));
+        command.Parameters.AddWithValue("$calendarJson", calendarJson);
+        command.Parameters.AddWithValue("$workerPhotoPath", workerPhotoPath);
         command.Parameters.AddWithValue("$deviceId", DeviceId);
         command.Parameters.AddWithValue(
             "$credentialHash",

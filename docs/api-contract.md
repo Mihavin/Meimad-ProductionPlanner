@@ -1,6 +1,6 @@
 # API Contract
 
-- **Status:** Draft target contract; schema-v9 planning-resource, Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
+- **Status:** Draft target contract; schema-v17 planning-resource, Setup/Calendar/Machine-Type/Machine-Availability/administrative, Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -21,7 +21,7 @@ Firmware remains a separate future project that may consume the frozen E-Ink rou
 
 - `/api/v1` is the proposed versioned base path for all business and device APIs.
 - `/health` is implemented as an unversioned liveness endpoint; richer readiness remains proposed.
-- Case, Order, Batch creation/read, Machine master, Machine backlog read, BatchOperation assignment, Single Edit Mode, TV Dashboard, and the E-Ink routes identified below are implemented. Other planning routes remain proposed.
+- Case, Order, Batch creation/read, Machine and Machine Type master data, Working Calendar CRUD and Setup Calendar selection, Machine backlog read, BatchOperation assignment, Single Edit Mode, TV Dashboard, and the E-Ink routes identified below are implemented. Other planning routes remain proposed.
 - The source's conceptual `/api/eink/...` paths are implemented as `/api/v1/eink/...`. Future compatibility guarantees/OpenAPI freezing remain TBD.
 - JSON field names are `camelCase`. Examples explicitly labeled Implemented describe the tested wire shape; all other examples remain Proposed until an OpenAPI document is approved.
 - Human/TV authentication and authorization mechanisms remain TBD. E-Ink device reads use implemented revocable bearer tokens with stored SHA-256 hashes and device/Machine scoping.
@@ -294,7 +294,7 @@ Unless explicitly marked implemented, paths in this section are **Proposed**. Mu
 
 Case Operation edits do not mutate an existing Production Batch because schema v9 snapshots scalar and dependency fields into Batch Operations. Route reorder remains a separate Proposed command.
 
-**Implemented now:** Case collection GET, POST, GET-by-ID, PATCH, nested operation GET/POST/PATCH, and preview GET. GET-by-ID and collection results include derived `isActive`, based on active Order demand or a `waiting`/`in_production` Production Batch. Operation reorder remains Proposed.
+**Implemented now:** Case collection GET, POST, GET-by-ID, PATCH, nested operation GET/POST/PATCH, and preview GET. GET-by-ID and collection results include derived `isActive`, based on `active`/`in_production` Order demand or a `waiting`/`in_production` Production Batch. Operation reorder remains Proposed.
 
 The implemented `GET /cases` accepts optional `search`, `customer`, and `isActive` parameters, returns matching records ordered by Part Number, and currently returns `nextCursor: null`. `search` performs case-insensitive substring matching across Part Number, Name, and Customer; `customer` performs case-insensitive Customer substring matching. Customer Reference, status, cursor, and limit filtering remain Proposed.
 
@@ -347,7 +347,7 @@ Part Number, Name, and Working Folder path are required. Both path fields must b
 
 The Case timing sums are descriptive route summaries. They do not replace the per-operation durations and dependency semantics used by the Timeline, so clients must not treat either sum as projected elapsed time.
 
-Implemented limits are 200 characters for short identity/material fields, 500 for material specification and raw dimensions, 4,096 for paths, and 8,000 for Notes. Text is trimmed and blank optional text becomes `null`. Case Operation setup/cycle values are nullable non-negative 32-bit integer seconds; Case timing fields are derived totals and are not accepted as master-data inputs. Part Number uniqueness remains undecided and is not enforced.
+Implemented limits are 200 characters for short identity/material fields, 500 for material specification and raw dimensions, 4,096 for paths, and 8,000 for Notes. Text is trimmed and blank optional text becomes `null`. Case Operation setup/cycle values are nullable non-negative seconds; QA-after-setup and load/unload are non-negative seconds with zero defaults. Case timing fields are derived totals and are not accepted as master-data inputs. Part Number uniqueness remains undecided and is not enforced.
 
 The target contract returns Working Folder and Preview paths only to an authorized Windows planning caller and omits them from TV/E-Ink/errors. The current Case read endpoints have no human authentication layer yet, so deployments must not treat them as production-secure until OD-012 is implemented.
 
@@ -362,6 +362,12 @@ Implemented Case Operation create request:
   "requiredMachineType": "fiveAxisMill",
   "setupTimeSeconds": 1200,
   "cycleTimePerPartSeconds": 180,
+  "qaTimeAfterSetupSeconds": 300,
+  "loadUnloadTimeSeconds": 45,
+  "loadUnloadRequiresWorker": true,
+  "automaticLoading": true,
+  "loadUnloadEveryNParts": 5,
+  "dayShiftOnly": true,
   "dependencyType": "SEQUENTIAL",
   "predecessorCaseOperationId": "opaque-op-10",
   "simultaneousGroupKey": null
@@ -380,6 +386,12 @@ Implemented Case Operation representation:
   "requiredMachineType": "fiveAxisMill",
   "setupTimeSeconds": 1200,
   "cycleTimePerPartSeconds": 180,
+  "qaTimeAfterSetupSeconds": 300,
+  "loadUnloadTimeSeconds": 45,
+  "loadUnloadRequiresWorker": true,
+  "automaticLoading": true,
+  "loadUnloadEveryNParts": 5,
+  "dayShiftOnly": true,
   "dependencyType": "SEQUENTIAL",
   "predecessorCaseOperationId": "opaque-op-10",
   "simultaneousGroupKey": null,
@@ -402,7 +414,7 @@ Implemented Case Operation PATCH is partial. For example:
 }
 ```
 
-The accepted fields are `operationNumber`, `name`, `requiredMachineType`, `setupTimeSeconds`, `cycleTimePerPartSeconds`, `dependencyType`, `predecessorCaseOperationId`, and `simultaneousGroupKey`. JSON `null` clears a nullable field; omission preserves it. `caseOperationId`, `caseId`, and `routePosition` are immutable and an unknown field is rejected. PATCH requires active Edit Mode plus the exact `If-Match: "case-operation:{operationId}:v{version}"`; a stale version returns `412`. The Server merges the partial request, validates the complete Case graph, and increments the operation version in one immediate transaction. Existing Batch Operation scalar and schema-v9 dependency snapshots remain unchanged.
+The accepted fields are `operationNumber`, `name`, `requiredMachineType`, `setupTimeSeconds`, `cycleTimePerPartSeconds`, `qaTimeAfterSetupSeconds`, `loadUnloadTimeSeconds`, `loadUnloadRequiresWorker`, `automaticLoading`, `loadUnloadEveryNParts`, `dayShiftOnly`, `dependencyType`, `predecessorCaseOperationId`, and `simultaneousGroupKey`. JSON `null` clears a nullable field; omission preserves it. `caseOperationId`, `caseId`, and `routePosition` are immutable and an unknown field is rejected. PATCH requires active Edit Mode plus the exact `If-Match: "case-operation:{operationId}:v{version}"`; a stale version returns `412`. The Server merges the partial request, validates the complete Case graph, and increments the operation version in one immediate transaction. Existing Batch Operation scalar and schema-v9 dependency snapshots remain unchanged.
 
 The Windows required-Machine dropdown is populated from the union of `processType`, `axisType`, and `capabilities` returned by the registered Machine catalog. It also offers a blank Any choice and preserves a selected legacy value. This is a client option list, not a new Server enum; the submitted token continues to use the string contract above.
 
@@ -458,7 +470,11 @@ Implemented Order create request and representation:
 }
 ```
 
-`orderNumber`, positive integer `quantity`, ISO `YYYY-MM-DD` `workFinishDate`, and `status` are required. Implemented status tokens are exactly `active`, `complete`, and `cancelled`; only `active` contributes to the parent Case's derived `isActive`. Notes are optional and limited to 8,000 characters. The parent Case is immutable after creation. Create rejects a missing Case, mutation requires the active Edit Mode generation, and PATCH requires the exact Order ETag in `If-Match`.
+`orderNumber`, positive integer `quantity`, ISO `YYYY-MM-DD` `workFinishDate`, and `status` are required. Implemented representation tokens are exactly `active`, `in_production`, `complete`, and `cancelled`; `active` and `in_production` contribute to the parent Case's derived `isActive`. Create accepts `active` or legacy/manual `cancelled` only. Manually submitting `in_production` or `complete` for a new or unallocated Order returns `422 order_status_server_owned`. Notes are optional and limited to 8,000 characters. The parent Case is immutable after creation. Create rejects a missing Case, mutation requires the active Edit Mode generation, and PATCH requires the exact Order ETag in `If-Match`.
+
+Once a non-cancelled or explicitly resumed Order has one or more Batch Allocations, its production status is Server-derived across every allocated Batch. It is `complete` only when aggregate allocated quantity is at least the Order quantity, every allocated Batch has at least one Batch Operation, and every operation in every allocated Batch is completed. Otherwise it is `in_production` when any related operation has left `not_started`, and `active` before work starts. Batch creation/deletion and Start, Suspend, and Finish recompute every affected Order in the same transaction as the planning change. This aggregate rule covers split Orders and multi-Order Batches and does not assign an Order directly to a Machine. The legacy already-linked cancellation exception is defined below.
+
+Order PATCH accepts the existing partial fields and is allocation-safe. Reducing `quantity` below the current aggregate allocated quantity returns `409 order_quantity_below_allocated`. For unallocated demand, a manual production token returns `422 order_status_server_owned`. When allocations exist, explicitly sending a `status` inconsistent with the derived result returns `409 order_status_derived`; omitting `status` preserves a valid edit and lets the Server apply the derived value. New Batch creation returns `422` with detail code `cancelled_order` before writing if an allocation references a cancelled Order. A legacy already-linked `cancelled` row remains preserved through automatic recomputation; explicitly PATCHing the status to the value matching current production facts resumes the derived lifecycle. Cross-Batch over-allocation, reallocation, and broader cancellation policy remain open.
 
 `allocatedQuantity` and `remainingQuantity` remain future derived projections because cross-Batch completion/cancellation and over-allocation semantics remain unresolved; the implemented Order response does not claim them yet. There is deliberately no Machine or assignment field on an Order.
 
@@ -550,6 +566,12 @@ Implemented Batch Operation representation returned by `/batches/{batchId}/opera
   "requiredMachineType": "fiveAxisMill",
   "setupTimeSeconds": 1200,
   "cycleTimePerPartSeconds": 180,
+  "qaTimeAfterSetupSeconds": 300,
+  "loadUnloadTimeSeconds": 45,
+  "loadUnloadRequiresWorker": true,
+  "automaticLoading": true,
+  "loadUnloadEveryNParts": 5,
+  "dayShiftOnly": true,
   "status": "not_started",
   "version": 1,
   "createdAt": "2026-08-11T10:00:00Z",
@@ -575,20 +597,42 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/machine-assignments/{assignmentId}` | Read one assignment. |
 | `PUT` | `/api/v1/batch-operations/{batchOperationId}/assignment` | Assign or move one Batch Operation to a Machine/position. |
 | `DELETE` | `/api/v1/batch-operations/{batchOperationId}/assignment` | Unassign one Batch Operation. |
+| `GET` | `/api/v1/batch-operations/{batchOperationId}/assignment-overrides` | Read immutable cross-type assignment confirmations. |
 | `POST` | `/api/v1/batch-operations/{batchOperationId}/start` | Start or resume the first assigned operation. |
-| `POST` | `/api/v1/batch-operations/{batchOperationId}/suspend` | Suspend an in-progress operation. |
+| `POST` | `/api/v1/batch-operations/{batchOperationId}/suspend` | Suspend an in-progress operation with a required structured reason. |
 | `POST` | `/api/v1/batch-operations/{batchOperationId}/finish` | Complete an in-progress operation and advance the backlog. |
 | `GET` | `/api/v1/downtimes` | Query Machine downtime. |
-| `POST` | `/api/v1/downtimes` | Create downtime. |
-| `PATCH` | `/api/v1/downtimes/{downtimeId}` | Change downtime. |
+| `GET` | `/api/v1/downtimes/{downtimeId}` | Read one downtime and ETag. |
+| `POST` | `/api/v1/downtimes` | Add planned maintenance or report a breakdown. |
+| `PATCH` | `/api/v1/downtimes/{downtimeId}` | Optimistically edit planned maintenance. |
+| `POST` | `/api/v1/downtimes/{downtimeId}/restore` | Optimistically close an active breakdown with restored time/repair note. |
 | `GET` | `/api/v1/working-calendars` | List Working Calendars for Machine selection. |
 | `POST` | `/api/v1/working-calendars` | Create a recurring weekly Working Calendar. |
+| `GET` | `/api/v1/working-calendars/{workingCalendarId}` | Read one Working Calendar and its version. |
+| `PATCH` | `/api/v1/working-calendars/{workingCalendarId}` | Optimistically update a recurring weekly Working Calendar. |
+| `DELETE` | `/api/v1/working-calendars/{workingCalendarId}` | Delete an unreferenced Working Calendar. |
+| `GET` | `/api/v1/setup-calendar` | Read the dedicated Setup Calendar selection. |
+| `PUT` | `/api/v1/setup-calendar` | Select a Working Calendar for setup availability. |
+| `DELETE` | `/api/v1/setup-calendar` | Clear the dedicated selection and use the documented fallback. |
+| `GET` | `/api/v1/machine-types` | List reusable Machine Types. |
+| `POST` | `/api/v1/machine-types` | Create a reusable Machine Type. |
+| `GET` | `/api/v1/machine-types/{machineTypeId}` | Read one Machine Type and its version. |
+| `PATCH` | `/api/v1/machine-types/{machineTypeId}` | Optimistically update a Machine Type. |
+| `DELETE` | `/api/v1/machine-types/{machineTypeId}` | Delete an unreferenced Machine Type. |
 
 Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. Batch deletion requires no Machine Assignment or official package, then deletes only its allocations and Batch Operations. Machine deletion requires no assignment, downtime, device binding, or official package. These endpoints never delete external folders, images, engineering files, or package bytes.
 
 An accepted assignment may produce warnings/conflicts; it must not cause silent rescheduling. Which structural errors reject versus which planning conflicts are accepted and reported is TBD.
 
-**Implemented now:** Machine collection GET/POST, GET/PATCH/DELETE by ID, guarded Case/Operation/Order/Batch deletes, Machine picture GET, Machine backlog GET, assignment PUT/DELETE, Batch Operation execution POST commands, and Working Calendar collection GET/POST. Backlog reorder POST, Machine Assignment query routes, downtime routes, and calendar update/archive remain Proposed. E-Ink binding administration is implemented separately under `/api/v1/eink/device-registrations`.
+**Implemented now:** Machine collection GET/POST, GET/PATCH/DELETE by ID, guarded Case/Operation/Order/Batch deletes, Machine picture GET, Machine backlog GET, assignment PUT/DELETE, Batch Operation execution POST commands, Machine Type CRUD, Working Calendar CRUD with usage/work/break/dated-exception data, dedicated Setup Calendar read/set/clear, and Machine downtime list/read/create/planned-edit/breakdown-restore. Backlog reorder POST, Machine Assignment query routes, downtime recurrence/cancellation, overnight Calendar windows, automatic holiday linkage, and calendar archive remain Proposed. E-Ink binding administration is implemented separately under `/api/v1/eink/device-registrations`.
+
+Schema-v11-v14 Setup administration adds active-editor CRUD at `/api/v1/resources` and `/api/v1/israeli-holidays`, plus optimistic `GET/PUT /api/v1/report-email-settings`. `POST /api/v1/israeli-holidays/sync` accepts `fromYear`/`toYear`, explicitly fetches Hebcal, atomically updates local provider rows, preserves manual overrides, and returns counts plus attempt/success/error state. Provider failure returns `succeeded: false` without changing cached holidays. Holiday status is `non_working`, `working`, or `partial_working`; partial working requires one same-day local start/end range. Working Calendar create/update includes `useIsraeliHolidays` (default false). A calendar-specific dated exception takes precedence; cached non-working closes the day, working preserves the recurring schedule, and partial-working replaces it with the holiday range. Timeline and employee-availability reads use SQLite only and never require internet. Resource updates use `ETag: "resource:{id}:v{version}"`; holiday updates use `ETag: "israeli-holiday:{id}:v{version}"`; report settings use `ETag: "report-email-settings:1:v{version}"`.
+
+Schema v20 extends report settings with `weeklyMaterialReportEnabled`, lowercase `weeklyMaterialReportSendDay`, and `weeklyMaterialReportTimeLocal` (`HH:mm`). `GET /api/v1/reports/weekly-material-order` returns only `{ items: [{ casePartNumber, requiredMaterialPieceQuantity }] }`. `POST /api/v1/reports/weekly-material-order/send` requires current Edit Mode and sends that same minimal report to configured recipients. Each non-complete Batch serving at least one Order due in the upcoming Sunday-Saturday week is counted once; summing `planned_quantity` includes its explicit scrap allowance. The background sender uses the configured local weekday/time/timezone and records one successful automatic delivery per target week.
+
+Schema v21 adds `weeklyEmployeeEfficiencyEnabled`, `weeklyEmployeeEfficiencySendDay`, and `weeklyEmployeeEfficiencyTimeLocal`. `POST /api/v1/employee-work-measurements` requires current Edit Mode and user identity and records employee/date planned and actual seconds plus optional source reference/notes. `GET /api/v1/reports/weekly-employee-efficiency` returns the previous completed Sunday-Saturday week grouped by employee with planned, actual, signed difference, nullable percentage difference, available calendar capacity, and nullable planned/actual capacity percentages. Capacity respects employee calendars, breaks, cached holidays, and employee exceptions. `POST /api/v1/reports/weekly-employee-efficiency/send` requires Edit Mode; automatic delivery is idempotent per completed week. No payroll, employee ranking, Machine efficiency, or Machine maintenance fields are returned.
+
+Schema v22 adds read-only `GET /api/v1/event-log?from=<RFC3339>&to=<RFC3339>&eventType=<token>&limit=<1..5000>`. Items contain `eventId`, `eventType`, `timestamp`, `user`, structured `relatedEntityIds`, nullable `reasonCode`/`comment`, and nullable `beforeData`/`afterData`. Cross-type override, backlog reorder, Operation execution/pause, and downtime events commit atomically with their source mutation. Timeline conflict and resource-wait detections use `user: system` and stable daily keys so polling does not duplicate identical detections. The endpoint exports evidence only and never runs analytics or mutates the plan.
 
 The implemented Machine collection returns the complete catalog ordered by Machine Number with `nextCursor: null`. Proposed filters are `processType`, `isActive`, `search`, `cursor`, and `limit`.
 
@@ -604,7 +648,8 @@ Implemented Machine create request and representation:
   "workingCalendarId": "opaque-calendar-id",
   "isActive": true,
   "displayEnabled": true,
-  "picturePath": "C:\\MachinePictures\\M-07.jpg"
+  "picturePath": "C:\\MachinePictures\\M-07.jpg",
+  "machineTypeId": "opaque-machine-type-id"
 }
 ```
 
@@ -624,9 +669,34 @@ Implemented Machine create request and representation:
   "backlogCount": 4,
   "version": 3,
   "createdAt": "2026-08-01T08:00:00Z",
-  "updatedAt": "2026-08-10T12:00:00Z"
+  "updatedAt": "2026-08-10T12:00:00Z",
+  "machineTypeId": "opaque-machine-type-id"
 }
 ```
+
+`machineTypeId` is an optional stable link to the reusable catalog. Existing schema-v9 Machines are linked during migration from their case-insensitive legacy `processType` values. For compatibility with existing Case Operation requirements, a linked type's name is mirrored into `processType`; Machine-specific `capabilities`, `axisType`, and the linked Machine Type's capabilities all participate in Server assignment validation. Machine and Machine Type changes that would invalidate a current assignment return `409 assigned_operation_incompatible`.
+
+Implemented Machine Type create request and representation:
+
+```json
+{
+  "name": "Five-axis milling",
+  "capabilities": ["milling", "fiveAxis", "probe"]
+}
+```
+
+```json
+{
+  "machineTypeId": "opaque-machine-type-id",
+  "name": "Five-axis milling",
+  "capabilities": ["milling", "fiveAxis", "probe"],
+  "version": 1,
+  "createdAt": "2026-08-12T08:00:00Z",
+  "updatedAt": "2026-08-12T08:00:00Z"
+}
+```
+
+Machine Type POST requires Edit Mode. PATCH accepts partial `name` and `capabilities`, requires `If-Match: "machine-type:{machineTypeId}:v{version}"`, and returns the updated representation. Names are case-insensitively unique; duplicate names return `409 machine_type_name_conflict`. Renames propagate the compatibility process name to linked Machines in the same transaction, but return `409 machine_type_name_in_use` while a Case Operation or unfinished Batch Operation requires the old name. DELETE returns `409 machine_type_in_use` while a Machine, Case Operation, or Batch Operation references the type; success returns `204`.
 
 Implemented assign/move request:
 
@@ -653,7 +723,20 @@ Implemented assignment command response:
 
 The `PUT` returns `201` for a first assignment or `200` for a move. It changes only the named assignment plus necessary backlog-position normalization as one explicit atomic command and returns the assignment record.
 
-The current implementation returns the assignment record shown above and performs no calculation. Compatibility requires an active Machine and a case-insensitive match between `requiredMachineType` and process type, axis type, or a declared capability; a missing requirement accepts any active Machine. The Server never chooses a Machine or position, and requested positions outside the target insertion range are rejected atomically.
+Compatibility normally requires an active Machine and a case-insensitive match between `requiredMachineType` and process type, axis type, or a Machine/linked-type capability; a missing requirement accepts any active Machine. An incompatible active Machine returns `409 machine_type_override_required` without changing the backlog. To proceed, the caller resubmits the same explicit Machine/position with:
+
+```json
+{
+  "machineId": "opaque-5-axis-machine-id",
+  "backlogPosition": 2,
+  "compatibilityOverride": {
+    "confirmed": true,
+    "reason": "3-axis Machine is unavailable; approved by production lead."
+  }
+}
+```
+
+`confirmed` must be true and trimmed `reason` must contain 1–1,000 characters; otherwise `422 validation_failed` returns `confirmation_required`, `reason_required`, or `too_long`. The Server derives the confirmer from the active Edit Mode token rather than trusting actor values in the body. It atomically stores the assignment plus an immutable audit snapshot containing Operation/Machine IDs, original required type, selected Machine process/type, reason, client ID, user ID, and UTC confirmation time. `GET .../assignment-overrides` returns these entries as `{ "items": [...] }`. Inactive Machines remain non-overridable. The Server never chooses a Machine or position, never changes the Operation route, requested positions outside the target insertion range are rejected atomically, and `409 operation_in_progress` prevents any proposal that would displace a running operation from backlog position zero.
 
 Proposed backlog reorder request:
 
@@ -683,7 +766,7 @@ Start, Suspend, and Finish requests have no body and require the active Edit Mod
 }
 ```
 
-Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. An in-progress operation cannot be moved or unassigned; it must be suspended first, otherwise assignment commands return `409 operation_in_progress`. Suspend retains assignment and position. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish transition recomputes the parent Production Batch status in the same transaction; the Batch row and version change only when that derived token changes. Suspended work remains `in_production`, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again. Invalid state, missing assignment, non-first start, and already-running Machine failures return stable `409` codes: `invalid_operation_transition`, `operation_not_assigned`, `operation_not_first_in_backlog`, and `machine_operation_already_in_progress`. Reassignment of completed work returns `409 operation_completed`.
+Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. Suspend requires `reasonType`: `additional_qa`, `tooling_problem`, `customer_request`, or `other`. Their required fields are respectively `problemDescription`, `toolingItemDescription`, both `customerContactName` and `requestDescription`, or `comment`; an optional comment is retained for every type. Missing data returns `422 validation_failed` without mutation. The Server records `pausedBy` from Edit Mode authority and the start timestamp; Resume atomically closes the event with its end timestamp. An in-progress operation cannot be moved or unassigned; it must be suspended first, otherwise assignment commands return `409 operation_in_progress`. Suspend retains assignment and position. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish transition recomputes the parent Production Batch status in the same transaction; the Batch row and version change only when that derived token changes. Suspended work remains `in_production`, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again.
 
 The implemented Machine master requires an existing Working Calendar. Clients obtain the opaque `workingCalendarId` from `GET /working-calendars`; users are not expected to know or type it. `picturePath` is optional, must be an absolute filesystem path, and is stored as text only. The Server does not require the file to exist during create/update. `GET /machines/{machineId}/picture` returns PNG, JPEG, BMP, or GIF bytes, `404 picture_not_found` for a missing/unavailable path, and `415 picture_format_unsupported` for another extension; errors do not expose the path. `deviceId` is a read-only projection of the optional enabled E-Ink binding administered through the active-editor device-registration API. PATCH requires the Machine ETag and rejects changes that would make assigned operations incompatible. Setting `isActive` false therefore requires an empty backlog. `displayEnabled` does not affect assignment compatibility.
 
@@ -694,12 +777,38 @@ Implemented Working Calendar create request:
   "name": "Extended shift",
   "timeZoneId": "Asia/Jerusalem",
   "workdays": ["sunday", "monday", "tuesday", "wednesday", "thursday"],
-  "shiftStartsAtLocal": "06:00",
-  "shiftEndsAtLocal": "22:00"
+  "windows": [
+    { "startsAtLocal": "06:00", "endsAtLocal": "22:00" }
+  ],
+  "breakWindows": [
+    { "startsAtLocal": "12:00", "endsAtLocal": "12:30" }
+  ],
+  "exceptions": [
+    { "date": "2026-09-13", "windows": [], "breakWindows": [], "name": "Closed" },
+    {
+      "date": "2026-09-14",
+      "windows": [{ "startsAtLocal": "08:00", "endsAtLocal": "16:00" }],
+      "breakWindows": [{ "startsAtLocal": "12:00", "endsAtLocal": "12:30" }],
+      "name": "Short day"
+    }
+  ],
+  "usages": ["machine", "setup_worker", "regular_worker", "qa_worker"]
 }
 ```
 
-The response adds `workingCalendarId`, `scheduleKind: "weekly"`, `version`, `createdAt`, and `updatedAt`. GET returns `{ "items": [...], "nextCursor": null }` ordered by name. POST requires active Edit Mode headers, generates the ID on the Server, rejects duplicate names case-insensitively with `409 working_calendar_name_conflict`, and returns validation failures as `422 validation_failed`. Workdays use lowercase Sunday-through-Saturday tokens. Times use local `HH:mm`; `24:00` is accepted only for the end, and overnight/empty shifts are not supported. The timezone must be available to the Server runtime. Legacy stored calendars with explicit UTC windows can be listed with `scheduleKind: "explicit"`; they are not created by this endpoint.
+The response adds `workingCalendarId`, `scheduleKind: "weekly"`, normalized start-ordered `windows`, `breakWindows`, date-ordered `exceptions`, normalized `usages`, compatibility single-shift fields (populated only when there is exactly one working window), `version`, `createdAt`, and `updatedAt`. Collection GET returns `{ "items": [...], "nextCursor": null }` ordered by name; item GET returns the resource with `ETag: "working-calendar:{workingCalendarId}:v{version}"`. POST requires active Edit Mode headers, generates the ID on the Server, rejects duplicate names case-insensitively with `409 working_calendar_name_conflict`, and returns validation failures as `422 validation_failed`. Workdays use lowercase Sunday-through-Saturday tokens. Times use local `HH:mm`; `24:00` is accepted only for an end. Working and break windows must be non-overlapping and same-day; every break must be fully contained in one working window. Recurring working windows are required. Each ISO `yyyy-MM-dd` exception replaces that day's recurring schedule: an empty `windows` list closes the day, while non-empty windows define special hours and may have their own contained breaks. Duplicate exception dates, overnight windows, and invalid usage tokens are rejected. Usage tokens are `machine`, `setup_worker`, `regular_worker`, and `qa_worker`; omitted legacy usage data is read as all four. The legacy `shiftStartsAtLocal`/`shiftEndsAtLocal` request pair remains accepted as one window but cannot be mixed with `windows`. The timezone must be available to the Server runtime.
+
+PATCH accepts partial `name`, `timeZoneId`, `workdays`, `windows`, `breakWindows`, `exceptions`, `usages`, `shiftStartsAtLocal`, and `shiftEndsAtLocal`, requires the matching Working Calendar ETag, revalidates the resulting complete schedule, and returns the updated resource. Sending an array replaces that complete collection. Legacy stored calendars with explicit UTC windows can be listed/read with `scheduleKind: "explicit"`; the Windows Setup page treats them as read-only. A direct PATCH that intends to replace one must provide enough fields to form a valid recurring weekly schedule. DELETE returns `409 working_calendar_in_use` while any Machine or Employee Resource references the Calendar or while it is the selected Setup Calendar. Removing a usage while a Machine, selected Setup Calendar, or same-role Employee Resource depends on it returns `409 working_calendar_usage_in_use`. Selecting a Calendar without setup-worker usage returns the same conflict. Machine create/update rejects a Calendar without Machine usage as `422 invalid_working_calendar_usage`. Successful delete returns `204`.
+
+The dedicated Setup Calendar selection is a separate singleton projection:
+
+```json
+{
+  "workingCalendarId": "opaque-calendar-id"
+}
+```
+
+`PUT /api/v1/setup-calendar` accepts that request under Edit Mode and returns `{ "workingCalendarId": "opaque-calendar-id", "calendar": { ...working calendar representation... } }`. GET returns the same shape and uses nulls when no dedicated Calendar is selected. DELETE clears the selection and returns `204`. The selected Calendar's timezone and weekly/explicit availability are used by the Timeline setup mapper. Clearing it restores Machine-calendar setup fallback plus the `setup_calendar_defaulted` attention conflict; it does not schedule or move work.
 
 ## 7. Planning projections
 
@@ -710,7 +819,19 @@ The response adds `workingCalendarId`, `scheduleKind: "weekly"`, `version`, `cre
 | `GET` | `/api/v1/conflicts` | Current explained conflicts, optionally filtered by Machine, Case, Batch, or severity. |
 | `GET` | `/api/v1/tv-dashboard` | Compact, read-only kiosk projection. |
 
-**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing all Batch Operations partitioned into the unassigned `pool` or exactly one Machine `backlog`. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, and assignment position. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
+**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing all unfinished Batch Operations partitioned into the unassigned `pool` or exactly one Machine `backlog`. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, and nullable estimated seconds. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
+
+The added operation fields are:
+
+```json
+{
+  "plannedQuantity": 53,
+  "orderReferences": ["WO-2026-1042", "WO-2026-1043"],
+  "estimatedTimeSeconds": 10740
+}
+```
+
+`estimatedTimeSeconds` is setup + QA + aggregate load/unload + (`cycleTimePerPartSeconds x plannedQuantity`) using checked wide arithmetic. Manual load/unload occurs per part; automatic loading contributes zero events without a frequency or `ceil(plannedQuantity / loadUnloadEveryNParts)` events. It is null when setup or cycle input is missing or cannot be represented. It is a compact input-derived estimate for the planning card, not a projected start/finish, persisted schedule, or actual-time record. A stock-only Batch returns an empty `orderReferences` array; the Windows client presents that state explicitly rather than inventing an Order.
 
 The current board response also contains `readAt`, `conflictCalculationStatus`, `conflictCalculationMessage`, `conflicts`, `pool`, and `machines`. Until persistence/API orchestration connects the pure engine, the status is exactly `unavailable`, the message says the engine is not connected to this projection, and `conflicts` is empty. Consumers must not interpret that empty list as a conflict-free plan. Assignment rejection feedback is client presentation of the assignment command error and is not stored as a calculated conflict.
 
@@ -763,11 +884,13 @@ Implemented response shape:
 }
 ```
 
-Interval `type` is `setup`, `production`, `idle`, `reserved`, or `downtime`. Operation metadata, including `operationName`, is null for Machine-only intervals. The Windows client uses operation number/name to render a visible marker even when a duration bar is too narrow for its full label. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations and missing/invalid timing or Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
+Interval `type` is `setup`, `production`, `waiting`, `idle`, `reserved`, or `downtime`. A `waiting` interval is Machine-available time held by a Sequential predecessor constraint; its detail explains the latest blocking predecessor (for example, `Waiting for OP10 on Machine M01 to finish.`). Operation metadata, including `operationName`, is null for Machine-only intervals. The Windows client uses operation number/name to render a visible marker even when a duration bar is too narrow for its full label. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations, `dependency_predecessor_unassigned`, missing/invalid timing or Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
 
-Timeline calculation is read-only with respect to authoritative planning inputs and never changes Machine assignment, backlog position, dependency, quantity, duration input, or Work Finish Date. Locked-simultaneous members have common calculated start/finish; shorter members emit `reserved` intervals through group finish.
+Timeline calculation is read-only with respect to authoritative planning inputs and never changes Machine assignment, backlog position, dependency, quantity, duration input, or Work Finish Date. Sequential edges constrain the child earliest start to calculated predecessor finish plus applicable availability; they may insert waiting gaps but never alter manual backlog order. Locked-simultaneous members have common calculated start/finish; shorter members emit `reserved` intervals through group finish.
 
-Each active Machine's `working_calendars.calendar_json` may contain the implemented weekly schedule or legacy `{ "availability": [{ "startsAt": <RFC3339>, "endsAt": <RFC3339> }] }`. An optional `application_settings['timeline.setup_calendar_json']` document can further restrict setup availability. If that setting is absent, setup uses the assigned Machine's calendar and the response includes the attention conflict `setup_calendar_defaulted`, explaining that machine-calendar-only setup scheduling is active; operation intervals are still calculated. Production duration is provisionally `plannedQuantity * cycleSeconds`. Dependencies are read only from immutable schema-v9 Batch Operation snapshots. Plan revisions/cache/freshness, filters, deadline policy, and richer calendar authoring remain open.
+The embedded and separate-window Windows Timeline surfaces consume this same GET response through one shared read-only view model. Opening or closing the separate window adds no endpoint and grants no mutation authority.
+
+Each active Machine's Working Calendar is expanded in its timezone with breaks, exceptions, and cached-holiday policy. The selected Setup Calendar is an additional setup constraint. The Timeline also expands every active employee's assigned Calendar and exceptions, then reserves one eligible employee per worker phase. Setup eligibility requires an exact case-insensitive employee skill match against the Machine number, name, type, axis, or effective capability; `*` explicitly matches any Machine. QA and worker-required load/unload use QA and regular-worker roles. A resource already reserved by another calculated phase is unavailable. Among simultaneously ready contenders, the Batch with the earliest allocated-Order Work Finish Date is calculated first; equal dates use the naturally smaller Order Number, followed by stable operation identity only for an exact tie. Contention inserts `waiting` intervals whose `detail` identifies whether due date or Order Number granted the blocking operation priority. Calculated employee choice and priority are not persisted, and stored Machine backlog order is unchanged. Dependencies remain immutable Batch snapshots. Plan revisions/cache/freshness, skill qualification expiry, and persisted worker assignment remain open.
 
 ### 7.2 Conflicts
 
@@ -915,6 +1038,13 @@ The implemented route is GET-only; POST/PUT/PATCH/DELETE do not match it. Creden
       "note": "Prepared"
     }
   ],
+  "expectedMachineTools": [
+    { "toolId": "T99", "description": "Probe", "note": "Expected loaded" }
+  ],
+  "localChecklistItems": [
+    { "itemId": "tools-collected", "label": "Tools collected from Tool Room" },
+    { "itemId": "machine-verified", "label": "Tools on Machine verified" }
+  ],
   "offsets": [
     { "name": "G54 Z", "value": "-125.40", "unit": "mm", "note": "Fixture top" }
   ],
@@ -922,7 +1052,7 @@ The implemented route is GET-only; POST/PUT/PATCH/DELETE do not match it. Creden
 }
 ```
 
-The Batch Operation must exist and have a current Machine Assignment. The Server snapshots Machine ID/number/name, Case ID/part number/name/revision/customer, Batch ID/number/planned quantity, and Batch Operation ID/number/name. `revision` is unique per Batch Operation; a correction publishes a different revision rather than changing an existing package.
+The Batch Operation must exist and have a current Machine Assignment. The Server snapshots Machine ID/number/name, Case ID/part number/name/revision/customer, Batch ID/number/planned quantity, and Batch Operation ID/number/name. Schema v19 also snapshots the Timeline-calculated setup start/finish, selected active setup worker ID/first/last name, optional packaged photo reference, official job tools, optional expected-on-Machine tools, and local checklist seed items. Missing optional data remains null/empty for compatibility. `revision` is unique per Batch Operation; a correction publishes a different revision rather than changing an existing package.
 
 Source files are read-only inputs. `sourceRelativePath` must stay under the Case Working Folder. `nc` accepts the configured baseline NC extensions; `text` accepts the baseline text formats. A requested preview must be the Case preview inside that Working Folder. Tool table, offsets, and instructions are package-specific official inputs, not a full tool inventory and not device-local annotations. The Server generates JSON/text assets for them.
 
@@ -1067,7 +1197,11 @@ Implemented response shape:
     "machine": { "machineId": "machine-opaque-id", "number": "M-07", "name": "Five-axis mill 7" },
     "part": { "caseId": "case-opaque-id", "partNumber": "PN-100", "name": "Bracket", "revision": "C", "customer": "Customer" },
     "batch": { "batchId": "batch-opaque-id", "batchNumber": "B-2026-0087", "plannedQuantity": 53 },
-    "operation": { "batchOperationId": "operation-opaque-id", "operationNumber": 20, "name": "Finish milling" }
+    "operation": { "batchOperationId": "operation-opaque-id", "operationNumber": 20, "name": "Finish milling" },
+    "setup": { "worker": { "resourceId": "employee-id", "firstName": "Miriam", "lastName": "Cohen", "photoFileId": "photo-file-id", "photoDownloadPath": "/api/v1/eink/devices/device-opaque-id/packages/package-opaque-id/revisions/2026-08-11.03/files/photo-file-id" }, "plannedStartsAt": "2026-08-11T11:00:00Z", "plannedEndsAt": "2026-08-11T11:30:00Z" },
+    "tools": { "job": [{ "toolId": "T01", "description": "End mill" }], "expectedOnMachine": [{ "toolId": "T99", "description": "Probe" }] },
+    "localChecklist": { "storage": "device_sd", "syncToServer": false, "commentsSupported": true, "items": [{ "itemId": "tools-collected", "label": "Tools collected from Tool Room" }] },
+    "tabletPolicy": { "transport": "wifi", "persistentStorage": "sd", "serverAccess": "read_only", "reverseSynchronization": false, "usbMassStorage": false }
   },
   "files": [
     {
@@ -1137,7 +1271,7 @@ Automatic checks are permitted only inside these workday/shift windows. The cont
 
 ### 8.6 No checklist/comment endpoint
 
-There is intentionally no route to upload tool checks, local statuses, or comments. Those remain on the tablet.
+There is intentionally no route to upload tool checks, local statuses, or comments. The manifest supplies checklist seed data and declares device-SD storage with `syncToServer: false`; completed marks and comments remain on the tablet.
 
 ### 8.7 Telemetry decision
 
@@ -1222,6 +1356,8 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Orders | `/orders`, `/orders/{orderId}` | Windows read; active editor mutates; never Machine-assigned. |
 | Production Batches | `/batches`, `/batches/{batchId}`, `/allocations`, nested `/operations` | Windows read; active editor mutates atomically. |
 | Machines | `/machines`, `/machines/{machineId}`, nested `/backlog` and `/reorder` | Windows read; active editor mutates. |
+| Machine Types | `/machine-types`, `/machine-types/{machineTypeId}` | Windows read; active editor creates/optimistically updates/deletes when unreferenced. |
+| Working/Setup Calendars | `/working-calendars`, `/working-calendars/{workingCalendarId}`, `/setup-calendar` | Windows read; active editor manages weekly calendars and the dedicated setup selection. |
 | Machine Assignments | `/machine-assignments`, `/batch-operations/{id}/assignment` | Windows read; active editor explicitly assigns/moves/unassigns. |
 | Timeline calculation | `/timeline` | Read-only deterministic projection; never repairs the plan. |
 | Conflicts | `/conflicts` | Read-only explained projection; no dismiss/repair route. |
@@ -1230,6 +1366,6 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
 | E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; admin `/eink/device-registrations` | Implemented device-scoped GET-only data; active-editor create/update registration. |
 
-Case and Case Operation create/read/update, Order create/read/update, Batch creation/read/derived lifecycle, Machine and basic weekly Working Calendar master data, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, calendar exception/update policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
+Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD and dedicated Setup Calendar selection, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar overnight/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 
 The contract cannot be frozen until the API, identity, edit-token, data-model, timeline, rendering, package, and telemetry questions in [Implementation plan](implementation-plan.md#open-decisions) are resolved.

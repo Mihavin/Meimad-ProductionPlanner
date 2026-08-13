@@ -1,27 +1,37 @@
 using System.Reflection;
 using Meimad.Planner.Server.Backup;
 using Meimad.Planner.Server.Api.Cases;
+using Meimad.Planner.Server.Api.AdministrativeSetup;
 using Meimad.Planner.Server.Api.EditMode;
+using Meimad.Planner.Server.Api.EventLogging;
 using Meimad.Planner.Server.Api.Deletion;
+using Meimad.Planner.Server.Api.Downtimes;
 using Meimad.Planner.Server.Api.EInk;
 using Meimad.Planner.Server.Api.JobPackages;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Machines;
+using Meimad.Planner.Server.Api.MachineTypes;
 using Meimad.Planner.Server.Api.Orders;
 using Meimad.Planner.Server.Api.ProductionBatches;
+using Meimad.Planner.Server.Api.Reports;
 using Meimad.Planner.Server.Api.PlanningBoard;
 using Meimad.Planner.Server.Api.Timeline;
 using Meimad.Planner.Server.Api.TvDashboard;
 using Meimad.Planner.Server.Api.WorkingCalendars;
 using Meimad.Planner.Server.Application.Cases;
+using Meimad.Planner.Server.Application.AdministrativeSetup;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.Deletion;
+using Meimad.Planner.Server.Application.Downtimes;
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.JobPackages;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Machines;
+using Meimad.Planner.Server.Application.MachineTypes;
 using Meimad.Planner.Server.Application.Orders;
 using Meimad.Planner.Server.Application.ProductionBatches;
+using Meimad.Planner.Server.Application.Reports;
 using Meimad.Planner.Server.Application.PlanningBoard;
 using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Application.TvDashboard;
@@ -63,6 +73,7 @@ public static class ServerApplication
         var eInkOptions = EInkOptions.FromConfiguration(
             builder.Configuration,
             builder.Environment.ContentRootPath);
+        var timelineOptions = TimelineOptions.FromConfiguration(builder.Configuration);
 
         builder.Services.AddSingleton(serverOptions);
         builder.Services.AddSingleton(databaseOptions);
@@ -70,9 +81,18 @@ public static class ServerApplication
         builder.Services.AddSingleton(backupOptions);
         builder.Services.AddSingleton(tvDashboardOptions);
         builder.Services.AddSingleton(eInkOptions);
+        builder.Services.AddSingleton(timelineOptions);
         builder.Services.AddSingleton<SqliteDatabase>();
         builder.Services.AddSingleton<DatabaseMigrator>();
         builder.Services.AddSingleton<SqliteBackupService>();
+        builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();
+        builder.Services.AddHttpClient<IIsraeliHolidaySource, HebcalIsraeliHolidaySource>(client =>
+        {
+            client.BaseAddress = new Uri("https://www.hebcal.com/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Meimad-Planner/0.1.2");
+        });
+        builder.Services.AddSingleton<AdministrativeSetupService>();
         builder.Services.AddSingleton<IPlanningDeletionRepository, SqlitePlanningDeletionRepository>();
         builder.Services.AddSingleton<PlanningDeletionService>();
         builder.Services.AddHostedService<DatabaseInitializationService>();
@@ -88,6 +108,10 @@ public static class ServerApplication
         builder.Services.AddSingleton<ProductionBatchService>();
         builder.Services.AddSingleton<IMachineRepository, SqliteMachineRepository>();
         builder.Services.AddSingleton<MachineService>();
+        builder.Services.AddSingleton<IMachineDowntimeRepository, SqliteMachineDowntimeRepository>();
+        builder.Services.AddSingleton<MachineDowntimeService>();
+        builder.Services.AddSingleton<IMachineTypeRepository, SqliteMachineTypeRepository>();
+        builder.Services.AddSingleton<MachineTypeService>();
         builder.Services.AddSingleton<IWorkingCalendarRepository, SqliteWorkingCalendarRepository>();
         builder.Services.AddSingleton<WorkingCalendarService>();
         builder.Services.AddSingleton<IMachineAssignmentRepository, SqliteMachineAssignmentRepository>();
@@ -105,6 +129,15 @@ public static class ServerApplication
         builder.Services.AddSingleton<EInkDeviceRegistrationService>();
         builder.Services.AddSingleton<IJobPackageRepository, SqliteJobPackageRepository>();
         builder.Services.AddSingleton<JobPackageService>();
+        builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
+        builder.Services.AddSingleton<IMaterialReportEmailSender, SmtpMaterialReportEmailSender>();
+        builder.Services.AddSingleton<WeeklyMaterialReportService>();
+        builder.Services.AddHostedService<WeeklyMaterialReportScheduler>();
+        builder.Services.AddSingleton<IWeeklyEmployeeEfficiencyRepository, SqliteWeeklyEmployeeEfficiencyRepository>();
+        builder.Services.AddSingleton<IEmployeeEfficiencyEmailSender, SmtpEmployeeEfficiencyEmailSender>();
+        builder.Services.AddSingleton<WeeklyEmployeeEfficiencyReportService>();
+        builder.Services.AddHostedService<WeeklyEmployeeEfficiencyReportScheduler>();
+        builder.Services.AddSingleton<IStructuredEventLogRepository, SqliteStructuredEventLogRepository>();
         builder.Services.AddWindowsService(options =>
         {
             options.ServiceName = serverOptions.ServiceName;
@@ -150,11 +183,14 @@ public static class ServerApplication
             Path.Combine(eInkSimulatorRoot, "index.html"),
             "text/html; charset=utf-8"));
         application.MapCaseEndpoints();
+        application.MapAdministrativeSetupEndpoints();
         application.MapEditModeEndpoints();
         application.MapPlanningDeletionEndpoints();
         application.MapOrderEndpoints();
         application.MapProductionBatchEndpoints();
         application.MapMachineEndpoints();
+        application.MapMachineDowntimeEndpoints();
+        application.MapMachineTypeEndpoints();
         application.MapWorkingCalendarEndpoints();
         application.MapMachineAssignmentEndpoints();
         application.MapPlanningBoardEndpoints();
@@ -163,6 +199,9 @@ public static class ServerApplication
         application.MapEInkEndpoints();
         application.MapEInkDeviceRegistrationEndpoints();
         application.MapJobPackageEndpoints();
+        application.MapWeeklyMaterialReportEndpoints();
+        application.MapWeeklyEmployeeEfficiencyReportEndpoints();
+        application.MapStructuredEventLogEndpoints();
 
         RegisterLifecycleLogging(application, serverOptions);
 

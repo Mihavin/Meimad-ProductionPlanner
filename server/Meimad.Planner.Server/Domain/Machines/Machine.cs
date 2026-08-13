@@ -15,7 +15,9 @@ internal sealed record Machine(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? PicturePath = null);
+    string? PicturePath = null,
+    string? MachineTypeId = null,
+    IReadOnlyList<string>? MachineTypeCapabilities = null);
 
 internal sealed record MachineValues(
     string? Number,
@@ -26,7 +28,8 @@ internal sealed record MachineValues(
     string? WorkingCalendarId,
     bool? IsActive,
     bool? DisplayEnabled,
-    string? PicturePath = null);
+    string? PicturePath = null,
+    string? MachineTypeId = null);
 
 internal sealed record ValidatedMachineValues(
     string Number,
@@ -37,4 +40,5 @@ internal sealed record ValidatedMachineValues(
     string WorkingCalendarId,
     bool IsActive,
     bool DisplayEnabled,
-    string? PicturePath = null);
+    string? PicturePath = null,
+    string? MachineTypeId = null);

@@ -21,6 +21,7 @@ internal interface IOrderRepository
     Task<PlannerOrder?> UpdateAsync(
         PlannerOrder order,
         int expectedVersion,
+        bool statusWasExplicitlySet,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 }

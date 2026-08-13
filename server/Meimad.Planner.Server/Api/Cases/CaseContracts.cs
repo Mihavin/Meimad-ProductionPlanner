@@ -44,7 +44,13 @@ internal sealed record CreateCaseOperationRequest(
     int? CycleTimePerPartSeconds,
     string? DependencyType,
     string? PredecessorCaseOperationId,
-    string? SimultaneousGroupKey)
+    string? SimultaneousGroupKey,
+    int QaTimeAfterSetupSeconds = 0,
+    int LoadUnloadTimeSeconds = 0,
+    bool LoadUnloadRequiresWorker = false,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null,
+    bool DayShiftOnly = false)
 {
     internal CreateCaseOperationCommand ToCommand() => new(
         OperationNumber,
@@ -54,7 +60,13 @@ internal sealed record CreateCaseOperationRequest(
         CycleTimePerPartSeconds,
         DependencyType,
         PredecessorCaseOperationId,
-        SimultaneousGroupKey);
+        SimultaneousGroupKey,
+        QaTimeAfterSetupSeconds,
+        LoadUnloadTimeSeconds,
+        LoadUnloadRequiresWorker,
+        AutomaticLoading,
+        LoadUnloadEveryNParts,
+        DayShiftOnly);
 }
 
 internal sealed class PatchCaseRequest
@@ -184,7 +196,13 @@ internal sealed class PatchCaseOperationRequest
             reader.ReadNullableInt32("cycleTimePerPartSeconds"),
             reader.ReadString("dependencyType"),
             reader.ReadString("predecessorCaseOperationId"),
-            reader.ReadString("simultaneousGroupKey"));
+            reader.ReadString("simultaneousGroupKey"),
+            reader.ReadInt32("qaTimeAfterSetupSeconds"),
+            reader.ReadInt32("loadUnloadTimeSeconds"),
+            reader.ReadBoolean("loadUnloadRequiresWorker"),
+            reader.ReadBoolean("automaticLoading"),
+            reader.ReadNullableInt32("loadUnloadEveryNParts"),
+            reader.ReadBoolean("dayShiftOnly"));
 
         reader.ThrowIfInvalid();
         return command;
@@ -201,7 +219,13 @@ internal sealed class PatchCaseOperationRequest
             "cycleTimePerPartSeconds",
             "dependencyType",
             "predecessorCaseOperationId",
-            "simultaneousGroupKey"
+            "simultaneousGroupKey",
+            "qaTimeAfterSetupSeconds",
+            "loadUnloadTimeSeconds",
+            "loadUnloadRequiresWorker",
+            "automaticLoading",
+            "loadUnloadEveryNParts",
+            "dayShiftOnly"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -262,6 +286,22 @@ internal sealed class PatchCaseOperationRequest
 
             AddTypeIssue(name, "32-bit integer or null");
             return OptionalField<int?>.Unspecified;
+        }
+
+        internal OptionalField<bool> ReadBoolean(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return OptionalField<bool>.Unspecified;
+            }
+
+            if (element.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return OptionalField<bool>.Specified(element.GetBoolean());
+            }
+
+            AddTypeIssue(name, "boolean");
+            return OptionalField<bool>.Unspecified;
         }
 
         internal OptionalField<string?> ReadString(string name)
@@ -360,7 +400,13 @@ internal sealed record CaseOperationResponse(
     string? SimultaneousGroupKey,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    int QaTimeAfterSetupSeconds,
+    int LoadUnloadTimeSeconds,
+    bool LoadUnloadRequiresWorker,
+    bool AutomaticLoading,
+    int? LoadUnloadEveryNParts,
+    bool DayShiftOnly)
 {
     internal static CaseOperationResponse FromApplication(CaseOperationDetails operation) => new(
         operation.CaseOperationId,
@@ -376,7 +422,13 @@ internal sealed record CaseOperationResponse(
         operation.SimultaneousGroupKey,
         operation.Version,
         operation.CreatedAt,
-        operation.UpdatedAt);
+        operation.UpdatedAt,
+        operation.QaTimeAfterSetupSeconds,
+        operation.LoadUnloadTimeSeconds,
+        operation.LoadUnloadRequiresWorker,
+        operation.AutomaticLoading,
+        operation.LoadUnloadEveryNParts,
+        operation.DayShiftOnly);
 }
 
 internal sealed record CaseOperationListResponse(

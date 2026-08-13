@@ -77,6 +77,65 @@ public sealed class PlanningDeletionApiTests
         });
     }
 
+    [Fact]
+    public async Task Batch_delete_recomputes_every_affected_order_after_last_allocation()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO orders (
+                        id, case_id, order_reference, quantity, work_finish_date,
+                        status, version)
+                    VALUES
+                        ('delete-complete', 'case-1', 'SO-COMPLETE', 1, '2026-09-01', 'complete', 4),
+                        ('delete-running', 'case-1', 'SO-RUNNING', 1, '2026-09-01', 'in_production', 5),
+                        ('delete-cancelled', 'case-1', 'SO-CANCELLED', 1, '2026-09-01', 'cancelled', 6);
+                    INSERT INTO production_batches (
+                        id, case_id, batch_number, status, planned_quantity)
+                    VALUES ('batch-delete-statuses', 'case-1', 'B-DELETE-STATUSES', 'complete', 3);
+                    INSERT INTO batch_allocations (
+                        id, production_batch_id, allocation_type, order_id, quantity)
+                    VALUES
+                        ('delete-allocation-complete', 'batch-delete-statuses', 'order', 'delete-complete', 1),
+                        ('delete-allocation-running', 'batch-delete-statuses', 'order', 'delete-running', 1),
+                        ('delete-allocation-cancelled', 'batch-delete-statuses', 'order', 'delete-cancelled', 1);
+                    INSERT INTO batch_operations (
+                        id, production_batch_id, source_case_operation_id,
+                        operation_number, route_position, name, status)
+                    VALUES (
+                        'delete-status-operation', 'batch-delete-statuses', 'case-op-1',
+                        10, 0, 'Complete work', 'completed');
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.DeleteAsync(
+                "/api/v1/batches/batch-delete-statuses");
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal(("active", 5), await ReadOrderStatusAndVersionAsync(
+                verify,
+                "delete-complete"));
+            Assert.Equal(("active", 6), await ReadOrderStatusAndVersionAsync(
+                verify,
+                "delete-running"));
+            Assert.Equal(("cancelled", 6), await ReadOrderStatusAndVersionAsync(
+                verify,
+                "delete-cancelled"));
+            Assert.Equal(0L, await CountAsync(
+                verify,
+                "production_batches",
+                "batch-delete-statuses"));
+        });
+    }
+
     private static async Task AssertBlockedAsync(HttpClient client, string path)
     {
         using var response = await client.DeleteAsync(path);
@@ -91,6 +150,18 @@ public sealed class PlanningDeletionApiTests
         command.CommandText = $"SELECT COUNT(*) FROM {table} WHERE id = $id;";
         command.Parameters.AddWithValue("$id", id);
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task<(string Status, int Version)> ReadOrderStatusAndVersionAsync(
+        SqliteConnection connection,
+        string orderId)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT status, version FROM orders WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", orderId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return (reader.GetString(0), reader.GetInt32(1));
     }
 
     private static void AddHeaders(HttpClient client)

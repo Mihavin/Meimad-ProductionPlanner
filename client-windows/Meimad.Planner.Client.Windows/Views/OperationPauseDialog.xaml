@@ -1,0 +1,29 @@
+<Window x:Class="Meimad.Planner.Client.Windows.Views.OperationPauseDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pause operation" Width="520" Height="570"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="Structured pause reason" FontSize="18" FontWeight="Bold"/>
+        <StackPanel Grid.Row="1" Margin="0,12,0,0"><TextBlock Text="Reason"/><ComboBox x:Name="Reason" SelectionChanged="Reason_Changed">
+            <ComboBoxItem Tag="additional_qa" Content="Additional QA" IsSelected="True"/>
+            <ComboBoxItem Tag="tooling_problem" Content="Tooling missing / problem"/>
+            <ComboBoxItem Tag="customer_request" Content="Customer request"/>
+            <ComboBoxItem Tag="other" Content="Other"/>
+        </ComboBox></StackPanel>
+        <StackPanel x:Name="ProblemPanel" Grid.Row="2" Margin="0,8,0,0"><TextBlock Text="Problem description *"/><TextBox x:Name="Problem" MaxLength="2000"/></StackPanel>
+        <StackPanel x:Name="ToolingPanel" Grid.Row="3" Margin="0,8,0,0" Visibility="Collapsed"><TextBlock Text="Missing / problem item *"/><TextBox x:Name="Tooling" MaxLength="2000"/></StackPanel>
+        <StackPanel x:Name="ContactPanel" Grid.Row="4" Margin="0,8,0,0" Visibility="Collapsed"><TextBlock Text="Customer contact name *"/><TextBox x:Name="Contact" MaxLength="2000"/></StackPanel>
+        <StackPanel x:Name="RequestPanel" Grid.Row="5" Margin="0,8,0,0" Visibility="Collapsed"><TextBlock Text="Customer request description *"/><TextBox x:Name="Request" MaxLength="2000"/></StackPanel>
+        <StackPanel Grid.Row="6" Margin="0,8,0,0"><TextBlock Text="Comment (required for Other)"/><TextBox x:Name="Comment" Height="90" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="2000"/></StackPanel>
+        <TextBlock x:Name="Validation" Grid.Row="7" Foreground="#B42318" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel" IsCancel="True" Margin="0,0,8,0"/><Button Content="Pause" Click="Pause_Click" IsDefault="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

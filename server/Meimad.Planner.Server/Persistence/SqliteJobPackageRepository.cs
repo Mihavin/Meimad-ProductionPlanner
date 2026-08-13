@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.JobPackages;
 using Meimad.Planner.Server.Domain.JobPackages;
@@ -8,6 +9,7 @@ namespace Meimad.Planner.Server.Persistence;
 
 internal sealed class SqliteJobPackageRepository : IJobPackageRepository
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SqliteDatabase database;
 
     public SqliteJobPackageRepository(SqliteDatabase database)
@@ -71,6 +73,28 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
         }
 
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<JobPackageSetupWorker?> ReadSetupWorkerAsync(
+        string resourceId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, first_name, last_name, photo_path
+            FROM employee_resources
+            WHERE id = $resourceId
+              AND resource_type = 'setup_worker'
+              AND is_active = 1;
+            """;
+        command.Parameters.AddWithValue("$resourceId", resourceId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new JobPackageSetupWorker(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                NullableString(reader, 3))
+            : null;
     }
 
     private static async Task<JobPackageGenerationContext?> ReadContextAsync(
@@ -160,13 +184,21 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
                 machine_id, machine_number, machine_name,
                 case_id, part_number, part_name, part_revision, customer,
                 production_batch_id, batch_number, planned_quantity,
-                operation_number, operation_name, created_at, updated_at)
+                operation_number, operation_name,
+                setup_worker_id, setup_worker_first_name, setup_worker_last_name,
+                setup_worker_photo_file_id, planned_setup_starts_at, planned_setup_ends_at,
+                job_tools_json, expected_machine_tools_json, local_checklist_items_json,
+                created_at, updated_at)
             VALUES (
                 $id, $batchOperationId, $revision, $toolCartId, $publishedAt,
                 $machineId, $machineNumber, $machineName,
                 $caseId, $partNumber, $partName, $partRevision, $customer,
                 $batchId, $batchNumber, $plannedQuantity,
-                $operationNumber, $operationName, $publishedAt, $publishedAt);
+                $operationNumber, $operationName,
+                $setupWorkerId, $setupWorkerFirstName, $setupWorkerLastName,
+                $setupWorkerPhotoFileId, $plannedSetupStartsAt, $plannedSetupEndsAt,
+                $jobToolsJson, $expectedMachineToolsJson, $localChecklistItemsJson,
+                $publishedAt, $publishedAt);
             """;
         Bind(command, "$id", package.PackageId);
         Bind(command, "$batchOperationId", snapshot.BatchOperationId);
@@ -186,6 +218,21 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
         Bind(command, "$plannedQuantity", snapshot.PlannedQuantity);
         Bind(command, "$operationNumber", snapshot.OperationNumber);
         Bind(command, "$operationName", snapshot.OperationName);
+        Bind(command, "$setupWorkerId", snapshot.SetupWorker?.ResourceId);
+        Bind(command, "$setupWorkerFirstName", snapshot.SetupWorker?.FirstName);
+        Bind(command, "$setupWorkerLastName", snapshot.SetupWorker?.LastName);
+        Bind(command, "$setupWorkerPhotoFileId", snapshot.SetupWorker?.PhotoFileId);
+        Bind(command, "$plannedSetupStartsAt", snapshot.PlannedSetupStartsAt is null
+            ? null
+            : Iso(snapshot.PlannedSetupStartsAt.Value));
+        Bind(command, "$plannedSetupEndsAt", snapshot.PlannedSetupEndsAt is null
+            ? null
+            : Iso(snapshot.PlannedSetupEndsAt.Value));
+        Bind(command, "$jobToolsJson", JsonSerializer.Serialize(snapshot.JobTools ?? [], JsonOptions));
+        Bind(command, "$expectedMachineToolsJson", JsonSerializer.Serialize(
+            snapshot.ExpectedMachineTools ?? [], JsonOptions));
+        Bind(command, "$localChecklistItemsJson", JsonSerializer.Serialize(
+            snapshot.LocalChecklistItems ?? [], JsonOptions));
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

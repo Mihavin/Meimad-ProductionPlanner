@@ -54,14 +54,30 @@ public sealed class TvDashboardApiTests
             using var page = await client.GetAsync("/tv-dashboard/");
             Assert.Equal(HttpStatusCode.OK, page.StatusCode);
             var html = await page.Content.ReadAsStringAsync();
-            Assert.Contains("READ-ONLY SHOP-FLOOR DISPLAY", html, StringComparison.Ordinal);
+            Assert.Contains("<h1>Machine status</h1>", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"server-status\"", html, StringComparison.Ordinal);
             Assert.DoesNotContain("<button", html, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("<form", html, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("<input", html, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Server URL", html, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("host address", html, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Urgent batches", html, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Current job", html, StringComparison.OrdinalIgnoreCase);
+
+            using var styles = await client.GetAsync("/tv-dashboard/styles.css");
+            var css = await styles.Content.ReadAsStringAsync();
+            Assert.Contains("overflow: hidden", css, StringComparison.Ordinal);
+            Assert.Contains("grid-template-rows: repeat(var(--grid-rows)", css, StringComparison.Ordinal);
 
             using var script = await client.GetAsync("/tv-dashboard/app.js");
             var javascript = await script.Content.ReadAsStringAsync();
             Assert.Contains("setTimeout(refresh", javascript, StringComparison.Ordinal);
+            Assert.Contains("fitGrid(machines.length)", javascript, StringComparison.Ordinal);
+            Assert.Contains("server-status-connected", css, StringComparison.Ordinal);
+            Assert.DoesNotContain("machine.current", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("machine.next", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("connection-banner", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
 
             using var post = await client.PostAsync("/api/v1/tv-dashboard", null);

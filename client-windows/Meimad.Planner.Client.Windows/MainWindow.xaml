@@ -3,206 +3,188 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
         Title="Meimad Production Planner"
-        Width="1380"
-        Height="900"
-        MinWidth="1100"
-        MinHeight="720"
+        Width="1380" Height="900" MinWidth="1100" MinHeight="720"
         Background="{StaticResource CanvasBrush}"
         Foreground="{StaticResource PrimaryTextBrush}"
         FontFamily="Segoe UI">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#18324A" Padding="28,20">
+        <Border Grid.Row="0" Background="#18324A" Padding="16,9">
             <DockPanel LastChildFill="True">
-                <TextBlock DockPanel.Dock="Right"
-                           Text="{Binding LocalIdentityText}"
-                           Foreground="White"
-                           Opacity="0.88"
-                           VerticalAlignment="Center" />
-                <StackPanel>
-                    <TextBlock Text="MEIMAD PRODUCTION PLANNER"
-                               Foreground="White"
-                               FontSize="22"
-                               FontWeight="Bold" />
-                    <TextBlock Text="Factory-local Windows planning client"
-                               Foreground="White"
-                               Opacity="0.72"
-                               Margin="0,4,0,0" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="28" Height="28" Background="Transparent" Margin="0,0,8,0"
+                            AutomationProperties.Name="Server connection status">
+                        <Border.ToolTip>
+                            <StackPanel MaxWidth="320">
+                                <TextBlock Text="{Binding HealthHeadline}" FontWeight="Bold" />
+                                <TextBlock Text="{Binding HealthDetail}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Border.ToolTip>
+                        <Ellipse x:Name="ServerStatusIndicator" Width="12" Height="12"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                                 AutomationProperties.Name="{Binding HealthHeadline}"
+                                 AutomationProperties.HelpText="{Binding HealthDetail}">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource GreyBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HealthLevel}" Value="healthy"><Setter Property="Fill" Value="{StaticResource GreenBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding HealthLevel}" Value="attention"><Setter Property="Fill" Value="{StaticResource YellowBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding HealthLevel}" Value="offline"><Setter Property="Fill" Value="{StaticResource RedBrush}" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                    </Border>
+
+                    <Button x:Name="EditModeToggleButton" Click="ToggleEditMode_Click"
+                            Width="30" Height="30" Padding="3" Margin="0,0,4,0">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="IsEnabled" Value="False" />
+                                <Setter Property="AutomationProperties.Name" Value="Edit Mode unavailable" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ModeLevel}" Value="viewer">
+                                        <Setter Property="IsEnabled" Value="True" />
+                                        <Setter Property="AutomationProperties.Name" Value="Request Edit Mode" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
+                                        <Setter Property="IsEnabled" Value="True" />
+                                        <Setter Property="AutomationProperties.Name" Value="Release Edit Mode" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding ModeLevel}" Value="requesting">
+                                        <Setter Property="AutomationProperties.Name" Value="Edit Mode request pending" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <Button.ToolTip>
+                            <StackPanel MaxWidth="320">
+                                <TextBlock FontWeight="Bold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="Edit Mode unavailable" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ModeLevel}" Value="viewer"><Setter Property="Text" Value="Request Edit Mode" /></DataTrigger>
+                                                <DataTrigger Binding="{Binding ModeLevel}" Value="editor"><Setter Property="Text" Value="Release Edit Mode" /></DataTrigger>
+                                                <DataTrigger Binding="{Binding ModeLevel}" Value="requesting"><Setter Property="Text" Value="Edit Mode request pending" /></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding ModeDetail}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Button.ToolTip>
+                        <Grid Width="16" Height="16">
+                            <Grid x:Name="LockedIcon">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Path Data="M4,7 L4,5 C4,2.8 5.8,1 8,1 C10.2,1 12,2.8 12,5 L12,7"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                <Border Width="12" Height="9" VerticalAlignment="Bottom" CornerRadius="1"
+                                        Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            </Grid>
+                            <Grid x:Name="UnlockedIcon">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Path Data="M12,7 L12,5 C12,2.8 10.2,1 8,1 C5.8,1 4,2.8 4,5"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                <Border Width="12" Height="9" VerticalAlignment="Bottom" CornerRadius="1"
+                                        Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            </Grid>
+                        </Grid>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="MEIMAD" Foreground="White" FontSize="17" FontWeight="Bold" />
+                    <TextBlock Text="  PRODUCTION PLANNER" Foreground="White" Opacity="0.72"
+                               FontSize="13" VerticalAlignment="Center" />
                 </StackPanel>
             </DockPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <StackPanel Margin="28">
-                <Border Background="{StaticResource PanelBrush}"
-                        BorderBrush="#D8DDE3"
-                        BorderThickness="1"
-                        CornerRadius="5"
-                        Padding="20">
-                    <StackPanel>
-                        <TextBlock Text="Server connection"
-                                   FontSize="18"
-                                   FontWeight="SemiBold" />
-                        <TextBlock Text="Settings are stored locally. This client connects only through HTTP API routes."
-                                   Foreground="{StaticResource MutedTextBrush}"
-                                   Margin="0,4,0,16" />
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="18" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="18" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Server URL" FontWeight="SemiBold" Margin="0,0,0,5" />
-                                <TextBox Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Local user name" FontWeight="SemiBold" Margin="0,0,0,5" />
-                                <TextBox Text="{Binding LocalUserName, UpdateSourceTrigger=PropertyChanged}" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Bottom">
-                                <Button Content="Connect / Save" Command="{Binding ConnectCommand}" />
-                                <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="0" />
-                            </StackPanel>
-                        </Grid>
-                    </StackPanel>
-                </Border>
-
-                <Grid Margin="0,18,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="18" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <Border Grid.Column="0"
-                            Background="{StaticResource PanelBrush}"
-                            BorderBrush="#D8DDE3"
-                            BorderThickness="1"
-                            CornerRadius="5"
-                            Padding="20">
-                        <StackPanel>
-                            <TextBlock Text="SERVER STATUS" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" />
-                            <TextBlock Text="{Binding HealthHeadline}" FontSize="22" FontWeight="SemiBold" Margin="0,12,0,4">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="{StaticResource GreyBrush}" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HealthLevel}" Value="healthy">
-                                                <Setter Property="Foreground" Value="{StaticResource GreenBrush}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding HealthLevel}" Value="attention">
-                                                <Setter Property="Foreground" Value="{StaticResource OrangeBrush}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding HealthLevel}" Value="offline">
-                                                <Setter Property="Foreground" Value="{StaticResource RedBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <TextBlock Text="{Binding HealthDetail}"
-                                       Foreground="{StaticResource MutedTextBrush}"
-                                       TextWrapping="Wrap" />
-                        </StackPanel>
-                    </Border>
-
-                    <Border Grid.Column="2"
-                            Background="{StaticResource PanelBrush}"
-                            BorderBrush="#D8DDE3"
-                            BorderThickness="1"
-                            CornerRadius="5"
-                            Padding="20">
-                        <StackPanel>
-                            <TextBlock Text="EDIT AUTHORITY" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" />
-                            <TextBlock Text="{Binding ModeHeadline}" FontSize="22" FontWeight="SemiBold" Margin="0,12,0,4">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="{StaticResource GreyBrush}" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
-                                                <Setter Property="Foreground" Value="{StaticResource BlueBrush}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding ModeLevel}" Value="requesting">
-                                                <Setter Property="Foreground" Value="{StaticResource OrangeBrush}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding ModeLevel}" Value="viewer">
-                                                <Setter Property="Foreground" Value="{StaticResource GreyBrush}" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding ModeLevel}" Value="offline">
-                                                <Setter Property="Foreground" Value="{StaticResource RedBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <TextBlock Text="{Binding ModeDetail}"
-                                       Foreground="{StaticResource MutedTextBrush}"
-                                       TextWrapping="Wrap" />
-                            <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                                <Button Content="Request Edit Mode" Command="{Binding RequestEditCommand}" />
-                                <Button Content="Release Edit Mode" Command="{Binding ReleaseEditCommand}" Margin="0" />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-                </Grid>
-
-                <Border Background="#FFF8E1"
-                        BorderBrush="{StaticResource YellowBrush}"
-                        BorderThickness="1"
-                        CornerRadius="5"
-                        Padding="18"
-                        Margin="0,18,0,0">
-                    <Border.Style>
-                        <Style TargetType="Border">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding HasPendingTransfer}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                    <DockPanel>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button Content="Release / Transfer" Command="{Binding ApproveTransferCommand}" />
-                            <Button Content="Reject" Command="{Binding RejectTransferCommand}" Margin="0" />
-                        </StackPanel>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Text="⚠ Edit Mode transfer request" FontWeight="Bold" FontSize="16" />
-                            <TextBlock Text="{Binding PendingTransferText}" Margin="0,5,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                    </DockPanel>
-                </Border>
-
-                <TabControl Margin="0,18,0,0">
-                    <TabItem Header="Cases">
-                        <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="8" />
-                    </TabItem>
-                    <TabItem Header="Machine Planning Board">
-                        <views:MachinePlanningBoardView DataContext="{Binding MachinePlanningBoard}" Margin="8" />
-                    </TabItem>
-                    <TabItem Header="Timeline">
-                        <views:TimelineView DataContext="{Binding Timeline}" Margin="8" />
-                    </TabItem>
-                </TabControl>
-            </StackPanel>
-        </ScrollViewer>
-
-        <Border Grid.Row="2" Background="#E7EBEF" Padding="28,10">
+        <Border Grid.Row="1" Background="#FFF8E1" BorderBrush="{StaticResource YellowBrush}"
+                BorderThickness="0,0,0,1" Padding="12,7">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasPendingTransfer}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
             <DockPanel>
-                <TextBlock DockPanel.Dock="Right"
-                           Text="No direct database access"
-                           FontWeight="SemiBold"
-                           Foreground="{StaticResource GreenBrush}" />
-                <TextBlock Text="Status refreshes every 5 seconds while the Server is available."
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Release / Transfer" Command="{Binding ApproveTransferCommand}" />
+                    <Button Content="Reject" Command="{Binding RejectTransferCommand}" Margin="0" />
+                </StackPanel>
+                <TextBlock Text="{Binding PendingTransferText}" FontWeight="SemiBold"
+                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+            </DockPanel>
+        </Border>
+
+        <TabControl Grid.Row="2" Margin="12,8,12,6">
+            <TabItem Header="Cases">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Planning Board">
+                <views:MachinePlanningBoardView DataContext="{Binding MachinePlanningBoard}" Margin="5" />
+            </TabItem>
+            <TabItem Header="Timeline">
+                <Grid Margin="5">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="0,0,0,5">
+                        <Button DockPanel.Dock="Right" Content="Open in Separate Window"
+                                ToolTip="Open this same live, read-only Timeline in a reusable window."
+                                Click="OpenTimelineWindow_Click" Margin="0" />
+                        <TextBlock Text="The Timeline is read-only and refreshes from committed Server state."
+                                   Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <views:TimelineView DataContext="{Binding Timeline}" />
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Setup">
+                <views:SetupView DataContext="{Binding Setup}" Margin="5" />
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="3" Background="#E7EBEF" Padding="14,5">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="No direct database access"
+                           FontWeight="SemiBold" Foreground="{StaticResource GreenBrush}" />
+                <TextBlock Text="Status and the separate Timeline refresh while the Server is available."
                            Foreground="{StaticResource MutedTextBrush}" />
             </DockPanel>
         </Border>

@@ -40,7 +40,19 @@ internal sealed record JobPackageSnapshot(
     int PlannedQuantity,
     string BatchOperationId,
     int OperationNumber,
-    string OperationName);
+    string OperationName,
+    SetupWorkerSnapshot? SetupWorker = null,
+    DateTimeOffset? PlannedSetupStartsAt = null,
+    DateTimeOffset? PlannedSetupEndsAt = null,
+    IReadOnlyList<ToolTableEntry>? JobTools = null,
+    IReadOnlyList<ToolTableEntry>? ExpectedMachineTools = null,
+    IReadOnlyList<LocalChecklistItem>? LocalChecklistItems = null);
+
+internal sealed record SetupWorkerSnapshot(
+    string ResourceId,
+    string FirstName,
+    string LastName,
+    string? PhotoFileId);
 
 internal sealed record JobPackageAsset(
     string FileId,
@@ -73,3 +85,5 @@ internal sealed record OffsetEntry(
     string Value,
     string? Unit,
     string? Note);
+
+internal sealed record LocalChecklistItem(string ItemId, string Label);

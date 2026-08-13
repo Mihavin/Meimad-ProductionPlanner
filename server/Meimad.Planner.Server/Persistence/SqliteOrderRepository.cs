@@ -115,12 +115,46 @@ internal sealed class SqliteOrderRepository : IOrderRepository
     public async Task<PlannerOrder?> UpdateAsync(
         PlannerOrder order,
         int expectedVersion,
+        bool statusWasExplicitlySet,
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+
+        var productionFacts = await SqliteOrderLifecycle.ReadFactsAsync(
+            connection, transaction, order.OrderId, order.Quantity, cancellationToken);
+        if (productionFacts.AllocatedQuantity > order.Quantity)
+        {
+            throw new OrderQuantityBelowAllocatedException(
+                order.OrderId,
+                productionFacts.AllocatedQuantity);
+        }
+
+        if (productionFacts.HasAllocatedBatch)
+        {
+            var derivedStatus = OrderLifecycle.Derive(productionFacts);
+            if (!statusWasExplicitlySet && order.Status == OrderStatus.Cancelled)
+            {
+                // Cancellation is an explicit legacy/manual state. Automatic derivation must
+                // not erase it; an explicit matching production status resumes the lifecycle.
+            }
+            else if (statusWasExplicitlySet && order.Status != derivedStatus)
+            {
+                throw new OrderDerivedStatusException(order.OrderId, derivedStatus);
+            }
+            else
+            {
+                order = order with { Status = derivedStatus };
+            }
+        }
+        else if (statusWasExplicitlySet
+                 && order.Status is OrderStatus.InProduction or OrderStatus.Complete)
+        {
+            throw new OrderManualProductionStatusException(
+                "An unallocated Order status may be active or cancelled; production status is derived by the Server.");
+        }
 
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;

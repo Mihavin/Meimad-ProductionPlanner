@@ -1,9 +1,43 @@
 # Architectural and correctness verification report
 
-- **Verification date:** 2026-08-11
+- **Baseline verification date:** 2026-08-11
+- **Current change review date:** 2026-08-13
 - **Repository:** `Meimad-ProductionPlanner`
-- **Runtime tested:** .NET SDK 10.0.302, Debug and Release
-- **Verdict:** Core automated MVP behavior passes; production acceptance is **conditional** on the high- and medium-priority gaps below.
+- **Baseline runtime tested:** .NET SDK 10.0.302, Debug and Release
+- **Verdict:** The schema-v22 Server and Windows automated suites pass with 310 tests and no failures/skips. Windows layout/workflow, live SMTP-provider behavior, physical-device, production-service, network-security, and disaster-recovery acceptance remain manual/environmental gaps.
+
+## 0. Schema-v17 change addendum (automated pass; manual checks pending)
+
+Static documentation/code review identifies the following additions in the current working tree:
+
+- schema v10 Machine Type catalog/linkage, Setup Calendar singleton selection, and allocated-Order lifecycle migration;
+- Working Calendar read/update/guarded-delete, usage/work/break/dated-exception authoring, and dedicated Setup Calendar read/set/clear routes;
+- Machine Type CRUD, linkage, inherited compatibility capabilities, and guarded deletion;
+- cross-type Machine assignment warning/confirmation, mandatory reason validation, and immutable actor/type/time audit;
+- linked-Order `active` / `in_production` / `complete` derivation plus quantity/status edit guards;
+- Planning Board planned quantity, allocated Order references, nullable input-derived estimated time, compact cards, and player-style execution controls;
+- a compact connection/Edit Mode header, dedicated Setup page, optimistic Order editing, and a shared read-only Timeline available in the main window or a separate closable window; and
+- schema v11 isolated Employee/Resource and Israeli-holiday CRUD plus optimistic report/email settings; schema v12 adds detailed employee fields, exact roles, normalized skills, restrictive role-compatible Calendar linkage, photo/notes storage, and an active-only resource view; schema v13 adds employee exception CRUD and deterministic exception-aware availability; and
+- schema v16 extended Case/Batch Operation timing snapshots, configurable day-shift-only policy, role-constrained Timeline phases in setup/QA/load-unload/production order, and extended compact-card estimates.
+- individual employee contention, setup Machine-skill matching, calendar/break/exception-aware worker reservations, and visible resource-waiting explanations without backlog mutation.
+- deterministic resource priority by earliest allocated-Order Work Finish Date and naturally smaller Order Number, with the deciding reason retained in the delayed interval and no persisted backlog mutation.
+- schema v17 planned-maintenance and open-breakdown storage/API lifecycle, optimistic maintenance edit/Restore, Setup Machine Availability UI, and reason-preserving Timeline/TV downtime projection.
+
+Current automated result:
+
+| Test assembly | Passed | Failed | Skipped |
+|---|---:|---:|---:|
+| `Meimad.Planner.Server.Tests` | 217 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 91 | 0 | 0 |
+| **Total** | **308** | **0** | **0** |
+
+Focused current tests cover schema-v10 through schema-v21 creation/upgrade, managed Setup Calendar behavior, recurring Working Calendar rules, Machine and Machine Type management, planned-maintenance create/edit, open breakdown blocking and recovery, reason-preserving Timeline projection, detailed Employee/Resource CRUD, holiday cache behavior, extended Operation timing snapshots, resource contention, and the planning/dependency/status/UI coverage described below. Weekly material-report tests verify minimal fields, scrap-inclusive aggregation, configured recipients, manual send, and idempotent scheduled delivery through a fake mail transport. Employee-efficiency tests verify employee-role grouping, planned/actual/difference and percentage calculations, calendar-derived capacity, measurement recording, manual send, configured recipients, and idempotent scheduled delivery. These automated tests do not establish visual or operational acceptance. Manual Windows checks, production-sized contention, live measurement-source integration, and live SMTP-relay delivery remain pending. Authenticated SMTP credential storage is not implemented. Physical TV/E-Ink, production Windows Service, LAN/TLS/authentication, backup/disaster recovery, and shop-floor display checks also remain pending.
+
+Current Release command:
+
+```powershell
+dotnet test .\server\Meimad.Planner.Server.slnx -c Release --artifacts-path .qa\release-0.1.2-tests
+```
 
 ## 1. Scope and method
 
@@ -32,7 +66,7 @@ The repository demonstrates a coherent client-server vertical slice:
 - E-Ink credentials are device-scoped and blocked from other API surfaces; and
 - SQLite backups are consistent, integrity-checked, and restored to an isolated test location for verification.
 
-This is not yet production-ready. The largest blockers are the absence of production human/TV authentication and TLS, and a backup boundary that protects SQLite metadata but not the official package-file root. Several contract surfaces also remain incomplete, particularly Case Operation reorder, calendar/downtime authoring, and a standalone conflict resource.
+This is not yet production-ready. The largest blockers are the absence of production human/TV authentication and TLS, and a backup boundary that protects SQLite metadata but not the official package-file root. Several contract surfaces also remain incomplete, particularly Case Operation reorder, Calendar archive/overnight policy, downtime recurrence/cancellation, and a standalone conflict resource.
 
 ## 3. End-to-end acceptance dataset
 
@@ -59,16 +93,16 @@ The dataset deliberately does not simulate device-local checklist/comments. Focu
 | Area | Result | Evidence and conclusion |
 |---|---|---|
 | Specification compliance | **Partial pass** | Required MVP component boundaries exist and excluded products are absent. The implemented subset is accurately described as partial in the project docs. Production security, some resource APIs, operating policies, and physical-device acceptance remain unresolved. |
-| Data model | **Partial pass** | Schema v9 has required tables, timestamps, restrictive foreign keys, checks, server-owned migrations, immutable Batch scalar/dependency and package metadata, path-only Case/Machine images, derived Case timing/Batch lifecycle, and orphan tests. Aggregate route revision, arbitrary dependency fan-in/out, actual-time history, and audit rules remain open. |
-| API boundaries | **Partial pass** | Windows and web clients use HTTP and contain no SQLite dependency. Planning writes are Server commands. E-Ink file paths stay internal. Optimistic Case Operation edit, basic weekly Working Calendar creation, version-checked Machine editing, and guarded Case/Operation/Order/Batch/Machine deletion are implemented; route reorder, calendar update/exceptions, Downtime mutation, and the documented standalone `/api/v1/conflicts` route are not. Human/TV auth is absent. |
+| Data model | **Automated pass / policy gap** | The current Server suite passes with schema-v10 creation/backfill coverage for Machine Types, the Setup Calendar singleton, and allocated-Order status normalization, schema-v11 administrative tables, schema-v12 Employee/Resource details and Calendar linkage, schema-v13 employee exceptions, schema-v14 holiday cache policy, and schema-v15 immutable cross-type assignment overrides. Aggregate route revision, arbitrary dependency fan-in/out, actual-time history, and broader audit rules remain open. |
+| API boundaries | **Automated pass / coverage gap** | Windows and web clients remain HTTP/API-only and contain no SQLite dependency. Focused tests pass for Working Calendar usage/work/break/dated-exception CRUD and Setup selection, Machine and Machine Type CRUD/linkage, planned-maintenance/breakdown mutation, and allocation-safe Order PATCH. Route reorder, Calendar archive/overnight policy, downtime recurrence/cancellation, and standalone `/api/v1/conflicts` remain absent; human/TV auth is absent. |
 | Edit token concurrency | **Core pass / operational gap** | Immediate transactions, singleton token, unique pending request, generation invalidation, Release, Reject, voluntary release, and configured no-response transfer pass concurrency tests. Caller headers are not authenticated, and heartbeat/disconnect, notification, cancellation, audit, and history retention policies remain open. |
-| Batch allocation | **Core pass / policy gap** | One/multiple/split/stock/mixed/scrap cases and adversarial invalid requests pass. Same-Case ownership, positive rows, non-scrap purpose, and total equality are enforced in the creation transaction. Cross-Batch over-allocation against an Order and later reallocation/lifecycle policy are undefined. |
-| Machine assignment ordering | **Pass** | Compatible assign, unassign, same-Machine move, cross-Machine move, inactive/incompatible rejection, and stable contiguous order pass. No automatic Machine choice or scheduling is present. Plan-revision/optimistic concurrency beyond Edit Mode generation is not defined. |
-| Time calculation | **Core pass / model gap** | Fixed timestamps, recurring/local calendars and timezone conversion, setup, missing-setup-calendar fallback, downtime subtraction, sequential and locked-simultaneous behavior, reserved/idle intervals, cycles, and insufficient availability pass deterministic tests. The engine never writes or reorders. Shared setup capacity, in-progress work, final duration formula, dated exceptions, performance targets, and broader DST-edge coverage remain open. |
+| Batch allocation / Order lifecycle | **Automated pass / policy gap** | Historical allocation tests and current aggregate Order-lifecycle tests pass for multi-Order, split/partial/full completion, atomic Batch create/delete/operation recomputation, cancelled-allocation rejection/preservation/resume, server-owned status, and quantity/status edit guards. Cross-Batch over-allocation and later reallocation/cancellation policy remain undefined. |
+| Machine assignment ordering | **Automated pass** | Compatible assign/move/unassign, stable contiguous ordering, running-head displacement rejection, linked Machine Type capabilities, unsafe type-update/rename protection, and explicitly warned/reasoned/audited cross-type overrides are covered by the passing Server and Windows suites. Inactive Machines remain non-overridable. No automatic Machine choice, route change, or scheduling is present. |
+| Time calculation | **Automated pass / model gap** | Deterministic tests cover recurring/local calendars, individual employee contention and setup skill eligibility, break/absence/holiday subtraction, setup/QA/manual phases, downtime, dependencies, reservations, cycles, and insufficient availability without writes/reordering. Persisted worker assignment, qualification expiry, in-progress work, performance targets, and broader DST-edge coverage remain open. |
 | Conflicts | **Partial pass** | Timeline/TV return deterministic, explained conflicts such as missing timing, invalid Machine calendars, cycles, invalid dependencies, same-Machine simultaneous work, and insufficient availability. A missing separate setup calendar now produces an attention explanation and Machine-calendar-only scheduling rather than suppressing operations. There is no standalone conflict API, persisted conflict identity/history, due-date-risk rule, acknowledgement policy, or complete severity catalog. |
 | Backups | **Database pass / system gap** | Online snapshot, timestamped unique file, count retention, integrity/FK checks, isolated restore, active-DB protection, corruption rejection, and concurrent-write tests pass. Official E-Ink package bytes and external Case folders are outside the SQLite backup and have no coordinated backup/restore policy. Scheduling, encryption, access control, RPO, and RTO remain open. |
-| TV Dashboard read-only behavior | **Functional pass / security gap** | Projection and UI are GET-only; POST returns 405; HTML contains no form/input/button edit controls; JavaScript does not use Edit Mode. Conditional refresh, current/next and their execution status, urgency, downtime, conflicts, and stale-view retention are tested. TV authentication and target kiosk/display visual acceptance are not implemented. |
-| E-Ink read-only behavior | **Server pass / device gap** | Device-scoped token validation, revocation/rotation, version ETag, Machine screen, revision-qualified manifest/files, checksum enforcement, time config, simulator, and cross-surface 403 behavior pass. There is no checklist/comment or USB endpoint. Physical SD/deep-sleep/wake/error/last-known-good behavior, device secret storage, signatures, superseded-package retention, and hardware acceptance are not verified in this repository. |
+| TV Dashboard read-only behavior | **Automated pass / visual and security gap** | Projection and UI are GET-only; POST returns 405. Static regression tests require status-only markup, no form/input/button, no Server URL/host text, hidden viewport overflow, dynamic grid fitting, connection-dot states, conditional refresh, and no job/urgent rendering. Last-known status is retained on failure. TV authentication and physical 1080p/4K kiosk/read-distance acceptance remain unverified. |
+| E-Ink read-only behavior | **Server pass / device gap** | Device-scoped token validation, revocation/rotation, version ETag, Machine screen, revision-qualified manifest/files, checksum enforcement, time config, simulator, and cross-surface 403 behavior pass. Schema-v19 tests cover Timeline-derived setup worker/time, packaged worker photo, job/expected Machine tools, and local-only checklist policy. There is no checklist/comment write-back or USB endpoint. Physical SD/deep-sleep/wake/error/last-known-good behavior, device secret storage, signatures, superseded-package retention, and hardware acceptance are not verified in this repository. |
 
 ## 5. Findings and required decisions
 
@@ -90,11 +124,11 @@ Schema v9 stores dependency type, predecessor source Case Operation ID, and simu
 
 **VR-004 — Required resource/contract coverage is incomplete.**
 
-The implemented route set includes Case Operation create/edit and basic weekly Working Calendar create/list, but still lacks route reorder, calendar update/exceptions, Downtime mutation, and standalone `/api/v1/conflicts`. The Markdown route-coverage table presents some target paths alongside implemented paths, so it must not be treated as a frozen OpenAPI contract. Decide and implement these boundaries before declaring the domain API complete.
+The current route set adds weekly Working Calendar usage/work/break/dated-exception read/update/delete, dedicated Setup Calendar selection, Machine Type CRUD, and planned-maintenance/breakdown downtime lifecycle, but still lacks route reorder, Calendar overnight/archive/automatic-holiday policy, downtime recurrence/cancellation, and standalone `/api/v1/conflicts`. The Markdown route-coverage table presents some target paths alongside implemented paths, so it must not be treated as a frozen OpenAPI contract. Verify the new routes and decide the remaining boundaries before declaring the domain API complete.
 
 **VR-005 — Cross-Batch Order allocation policy is unresolved.**
 
-Creation validates each Batch internally, but nothing prevents cumulative allocations across active Batches from exceeding an Order’s demand. Split production is valid, so the missing rule is not simply a uniqueness constraint. Define whether cumulative good-quantity allocations may exceed Order quantity, which Batch/Order statuses participate, and how cancellation/reallocation is handled; then enforce it transactionally.
+Creation validates each Batch internally, and the new Order PATCH guard prevents reducing demand below the current aggregate allocation. Nothing prevents cumulative allocations across active Batches from exceeding an Order's demand, however. Split production is valid, so the missing rule is not simply a uniqueness constraint. Define whether cumulative good-quantity allocations may exceed Order quantity, which Batch/Order statuses participate, and how cancellation/reallocation is handled; then enforce it transactionally.
 
 **VR-006 — Edit Mode is concurrency-safe but not yet an operational lock policy.**
 
@@ -122,9 +156,11 @@ General create idempotency, pagination limits, OpenAPI publication, consumer com
 
 The repository now has an initial `HEAD` commit. Verification results can be tied to a revision and subsequent work reviewed as a diff; release verification must continue to record the tested commit or artifact hashes.
 
-## 6. Test execution
+## 6. Historical baseline test execution
 
-Final full-suite command:
+The following command/result applies to the 2026-08-11 schema-v9 baseline only. It must not be treated as evidence for the schema-v10/v11 working-tree additions listed in the addendum.
+
+Historical full-suite command:
 
 ```powershell
 dotnet test server/Meimad.Planner.Server.slnx -c Release --artifacts-path .qa/delete-edit-release
@@ -144,6 +180,6 @@ Coverage includes startup/health, configuration validation, migrations through s
 
 ## 7. Acceptance decision
 
-The current code is accepted as a tested **development MVP vertical slice**, not as a production factory deployment. No automated correctness failure remains in the reviewed suite. Production release should be blocked until VR-001 and VR-002 are resolved and the owners explicitly accept or close VR-004 through VR-008 with tests and updated contracts; VR-003 is resolved by schema v9.
+The schema-v13 working tree is accepted as an **automated-tested development MVP vertical slice**, not as a production factory deployment or a visually accepted Windows release. Its Server and Windows suites pass, while the manual/environmental checks listed in the addendum remain outstanding. Production release should remain blocked until VR-001 and VR-002 are resolved and the owners explicitly accept or close VR-004 through VR-008 with tests and updated contracts; VR-003 remains resolved by schema v9.
 
 Physical TV/E-Ink behavior, production Windows Service installation/upgrades, real factory network security, disaster recovery, performance/scale, and operator workflows were not exercised and must not be inferred from this report.

@@ -44,7 +44,7 @@ internal static class OrderValidator
             issues.Add(new OrderValidationIssue(
                 "status",
                 "invalid_status",
-                "status must be active, complete, or cancelled."));
+                "status must be active, in_production, complete, or cancelled."));
         }
 
         var notes = OptionalText(values.Notes, "notes", NotesMaximum, issues);

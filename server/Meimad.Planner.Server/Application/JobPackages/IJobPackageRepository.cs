@@ -15,6 +15,10 @@ internal interface IJobPackageRepository
         JobPackageContextStamp expectedContext,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
+
+    Task<JobPackageSetupWorker?> ReadSetupWorkerAsync(
+        string resourceId,
+        CancellationToken cancellationToken);
 }
 
 internal sealed record JobPackageGenerationContext(
@@ -43,9 +47,17 @@ internal sealed record GenerateJobPackageCommand(
     IReadOnlyList<JobPackageSourceFileCommand>? Files,
     IReadOnlyList<ToolTableEntry>? ToolTable,
     IReadOnlyList<OffsetEntry>? Offsets,
-    string? Instructions);
+    string? Instructions,
+    IReadOnlyList<ToolTableEntry>? ExpectedMachineTools = null,
+    IReadOnlyList<LocalChecklistItem>? LocalChecklistItems = null);
 
 internal sealed record JobPackageSourceFileCommand(
     string AssetType,
     string SourceRelativePath,
     string LogicalPath);
+
+internal sealed record JobPackageSetupWorker(
+    string ResourceId,
+    string FirstName,
+    string LastName,
+    string? PhotoPath);

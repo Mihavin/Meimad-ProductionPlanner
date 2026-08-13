@@ -57,7 +57,13 @@ internal sealed record NewCaseOperation(
     CaseOperationDependencyType DependencyType,
     string? PredecessorCaseOperationId,
     string? SimultaneousGroupKey,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    int QaTimeAfterSetupSeconds = 0,
+    int LoadUnloadTimeSeconds = 0,
+    bool LoadUnloadRequiresWorker = false,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null,
+    bool DayShiftOnly = false);
 
 internal sealed record CaseOperationDetails(
     string CaseOperationId,
@@ -73,4 +79,10 @@ internal sealed record CaseOperationDetails(
     string? SimultaneousGroupKey,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    int QaTimeAfterSetupSeconds = 0,
+    int LoadUnloadTimeSeconds = 0,
+    bool LoadUnloadRequiresWorker = false,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null,
+    bool DayShiftOnly = false);

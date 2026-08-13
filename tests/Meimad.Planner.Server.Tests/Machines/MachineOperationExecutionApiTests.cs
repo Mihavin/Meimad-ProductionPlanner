@@ -64,6 +64,22 @@ public sealed class MachineOperationExecutionApiTests
                 connection, "SELECT status FROM production_batches WHERE id = 'batch-1';"));
             Assert.Equal("waiting", await ScalarAsync(
                 connection, "SELECT status FROM production_batches WHERE id = 'batch-2';"));
+
+            using var events = await client.GetAsync("/api/v1/event-log?limit=50");
+            events.EnsureSuccessStatusCode();
+            using var eventsJson = JsonDocument.Parse(await events.Content.ReadAsStringAsync());
+            var types = eventsJson.RootElement.GetProperty("items").EnumerateArray()
+                .Select(value => value.GetProperty("eventType").GetString()).ToArray();
+            Assert.Contains("operation_started", types);
+            Assert.Contains("operation_paused", types);
+            Assert.Contains("operation_resumed", types);
+            Assert.Contains("operation_finished", types);
+            var paused = Assert.Single(eventsJson.RootElement.GetProperty("items").EnumerateArray(),
+                value => value.GetProperty("eventType").GetString() == "operation_paused");
+            Assert.Equal("other", paused.GetProperty("reasonCode").GetString());
+            Assert.Equal("planner", paused.GetProperty("user").GetString());
+            Assert.Equal("in_progress", paused.GetProperty("beforeData").GetProperty("status").GetString());
+            Assert.Equal("suspended", paused.GetProperty("afterData").GetProperty("status").GetString());
         });
     }
 
@@ -79,7 +95,8 @@ public sealed class MachineOperationExecutionApiTests
             Assert.Equal(HttpStatusCode.Conflict, nonFirst.StatusCode);
             Assert.Equal("operation_not_first_in_backlog", await ErrorCodeAsync(nonFirst));
 
-            using var suspendBeforeStart = await client.PostAsync("/api/v1/batch-operations/op-1/suspend", null);
+            using var suspendBeforeStart = await client.PostAsJsonAsync(
+                "/api/v1/batch-operations/op-1/suspend", new { reasonType = "other", comment = "test" });
             Assert.Equal(HttpStatusCode.Conflict, suspendBeforeStart.StatusCode);
             Assert.Equal("invalid_operation_transition", await ErrorCodeAsync(suspendBeforeStart));
 
@@ -134,9 +151,99 @@ public sealed class MachineOperationExecutionApiTests
         });
     }
 
+    public static TheoryData<object, string> ValidPauseReasons => new()
+    {
+        { new { reasonType = "additional_qa", problemDescription = "Surface requires reinspection", comment = "Hold" }, "additional_qa" },
+        { new { reasonType = "tooling_problem", toolingItemDescription = "10mm end mill" }, "tooling_problem" },
+        { new { reasonType = "customer_request", customerContactName = "Dana", requestDescription = "Hold pending drawing review" }, "customer_request" },
+        { new { reasonType = "other", comment = "Supervisor requested a safety review" }, "other" }
+    };
+
+    [Theory]
+    [MemberData(nameof(ValidPauseReasons))]
+    public async Task Structured_pause_reason_is_stored_and_resume_closes_event(object reason, string expectedType)
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditHeaders(client);
+            Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
+            using var pause = await client.PostAsJsonAsync("/api/v1/batch-operations/op-1/suspend", reason);
+            pause.EnsureSuccessStatusCode();
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal(expectedType, await ScalarAsync(connection,
+                "SELECT reason_type FROM operation_pause_events WHERE batch_operation_id = 'op-1' AND status = 'active';"));
+            Assert.Equal("planner", await ScalarAsync(connection,
+                "SELECT paused_by FROM operation_pause_events WHERE batch_operation_id = 'op-1';"));
+
+            using var board = await client.GetAsync("/api/v1/planning-board");
+            board.EnsureSuccessStatusCode();
+            using (var boardJson = JsonDocument.Parse(await board.Content.ReadAsStringAsync()))
+            {
+                var paused = boardJson.RootElement.GetProperty("machines")[0]
+                    .GetProperty("backlog")[0];
+                Assert.Equal("suspended", paused.GetProperty("status").GetString());
+                Assert.Contains(expectedType.Replace('_', ' '),
+                    paused.GetProperty("activePauseReason").GetString(), StringComparison.Ordinal);
+                Assert.Equal("planner", paused.GetProperty("pausedBy").GetString());
+            }
+
+            if (expectedType == "additional_qa")
+            {
+                var now = DateTimeOffset.UtcNow;
+                using var timeline = await client.GetAsync(
+                    $"/api/v1/timeline?from={Uri.EscapeDataString(now.AddMinutes(-5).ToString("O"))}&to={Uri.EscapeDataString(now.AddHours(1).ToString("O"))}");
+                timeline.EnsureSuccessStatusCode();
+                using var timelineJson = JsonDocument.Parse(await timeline.Content.ReadAsStringAsync());
+                var intervals = timelineJson.RootElement.GetProperty("machines")[0]
+                    .GetProperty("intervals").EnumerateArray().ToArray();
+                Assert.Contains(intervals, value =>
+                    value.GetProperty("type").GetString() == "waiting"
+                    && value.GetProperty("operationId").GetString() == "op-1"
+                    && value.GetProperty("detail").GetString()!.Contains("paused by planner", StringComparison.OrdinalIgnoreCase));
+                Assert.DoesNotContain(intervals, value =>
+                    value.GetProperty("operationId").ValueKind == JsonValueKind.String
+                    && value.GetProperty("operationId").GetString() == "op-1"
+                    && value.GetProperty("type").GetString() is "setup" or "production");
+            }
+
+            Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
+            Assert.Equal("closed", await ScalarAsync(connection,
+                "SELECT status FROM operation_pause_events WHERE batch_operation_id = 'op-1';"));
+            Assert.NotNull(await ScalarAsync(connection,
+                "SELECT pause_ended_at FROM operation_pause_events WHERE batch_operation_id = 'op-1';"));
+        });
+    }
+
+    [Fact]
+    public async Task Pause_without_required_structured_fields_is_rejected()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditHeaders(client);
+            await PostActionAsync(client, "op-1", "start");
+            using var response = await client.PostAsJsonAsync(
+                "/api/v1/batch-operations/op-1/suspend", new { reasonType = "customer_request" });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("validation_failed", await ErrorCodeAsync(response));
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal("in_progress", await ScalarAsync(connection,
+                "SELECT status FROM batch_operations WHERE id = 'op-1';"));
+            Assert.Equal(0L, (long)(await ScalarAsync(connection,
+                "SELECT COUNT(*) FROM operation_pause_events;"))!);
+        });
+    }
+
     private static async Task<string> PostActionAsync(HttpClient client, string operationId, string action)
     {
-        using var response = await client.PostAsync($"/api/v1/batch-operations/{operationId}/{action}", null);
+        using var response = action == "suspend"
+            ? await client.PostAsJsonAsync($"/api/v1/batch-operations/{operationId}/{action}",
+                new { reasonType = "other", comment = "Test pause" })
+            : await client.PostAsync($"/api/v1/batch-operations/{operationId}/{action}", null);
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return document.RootElement.GetProperty("status").GetString()!;

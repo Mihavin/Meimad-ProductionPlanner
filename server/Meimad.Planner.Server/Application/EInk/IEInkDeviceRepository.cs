@@ -58,7 +58,25 @@ internal sealed record EInkPackageMetadataSource(
     int PlannedQuantity,
     string BatchOperationId,
     int OperationNumber,
-    string OperationName);
+    string OperationName,
+    string? SetupWorkerId,
+    string? SetupWorkerFirstName,
+    string? SetupWorkerLastName,
+    string? SetupWorkerPhotoFileId,
+    DateTimeOffset? PlannedSetupStartsAt,
+    DateTimeOffset? PlannedSetupEndsAt,
+    IReadOnlyList<EInkToolSource> JobTools,
+    IReadOnlyList<EInkToolSource> ExpectedMachineTools,
+    IReadOnlyList<EInkChecklistItemSource> LocalChecklistItems);
+
+internal sealed record EInkToolSource(
+    string ToolId,
+    string Description,
+    string? Diameter,
+    string? Length,
+    string? Note);
+
+internal sealed record EInkChecklistItemSource(string ItemId, string Label);
 
 internal sealed record EInkPackageFileSource(
     string FileId,

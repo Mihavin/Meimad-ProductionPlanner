@@ -1,0 +1,475 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.SetupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinHeight="560">
+    <UserControl.Resources>
+        <Style x:Key="SetupFieldLabel" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,3" />
+        </Style>
+        <Style x:Key="SetupField" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,10,8" />
+        </Style>
+        <Style x:Key="SetupSection" TargetType="Border">
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#D8DDE3" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="14" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CanvasBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="12" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Style="{StaticResource SetupSection}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0">
+                    <TextBlock Text="Server URL" Style="{StaticResource SetupFieldLabel}" />
+                    <TextBox Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="2">
+                    <TextBlock Text="Local user name" Style="{StaticResource SetupFieldLabel}" />
+                    <TextBox Text="{Binding LocalUserName, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Bottom">
+                    <Button Content="Save" Command="{Binding SaveConnectionCommand}" />
+                    <Button Content="Connect" Command="{Binding ConnectCommand}" />
+                    <Button Content="Refresh" Command="{Binding RefreshConnectionCommand}" Margin="0" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" Margin="0,7,0,0"
+                            VerticalAlignment="Bottom">
+                    <TextBlock Text="{Binding ConnectionHeadline}" FontWeight="Bold" Margin="0,0,8,0" />
+                    <TextBlock Text="{Binding ConnectionDetail}" Foreground="{StaticResource MutedTextBrush}"
+                               TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="2">
+            <TabItem Header="Calendars">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="320" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewCalendarCommand}" Margin="8,0,0,0" />
+                                <TextBlock Text="WORKING CALENDARS" FontWeight="Bold" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding WorkingCalendars}"
+                                     SelectedItem="{Binding SelectedCalendar}"
+                                     DisplayMemberPath="DisplayName"
+                                     HorizontalContentAlignment="Stretch" />
+                            <StackPanel Grid.Row="2" Margin="0,10,0,0">
+                                <TextBlock Text="Dedicated Setup Calendar" Style="{StaticResource SetupFieldLabel}" />
+                                <ComboBox ItemsSource="{Binding SetupWorkerCalendars}"
+                                          SelectedItem="{Binding SelectedSetupCalendar}"
+                                          DisplayMemberPath="Name" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="Use for setup" Command="{Binding SetSetupCalendarCommand}" />
+                                    <Button Content="Clear" Command="{Binding ClearSetupCalendarCommand}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="Setup personnel may use different availability than Machines."
+                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel IsEnabled="{Binding IsEditor}" Margin="0,0,8,0">
+                            <TextBlock Text="{Binding CalendarFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
+                            <TextBlock Text="Legacy explicit-window calendars are read-only."
+                                       Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+                            <UniformGrid Columns="2" IsEnabled="{Binding IsCalendarEditable}">
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Calendar name" Style="{StaticResource SetupFieldLabel}" />
+                                    <TextBox Text="{Binding CalendarName}" />
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Time zone" Style="{StaticResource SetupFieldLabel}" />
+                                    <ComboBox ItemsSource="{Binding CalendarTimeZones}"
+                                              Text="{Binding CalendarTimeZoneId, UpdateSourceTrigger=PropertyChanged}"
+                                              IsEditable="True" IsTextSearchEnabled="True" />
+                                </StackPanel>
+                            </UniformGrid>
+                            <TextBlock Text="Calendar usages" Style="{StaticResource SetupFieldLabel}" />
+                            <WrapPanel Margin="0,2,0,12" IsEnabled="{Binding IsCalendarEditable}">
+                                <CheckBox Content="Machine" IsChecked="{Binding CalendarUsageMachine}" Margin="0,0,14,0" />
+                                <CheckBox Content="Setup worker" IsChecked="{Binding CalendarUsageSetupWorker}" Margin="0,0,14,0" />
+                                <CheckBox Content="Regular worker" IsChecked="{Binding CalendarUsageRegularWorker}" Margin="0,0,14,0" />
+                                <CheckBox Content="QA worker" IsChecked="{Binding CalendarUsageQaWorker}" />
+                            </WrapPanel>
+                            <CheckBox Content="Apply cached Israeli holidays to availability"
+                                      IsChecked="{Binding CalendarUseIsraeliHolidays}"
+                                      IsEnabled="{Binding IsCalendarEditable}" Margin="0,0,0,12"
+                                      ToolTip="Uses the local holiday cache. Timeline and resource calculation do not access the internet." />
+                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}">
+                                <TextBlock Text="Working windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding CalendarWindowsText, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True" MinHeight="58" VerticalScrollBarVisibility="Auto"
+                                         ToolTip="For example: 06:00-10:00 then 10:30-18:00. Windows are shared by the selected workdays." />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}">
+                                <TextBlock Text="Lunch / break windows (one HH:mm-HH:mm range per line)" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding CalendarBreakWindowsText, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True" MinHeight="45" VerticalScrollBarVisibility="Auto"
+                                         ToolTip="Breaks must be contained within a working window and are removed from availability." />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}" IsEnabled="{Binding IsCalendarEditable}">
+                                <TextBlock Text="Dated exceptions" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding CalendarExceptionsText, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True" MinHeight="70" VerticalScrollBarVisibility="Auto"
+                                         ToolTip="One per line: yyyy-MM-dd | closed | name, or yyyy-MM-dd | 08:00-16:00 | 12:00-12:30 | name. Use commas for multiple windows and - for no breaks." />
+                            </StackPanel>
+                            <TextBlock Text="Working days" Style="{StaticResource SetupFieldLabel}" />
+                            <WrapPanel Margin="0,2,0,12" IsEnabled="{Binding IsCalendarEditable}">
+                                <CheckBox Content="Sun" IsChecked="{Binding WorksSunday}" Margin="0,0,14,0" />
+                                <CheckBox Content="Mon" IsChecked="{Binding WorksMonday}" Margin="0,0,14,0" />
+                                <CheckBox Content="Tue" IsChecked="{Binding WorksTuesday}" Margin="0,0,14,0" />
+                                <CheckBox Content="Wed" IsChecked="{Binding WorksWednesday}" Margin="0,0,14,0" />
+                                <CheckBox Content="Thu" IsChecked="{Binding WorksThursday}" Margin="0,0,14,0" />
+                                <CheckBox Content="Fri" IsChecked="{Binding WorksFriday}" Margin="0,0,14,0" />
+                                <CheckBox Content="Sat" IsChecked="{Binding WorksSaturday}" />
+                            </WrapPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Save calendar" Command="{Binding SaveCalendarCommand}" />
+                                <Button Content="Delete calendar" Click="DeleteCalendar_Click" Margin="0" />
+                            </StackPanel>
+                        </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Machines">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="3*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewMachineCommand}" Margin="8,0,0,0" />
+                                <TextBlock Text="MACHINES" FontWeight="Bold" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding Machines}" SelectedItem="{Binding SelectedMachine}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Machine" Binding="{Binding DisplayName}" Width="*" />
+                                    <DataGridTextColumn Header="Type" Binding="{Binding ProcessType}" Width="120" />
+                                    <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel IsEnabled="{Binding IsEditor}">
+                                <TextBlock Text="{Binding MachineFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine number" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineNumber}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineName}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Reusable Machine Type" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineTypes}" SelectedItem="{Binding SelectedMachineTypeForMachine}" DisplayMemberPath="Name"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Legacy/process type" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineProcessType}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Axis type" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineAxisType}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working calendar" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineWorkingCalendars}" SelectedItem="{Binding SelectedMachineCalendar}" DisplayMemberPath="Name"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capabilities (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineCapabilitiesText}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Picture path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachinePicturePath}"/></StackPanel>
+                                </UniformGrid>
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,12">
+                                    <CheckBox Content="Active" IsChecked="{Binding MachineIsActive}" Margin="0,0,18,0" />
+                                    <CheckBox Content="Show on displays" IsChecked="{Binding MachineDisplayEnabled}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Save machine" Command="{Binding SaveMachineCommand}" />
+                                    <Button Content="Deactivate" Command="{Binding DeactivateMachineCommand}" />
+                                    <Button Content="Delete" Click="DeleteMachine_Click" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="The Server blocks unsafe deactivation/deletion when planning assignments or other references exist."
+                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Machine Availability">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="3*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="Add maintenance" Command="{Binding NewPlannedMaintenanceCommand}" Margin="0,0,6,0" />
+                                    <Button Content="Mark broken" Command="{Binding ReportBreakdownCommand}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="MACHINE DOWNTIME" FontWeight="Bold" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding Downtimes}" SelectedItem="{Binding SelectedDowntime}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Window" Binding="{Binding DisplayName}" Width="*" />
+                                    <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="2*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel IsEnabled="{Binding IsEditor}">
+                                <TextBlock Text="{Binding DowntimeFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Machine" Style="{StaticResource SetupFieldLabel}" />
+                                        <ComboBox ItemsSource="{Binding Machines}" SelectedItem="{Binding SelectedDowntimeMachine}" DisplayMemberPath="DisplayName" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Type" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding DowntimeType, Mode=OneWay}" IsReadOnly="True" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Start (yyyy-MM-dd HH:mm)" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding DowntimeStartsAt}" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Maintenance end" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding DowntimeEndsAt}" IsEnabled="{Binding IsPlannedMaintenance}" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Planned / reported by" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding DowntimeActor}" />
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}">
+                                        <TextBlock Text="Restore time" Style="{StaticResource SetupFieldLabel}" />
+                                        <TextBox Text="{Binding DowntimeRestoredAt}" IsEnabled="{Binding IsBreakdown}" />
+                                    </StackPanel>
+                                </UniformGrid>
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Reason / note" Style="{StaticResource SetupFieldLabel}" />
+                                    <TextBox Text="{Binding DowntimeReason}" AcceptsReturn="True" MinHeight="52" />
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Repair note" Style="{StaticResource SetupFieldLabel}" />
+                                    <TextBox Text="{Binding DowntimeRepairNote}" AcceptsReturn="True" MinHeight="52" IsEnabled="{Binding IsBreakdown}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Save maintenance / report breakdown" Command="{Binding SaveDowntimeCommand}" />
+                                    <Button Content="Mark restored" Command="{Binding RestoreBreakdownCommand}" Margin="0" />
+                                </StackPanel>
+                                <TextBlock Text="Active breakdowns remain unavailable until Mark restored. Timeline recalculation never changes backlog order."
+                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Machine Types">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="3*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewMachineTypeCommand}" Margin="8,0,0,0" />
+                                <TextBlock Text="REUSABLE MACHINE TYPES" FontWeight="Bold" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding MachineTypes}"
+                                     SelectedItem="{Binding SelectedMachineType}"
+                                     DisplayMemberPath="DisplayName" />
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <StackPanel IsEnabled="{Binding IsEditor}">
+                            <TextBlock Text="{Binding MachineTypeFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
+                            <StackPanel Style="{StaticResource SetupField}">
+                                <TextBlock Text="Type name" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding MachineTypeName}" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}">
+                                <TextBlock Text="Capabilities (comma-separated)" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding MachineTypeCapabilitiesText}" />
+                            </StackPanel>
+                            <TextBlock Text="Examples: 3-axis milling, 4-axis milling, 5-axis milling, turning, mill-turn, conventional, automated. Capabilities allow compatible work across type names."
+                                       TextWrapping="Wrap"
+                                       Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Save Machine Type" Command="{Binding SaveMachineTypeCommand}" />
+                                <Button Content="Delete Machine Type" Click="DeleteMachineType_Click" Margin="0" />
+                            </StackPanel>
+                            <TextBlock Text="A Machine Type that is assigned to a Machine cannot be deleted until it is reassigned."
+                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Employees / Resources">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8"><Button DockPanel.Dock="Right" Content="New" Command="{Binding NewResourceCommand}" Margin="8,0,0,0"/><TextBlock Text="EMPLOYEES / RESOURCES" FontWeight="Bold" VerticalAlignment="Center"/></DockPanel>
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding Resources}" SelectedItem="{Binding SelectedResource}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Employee #" Binding="{Binding EmployeeNumber}" Width="95"/><DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="115"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
+                            <TextBlock Text="{Binding ResourceFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <UniformGrid Columns="2">
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Employee number" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceEmployeeNumber}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="First name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceFirstName}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Last name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceLastName}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Role" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceRoles}" SelectedItem="{Binding ResourceRole}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Assigned calendar" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceCalendars}" SelectedItem="{Binding SelectedResourceCalendar}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Skills (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceSkillsText}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Email" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceEmail}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Photo path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourcePhotoPath}"/></StackPanel>
+                            </UniformGrid>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceNotes}" AcceptsReturn="True" MinHeight="58" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/></StackPanel>
+                            <CheckBox Content="Active" IsChecked="{Binding ResourceIsActive}" Margin="0,0,0,12"/>
+                            <StackPanel Orientation="Horizontal"><Button Content="Save employee / resource" Command="{Binding SaveResourceCommand}"/><Button Content="Delete" Click="DeleteResource_Click" Margin="0"/></StackPanel>
+                            <TextBlock Text="Inactive employees are excluded from future resource availability. Employee capacity scheduling is not implemented." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            <Separator Margin="0,16,0,12"/>
+                            <DockPanel Margin="0,0,0,8">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Refresh exceptions" Command="{Binding RefreshResourceExceptionsCommand}"/><Button Content="New exception" Command="{Binding NewResourceExceptionCommand}" Margin="0"/></StackPanel>
+                                <TextBlock Text="EMPLOYEE CALENDAR EXCEPTIONS" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <ListBox ItemsSource="{Binding ResourceExceptions}" SelectedItem="{Binding SelectedResourceException}" DisplayMemberPath="DisplayName" MinHeight="80" MaxHeight="150" Margin="0,0,0,10"/>
+                            <TextBlock Text="{Binding ResourceExceptionFormHeading}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <UniformGrid Columns="2">
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Date (yyyy-MM-dd)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceExceptionDate}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Exception type" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ResourceExceptionTypes}" SelectedItem="{Binding ResourceExceptionType}"/></StackPanel>
+                            </UniformGrid>
+                            <CheckBox Content="Full day" IsChecked="{Binding ResourceExceptionIsFullDay}" Margin="0,0,0,8"/>
+                            <UniformGrid Columns="2" IsEnabled="{Binding IsResourceExceptionPartialDay}">
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Start (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceExceptionStartsAt}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="End (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceExceptionEndsAt}"/></StackPanel>
+                            </UniformGrid>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Note" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceExceptionNote}" AcceptsReturn="True" MinHeight="48" TextWrapping="Wrap"/></StackPanel>
+                            <StackPanel Orientation="Horizontal"><Button Content="Save exception" Command="{Binding SaveResourceExceptionCommand}"/><Button Content="Delete exception" Click="DeleteResourceException_Click" Margin="0"/></StackPanel>
+                        </StackPanel></ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Israeli Holidays">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8"><Button DockPanel.Dock="Right" Content="New" Command="{Binding NewIsraeliHolidayCommand}" Margin="8,0,0,0"/><TextBlock Text="ISRAELI HOLIDAY CALENDAR" FontWeight="Bold" VerticalAlignment="Center"/></DockPanel>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding IsraeliHolidays}" SelectedItem="{Binding SelectedIsraeliHoliday}" DisplayMemberPath="DisplayName"/>
+                            <StackPanel Grid.Row="2" Margin="0,10,0,0" IsEnabled="{Binding IsEditor}">
+                                <TextBlock Text="ONLINE REFRESH / LOCAL CACHE" Style="{StaticResource SetupFieldLabel}"/>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="From year" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HolidaySyncFromYear}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="To year" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HolidaySyncToYear}"/></StackPanel>
+                                </UniformGrid>
+                                <Button Content="Refresh from Hebcal" Command="{Binding SynchronizeIsraeliHolidaysCommand}" HorizontalAlignment="Left"/>
+                                <TextBlock Text="Holiday data provided by Hebcal.com (CC BY 4.0)." Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,5,0,0"/>
+                                <TextBlock Text="{Binding HolidaySyncStatus}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <StackPanel IsEnabled="{Binding IsEditor}">
+                            <TextBlock Text="{Binding IsraeliHolidayFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Date (yyyy-MM-dd)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding IsraeliHolidayDate}"/></StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Holiday name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding IsraeliHolidayName}"/></StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Availability policy" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding IsraeliHolidayStatuses}" SelectedItem="{Binding IsraeliHolidayStatus}"/></StackPanel>
+                            <UniformGrid Columns="2">
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Partial day starts (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding IsraeliHolidayStartsAt}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Partial day ends (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding IsraeliHolidayEndsAt}"/></StackPanel>
+                            </UniformGrid>
+                            <StackPanel Orientation="Horizontal"><Button Content="Save holiday" Command="{Binding SaveIsraeliHolidayCommand}"/><Button Content="Delete" Click="DeleteIsraeliHoliday_Click" Margin="0"/></StackPanel>
+                            <TextBlock Text="Manual edits are preserved during later online refreshes. Calendars that opt in use this local cache, including while offline. Calendar-specific dated exceptions take precedence." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Reports / Email">
+                <ScrollViewer Margin="8" VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" MaxWidth="760" HorizontalAlignment="Left"><StackPanel IsEnabled="{Binding IsEditor}">
+                    <TextBlock Text="Report and email delivery" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                    <UniformGrid Columns="2">
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Sender address" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ReportSenderAddress}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Recipients (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ReportRecipientsText}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="SMTP host" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ReportSmtpHost}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="SMTP port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ReportSmtpPort}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Weekly send day" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding Weekdays}" SelectedItem="{Binding WeeklyMaterialReportSendDay}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Weekly send time (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WeeklyMaterialReportTimeLocal}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Efficiency report send day" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding Weekdays}" SelectedItem="{Binding WeeklyEmployeeEfficiencySendDay}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Efficiency report send time (HH:mm)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WeeklyEmployeeEfficiencyTimeLocal}"/></StackPanel>
+                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Time zone" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ReportTimeZoneId}"/></StackPanel>
+                    </UniformGrid>
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,12"><CheckBox Content="Use SSL" IsChecked="{Binding ReportUseSsl}" Margin="0,0,18,0"/><CheckBox Content="Enable weekly material order report" IsChecked="{Binding WeeklyMaterialReportEnabled}" Margin="0,0,18,0"/><CheckBox Content="Enable weekly employee efficiency report" IsChecked="{Binding WeeklyEmployeeEfficiencyEnabled}"/></StackPanel>
+                    <StackPanel Orientation="Horizontal"><Button Content="Save report / email settings" Command="{Binding SaveReportEmailSettingsCommand}"/><Button Content="Send weekly material report now" Command="{Binding SendWeeklyMaterialReportNowCommand}" Margin="8,0,0,0"/><Button Content="Send employee efficiency report now" Command="{Binding SendWeeklyEmployeeEfficiencyReportNowCommand}" Margin="8,0,0,0"/></StackPanel>
+                    <TextBlock Text="The report contains only Case / Part Number and required material-piece quantity. Quantity uses Batch planned quantity, which already includes scrap allowance." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                    <TextBlock Text="Employee efficiency compares recorded planned and actual labor with calendar capacity after breaks, holidays, and employee exceptions. It does not calculate payroll, rank employees, or include machine maintenance." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                </StackPanel></Border></ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <DockPanel Grid.Row="3" Margin="2,8,2,0">
+            <Button DockPanel.Dock="Right" Content="Refresh setup data" Command="{Binding RefreshMasterDataCommand}" Margin="8,0,0,0" />
+            <StackPanel>
+                <TextBlock Text="{Binding AuthorityText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</UserControl>

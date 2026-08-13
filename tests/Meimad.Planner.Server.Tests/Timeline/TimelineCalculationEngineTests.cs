@@ -50,7 +50,8 @@ public sealed class TimelineCalculationEngineTests
             interval.Type == TimelineIntervalType.Downtime);
         Assert.Equal(Utc(10), downtime.StartsAt);
         Assert.Equal(Utc(10, 30), downtime.EndsAt);
-        Assert.Equal("Maintenance", downtime.Detail);
+        Assert.Equal("op-a", downtime.OperationId);
+        Assert.Equal("Operation delayed by Maintenance", downtime.Detail);
     }
 
     [Fact]
@@ -169,6 +170,131 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Sequential_operations_on_same_machine_follow_the_manual_backlog_without_dependency_waiting()
+    {
+        var operations = new[] { Operation("op-10", 0, 2), Operation("op-20", 0, 1) };
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", operations)],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)),
+            [],
+            [new TimelineDependency("10-20", TimelineDependencyType.Sequential, "op-10", "op-20")]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(["op-10", "op-20"], operations.Select(operation => operation.OperationId));
+        Assert.Equal(Utc(10), result.Operations.Single(operation => operation.OperationId == "op-20").StartsAt);
+        Assert.Empty(result.Operations.Single(operation => operation.OperationId == "op-20").WaitingIntervals);
+    }
+
+    [Fact]
+    public void Sequential_child_on_free_different_machine_waits_for_parent_and_exposes_waiting_interval()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-1", [Operation("op-10", 0, 6)]),
+                Backlog("machine-5", [Operation("op-20", 0, 1)])
+            ],
+            [Calendar("machine-1", Window(8, 17)), Calendar("machine-5", Window(8, 17))],
+            SetupCalendar(Window(8, 17)),
+            [],
+            [new TimelineDependency("10-20", TimelineDependencyType.Sequential, "op-10", "op-20")]));
+
+        Assert.Empty(result.Conflicts);
+        var child = result.Operations.Single(operation => operation.OperationId == "op-20");
+        Assert.Equal(Utc(14), child.StartsAt);
+        AssertIntervals(
+            child.WaitingIntervals,
+            (TimelineIntervalType.Waiting, Utc(8), Utc(14)));
+        Assert.Equal("op-10", Assert.Single(child.WaitingIntervals).Detail);
+    }
+
+    [Fact]
+    public void Multiple_children_wait_for_the_same_sequential_parent_without_reordering_backlogs()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-1", [Operation("parent", 0, 4)]),
+                Backlog("machine-2", [Operation("child-a", 0, 1)]),
+                Backlog("machine-3", [Operation("child-b", 0, 1)])
+            ],
+            [
+                Calendar("machine-1", Window(8, 17)),
+                Calendar("machine-2", Window(8, 17)),
+                Calendar("machine-3", Window(8, 17))
+            ],
+            SetupCalendar(Window(8, 17)),
+            [],
+            [
+                new TimelineDependency("parent-a", TimelineDependencyType.Sequential, "parent", "child-a"),
+                new TimelineDependency("parent-b", TimelineDependencyType.Sequential, "parent", "child-b")
+            ]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.All(result.Operations.Where(operation => operation.OperationId.StartsWith("child", StringComparison.Ordinal)),
+            child => Assert.Equal(Utc(12), child.StartsAt));
+    }
+
+    [Fact]
+    public void Child_with_multiple_sequential_parents_waits_for_the_latest_finish()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-1", [Operation("parent-a", 0, 2)]),
+                Backlog("machine-2", [Operation("parent-b", 0, 4)]),
+                Backlog("machine-3", [Operation("child", 0, 1)])
+            ],
+            [
+                Calendar("machine-1", Window(8, 17)),
+                Calendar("machine-2", Window(8, 17)),
+                Calendar("machine-3", Window(8, 17))
+            ],
+            SetupCalendar(Window(8, 17)),
+            [],
+            [
+                new TimelineDependency("a-child", TimelineDependencyType.Sequential, "parent-a", "child"),
+                new TimelineDependency("b-child", TimelineDependencyType.Sequential, "parent-b", "child")
+            ]));
+
+        Assert.Empty(result.Conflicts);
+        var child = result.Operations.Single(operation => operation.OperationId == "child");
+        Assert.Equal(Utc(12), child.StartsAt);
+        Assert.Equal("parent-b", Assert.Single(child.WaitingIntervals).Detail);
+    }
+
+    [Fact]
+    public void Missing_parent_dependency_returns_conflict_and_does_not_schedule_child()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [Operation("child", 0, 1)])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)),
+            [],
+            [new TimelineDependency("missing-parent", TimelineDependencyType.Sequential, "parent", "child")]));
+
+        Assert.Empty(result.Operations);
+        Assert.Contains(result.Conflicts, conflict => conflict.Code == "invalid_dependency_reference");
+    }
+
+    [Fact]
+    public void Recalculation_uses_reordered_manual_backlog_without_mutating_either_input()
+    {
+        var firstOrder = new[] { Operation("op-a", 0, 1), Operation("op-b", 0, 1) };
+        var secondOrder = new[] { Operation("op-b", 0, 1), Operation("op-a", 0, 1) };
+        var engine = new TimelineCalculationEngine();
+        var first = engine.Calculate(Input(
+            [Backlog("machine-1", firstOrder)],
+            [Calendar("machine-1", Window(8, 17))], SetupCalendar(Window(8, 17)), [], []));
+        var second = engine.Calculate(Input(
+            [Backlog("machine-1", secondOrder)],
+            [Calendar("machine-1", Window(8, 17))], SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Equal(["op-a", "op-b"], firstOrder.Select(operation => operation.OperationId));
+        Assert.Equal(["op-b", "op-a"], secondOrder.Select(operation => operation.OperationId));
+        Assert.Equal(Utc(8), first.Operations.Single(operation => operation.OperationId == "op-a").StartsAt);
+        Assert.Equal(Utc(8), second.Operations.Single(operation => operation.OperationId == "op-b").StartsAt);
+    }
+
+    [Fact]
     public void Dependency_cycle_is_reported_without_reordering_or_partial_schedule()
     {
         var input = Input(
@@ -267,19 +393,233 @@ public sealed class TimelineCalculationEngineTests
         Assert.Contains(result.Conflicts, value => value.Code == "simultaneous_same_machine");
     }
 
+    [Fact]
+    public void Setup_qa_worker_load_and_production_are_calculated_in_sequence()
+    {
+        var operation = new TimelineOperationInput(
+            "op-phases", TimeSpan.FromHours(1), TimeSpan.FromHours(1),
+            TimeSpan.FromHours(1), TimeSpan.FromMinutes(30), true);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], [],
+            [
+                Resource("setup", TimelineResourceRole.SetupWorker, Window(8, 17)),
+                Resource("qa", TimelineResourceRole.QaWorker, Window(10, 17)),
+                Resource("regular", TimelineResourceRole.RegularWorker, Window(8, 17))
+            ]));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.SetupIntervals, (TimelineIntervalType.Setup, Utc(8), Utc(9)));
+        AssertIntervals(scheduled.QaIntervals!, (TimelineIntervalType.Qa, Utc(10), Utc(11)));
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(11), Utc(11, 30)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(11, 30), Utc(12, 30)));
+    }
+
+    [Fact]
+    public void Day_shift_only_operation_is_intersected_with_the_day_shift_calendar()
+    {
+        var operation = new TimelineOperationInput(
+            "op-day", TimeSpan.Zero, TimeSpan.FromHours(1), DayShiftOnly: true);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], [], null,
+            [Calendar("machine-1", Window(12, 17))]));
+
+        Assert.Empty(result.Conflicts);
+        AssertIntervals(Assert.Single(result.Operations).ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(12), Utc(13)));
+    }
+
+    [Fact]
+    public void Worker_required_load_unload_waits_for_regular_worker_availability()
+    {
+        var operation = new TimelineOperationInput(
+            "op-load", TimeSpan.Zero, TimeSpan.FromHours(1),
+            LoadUnloadDuration: TimeSpan.FromMinutes(30), LoadUnloadRequiresWorker: true);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], [],
+            [Resource("regular", TimelineResourceRole.RegularWorker, Window(12, 17))]));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(12), Utc(12, 30)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(12, 30), Utc(13, 30)));
+    }
+
+    [Fact]
+    public void Four_simultaneous_setups_with_three_workers_make_one_machine_wait()
+    {
+        var backlogs = Enumerable.Range(1, 4)
+            .Select(index => Backlog($"machine-{index}",
+                [Operation($"op-{index}", setupHours: 1, productionHours: 0)]))
+            .ToArray();
+        var calendars = Enumerable.Range(1, 4)
+            .Select(index => new TimelineMachineCalendar(
+                $"machine-{index}", [Window(8, 17)], ["milling"]))
+            .ToArray();
+        var workers = Enumerable.Range(1, 3)
+            .Select(index => new TimelineResourceCalendar(
+                $"setup-{index}", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"]))
+            .ToArray();
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            backlogs, calendars, SetupCalendar(Window(8, 17)), [], [], workers));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(3, result.Operations.Count(value => value.StartsAt == Utc(8)));
+        var delayed = Assert.Single(result.Operations, value => value.StartsAt == Utc(9));
+        var wait = Assert.Single(delayed.WaitingIntervals);
+        Assert.Equal(Utc(8), wait.StartsAt);
+        Assert.Equal(Utc(9), wait.EndsAt);
+        Assert.Contains("skilled setup worker", wait.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["op-1", "op-2", "op-3", "op-4"],
+            backlogs.SelectMany(value => value.Operations).Select(value => value.OperationId));
+    }
+
+    [Fact]
+    public void Setup_worker_without_machine_skill_is_not_selected()
+    {
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [Operation("op-skilled", 1, 0)])],
+            [new TimelineMachineCalendar("machine-1", [Window(8, 17)], ["five-axis milling"])],
+            SetupCalendar(Window(8, 17)), [], [],
+            [
+                new TimelineResourceCalendar("unskilled", TimelineResourceRole.SetupWorker,
+                    [Window(8, 17)], ["turning"]),
+                new TimelineResourceCalendar("skilled", TimelineResourceRole.SetupWorker,
+                    [Window(10, 17)], ["five-axis milling"])
+            ]));
+
+        Assert.Empty(result.Conflicts);
+        var operation = Assert.Single(result.Operations);
+        Assert.Equal(Utc(10), operation.StartsAt);
+        Assert.All(operation.SetupIntervals,
+            interval => Assert.Contains("skilled", interval.Detail, StringComparison.Ordinal));
+        Assert.Contains(operation.WaitingIntervals,
+            interval => interval.StartsAt == Utc(8) && interval.EndsAt == Utc(10));
+    }
+
+    [Fact]
+    public void Regular_worker_lunch_break_splits_manual_part_change_and_shows_waiting()
+    {
+        var operation = new TimelineOperationInput(
+            "op-lunch", TimeSpan.Zero, TimeSpan.FromHours(1),
+            LoadUnloadDuration: TimeSpan.FromHours(2), LoadUnloadRequiresWorker: true);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(11, 17))],
+            SetupCalendar(Window(11, 17)), [], [],
+            [new TimelineResourceCalendar("regular", TimelineResourceRole.RegularWorker,
+                [Window(8, 12), Window(13, 17)])]));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(11), Utc(12)),
+            (TimelineIntervalType.LoadUnload, Utc(13), Utc(14)));
+        Assert.Contains(scheduled.WaitingIntervals,
+            interval => interval.StartsAt == Utc(12)
+                && interval.EndsAt == Utc(13)
+                && interval.Detail!.Contains("regular worker", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Setup_contention_uses_earlier_work_finish_date_without_reordering_backlogs()
+    {
+        var late = new TimelineOperationInput(
+            "op-a-late", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 20), PriorityOrderNumber: "SO-1");
+        var urgent = new TimelineOperationInput(
+            "op-z-urgent", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 12), PriorityOrderNumber: "SO-99");
+        var backlogs = new[]
+        {
+            Backlog("machine-late", [late]),
+            Backlog("machine-urgent", [urgent])
+        };
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            backlogs,
+            [
+                new TimelineMachineCalendar("machine-late", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-urgent", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup-1", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(Utc(8), Assert.Single(result.Operations, value => value.OperationId == urgent.OperationId).StartsAt);
+        var delayed = Assert.Single(result.Operations, value => value.OperationId == late.OperationId);
+        Assert.Equal(Utc(9), delayed.StartsAt);
+        Assert.Contains(delayed.WaitingIntervals, interval =>
+            interval.Detail!.Contains("Work Finish Date 2026-08-12 is earlier", StringComparison.Ordinal));
+        Assert.Equal(["op-a-late", "op-z-urgent"],
+            backlogs.SelectMany(value => value.Operations).Select(value => value.OperationId));
+    }
+
+    [Fact]
+    public void Equal_due_date_setup_contention_uses_naturally_smaller_order_number()
+    {
+        var largerOrder = new TimelineOperationInput(
+            "op-a-large-order", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 12), PriorityOrderNumber: "SO-10");
+        var smallerOrder = new TimelineOperationInput(
+            "op-z-small-order", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 12), PriorityOrderNumber: "SO-2");
+        var backlogs = new[]
+        {
+            Backlog("machine-large", [largerOrder]),
+            Backlog("machine-small", [smallerOrder])
+        };
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            backlogs,
+            [
+                new TimelineMachineCalendar("machine-large", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-small", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup-1", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(Utc(8), Assert.Single(result.Operations, value => value.OperationId == smallerOrder.OperationId).StartsAt);
+        var delayed = Assert.Single(result.Operations, value => value.OperationId == largerOrder.OperationId);
+        Assert.Equal(Utc(9), delayed.StartsAt);
+        Assert.Contains(delayed.WaitingIntervals, interval =>
+            interval.Detail!.Contains("smaller Order number SO-2", StringComparison.Ordinal));
+        Assert.Equal(["op-a-large-order", "op-z-small-order"],
+            backlogs.SelectMany(value => value.Operations).Select(value => value.OperationId));
+    }
+
     private static TimelineCalculationInput Input(
         IReadOnlyList<TimelineMachineBacklog> backlogs,
         IReadOnlyList<TimelineMachineCalendar> calendars,
         TimelineSetupCalendar setupCalendar,
         IReadOnlyList<TimelineDowntime> downtimes,
-        IReadOnlyList<TimelineDependency> dependencies) => new(
+        IReadOnlyList<TimelineDependency> dependencies,
+        IReadOnlyList<TimelineResourceCalendar>? resources = null,
+        IReadOnlyList<TimelineMachineCalendar>? dayShiftCalendars = null) => new(
         HorizonStart,
         HorizonEnd,
         backlogs,
         calendars,
         setupCalendar,
         downtimes,
-        dependencies);
+        dependencies,
+        resources,
+        dayShiftCalendars);
 
     private static TimelineMachineBacklog Backlog(
         string machineId,
@@ -298,6 +638,10 @@ public sealed class TimelineCalculationEngineTests
         params TimelineWindow[] windows) => new(machineId, windows);
 
     private static TimelineSetupCalendar SetupCalendar(params TimelineWindow[] windows) => new(windows);
+
+    private static TimelineResourceCalendar Resource(
+        string resourceId, TimelineResourceRole role, params TimelineWindow[] windows) =>
+        new(resourceId, role, windows, ["*"]);
 
     private static TimelineWindow Window(int startHour, int endHour) =>
         new(Utc(startHour), Utc(endHour));

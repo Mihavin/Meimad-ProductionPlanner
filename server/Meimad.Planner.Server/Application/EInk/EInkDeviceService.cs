@@ -222,7 +222,7 @@ internal sealed class EInkDeviceService
             package.BatchOperationId,
             package.ToolCartId,
             package.PublishedAt,
-            ManifestMetadata(package.Metadata),
+            ManifestMetadata(source, package),
             package.Files.Select(file => ManifestFile(source, package, file)).ToArray());
         return new EInkResource<EInkManifestResponse>(value, EntityTag(value));
     }
@@ -265,7 +265,8 @@ internal sealed class EInkDeviceService
     }
 
     private static EInkManifestMetadataResponse? ManifestMetadata(
-        EInkPackageMetadataSource? value) => value is null
+        EInkDeviceSource source,
+        EInkPackageSource package) => package.Metadata is not { } value
         ? null
         : new EInkManifestMetadataResponse(
             new EInkManifestMachineResponse(
@@ -285,7 +286,42 @@ internal sealed class EInkDeviceService
             new EInkManifestOperationResponse(
                 value.BatchOperationId,
                 value.OperationNumber,
-                value.OperationName));
+                value.OperationName),
+            new EInkManifestSetupResponse(
+                value.SetupWorkerId is null
+                    ? null
+                    : new EInkManifestSetupWorkerResponse(
+                        value.SetupWorkerId,
+                        value.SetupWorkerFirstName ?? string.Empty,
+                        value.SetupWorkerLastName ?? string.Empty,
+                        value.SetupWorkerPhotoFileId,
+                        value.SetupWorkerPhotoFileId is null
+                            ? null
+                            : FilePath(source.DeviceId, package, value.SetupWorkerPhotoFileId)),
+                value.PlannedSetupStartsAt,
+                value.PlannedSetupEndsAt),
+            new EInkManifestToolsResponse(
+                value.JobTools.Select(Tool).ToArray(),
+                value.ExpectedMachineTools.Select(Tool).ToArray()),
+            new EInkLocalChecklistResponse(
+                "device_sd",
+                false,
+                true,
+                value.LocalChecklistItems.Select(item => new EInkChecklistItemResponse(
+                    item.ItemId, item.Label)).ToArray()),
+            new EInkTabletPolicyResponse(
+                "wifi",
+                "sd",
+                "read_only",
+                false,
+                false));
+
+    private static EInkToolResponse Tool(EInkToolSource value) => new(
+        value.ToolId,
+        value.Description,
+        value.Diameter,
+        value.Length,
+        value.Note);
 
     private string ResolveStoragePath(string relativePath)
     {

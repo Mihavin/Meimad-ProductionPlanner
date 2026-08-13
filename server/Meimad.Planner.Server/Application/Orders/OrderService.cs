@@ -20,6 +20,11 @@ internal sealed class OrderService
         CancellationToken cancellationToken = default)
     {
         var values = OrderValidator.ValidateAndNormalize(ToValues(command));
+        if (values.Status is OrderStatus.InProduction or OrderStatus.Complete)
+        {
+            throw new OrderManualProductionStatusException(
+                "A new Order status must be active or cancelled; production status is derived by the Server.");
+        }
         var now = timeProvider.GetUtcNow();
         var order = new PlannerOrder(
             Guid.NewGuid().ToString("N"),
@@ -78,6 +83,7 @@ internal sealed class OrderService
         return await repository.UpdateAsync(
                 updated,
                 expectedVersion,
+                command.Status.IsSpecified,
                 editAuthority,
                 cancellationToken)
             ?? throw new OrderVersionConflictException(orderId, expectedVersion);
@@ -118,3 +124,21 @@ internal sealed class OrderVersionConflictException : Exception
     {
     }
 }
+
+internal sealed class OrderQuantityBelowAllocatedException : Exception
+{
+    internal OrderQuantityBelowAllocatedException(string orderId, long allocatedQuantity)
+        : base($"Order '{orderId}' quantity cannot be lower than its allocated quantity {allocatedQuantity}.")
+    {
+    }
+}
+
+internal sealed class OrderDerivedStatusException : Exception
+{
+    internal OrderDerivedStatusException(string orderId, OrderStatus expected)
+        : base($"Order '{orderId}' status is derived from related production work and must be '{expected.ToContractToken()}'.")
+    {
+    }
+}
+
+internal sealed class OrderManualProductionStatusException(string message) : Exception(message);

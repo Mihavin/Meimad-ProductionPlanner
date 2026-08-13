@@ -9,8 +9,13 @@ internal interface IMachineAssignmentRepository
         string batchOperationId,
         string machineId,
         int backlogPosition,
+        MachineAssignmentOverrideConfirmation? overrideConfirmation,
         DateTimeOffset now,
         EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MachineAssignmentOverrideLog>> ListOverridesAsync(
+        string batchOperationId,
         CancellationToken cancellationToken);
 
     Task<bool> UnassignAsync(
@@ -26,6 +31,7 @@ internal interface IMachineAssignmentRepository
     Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
+        OperationPauseReason? pauseReason,
         DateTimeOffset now,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
@@ -34,6 +40,21 @@ internal interface IMachineAssignmentRepository
 internal sealed record AssignmentMutationResult(
     MachineAssignment Assignment,
     bool WasCreated);
+
+internal sealed record MachineAssignmentOverrideConfirmation(
+    bool Confirmed,
+    string Reason);
+
+internal sealed record MachineAssignmentOverrideLog(
+    string OverrideId,
+    string BatchOperationId,
+    string MachineId,
+    string RequiredMachineType,
+    string SelectedMachineType,
+    string Reason,
+    string ConfirmedByClientId,
+    string ConfirmedByUserId,
+    DateTimeOffset ConfirmedAt);
 
 internal enum BatchOperationExecutionAction
 {

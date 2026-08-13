@@ -81,7 +81,13 @@ internal sealed class CaseService
                 command.CycleTimePerPartSeconds,
                 command.DependencyType,
                 command.PredecessorCaseOperationId,
-                command.SimultaneousGroupKey));
+                command.SimultaneousGroupKey,
+                command.QaTimeAfterSetupSeconds,
+                command.LoadUnloadTimeSeconds,
+                command.LoadUnloadRequiresWorker,
+                command.AutomaticLoading,
+                command.LoadUnloadEveryNParts,
+                command.DayShiftOnly));
         var now = timeProvider.GetUtcNow();
         var operation = new NewCaseOperation(
             Guid.NewGuid().ToString("N"),
@@ -94,7 +100,13 @@ internal sealed class CaseService
             values.DependencyType,
             values.PredecessorCaseOperationId,
             values.SimultaneousGroupKey,
-            now);
+            now,
+            values.QaTimeAfterSetupSeconds,
+            values.LoadUnloadTimeSeconds,
+            values.LoadUnloadRequiresWorker,
+            values.AutomaticLoading,
+            values.LoadUnloadEveryNParts,
+            values.DayShiftOnly);
 
         return await repository.CreateOperationAsync(
                 operation,

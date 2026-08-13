@@ -50,8 +50,8 @@ public sealed class OrderApiTests
                 Content = JsonContent.Create(new
                 {
                     quantity = 60,
-                    status = "complete",
-                    notes = "Demand completed"
+                    status = "cancelled",
+                    notes = "Demand cancelled"
                 })
             };
             patchRequest.Headers.TryAddWithoutValidation("If-Match", firstEntityTag);
@@ -62,7 +62,7 @@ public sealed class OrderApiTests
             Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
             using var orderDocument = JsonDocument.Parse(await getResponse.Content.ReadAsStringAsync());
             Assert.Equal(60, orderDocument.RootElement.GetProperty("quantity").GetInt32());
-            Assert.Equal("complete", orderDocument.RootElement.GetProperty("status").GetString());
+            Assert.Equal("cancelled", orderDocument.RootElement.GetProperty("status").GetString());
             Assert.Equal(2, orderDocument.RootElement.GetProperty("version").GetInt32());
 
             using var caseWithoutDemand = await client.GetAsync($"/api/v1/cases/{caseId}");

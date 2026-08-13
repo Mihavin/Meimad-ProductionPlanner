@@ -3,6 +3,7 @@ using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Machines;
 using Meimad.Planner.Server.Domain.Machines;
+using Meimad.Planner.Server.Domain.WorkingCalendars;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -36,7 +37,13 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         ) AS backlog_count,
         machines.version,
         machines.created_at,
-        machines.updated_at
+        machines.updated_at,
+        machines.machine_type_id,
+        COALESCE((
+            SELECT machine_types.capabilities_json
+            FROM machine_types
+            WHERE machine_types.id = machines.machine_type_id
+        ), '[]') AS machine_type_capabilities_json
         """;
 
     private readonly SqliteDatabase database;
@@ -54,6 +61,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        machine = await ApplyMachineTypeAsync(connection, transaction, machine, cancellationToken);
         await EnsureCalendarExistsAsync(
             connection,
             transaction,
@@ -72,11 +80,11 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             INSERT INTO machines (
                 id, number, name, machine_type, axis_type, capabilities_json,
                 working_calendar_id, display_configuration_json, status, picture_reference,
-                is_active, display_enabled, version, created_at, updated_at)
+                is_active, display_enabled, version, created_at, updated_at, machine_type_id)
             VALUES (
                 $id, $number, $name, $processType, $axisType, $capabilities,
                 $calendarId, '{}', $status, $picturePath,
-                $isActive, $displayEnabled, $version, $createdAt, $updatedAt);
+                $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId);
             """;
         AddWriteParameters(command, machine);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -120,6 +128,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        machine = await ApplyMachineTypeAsync(connection, transaction, machine, cancellationToken);
         await EnsureCalendarExistsAsync(
             connection,
             transaction,
@@ -151,6 +160,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 is_active = $isActive,
                 display_enabled = $displayEnabled,
                 picture_reference = $picturePath,
+                machine_type_id = $machineTypeId,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
@@ -190,6 +200,35 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         }
     }
 
+    private static async Task<Machine> ApplyMachineTypeAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Machine machine,
+        CancellationToken cancellationToken)
+    {
+        if (machine.MachineTypeId is null)
+        {
+            return machine with { MachineTypeCapabilities = null };
+        }
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT name, capabilities_json FROM machine_types WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", machine.MachineTypeId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new MachineTypeReferenceNotFoundException(machine.MachineTypeId);
+        }
+
+        var typeCapabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(1)) ?? [];
+        return machine with
+        {
+            ProcessType = reader.GetString(0),
+            MachineTypeCapabilities = typeCapabilities
+        };
+    }
+
     private static async Task EnsureCalendarExistsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -198,14 +237,20 @@ internal sealed class SqliteMachineRepository : IMachineRepository
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM working_calendars WHERE id = $id);";
+        command.CommandText = "SELECT calendar_json FROM working_calendars WHERE id = $id;";
         command.Parameters.AddWithValue("$id", calendarId);
-        if (Convert.ToInt32(
-                await command.ExecuteScalarAsync(cancellationToken),
-                CultureInfo.InvariantCulture) != 1)
+        var calendarJson = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (calendarJson is null)
         {
             throw new WorkingCalendarNotFoundException(calendarId);
         }
+
+        using var document = JsonDocument.Parse(calendarJson);
+        if (document.RootElement.TryGetProperty("usages", out var usages)
+            && usages.ValueKind == JsonValueKind.Array
+            && !usages.EnumerateArray().Any(value =>
+                string.Equals(value.GetString(), WorkingCalendarUsage.Machine, StringComparison.Ordinal)))
+            throw new WorkingCalendarUsageException(calendarId);
     }
 
     private static async Task EnsureNumberAvailableAsync(
@@ -289,12 +334,16 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         command.Parameters.AddWithValue("$version", machine.Version);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(machine.CreatedAt));
         command.Parameters.AddWithValue("$updatedAt", FormatInstant(machine.UpdatedAt));
+        command.Parameters.AddWithValue(
+            "$machineTypeId",
+            machine.MachineTypeId is null ? DBNull.Value : machine.MachineTypeId);
     }
 
     private static Machine ReadMachine(SqliteDataReader reader)
     {
         var capabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(5))
             ?? throw new InvalidDataException("Stored Machine capabilities must be a JSON array.");
+        var typeCapabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(16)) ?? [];
         return new Machine(
             reader.GetString(0),
             reader.GetString(1),
@@ -310,7 +359,9 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             reader.GetInt32(12),
             ParseInstant(reader.GetString(13)),
             ParseInstant(reader.GetString(14)),
-            reader.IsDBNull(9) ? null : reader.GetString(9));
+            reader.IsDBNull(9) ? null : reader.GetString(9),
+            reader.IsDBNull(15) ? null : reader.GetString(15),
+            typeCapabilities);
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

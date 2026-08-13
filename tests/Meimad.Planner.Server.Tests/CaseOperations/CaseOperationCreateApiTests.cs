@@ -12,6 +12,65 @@ namespace Meimad.Planner.Server.Tests.CaseOperations;
 public sealed class CaseOperationCreateApiTests
 {
     [Fact]
+    public async Task Stores_extended_time_profile_and_snapshots_it_into_a_batch_operation()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var caseId = await CreateCaseAsync(client);
+            var operation = await CreateOperationAsync(client, caseId, new
+            {
+                operationNumber = 10,
+                name = "Automated milling",
+                requiredMachineType = "five axis",
+                setupTimeSeconds = 600,
+                cycleTimePerPartSeconds = 120,
+                qaTimeAfterSetupSeconds = 300,
+                loadUnloadTimeSeconds = 45,
+                loadUnloadRequiresWorker = true,
+                automaticLoading = true,
+                loadUnloadEveryNParts = 5,
+                dayShiftOnly = true,
+                dependencyType = "INDEPENDENT",
+                predecessorCaseOperationId = (string?)null,
+                simultaneousGroupKey = (string?)null
+            });
+            Assert.Equal(300, operation.GetProperty("qaTimeAfterSetupSeconds").GetInt32());
+            Assert.Equal(45, operation.GetProperty("loadUnloadTimeSeconds").GetInt32());
+            Assert.True(operation.GetProperty("loadUnloadRequiresWorker").GetBoolean());
+            Assert.True(operation.GetProperty("automaticLoading").GetBoolean());
+            Assert.Equal(5, operation.GetProperty("loadUnloadEveryNParts").GetInt32());
+            Assert.True(operation.GetProperty("dayShiftOnly").GetBoolean());
+
+            using var orderResponse = await client.PostAsJsonAsync("/api/v1/orders", new
+            {
+                caseId, orderNumber = "SO-TIME", quantity = 10,
+                workFinishDate = "2026-09-30", status = "active", notes = (string?)null
+            });
+            var order = JsonDocument.Parse(await orderResponse.Content.ReadAsStringAsync());
+            using var batchResponse = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId, batchNumber = "B-TIME", status = "waiting", plannedQuantity = 10,
+                allocations = new[] { new { allocationType = "order", orderId = order.RootElement.GetProperty("orderId").GetString(), quantity = 10 } }
+            });
+            var batch = JsonDocument.Parse(await batchResponse.Content.ReadAsStringAsync());
+            using var snapshotResponse = await client.GetAsync($"/api/v1/batches/{batch.RootElement.GetProperty("batchId").GetString()}/operations");
+            var snapshot = JsonDocument.Parse(await snapshotResponse.Content.ReadAsStringAsync());
+            var item = Assert.Single(snapshot.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal(300, item.GetProperty("qaTimeAfterSetupSeconds").GetInt32());
+            Assert.Equal(45, item.GetProperty("loadUnloadTimeSeconds").GetInt32());
+            Assert.Equal(5, item.GetProperty("loadUnloadEveryNParts").GetInt32());
+            Assert.True(item.GetProperty("dayShiftOnly").GetBoolean());
+
+            using var boardResponse = await client.GetAsync("/api/v1/planning-board");
+            var board = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());
+            var card = Assert.Single(board.RootElement.GetProperty("pool").EnumerateArray());
+            Assert.Equal(2190, card.GetProperty("estimatedTimeSeconds").GetInt64());
+        });
+    }
+
+    [Fact]
     public async Task Creates_ordered_route_and_does_not_retrofit_existing_batch_snapshot()
     {
         await RunWithServerAsync(async (application, client) =>

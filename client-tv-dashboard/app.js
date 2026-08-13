@@ -3,10 +3,9 @@
 const state = {
   etag: null,
   refreshSeconds: 15,
-  freshness: "unknown",
-  nextRefreshAt: Date.now(),
   timer: null,
-  hasSnapshot: false
+  hasSnapshot: false,
+  machineCount: 0
 };
 
 const byId = (id) => document.getElementById(id);
@@ -20,148 +19,100 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function formatLocal(value, options) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, options).format(new Date(value));
+function setServerStatus(status, description) {
+  const indicator = byId("server-status");
+  indicator.className = `server-status server-status-${status}`;
+  indicator.setAttribute("aria-label", description);
+  indicator.title = description;
 }
 
-function formatFinish(value) {
-  return value ? `Finish ${formatLocal(value, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "Finish not calculated";
-}
-
-function renderJob(job, emptyText) {
-  if (!job) return `<div class="empty-value">${escapeHtml(emptyText)}</div>`;
-  const urgency = job.urgent
-    ? `<span class="urgent-tag">▲ URGENT • DUE ${escapeHtml(job.workFinishDate)}</span>`
-    : "";
-  return `
-    <div class="job-part">${escapeHtml(job.partNumber)}</div>
-    <div class="job-line">${escapeHtml(job.batchNumber)} • OP${escapeHtml(job.operationNumber)} • ${escapeHtml(job.operationName)}</div>
-    <div class="job-meta">${escapeHtml(formatFinish(job.projectedFinish))}</div>
-    ${urgency}`;
-}
-
-function renderConflicts(conflicts) {
-  if (!conflicts.length) return `<div class="ok-text">✓ No calculated conflicts</div>`;
-  const visible = conflicts.slice(0, 2).map((conflict) => `
-    <div class="conflict-item ${conflict.severity === "blocking" ? "blocking" : ""}">
-      <strong>${escapeHtml(conflict.severity)} • ${escapeHtml(conflict.code)}</strong>
-      <span>${escapeHtml(conflict.message)}</span>
-    </div>`).join("");
-  const remainder = conflicts.length > 2
-    ? `<div class="more-conflicts">+${conflicts.length - 2} more conflict${conflicts.length - 2 === 1 ? "" : "s"}</div>`
-    : "";
-  return `<div class="conflict-list">${visible}${remainder}</div>`;
-}
-
-function renderDowntime(downtime) {
-  if (!downtime) return `<div class="ok-text">✓ Available</div>`;
-  const heading = downtime.isCurrent
-    ? `<div class="downtime-current">● DOWNTIME NOW</div>`
-    : `<div class="downtime-upcoming">● UPCOMING</div>`;
-  return `${heading}
-    <div class="downtime-reason">${escapeHtml(downtime.reason)}</div>
-    <div class="downtime-time">${escapeHtml(formatLocal(downtime.startsAt, { weekday: "short", hour: "2-digit", minute: "2-digit" }))} → ${escapeHtml(formatLocal(downtime.endsAt, { weekday: "short", hour: "2-digit", minute: "2-digit" }))}</div>`;
+function statusClass(code) {
+  return ["current", "setup", "conflict", "downtime"].includes(code)
+    ? code
+    : "idle";
 }
 
 function renderMachine(machine) {
-  const statusClass = ["current", "setup", "conflict", "downtime"].includes(machine.status.code)
-    ? machine.status.code
-    : "idle";
-  return `<article class="machine-row status-${statusClass}" aria-label="Machine ${escapeHtml(machine.number)}">
-    <div class="cell machine-cell">
-      <div class="machine-number">${escapeHtml(machine.number)}</div>
-      <div class="machine-name">${escapeHtml(machine.name)}</div>
-      <div class="process-type">${escapeHtml(machine.processType)}</div>
+  const code = statusClass(String(machine.status?.code ?? "idle"));
+  const number = escapeHtml(machine.number);
+  const name = escapeHtml(machine.name);
+  const label = escapeHtml(machine.status?.label ?? "Unknown");
+  return `<article class="machine-card status-${code}" aria-label="${number} ${name}: ${label}">
+    <div class="machine-identity">
+      <span class="machine-number">${number}</span>
+      <span class="machine-name">${name}</span>
     </div>
-    <div class="cell status-cell">
-      <div class="cell-label">Status</div>
-      <div class="status-pill"><span class="status-icon" aria-hidden="true">${escapeHtml(machine.status.icon)}</span><span>${escapeHtml(machine.status.label)}</span></div>
-    </div>
-    <div class="cell current-cell">
-      <div class="cell-label">Current job</div>
-      ${renderJob(machine.current, "No current job")}
-    </div>
-    <div class="cell next-cell">
-      <div class="cell-label">Next job</div>
-      ${renderJob(machine.next, "No next job")}
-    </div>
-    <div class="cell conflicts-cell">
-      <div class="cell-label">Conflicts • ${machine.conflicts.length}</div>
-      ${renderConflicts(machine.conflicts)}
-    </div>
-    <div class="cell downtime-cell">
-      <div class="cell-label">Downtime</div>
-      ${renderDowntime(machine.downtime)}
-    </div>
+    <div class="machine-status">${label}</div>
   </article>`;
 }
 
-function renderUrgent(batches) {
-  const section = byId("urgent-section");
-  section.hidden = batches.length === 0;
-  byId("urgent-list").innerHTML = batches.slice(0, 8).map((batch) => `
-    <div class="urgent-batch ${batch.isOverdue ? "overdue" : ""}">
-      <strong>${escapeHtml(batch.partNumber)} • ${escapeHtml(batch.batchNumber)}</strong>
-      <span>${batch.isOverdue ? "OVERDUE" : "DUE"} ${escapeHtml(batch.workFinishDate)}${batch.machineNumber ? ` • ${escapeHtml(batch.machineNumber)}` : " • UNASSIGNED"}</span>
-    </div>`).join("");
+function fitGrid(machineCount) {
+  const grid = byId("machine-grid");
+  if (machineCount < 1) {
+    grid.style.setProperty("--grid-columns", "1");
+    grid.style.setProperty("--grid-rows", "1");
+    grid.style.setProperty("--density", "1");
+    return;
+  }
+
+  const width = Math.max(1, grid.clientWidth);
+  const height = Math.max(1, grid.clientHeight);
+  const preferredAspect = 1.65;
+  let best = null;
+
+  for (let columns = 1; columns <= machineCount; columns += 1) {
+    const rows = Math.ceil(machineCount / columns);
+    const cellAspect = (width / columns) / (height / rows);
+    const emptyCells = (columns * rows) - machineCount;
+    const score = Math.abs(Math.log(cellAspect / preferredAspect)) + (emptyCells * 0.025);
+    if (!best || score < best.score) best = { columns, rows, score };
+  }
+
+  const cellWidth = width / best.columns;
+  const cellHeight = height / best.rows;
+  const density = Math.max(.48, Math.min(1.2, cellWidth / 360, cellHeight / 170));
+  grid.style.setProperty("--grid-columns", String(best.columns));
+  grid.style.setProperty("--grid-rows", String(best.rows));
+  grid.style.setProperty("--density", density.toFixed(3));
 }
 
 function render(data) {
+  const machines = Array.isArray(data.machines) ? data.machines : [];
   state.hasSnapshot = true;
+  state.machineCount = machines.length;
   state.refreshSeconds = Math.max(5, Number(data.refreshAfterSeconds) || 15);
-  state.freshness = String(data.freshness || "unknown");
-  byId("machine-count").textContent = data.summary.machineCount;
-  byId("conflict-count").textContent = data.summary.criticalConflictCount;
-  byId("urgent-count").textContent = data.summary.urgentBatchCount;
-  byId("downtime-count").textContent = data.summary.downtimeMachineCount;
-  byId("machine-list").innerHTML = data.machines.length
-    ? data.machines.map(renderMachine).join("")
-    : `<div class="empty-state">No display-enabled Machines are configured.</div>`;
-  renderUrgent(data.urgentBatches);
-  byId("generated-at").textContent = `Snapshot ${formatLocal(data.generatedAt, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-  byId("connection-banner").hidden = true;
+  byId("machine-grid").innerHTML = machines.length
+    ? machines.map(renderMachine).join("")
+    : `<div class="empty-state">No display-enabled machines</div>`;
+  byId("machine-grid").setAttribute("aria-busy", "false");
+  fitGrid(machines.length);
 }
 
 async function refresh() {
   clearTimeout(state.timer);
-  byId("refresh-state").textContent = "Refreshing…";
+  setServerStatus("connecting", state.hasSnapshot ? "Refreshing machine status" : "Connecting");
   try {
     const headers = state.etag ? { "If-None-Match": state.etag } : {};
     const response = await fetch("/api/v1/tv-dashboard", { headers, cache: "no-cache" });
     if (response.status === 304) {
-      byId("connection-banner").hidden = true;
+      setServerStatus("connected", "Connected");
     } else if (response.ok) {
       state.etag = response.headers.get("ETag");
       render(await response.json());
+      setServerStatus("connected", "Connected");
     } else {
-      throw new Error(`Server returned ${response.status}`);
+      throw new Error(`Request failed: ${response.status}`);
     }
   } catch (error) {
-    byId("connection-banner").hidden = false;
+    setServerStatus("disconnected", "Disconnected; showing last received machine status");
     if (!state.hasSnapshot) {
-      byId("machine-list").innerHTML = `<div class="empty-state">Server data is unavailable. Retrying automatically…</div>`;
+      byId("machine-grid").innerHTML = `<div class="empty-state">Machine status unavailable</div>`;
+      byId("machine-grid").setAttribute("aria-busy", "false");
     }
   } finally {
-    state.nextRefreshAt = Date.now() + state.refreshSeconds * 1000;
     state.timer = setTimeout(refresh, state.refreshSeconds * 1000);
   }
 }
 
-function updateClock() {
-  const now = new Date();
-  byId("clock").textContent = new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
-  }).format(now);
-  byId("date").textContent = new Intl.DateTimeFormat(undefined, {
-    weekday: "long", year: "numeric", month: "long", day: "numeric"
-  }).format(now);
-  const remaining = Math.max(0, Math.ceil((state.nextRefreshAt - Date.now()) / 1000));
-  byId("refresh-state").textContent = state.hasSnapshot
-    ? `${state.freshness.toUpperCase()} • READ-ONLY • refresh in ${remaining}s`
-    : "Connecting…";
-}
-
-setInterval(updateClock, 1000);
-updateClock();
+window.addEventListener("resize", () => fitGrid(state.machineCount));
 refresh();

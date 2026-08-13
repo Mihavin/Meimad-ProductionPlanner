@@ -46,6 +46,14 @@ internal static class OrderEndpoints
         {
             return ValidationError(exception, httpContext);
         }
+        catch (OrderManualProductionStatusException exception)
+        {
+            return Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "order_status_server_owned",
+                exception.Message,
+                httpContext);
+        }
         catch (OrderCaseNotFoundException exception)
         {
             return Error(
@@ -161,6 +169,30 @@ internal static class OrderEndpoints
                 StatusCodes.Status412PreconditionFailed,
                 "resource_version_stale",
                 "The Order changed after it was read.",
+                httpContext);
+        }
+        catch (OrderQuantityBelowAllocatedException exception)
+        {
+            return Error(
+                StatusCodes.Status409Conflict,
+                "order_quantity_below_allocated",
+                exception.Message,
+                httpContext);
+        }
+        catch (OrderDerivedStatusException exception)
+        {
+            return Error(
+                StatusCodes.Status409Conflict,
+                "order_status_derived",
+                exception.Message,
+                httpContext);
+        }
+        catch (OrderManualProductionStatusException exception)
+        {
+            return Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "order_status_server_owned",
+                exception.Message,
                 httpContext);
         }
         catch (EditModeMutationException exception)

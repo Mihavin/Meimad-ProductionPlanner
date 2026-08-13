@@ -29,6 +29,8 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.Contains("mill", viewModel.OperationMachineTypeOptions);
         Assert.Contains("5-axis", viewModel.OperationMachineTypeOptions);
         Assert.Contains("probe", viewModel.OperationMachineTypeOptions);
+        Assert.Contains("turning", viewModel.OperationMachineTypeOptions);
+        Assert.Contains("automated", viewModel.OperationMachineTypeOptions);
         Assert.Contains(string.Empty, viewModel.OperationMachineTypeOptions);
         Assert.Single(viewModel.OperationMachineTypeOptions, value =>
             string.Equals(value, "mill", StringComparison.OrdinalIgnoreCase));
@@ -78,6 +80,8 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.False(viewModel.SaveCommand.CanExecute(null));
         Assert.False(viewModel.BeginCreateOperationCommand.CanExecute(null));
         Assert.False(viewModel.BeginCreateOrderCommand.CanExecute(null));
+        viewModel.SelectedOrder = viewModel.Orders.Single();
+        Assert.False(viewModel.BeginEditOrderCommand.CanExecute(null));
         Assert.False(viewModel.BeginCreateBatchCommand.CanExecute(null));
     }
 
@@ -124,6 +128,7 @@ public sealed class CaseWorkspaceViewModelTests
         await viewModel.EnsureLoadedAsync();
 
         await viewModel.BeginCreateOrderAsync();
+        Assert.Equal(["active", "cancelled"], viewModel.OrderStatuses);
         viewModel.NewOrderNumber = "SO-2";
         viewModel.NewOrderQuantity = "9";
         viewModel.NewOrderWorkFinishDate = "2026-09-30";
@@ -159,6 +164,156 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.Equal(2, viewModel.Batches.Count);
         Assert.False(viewModel.IsCreatingBatch);
         Assert.Equal(21, api.LastGeneration);
+    }
+
+    [Fact]
+    public async Task Editor_edits_existing_order_with_etag_and_refreshes_visible_demand()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(23));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOrder = viewModel.Orders.Single();
+        var planChanged = 0;
+        viewModel.PlanChanged += (_, _) => planChanged++;
+
+        await viewModel.BeginEditOrderAsync();
+
+        Assert.True(viewModel.IsEditingOrder);
+        Assert.Contains("in_production", viewModel.OrderStatuses);
+        Assert.Contains("complete", viewModel.OrderStatuses);
+        Assert.Equal("EDIT ORDER", viewModel.OrderFormHeading);
+        Assert.Equal("Save Order", viewModel.OrderSaveButtonText);
+        Assert.Equal("SO-1", viewModel.NewOrderNumber);
+        Assert.Equal("5", viewModel.NewOrderQuantity);
+        Assert.Equal("2026-08-20", viewModel.NewOrderWorkFinishDate);
+        Assert.Equal("ACTIVE", viewModel.NewOrderStatus);
+
+        viewModel.NewOrderNumber = "SO-1-REVISED";
+        viewModel.NewOrderQuantity = "8";
+        viewModel.NewOrderWorkFinishDate = "2026-09-01";
+        viewModel.NewOrderStatus = "in_production";
+        viewModel.NewOrderNotes = "Planner revision";
+        await viewModel.CreateOrderAsync();
+
+        Assert.NotNull(api.LastOrderUpdate);
+        Assert.Equal("SO-1-REVISED", api.LastOrderUpdate!.OrderNumber);
+        Assert.Equal(8, api.LastOrderUpdate.Quantity);
+        Assert.Equal("2026-09-01", api.LastOrderUpdate.WorkFinishDate);
+        Assert.Equal("in_production", api.LastOrderUpdate.Status);
+        Assert.Equal("Planner revision", api.LastOrderUpdate.Notes);
+        Assert.Equal("\"order:order-1:v1\"", api.LastOrderEntityTag);
+        Assert.Equal("windows-1", api.LastClientId);
+        Assert.Equal(23, api.LastGeneration);
+        Assert.Equal("SO-1-REVISED", Assert.Single(viewModel.Orders).OrderNumber);
+        Assert.Equal(2, viewModel.SelectedOrder?.Version);
+        Assert.False(viewModel.IsOrderFormOpen);
+        Assert.Equal(1, planChanged);
+    }
+
+    [Fact]
+    public async Task Order_edit_omits_unchanged_status_so_server_can_rederive_it_after_quantity_changes()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(23));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOrder = viewModel.Orders.Single();
+        await viewModel.BeginEditOrderAsync();
+        viewModel.NewOrderQuantity = "8";
+
+        await viewModel.CreateOrderAsync();
+
+        Assert.NotNull(api.LastOrderUpdate);
+        Assert.Null(api.LastOrderUpdate!.Status);
+        Assert.Equal(8, api.LastOrderUpdate.Quantity);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Order_edit_keeps_its_original_identity_when_the_grid_selection_changes(bool clearSelection)
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(23));
+        await viewModel.EnsureLoadedAsync();
+        var original = viewModel.Orders.Single();
+        viewModel.SelectedOrder = original;
+        await viewModel.BeginEditOrderAsync();
+        Assert.False(viewModel.IsOrderListEnabled);
+
+        if (clearSelection)
+        {
+            viewModel.SelectedOrder = null;
+        }
+        else
+        {
+            var other = new PlannerOrder(
+                "order-other", "case-1", "SO-OTHER", 2, "2026-08-22", "active", null);
+            viewModel.Orders.Add(other);
+            viewModel.SelectedOrder = other;
+        }
+
+        viewModel.NewOrderNumber = "SO-1-SAFE";
+        await viewModel.CreateOrderAsync();
+
+        Assert.Equal("order-1", api.LastOrderId);
+        Assert.Equal("\"order:order-1:v1\"", api.LastOrderEntityTag);
+        Assert.Null(api.LastOrderCreate);
+        Assert.Equal("SO-1-SAFE", api.LastOrderUpdate?.OrderNumber);
+        Assert.True(viewModel.IsOrderListEnabled);
+    }
+
+    [Fact]
+    public async Task Order_edit_reloads_server_sort_and_reselects_immutable_target_when_due_date_crosses_another_order()
+    {
+        var api = new FakeApiClient(
+            CreateCase(),
+            [
+                new("order-1", "case-1", "SO-1", 5, "2026-08-20", "active", null),
+                new("order-2", "case-1", "SO-2", 7, "2026-09-10", "active", null)
+            ]);
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(23));
+        await viewModel.EnsureLoadedAsync();
+        var editTarget = viewModel.Orders.Single(order => order.OrderId == "order-2");
+        viewModel.SelectedOrder = editTarget;
+        await viewModel.BeginEditOrderAsync();
+
+        viewModel.SelectedOrder = viewModel.Orders.Single(order => order.OrderId == "order-1");
+        viewModel.NewOrderWorkFinishDate = "2026-08-10";
+        await viewModel.CreateOrderAsync();
+
+        Assert.Equal("order-2", api.LastOrderId);
+        Assert.Equal(2, api.OrderListReads);
+        Assert.Equal(["order-2", "order-1"], viewModel.Orders.Select(order => order.OrderId));
+        Assert.Equal("order-2", viewModel.SelectedOrder?.OrderId);
+        Assert.Equal("2026-08-10", viewModel.SelectedOrder?.WorkFinishDate);
+    }
+
+    [Theory]
+    [InlineData("0", "2026-09-01", "whole number")]
+    [InlineData("5", "09/01/2026", "YYYY-MM-DD")]
+    public async Task Invalid_order_edit_stays_open_and_does_not_call_server(
+        string quantity,
+        string finishDate,
+        string expectedFeedback)
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(23));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOrder = viewModel.Orders.Single();
+        await viewModel.BeginEditOrderAsync();
+        viewModel.NewOrderQuantity = quantity;
+        viewModel.NewOrderWorkFinishDate = finishDate;
+
+        await viewModel.CreateOrderAsync();
+
+        Assert.Null(api.LastOrderUpdate);
+        Assert.True(viewModel.IsEditingOrder);
+        Assert.Contains(expectedFeedback, viewModel.StatusMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -262,16 +417,33 @@ public sealed class CaseWorkspaceViewModelTests
     private sealed class FakeApiClient : IPlannerApiClient
     {
         private PlannerCase plannerCase;
+        private readonly List<PlannerOrder> orders;
 
-        internal FakeApiClient(PlannerCase plannerCase)
+        internal FakeApiClient(
+            PlannerCase plannerCase,
+            IReadOnlyList<PlannerOrder>? initialOrders = null)
         {
             this.plannerCase = plannerCase;
+            orders = (initialOrders ??
+            [
+                new PlannerOrder(
+                    "order-1",
+                    plannerCase.CaseId,
+                    "SO-1",
+                    5,
+                    "2026-08-20",
+                    "ACTIVE",
+                    null)
+            ]).ToList();
         }
 
         internal CaseQuery? LastQuery { get; private set; }
         internal CaseUpdate? LastUpdate { get; private set; }
         internal CaseUpdate? LastCreate { get; private set; }
         internal OrderCreate? LastOrderCreate { get; private set; }
+        internal OrderUpdate? LastOrderUpdate { get; private set; }
+        internal string? LastOrderId { get; private set; }
+        internal string? LastOrderEntityTag { get; private set; }
         internal ProductionBatchCreate? LastBatchCreate { get; private set; }
         internal CaseOperationCreate? LastOperationCreate { get; private set; }
         internal CaseOperationUpdate? LastOperationUpdate { get; private set; }
@@ -280,6 +452,7 @@ public sealed class CaseWorkspaceViewModelTests
         internal string? LastClientId { get; private set; }
         internal long LastGeneration { get; private set; }
         internal int PreviewReads { get; private set; }
+        internal int OrderListReads { get; private set; }
 
         public Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
             CaseQuery query,
@@ -419,12 +592,30 @@ public sealed class CaseWorkspaceViewModelTests
                     DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
             ]);
 
+        public Task<IReadOnlyList<PlannerMachineType>> ListMachineTypesAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<PlannerMachineType>>([
+                new(
+                    "machine-type-turning",
+                    "turning",
+                    ["automated"],
+                    1,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow)
+            ]);
+
         public Task<IReadOnlyList<PlannerOrder>> ListOrdersAsync(
             string caseId,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<PlannerOrder>>([
-                new("order-1", caseId, "SO-1", 5, "2026-08-20", "ACTIVE", null)
-            ]);
+            CancellationToken cancellationToken = default)
+        {
+            OrderListReads++;
+            return Task.FromResult<IReadOnlyList<PlannerOrder>>(orders
+                .Where(order => order.CaseId == caseId)
+                .OrderBy(order => order.WorkFinishDate, StringComparer.Ordinal)
+                .ThenBy(order => order.OrderNumber, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(order => order.OrderId, StringComparer.Ordinal)
+                .ToArray());
+        }
 
         public Task<PlannerOrder> CreateOrderAsync(
             OrderCreate create,
@@ -435,14 +626,43 @@ public sealed class CaseWorkspaceViewModelTests
             LastOrderCreate = create;
             LastClientId = clientId;
             LastGeneration = editGeneration;
-            return Task.FromResult(new PlannerOrder(
+            var created = new PlannerOrder(
                 "order-2",
                 create.CaseId,
                 create.OrderNumber,
                 create.Quantity,
                 create.WorkFinishDate,
                 create.Status,
-                create.Notes));
+                create.Notes);
+            orders.Add(created);
+            return Task.FromResult(created);
+        }
+
+        public Task<PlannerOrder> UpdateOrderAsync(
+            string orderId,
+            OrderUpdate update,
+            string entityTag,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastOrderId = orderId;
+            LastOrderUpdate = update;
+            LastOrderEntityTag = entityTag;
+            LastClientId = clientId;
+            LastGeneration = editGeneration;
+            var current = orders.Single(order => order.OrderId == orderId);
+            var updated = new PlannerOrder(
+                orderId,
+                current.CaseId,
+                update.OrderNumber,
+                update.Quantity,
+                update.WorkFinishDate,
+                update.Status ?? current.Status,
+                update.Notes,
+                current.Version + 1);
+            orders[orders.IndexOf(current)] = updated;
+            return Task.FromResult(updated);
         }
 
         public Task<IReadOnlyList<ProductionBatch>> ListBatchesAsync(

@@ -15,7 +15,8 @@ internal sealed record CreateMachineRequest(
     string? WorkingCalendarId,
     bool? IsActive,
     bool? DisplayEnabled,
-    string? PicturePath)
+    string? PicturePath,
+    string? MachineTypeId = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -26,7 +27,8 @@ internal sealed record CreateMachineRequest(
         WorkingCalendarId,
         IsActive,
         DisplayEnabled,
-        PicturePath);
+        PicturePath,
+        MachineTypeId);
 }
 
 internal sealed class PatchMachineRequest
@@ -47,7 +49,8 @@ internal sealed class PatchMachineRequest
             reader.String("workingCalendarId"),
             reader.Boolean("isActive"),
             reader.Boolean("displayEnabled"),
-            reader.String("picturePath"));
+            reader.String("picturePath"),
+            reader.String("machineTypeId"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -57,7 +60,8 @@ internal sealed class PatchMachineRequest
         private static readonly HashSet<string> Allowed =
         [
             "number", "name", "processType", "axisType", "capabilities",
-            "workingCalendarId", "isActive", "displayEnabled", "picturePath"
+            "workingCalendarId", "isActive", "displayEnabled", "picturePath",
+            "machineTypeId"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -175,7 +179,8 @@ internal sealed record MachineResponse(
     int BacklogCount,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    string? MachineTypeId)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -192,7 +197,8 @@ internal sealed record MachineResponse(
         machine.BacklogCount,
         machine.Version,
         machine.CreatedAt,
-        machine.UpdatedAt);
+        machine.UpdatedAt,
+        machine.MachineTypeId);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

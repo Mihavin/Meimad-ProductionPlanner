@@ -10,6 +10,7 @@ namespace Meimad.Planner.Client.Windows.Presentation;
 
 internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 {
+    private readonly Func<AssignmentOverridePrompt, string?>? requestOverrideReason;
     private IPlannerApiClient? apiClient;
     private string clientId = string.Empty;
     private long editGeneration;
@@ -36,8 +37,10 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     private CalendarWorkweekOption selectedCalendarWorkweek;
     private CalendarShiftOption selectedCalendarShift;
 
-    internal MachinePlanningBoardViewModel()
+    internal MachinePlanningBoardViewModel(
+        Func<AssignmentOverridePrompt, string?>? requestOverrideReason = null)
     {
+        this.requestOverrideReason = requestOverrideReason;
         selectedCalendarWorkweek = CalendarWorkweeks[0];
         selectedCalendarShift = CalendarShifts[0];
         RefreshCommand = new AsyncCommand(RefreshAsync, () => apiClient is not null && !IsBusy);
@@ -241,7 +244,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             var snapshot = await snapshotTask;
             ApplyCalendars(await calendarsTask);
             Apply(snapshot);
-            await LoadMachinePicturesAsync();
+            await Task.WhenAll(LoadMachinePicturesAsync(), LoadOperationPreviewsAsync());
             hasLoaded = true;
             StatusMessage = $"Board loaded from the Server at {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.";
         }
@@ -476,16 +479,49 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         IsBusy = true;
         try
         {
-            await apiClient!.AssignOrMoveOperationAsync(
-                operation.BatchOperationId,
-                targetMachine.MachineId,
-                targetPosition,
-                clientId,
-                editGeneration);
-            AddFeedback(
-                "information",
-                "Manual assignment accepted",
-                $"{operation.DisplayTitle} was placed on {targetMachine.DisplayName} at position {targetPosition + 1}.");
+            try
+            {
+                await apiClient!.AssignOrMoveOperationAsync(
+                    operation.BatchOperationId,
+                    targetMachine.MachineId,
+                    targetPosition,
+                    clientId,
+                    editGeneration);
+                AddFeedback(
+                    "information",
+                    "Manual assignment accepted",
+                    $"{operation.DisplayTitle} was placed on {targetMachine.DisplayName} at position {targetPosition + 1}.");
+            }
+            catch (PlannerApiException exception)
+                when (exception.Code == "machine_type_override_required")
+            {
+                var reason = requestOverrideReason?.Invoke(new AssignmentOverridePrompt(
+                    operation.DisplayTitle,
+                    exception.RequiredMachineType ?? operation.RequiredMachineText,
+                    targetMachine.DisplayName,
+                    exception.SelectedMachineType ?? targetMachine.ProcessType));
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    AddFeedback(
+                        "warning",
+                        "Assignment override cancelled",
+                        $"{operation.DisplayTitle} remains unchanged. A confirmation reason is required to assign it to {targetMachine.DisplayName}.");
+                    StatusMessage = "The incompatible assignment was not confirmed.";
+                    return;
+                }
+
+                await apiClient!.AssignOrMoveOperationAsync(
+                    operation.BatchOperationId,
+                    targetMachine.MachineId,
+                    targetPosition,
+                    clientId,
+                    editGeneration,
+                    new MachineAssignmentCompatibilityOverride(true, reason.Trim()));
+                AddFeedback(
+                    "warning",
+                    "Cross-type assignment confirmed",
+                    $"{operation.DisplayTitle} was placed on {targetMachine.DisplayName}. The Server recorded the confirmation and reason.");
+            }
         }
         catch (Exception exception) when (IsExpected(exception))
         {
@@ -538,7 +574,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     internal async Task ChangeExecutionStatusAsync(
         PlanningOperationViewModel operation,
-        string action)
+        string action,
+        OperationPauseRequest? pause = null)
     {
         if (apiClient is null || !isEditor || IsBusy)
         {
@@ -562,11 +599,14 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         IsBusy = true;
         try
         {
-            var result = await apiClient.ChangeOperationExecutionAsync(
-                operation.BatchOperationId,
-                action,
-                clientId,
-                editGeneration);
+            var result = action == "suspend"
+                ? await apiClient.PauseOperationAsync(
+                    operation.BatchOperationId,
+                    pause ?? throw new InvalidOperationException("A pause reason is required."),
+                    clientId,
+                    editGeneration)
+                : await apiClient.ChangeOperationExecutionAsync(
+                    operation.BatchOperationId, action, clientId, editGeneration);
             AddFeedback(
                 "information",
                 $"Operation {action} accepted",
@@ -660,6 +700,22 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task LoadOperationPreviewsAsync()
+    {
+        if (apiClient is null) return;
+        var operations = Pool.Concat(Machines.SelectMany(machine => machine.Backlog)).ToArray();
+        var previewTasks = operations.Select(operation => operation.CaseId)
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(caseId => caseId, caseId => apiClient.GetCasePreviewAsync(caseId), StringComparer.Ordinal);
+        await Task.WhenAll(previewTasks.Values);
+        var previews = previewTasks.ToDictionary(
+            pair => pair.Key, pair => ToBitmap(pair.Value.Result), StringComparer.Ordinal);
+        foreach (var operation in operations)
+        {
+            operation.Preview = previews[operation.CaseId];
+        }
+    }
+
     private void ClearMachineForm()
     {
         editingMachineId = null;
@@ -728,7 +784,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         PlanningMachineColumnViewModel machine,
         Exception exception)
     {
-        if (exception is PlannerApiException { Code: "incompatible_machine" })
+        if (exception is PlannerApiException
+            { Code: "incompatible_machine" or "machine_type_override_required" })
         {
             AddFeedback(
                 "blocking",
@@ -783,38 +840,134 @@ internal sealed record CalendarWorkweekOption(string Label, IReadOnlyList<string
 
 internal sealed record CalendarShiftOption(string Label, string StartsAt, string EndsAt);
 
-internal sealed class PlanningOperationViewModel
+internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
 {
+    private BitmapImage? preview;
+
     internal PlanningOperationViewModel(PlanningBoardOperation operation)
     {
         BatchOperationId = operation.BatchOperationId;
+        CaseId = operation.CaseId;
+        CaseName = operation.CaseName;
         BatchNumber = operation.BatchNumber;
         PartNumber = operation.PartNumber;
         OperationNumber = operation.OperationNumber;
         OperationName = operation.OperationName;
         RequiredMachineType = operation.RequiredMachineType;
+        PlannedQuantity = operation.PlannedQuantity;
+        OrderReferences = operation.OrderReferences ?? [];
+        EstimatedTimeSeconds = operation.EstimatedTimeSeconds
+            ?? CalculateEstimatedTime(
+                operation.SetupTimeSeconds,
+                operation.CycleTimePerPartSeconds,
+                operation.PlannedQuantity);
         Status = operation.Status;
         MachineId = operation.MachineId;
         BacklogPosition = operation.BacklogPosition;
+        ActivePauseReason = operation.ActivePauseReason;
+        PausedBy = operation.PausedBy;
+        PauseStartedAt = operation.PauseStartedAt;
     }
 
     public string BatchOperationId { get; }
+    public string CaseId { get; }
+    public string? CaseName { get; }
     public string BatchNumber { get; }
     public string PartNumber { get; }
     public int OperationNumber { get; }
     public string OperationName { get; }
     public string? RequiredMachineType { get; }
+    public int PlannedQuantity { get; }
+    public IReadOnlyList<string> OrderReferences { get; }
+    public long? EstimatedTimeSeconds { get; }
     public string Status { get; }
     public string? MachineId { get; }
     public int? BacklogPosition { get; }
+    public BitmapImage? Preview
+    {
+        get => preview;
+        internal set
+        {
+            if (ReferenceEquals(preview, value)) return;
+            preview = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Preview)));
+        }
+    }
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string PartCaseText => $"{PartNumber} / {CaseName ?? CaseId}";
+    public string OperationText => $"OP{OperationNumber} {OperationName}";
+    public string BatchOrderText => OrderReferences.Count == 0
+        ? $"Batch {BatchNumber}"
+        : $"{BatchNumber} / {string.Join(", ", OrderReferences)}";
+    public string? ActivePauseReason { get; }
+    public string? PausedBy { get; }
+    public DateTimeOffset? PauseStartedAt { get; }
     public string DisplayTitle => $"{PartNumber} / {BatchNumber} / OP{OperationNumber}";
     public string RequiredMachineText => RequiredMachineType ?? "Any active Machine";
-    public string StatusText => $"Status: {Status}";
-    public bool CanStart => MachineId is not null && Status is "not_started" or "suspended";
+    public string PlannedQuantityText => $"Qty {PlannedQuantity}";
+    public string OrderReferencesText => OrderReferences.Count == 0
+        ? "Stock / no Order"
+        : string.Join(", ", OrderReferences);
+    public string EstimatedTimeText => EstimatedTimeSeconds.HasValue
+        ? $"Time {Formatting.DurationText.Format(EstimatedTimeSeconds.Value)}"
+        : "Time unavailable";
+    public string StatusText => Status switch
+    {
+        "not_started" => "Not started",
+        "in_progress" => "In progress",
+        "suspended" => "Paused",
+        "completed" => "Complete",
+        _ => Status.Replace('_', ' ')
+    };
+    public string StatusDetail => ActivePauseReason is null
+        ? StatusText
+        : $"Paused by {PausedBy} at {PauseStartedAt:g}. {ActivePauseReason}";
+    public string StatusGlyph => Status switch
+    {
+        "not_started" => "○",
+        "in_progress" => "▶",
+        "suspended" => "Ⅱ",
+        "completed" => "✓",
+        _ => "•"
+    };
+    public bool CanStart => MachineId is not null
+        && BacklogPosition == 0
+        && Status is "not_started" or "suspended";
     public bool CanSuspend => MachineId is not null && Status == "in_progress";
     public bool CanFinish => MachineId is not null && Status == "in_progress";
     public bool CanMove => Status != "in_progress";
+
+    private static long? CalculateEstimatedTime(
+        int? setupTimeSeconds,
+        int? cycleTimePerPartSeconds,
+        int plannedQuantity)
+    {
+        if (!setupTimeSeconds.HasValue
+            || !cycleTimePerPartSeconds.HasValue
+            || plannedQuantity < 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return checked(
+                (long)setupTimeSeconds.Value
+                + (long)plannedQuantity * cycleTimePerPartSeconds.Value);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
 }
+
+internal sealed record AssignmentOverridePrompt(
+    string OperationDisplayName,
+    string RequiredMachineType,
+    string MachineDisplayName,
+    string SelectedMachineType);
 
 internal sealed class PlanningMachineColumnViewModel : INotifyPropertyChanged
 {

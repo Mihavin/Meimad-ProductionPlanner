@@ -8,7 +8,13 @@ namespace Meimad.Planner.Server.Persistence;
 internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionRepository
 {
     private readonly SqliteDatabase database;
-    public SqlitePlanningDeletionRepository(SqliteDatabase database) => this.database = database;
+    private readonly TimeProvider timeProvider;
+
+    public SqlitePlanningDeletionRepository(SqliteDatabase database, TimeProvider timeProvider)
+    {
+        this.database = database;
+        this.timeProvider = timeProvider;
+    }
 
     public Task<bool> DeleteCaseAsync(string id, EditAuthority authority, CancellationToken token) =>
         ExecuteAsync(id, authority, async (c, t) =>
@@ -44,11 +50,24 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         {
             if (!await ExistsAsync(c, t, "production_batches", id, token)) return false;
             await BlockBySqlAsync(c, t, "SELECT EXISTS(SELECT 1 FROM machine_assignments JOIN batch_operations ON batch_operations.id = machine_assignments.batch_operation_id WHERE batch_operations.production_batch_id = $id);", id, "Unassign all Batch Operations before deleting the Production Batch.", token);
+            await BlockBySqlAsync(c, t, "SELECT EXISTS(SELECT 1 FROM operation_pause_events JOIN batch_operations ON batch_operations.id = operation_pause_events.batch_operation_id WHERE batch_operations.production_batch_id = $id);", id, "The Production Batch has retained Operation pause history and cannot be deleted.", token);
             await BlockIfAnyAsync(c, t, "eink_package_revisions", "production_batch_id", id, "The Production Batch is referenced by an official job package.", token);
             await BlockBySqlAsync(c, t, "SELECT EXISTS(SELECT 1 FROM eink_package_revisions JOIN batch_operations ON batch_operations.id = eink_package_revisions.batch_operation_id WHERE batch_operations.production_batch_id = $id);", id, "The Production Batch is referenced by an official job package.", token);
+            var affectedOrders = await SqliteOrderLifecycle.ReadCandidatesForBatchAsync(
+                c,
+                t,
+                id,
+                token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM batch_allocations WHERE production_batch_id = $id;", id, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM batch_operations WHERE production_batch_id = $id;", id, token);
-            return await DeleteRowAsync(c, t, "production_batches", id, token);
+            if (!await DeleteRowAsync(c, t, "production_batches", id, token)) return false;
+            await SqliteOrderLifecycle.RecomputeAsync(
+                c,
+                t,
+                affectedOrders,
+                timeProvider.GetUtcNow(),
+                token);
+            return true;
         }, token);
 
     public Task<bool> DeleteCaseOperationAsync(string caseId, string id, EditAuthority authority, CancellationToken token) =>

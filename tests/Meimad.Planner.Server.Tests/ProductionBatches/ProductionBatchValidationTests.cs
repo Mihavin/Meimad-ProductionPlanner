@@ -112,6 +112,17 @@ public sealed class ProductionBatchValidationTests
         Assert.Contains(exception.Issues, issue => issue.Code == "cross_case_order");
     }
 
+    [Fact]
+    public void Rejects_cancelled_order_reference()
+    {
+        var exception = Assert.Throws<ProductionBatchValidationException>(() =>
+            ProductionBatchValidator.ValidateOrderCaseOwnership(
+                "case-1",
+                [new OrderAllocationReference("cancelled", "case-1", IsCancelled: true)]));
+
+        Assert.Contains(exception.Issues, issue => issue.Code == "cancelled_order");
+    }
+
     private static void AssertValid(int plannedQuantity, params BatchAllocationValue[] allocations)
     {
         var values = Validate(plannedQuantity, allocations);

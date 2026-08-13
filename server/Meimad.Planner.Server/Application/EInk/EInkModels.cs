@@ -63,7 +63,11 @@ internal sealed record EInkManifestMetadataResponse(
     EInkManifestMachineResponse Machine,
     EInkManifestPartResponse Part,
     EInkManifestBatchResponse Batch,
-    EInkManifestOperationResponse Operation);
+    EInkManifestOperationResponse Operation,
+    EInkManifestSetupResponse Setup,
+    EInkManifestToolsResponse Tools,
+    EInkLocalChecklistResponse LocalChecklist,
+    EInkTabletPolicyResponse TabletPolicy);
 
 internal sealed record EInkManifestMachineResponse(string MachineId, string Number, string Name);
 
@@ -83,6 +87,44 @@ internal sealed record EInkManifestOperationResponse(
     string BatchOperationId,
     int OperationNumber,
     string Name);
+
+internal sealed record EInkManifestSetupResponse(
+    EInkManifestSetupWorkerResponse? Worker,
+    DateTimeOffset? PlannedStartsAt,
+    DateTimeOffset? PlannedEndsAt);
+
+internal sealed record EInkManifestSetupWorkerResponse(
+    string ResourceId,
+    string FirstName,
+    string LastName,
+    string? PhotoFileId,
+    string? PhotoDownloadPath);
+
+internal sealed record EInkManifestToolsResponse(
+    IReadOnlyList<EInkToolResponse> Job,
+    IReadOnlyList<EInkToolResponse> ExpectedOnMachine);
+
+internal sealed record EInkToolResponse(
+    string ToolId,
+    string Description,
+    string? Diameter,
+    string? Length,
+    string? Note);
+
+internal sealed record EInkLocalChecklistResponse(
+    string Storage,
+    bool SyncToServer,
+    bool CommentsSupported,
+    IReadOnlyList<EInkChecklistItemResponse> Items);
+
+internal sealed record EInkChecklistItemResponse(string ItemId, string Label);
+
+internal sealed record EInkTabletPolicyResponse(
+    string Transport,
+    string PersistentStorage,
+    string ServerAccess,
+    bool ReverseSynchronization,
+    bool UsbMassStorage);
 
 internal sealed record EInkManifestFileResponse(
     string FileId,

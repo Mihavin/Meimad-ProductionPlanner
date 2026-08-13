@@ -57,7 +57,8 @@ internal static partial class MachineValidator
             workingCalendarId!,
             values.IsActive!.Value,
             values.DisplayEnabled!.Value,
-            picturePath);
+            picturePath,
+            Normalize(values.MachineTypeId));
     }
 
     private static IReadOnlyList<string> NormalizeCapabilities(
@@ -210,7 +211,10 @@ internal static class MachineCompatibility
         return string.IsNullOrEmpty(required)
             || string.Equals(machine.ProcessType, required, StringComparison.OrdinalIgnoreCase)
             || string.Equals(machine.AxisType, required, StringComparison.OrdinalIgnoreCase)
-            || machine.Capabilities.Contains(required, StringComparer.OrdinalIgnoreCase);
+            || machine.Capabilities.Contains(required, StringComparer.OrdinalIgnoreCase)
+            || (machine.MachineTypeCapabilities?.Contains(
+                    required,
+                    StringComparer.OrdinalIgnoreCase) ?? false);
     }
 }
 

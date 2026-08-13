@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Domain.Machines;
 using Meimad.Planner.Server.Domain.ProductionBatches;
@@ -21,13 +22,15 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         string batchOperationId,
         string machineId,
         int backlogPosition,
+        MachineAssignmentOverrideConfirmation? overrideConfirmation,
         DateTimeOffset now,
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var confirmedByUserId = await EnsureEditAuthorityAsync(
+            connection, transaction, editAuthority, cancellationToken);
         var requiredMachineType = await ReadRequiredMachineTypeAsync(
             connection,
             transaction,
@@ -39,9 +42,24 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             machineId,
             cancellationToken)
             ?? throw new AssignmentMachineNotFoundException(machineId);
-        if (!MachineCompatibility.IsCompatible(targetMachine, requiredMachineType))
+        var requiresOverride = targetMachine.IsActive
+            && !string.IsNullOrWhiteSpace(requiredMachineType)
+            && !string.Equals(
+                targetMachine.ProcessType,
+                requiredMachineType.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+        if (!targetMachine.IsActive)
         {
             throw new IncompatibleMachineException(batchOperationId, machineId);
+        }
+
+        if (requiresOverride && overrideConfirmation is null)
+        {
+            throw new MachineAssignmentOverrideRequiredException(
+                batchOperationId,
+                machineId,
+                requiredMachineType!,
+                targetMachine.ProcessType);
         }
 
         var current = await ReadAssignmentForOperationAsync(
@@ -88,6 +106,13 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             .Where(assignment => assignment.MachineAssignmentId != current?.MachineAssignmentId)
             .ToList();
 
+        await EnsureRunningOperationRemainsFirstAsync(
+            connection,
+            transaction,
+            machineId,
+            targetFinal[0].BatchOperationId,
+            cancellationToken);
+
         var originalAssignments = targetOriginal
             .Concat(sourceOriginal)
             .ToDictionary(assignment => assignment.MachineAssignmentId, StringComparer.Ordinal);
@@ -106,8 +131,68 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             selected.MachineAssignmentId,
             now,
             cancellationToken);
+        if (requiresOverride)
+        {
+            await InsertOverrideLogAsync(
+                connection,
+                transaction,
+                batchOperationId,
+                targetMachine,
+                requiredMachineType!,
+                overrideConfirmation!,
+                editAuthority,
+                confirmedByUserId,
+                now,
+                cancellationToken);
+            await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
+                "cross_machine_type_override", now, confirmedByUserId,
+                new Dictionary<string,string> { ["batchOperationId"]=batchOperationId,["machineId"]=machineId },
+                "machine_type_incompatible", overrideConfirmation!.Reason,
+                new { requiredMachineType }, new { selectedMachineType=targetMachine.ProcessType }), cancellationToken);
+        }
+        if (current is not null && (current.MachineId != machineId || current.BacklogPosition != backlogPosition))
+            await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
+                "manual_backlog_reorder", now, confirmedByUserId,
+                new Dictionary<string,string> { ["batchOperationId"]=batchOperationId,["machineId"]=machineId },
+                null, null,
+                new { machineId=current.MachineId,backlogPosition=current.BacklogPosition },
+                new { machineId,backlogPosition }), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new AssignmentMutationResult(persisted, current is null);
+    }
+
+    public async Task<IReadOnlyList<MachineAssignmentOverrideLog>> ListOverridesAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, batch_operation_id, machine_id, required_machine_type,
+                   selected_machine_type, reason, confirmed_by_client_id,
+                   confirmed_by_user_id, confirmed_at
+            FROM machine_assignment_overrides
+            WHERE batch_operation_id = $batchOperationId
+            ORDER BY confirmed_at, id;
+            """;
+        command.Parameters.AddWithValue("$batchOperationId", batchOperationId);
+        var values = new List<MachineAssignmentOverrideLog>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(new MachineAssignmentOverrideLog(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                ParseInstant(reader.GetString(8))));
+        }
+
+        return values;
     }
 
     public async Task<bool> UnassignAsync(
@@ -209,13 +294,14 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
     public async Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
+        OperationPauseReason? pauseReason,
         DateTimeOffset now,
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var pausedBy = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
         var execution = await ReadExecutionStateAsync(
             connection, transaction, batchOperationId, cancellationToken)
             ?? throw new BatchOperationNotFoundException(batchOperationId);
@@ -261,6 +347,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        if (action == BatchOperationExecutionAction.Suspend)
+        {
+            await InsertPauseEventAsync(connection, transaction, batchOperationId,
+                pauseReason!, pausedBy, now, cancellationToken);
+        }
+        else if (action == BatchOperationExecutionAction.Start && execution.Status == "suspended")
+        {
+            await ClosePauseEventAsync(connection, transaction, batchOperationId, now, cancellationToken);
+        }
+
         if (action == BatchOperationExecutionAction.Finish)
         {
             var original = await ReadAssignmentsForMachineAsync(
@@ -295,12 +391,81 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             now,
             cancellationToken);
 
+        await SqliteOrderLifecycle.RecomputeForBatchAsync(
+            connection,
+            transaction,
+            execution.BatchId,
+            now,
+            cancellationToken);
+
+        var eventType = action switch
+        {
+            BatchOperationExecutionAction.Start when execution.Status == "suspended" => "operation_resumed",
+            BatchOperationExecutionAction.Start => "operation_started",
+            BatchOperationExecutionAction.Suspend => "operation_paused",
+            BatchOperationExecutionAction.Finish => "operation_finished",
+            _ => throw new ArgumentOutOfRangeException(nameof(action))
+        };
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
+            eventType, now, pausedBy,
+            new Dictionary<string,string> {
+                ["batchOperationId"]=batchOperationId,["productionBatchId"]=execution.BatchId,
+                ["machineId"]=execution.MachineId },
+            pauseReason?.ReasonType, pauseReason?.Comment,
+            new { status=execution.Status }, new { status=targetStatus,pauseReason }), cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
         return new BatchOperationExecutionResult(
             batchOperationId,
             execution.MachineId,
             targetStatus,
             execution.Version + 1);
+    }
+
+    private static async Task InsertPauseEventAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string operationId,
+        OperationPauseReason reason, string pausedBy, DateTimeOffset now, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO operation_pause_events
+                (id, batch_operation_id, reason_type, problem_description, tooling_item_description,
+                 customer_contact_name, request_description, comment, paused_by,
+                 pause_started_at, status, version, created_at, updated_at)
+            VALUES ($id, $operationId, $type, $problem, $tooling, $contact, $request,
+                    $comment, $pausedBy, $at, 'active', 1, $at, $at);
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        command.Parameters.AddWithValue("$operationId", operationId);
+        command.Parameters.AddWithValue("$type", reason.ReasonType);
+        command.Parameters.AddWithValue("$problem", (object?)reason.ProblemDescription ?? DBNull.Value);
+        command.Parameters.AddWithValue("$tooling", (object?)reason.ToolingItemDescription ?? DBNull.Value);
+        command.Parameters.AddWithValue("$contact", (object?)reason.CustomerContactName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$request", (object?)reason.RequestDescription ?? DBNull.Value);
+        command.Parameters.AddWithValue("$comment", (object?)reason.Comment ?? DBNull.Value);
+        command.Parameters.AddWithValue("$pausedBy", pausedBy);
+        command.Parameters.AddWithValue("$at", FormatInstant(now));
+        await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task ClosePauseEventAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string operationId,
+        DateTimeOffset now, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE operation_pause_events
+            SET status = 'closed', pause_ended_at = $at, updated_at = $at, version = version + 1
+            WHERE batch_operation_id = $operationId AND status = 'active';
+            """;
+        command.Parameters.AddWithValue("$operationId", operationId);
+        command.Parameters.AddWithValue("$at", FormatInstant(now));
+        if (await command.ExecuteNonQueryAsync(token) != 1)
+        {
+            throw new BatchOperationTransitionException("suspended_without_active_pause", BatchOperationExecutionAction.Start);
+        }
     }
 
     private static async Task<ExecutionState?> ReadExecutionStateAsync(
@@ -592,6 +757,34 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         }
     }
 
+    private static async Task EnsureRunningOperationRemainsFirstAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        string firstBatchOperationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT batch_operations.id
+            FROM machine_assignments
+            INNER JOIN batch_operations
+                ON batch_operations.id = machine_assignments.batch_operation_id
+            WHERE machine_assignments.machine_id = $machineId
+              AND batch_operations.status = 'in_progress'
+              AND batch_operations.id <> $firstBatchOperationId
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        command.Parameters.AddWithValue("$firstBatchOperationId", firstBatchOperationId);
+        var displacedOperationId = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (displacedOperationId is not null)
+        {
+            throw new RunningBatchOperationCannotMoveException(displacedOperationId);
+        }
+    }
+
     private static async Task<Machine?> ReadMachineAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -601,11 +794,15 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT id, number, name, machine_type, axis_type, capabilities_json,
-                   working_calendar_id, is_active, display_enabled,
-                   version, created_at, updated_at
+            SELECT machines.id, machines.number, machines.name, machines.machine_type,
+                   machines.axis_type, machines.capabilities_json,
+                   machines.working_calendar_id, machines.is_active, machines.display_enabled,
+                   machines.version, machines.created_at, machines.updated_at,
+                   machines.machine_type_id,
+                   COALESCE(machine_types.capabilities_json, '[]')
             FROM machines
-            WHERE id = $id;
+            LEFT JOIN machine_types ON machine_types.id = machines.machine_type_id
+            WHERE machines.id = $id;
             """;
         command.Parameters.AddWithValue("$id", machineId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -615,6 +812,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         }
 
         var capabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(5)) ?? [];
+        var typeCapabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(13)) ?? [];
         return new Machine(
             reader.GetString(0),
             reader.GetString(1),
@@ -629,7 +827,10 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             0,
             reader.GetInt32(9),
             ParseInstant(reader.GetString(10)),
-            ParseInstant(reader.GetString(11)));
+            ParseInstant(reader.GetString(11)),
+            null,
+            reader.IsDBNull(12) ? null : reader.GetString(12),
+            typeCapabilities);
     }
 
     private static async Task<MachineAssignment?> ReadAssignmentForOperationAsync(
@@ -686,7 +887,44 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         ParseInstant(reader.GetString(5)),
         ParseInstant(reader.GetString(6)));
 
-    private static async Task EnsureEditAuthorityAsync(
+    private static async Task InsertOverrideLogAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        Machine targetMachine,
+        string requiredMachineType,
+        MachineAssignmentOverrideConfirmation confirmation,
+        EditAuthority editAuthority,
+        string confirmedByUserId,
+        DateTimeOffset confirmedAt,
+        CancellationToken cancellationToken)
+    {
+        var instant = FormatInstant(confirmedAt);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO machine_assignment_overrides (
+                id, batch_operation_id, machine_id, required_machine_type,
+                selected_machine_type, reason, confirmed_by_client_id,
+                confirmed_by_user_id, confirmed_at, version, created_at, updated_at)
+            VALUES (
+                $id, $batchOperationId, $machineId, $requiredMachineType,
+                $selectedMachineType, $reason, $confirmedByClientId,
+                $confirmedByUserId, $confirmedAt, 1, $confirmedAt, $confirmedAt);
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        command.Parameters.AddWithValue("$batchOperationId", batchOperationId);
+        command.Parameters.AddWithValue("$machineId", targetMachine.MachineId);
+        command.Parameters.AddWithValue("$requiredMachineType", requiredMachineType);
+        command.Parameters.AddWithValue("$selectedMachineType", targetMachine.ProcessType);
+        command.Parameters.AddWithValue("$reason", confirmation.Reason);
+        command.Parameters.AddWithValue("$confirmedByClientId", editAuthority.ClientId);
+        command.Parameters.AddWithValue("$confirmedByUserId", confirmedByUserId);
+        command.Parameters.AddWithValue("$confirmedAt", instant);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         EditAuthority editAuthority,
@@ -699,7 +937,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
+        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
         {
@@ -709,12 +947,14 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         }
 
         if (!string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != editAuthority.Generation)
+            || reader.GetInt64(2) != editAuthority.Generation)
         {
             throw new EditModeMutationException(
                 "edit_generation_stale",
                 "This client does not hold the active Edit Mode generation.");
         }
+
+        return reader.GetString(1);
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

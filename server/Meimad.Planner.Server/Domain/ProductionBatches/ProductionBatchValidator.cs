@@ -95,6 +95,13 @@ internal static class ProductionBatchValidator
                     "cross_case_order",
                     $"Order '{reference.OrderId}' does not belong to the Batch Case."));
             }
+            else if (reference.IsCancelled)
+            {
+                issues.Add(new ProductionBatchValidationIssue(
+                    "allocations.orderId",
+                    "cancelled_order",
+                    $"Cancelled Order '{reference.OrderId}' cannot be allocated to a Production Batch."));
+            }
         }
 
         if (issues.Count > 0)
@@ -249,7 +256,10 @@ internal sealed record ValidatedBatchAllocationValue(
     string? OrderId,
     int Quantity);
 
-internal sealed record OrderAllocationReference(string OrderId, string? OrderCaseId);
+internal sealed record OrderAllocationReference(
+    string OrderId,
+    string? OrderCaseId,
+    bool IsCancelled = false);
 
 internal sealed record ProductionBatchValidationIssue(string Field, string Code, string Message);
 

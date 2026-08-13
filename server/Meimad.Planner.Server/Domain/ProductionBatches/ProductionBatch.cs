@@ -36,4 +36,10 @@ internal sealed record BatchOperation(
     string Status,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    int QaTimeAfterSetupSeconds = 0,
+    int LoadUnloadTimeSeconds = 0,
+    bool LoadUnloadRequiresWorker = false,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null,
+    bool DayShiftOnly = false);

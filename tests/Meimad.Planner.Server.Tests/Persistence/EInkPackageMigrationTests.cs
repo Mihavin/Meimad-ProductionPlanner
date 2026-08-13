@@ -72,6 +72,11 @@ public sealed class EInkPackageMigrationTests
             Assert.Contains("part_number", names);
             Assert.Contains("production_batch_id", names);
             Assert.Contains("operation_number", names);
+            Assert.Contains("setup_worker_first_name", names);
+            Assert.Contains("planned_setup_starts_at", names);
+            Assert.Contains("job_tools_json", names);
+            Assert.Contains("expected_machine_tools_json", names);
+            Assert.Contains("local_checklist_items_json", names);
         }
 
         await using var update = connection.CreateCommand();

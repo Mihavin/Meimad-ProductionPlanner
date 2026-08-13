@@ -39,7 +39,20 @@ internal sealed record PlanningBoardOperationResponse(
     int? CycleTimePerPartSeconds,
     string Status,
     string? MachineId,
-    int? BacklogPosition)
+    int? BacklogPosition,
+    int PlannedQuantity,
+    IReadOnlyList<string> OrderReferences,
+    long? EstimatedTimeSeconds,
+    int QaTimeAfterSetupSeconds,
+    int LoadUnloadTimeSeconds,
+    bool LoadUnloadRequiresWorker,
+    bool AutomaticLoading,
+    int? LoadUnloadEveryNParts,
+    bool DayShiftOnly,
+    string? ActivePauseReason,
+    string? PausedBy,
+    DateTimeOffset? PauseStartedAt,
+    string? CaseName)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -55,7 +68,20 @@ internal sealed record PlanningBoardOperationResponse(
         operation.CycleTimePerPartSeconds,
         operation.Status,
         operation.MachineId,
-        operation.BacklogPosition);
+        operation.BacklogPosition,
+        operation.PlannedQuantity,
+        operation.OrderReferences,
+        operation.EstimatedTimeSeconds,
+        operation.QaTimeAfterSetupSeconds,
+        operation.LoadUnloadTimeSeconds,
+        operation.LoadUnloadRequiresWorker,
+        operation.AutomaticLoading,
+        operation.LoadUnloadEveryNParts,
+        operation.DayShiftOnly,
+        operation.ActivePauseReason,
+        operation.PausedBy,
+        operation.PauseStartedAt,
+        operation.CaseName);
 }
 
 internal sealed record PlanningBoardMachineResponse(

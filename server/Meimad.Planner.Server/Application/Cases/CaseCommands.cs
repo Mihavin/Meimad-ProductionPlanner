@@ -43,7 +43,13 @@ internal sealed record CreateCaseOperationCommand(
     int? CycleTimePerPartSeconds,
     string? DependencyType,
     string? PredecessorCaseOperationId,
-    string? SimultaneousGroupKey);
+    string? SimultaneousGroupKey,
+    int QaTimeAfterSetupSeconds = 0,
+    int LoadUnloadTimeSeconds = 0,
+    bool LoadUnloadRequiresWorker = false,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null,
+    bool DayShiftOnly = false);
 
 internal sealed record UpdateCaseOperationCommand(
     OptionalField<int> OperationNumber,
@@ -53,4 +59,10 @@ internal sealed record UpdateCaseOperationCommand(
     OptionalField<int?> CycleTimePerPartSeconds,
     OptionalField<string?> DependencyType,
     OptionalField<string?> PredecessorCaseOperationId,
-    OptionalField<string?> SimultaneousGroupKey);
+    OptionalField<string?> SimultaneousGroupKey,
+    OptionalField<int> QaTimeAfterSetupSeconds = default,
+    OptionalField<int> LoadUnloadTimeSeconds = default,
+    OptionalField<bool> LoadUnloadRequiresWorker = default,
+    OptionalField<bool> AutomaticLoading = default,
+    OptionalField<int?> LoadUnloadEveryNParts = default,
+    OptionalField<bool> DayShiftOnly = default);

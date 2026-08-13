@@ -14,7 +14,20 @@ internal sealed class DatabaseMigrator
         new SchemaV6EInkPackagesMigration(),
         new SchemaV7JobPackageGenerationMigration(),
         new SchemaV8MachinePictureMigration(),
-        new SchemaV9BatchLifecycleMigration()
+        new SchemaV9BatchLifecycleMigration(),
+        new SchemaV10SetupMachineTypesAndOrderLifecycleMigration(),
+        new SchemaV11AdministrativeSetupMigration(),
+        new SchemaV12EmployeeResourceDetailsMigration(),
+        new SchemaV13EmployeeCalendarExceptionsMigration(),
+        new SchemaV14IsraeliHolidayCacheMigration(),
+        new SchemaV15MachineAssignmentOverridesMigration(),
+        new SchemaV16OperationTimeModelMigration(),
+        new SchemaV17MachineDowntimeMigration(),
+        new SchemaV18OperationPauseEventsMigration(),
+        new SchemaV19EInkSetupPackageMigration(),
+        new SchemaV20WeeklyMaterialReportMigration(),
+        new SchemaV21WeeklyEmployeeEfficiencyReportMigration(),
+        new SchemaV22StructuredEventLogMigration()
     ];
 
     private readonly SqliteDatabase database;

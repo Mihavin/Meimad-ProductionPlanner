@@ -25,7 +25,7 @@ public sealed class MachineAssignmentPersistenceTests
             machineService,
             authority,
             "M-2",
-            "machining",
+            "milling",
             ["mill", "laser"]);
         var assignments = CreateAssignmentService(fixture.Database);
 
@@ -77,7 +77,7 @@ public sealed class MachineAssignmentPersistenceTests
         var assignments = CreateAssignmentService(fixture.Database);
         await assignments.AssignOrMoveAsync("op-a", mill.MachineId, 0, authority);
 
-        await Assert.ThrowsAsync<IncompatibleMachineException>(() =>
+        await Assert.ThrowsAsync<MachineAssignmentOverrideRequiredException>(() =>
             assignments.AssignOrMoveAsync("op-laser", mill.MachineId, 1, authority));
         await Assert.ThrowsAsync<IncompatibleMachineException>(() =>
             assignments.AssignOrMoveAsync("op-laser", inactive.MachineId, 0, authority));
@@ -86,6 +86,40 @@ public sealed class MachineAssignmentPersistenceTests
 
         await AssertBacklogAsync(assignments, mill.MachineId, "op-a");
         await AssertBacklogAsync(assignments, inactive.MachineId);
+    }
+
+    [Fact]
+    public async Task Assign_or_reorder_before_running_operation_is_atomic()
+    {
+        await using var fixture = await Persistence.TemporaryDatabase.CreateAsync();
+        await SeedCalendarAndOperationsAsync(fixture.Database);
+        var authority = await GrantEditModeAsync(fixture.Database);
+        var machineService = CreateMachineService(fixture.Database);
+        var first = await CreateMachineAsync(machineService, authority, "M-RUNNING", "mill", []);
+        var second = await CreateMachineAsync(machineService, authority, "M-SOURCE", "mill", []);
+        var assignments = CreateAssignmentService(fixture.Database);
+
+        await assignments.AssignOrMoveAsync("op-a", first.MachineId, 0, authority);
+        await assignments.AssignOrMoveAsync("op-b", first.MachineId, 1, authority);
+        await assignments.AssignOrMoveAsync("op-c", second.MachineId, 0, authority);
+        await assignments.ChangeExecutionStatusAsync(
+            "op-a",
+            BatchOperationExecutionAction.Start,
+            authority);
+        var firstBefore = await ReadAssignmentsAsync(assignments, first.MachineId);
+        var secondBefore = await ReadAssignmentsAsync(assignments, second.MachineId);
+
+        var reorderException = await Assert.ThrowsAsync<RunningBatchOperationCannotMoveException>(
+            () => assignments.AssignOrMoveAsync("op-b", first.MachineId, 0, authority));
+        Assert.Contains("'op-a'", reorderException.Message, StringComparison.Ordinal);
+        Assert.Equal(firstBefore, await ReadAssignmentsAsync(assignments, first.MachineId));
+        Assert.Equal(secondBefore, await ReadAssignmentsAsync(assignments, second.MachineId));
+
+        var moveException = await Assert.ThrowsAsync<RunningBatchOperationCannotMoveException>(
+            () => assignments.AssignOrMoveAsync("op-c", first.MachineId, 0, authority));
+        Assert.Contains("'op-a'", moveException.Message, StringComparison.Ordinal);
+        Assert.Equal(firstBefore, await ReadAssignmentsAsync(assignments, first.MachineId));
+        Assert.Equal(secondBefore, await ReadAssignmentsAsync(assignments, second.MachineId));
     }
 
     [Fact]
@@ -175,6 +209,11 @@ public sealed class MachineAssignmentPersistenceTests
             Enumerable.Range(0, expectedOperationIds.Length),
             backlog.Select(item => item.Assignment.BacklogPosition));
     }
+
+    private static async Task<MachineAssignment[]> ReadAssignmentsAsync(
+        MachineAssignmentService service,
+        string machineId) =>
+        [.. (await service.GetBacklogAsync(machineId)).Select(item => item.Assignment)];
 
     private static async Task SeedCalendarAndOperationsAsync(SqliteDatabase database)
     {

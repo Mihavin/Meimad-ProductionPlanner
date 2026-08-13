@@ -1,5 +1,6 @@
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
+using Meimad.Planner.Client.Windows.Views;
 
 namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
@@ -19,9 +20,15 @@ public sealed class TimelineViewModelTests
             [new TimelineBatch("batch-1", "B-1", "PN-1"), new TimelineBatch("batch-2", "B-2", "PN-2")],
             [new TimelineMachine(
                 "machine-1", "M-1", "Mill",
-                [new TimelineInterval(
-                    "setup", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
-                    "Rough mill", setupStart, setupEnd, "server detail")])],
+                [
+                    new TimelineInterval(
+                        "setup", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+                        "Rough mill", setupStart, setupEnd, "server detail"),
+                    new TimelineInterval(
+                        "waiting", "machine-1", "op-2", "batch-1", "B-1", "PN-1", 20,
+                        "Finish mill", setupEnd, setupEnd.AddHours(1),
+                        "Waiting for OP10 on Machine M-1 to finish.")
+                ])],
             [
                 Dependency("dep-1", "batch-1", 10, 20),
                 Dependency("dep-2", "batch-2", 30, 40)
@@ -41,12 +48,16 @@ public sealed class TimelineViewModelTests
         Assert.Equal(setupEnd, viewModel.Machines[0].Intervals[0].EndsAt);
         Assert.Equal("Rough mill", viewModel.Machines[0].Intervals[0].OperationName);
         Assert.Equal("server detail", viewModel.Machines[0].Intervals[0].Detail);
+        Assert.Equal("waiting", viewModel.Machines[0].Intervals[1].Type);
+        Assert.Equal("Waiting for OP10 on Machine M-1 to finish.", viewModel.Machines[0].Intervals[1].Detail);
         Assert.Equal("dep-1", Assert.Single(viewModel.SelectedDependencies).DependencyId);
         viewModel.SelectedBatch = viewModel.Batches[1];
         Assert.Equal("dep-2", Assert.Single(viewModel.SelectedDependencies).DependencyId);
         Assert.Equal("warning", Assert.Single(viewModel.Conflicts).Severity);
         Assert.Equal(start, api.RequestedFrom);
         Assert.Equal(end, api.RequestedTo);
+        Assert.Equal(30, TimelineView.CompactRowHeight);
+        Assert.Equal("M-1 — Mill", TimelineView.MachineDisplayLabel(viewModel.Machines[0]));
 
         viewModel.Invalidate();
         await viewModel.EnsureLoadedAsync();
