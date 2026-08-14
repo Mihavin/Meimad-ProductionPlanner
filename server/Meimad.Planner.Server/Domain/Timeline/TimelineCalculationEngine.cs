@@ -50,13 +50,31 @@ internal sealed class TimelineCalculationEngine
             if (entry.Operation.SetupDuration < TimeSpan.Zero
                 || entry.Operation.ProductionDuration < TimeSpan.Zero
                 || entry.Operation.QaDuration < TimeSpan.Zero
-                || entry.Operation.LoadUnloadDuration < TimeSpan.Zero)
+                || entry.Operation.LoadUnloadDuration < TimeSpan.Zero
+                || entry.Operation.PlannedQuantity < 0
+                || entry.Operation.LoadUnloadEveryNParts <= 0)
             {
                 invalidOperations.Add(entry.Operation.OperationId);
                 conflicts.Add(
                     "invalid_duration",
                     TimelineConflictSeverity.Blocking,
-                    $"Operation '{entry.Operation.OperationId}' has a negative setup or production duration.",
+                    $"Operation '{entry.Operation.OperationId}' has an invalid duration, quantity, or load/unload frequency.",
+                    [entry.Operation.OperationId],
+                    [entry.MachineId]);
+                continue;
+            }
+
+            try
+            {
+                _ = TotalDuration(entry.Operation);
+            }
+            catch (OverflowException)
+            {
+                invalidOperations.Add(entry.Operation.OperationId);
+                conflicts.Add(
+                    "invalid_duration",
+                    TimelineConflictSeverity.Blocking,
+                    $"Operation '{entry.Operation.OperationId}' has a duration that exceeds the supported range.",
                     [entry.Operation.OperationId],
                     [entry.MachineId]);
             }
@@ -1189,8 +1207,73 @@ internal sealed class TimelineCalculationEngine
     }
 
     private static TimeSpan TotalDuration(TimelineOperationInput operation) =>
-        operation.SetupDuration + operation.QaDuration
-        + operation.LoadUnloadDuration + operation.ProductionDuration;
+        TimeSpan.FromTicks(checked(
+            operation.SetupDuration.Ticks
+            + operation.QaDuration.Ticks
+            + operation.ProductionDuration.Ticks * operation.PlannedQuantity
+            + operation.LoadUnloadDuration.Ticks * LoadUnloadOccurrenceCount(operation)));
+
+    private static int LoadUnloadOccurrenceCount(TimelineOperationInput operation)
+    {
+        if (operation.PlannedQuantity == 0 || operation.LoadUnloadDuration == TimeSpan.Zero)
+        {
+            return 0;
+        }
+
+        if (!operation.AutomaticLoading)
+        {
+            return operation.PlannedQuantity;
+        }
+
+        return operation.LoadUnloadEveryNParts is { } everyN
+            ? checked((operation.PlannedQuantity + everyN - 1) / everyN)
+            : 0;
+    }
+
+    private static IReadOnlyList<ProductionRun> ProductionRuns(TimelineOperationInput operation)
+    {
+        if (operation.PlannedQuantity == 0)
+        {
+            return [];
+        }
+
+        if (LoadUnloadOccurrenceCount(operation) == 0)
+        {
+            return [new ProductionRun(operation.PlannedQuantity, false)];
+        }
+
+        var partsPerRun = operation.AutomaticLoading
+            ? operation.LoadUnloadEveryNParts!.Value
+            : 1;
+        var remaining = operation.PlannedQuantity;
+        var runs = new List<ProductionRun>();
+        while (remaining > 0)
+        {
+            var partCount = Math.Min(remaining, partsPerRun);
+            runs.Add(new ProductionRun(partCount, true));
+            remaining -= partCount;
+        }
+        return runs;
+    }
+
+    private static TimeSpan ProductionRunDuration(
+        TimelineOperationInput operation,
+        ProductionRun run) => TimeSpan.FromTicks(checked(
+        operation.ProductionDuration.Ticks * run.PartCount));
+
+    private static string LoadUnloadDetail(
+        TimelineOperationInput operation,
+        int occurrenceIndex,
+        int occurrenceCount,
+        string? resourceId)
+    {
+        var method = operation.LoadUnloadRequiresWorker
+            ? $"Regular worker: {resourceId}"
+            : operation.AutomaticLoading
+                ? $"Automatic load/unload every {operation.LoadUnloadEveryNParts} parts"
+                : "Manual load/unload";
+        return $"Part reload {occurrenceIndex}/{occurrenceCount}; {method}";
+    }
 
     private static string InsufficientAvailabilityMessage(
         ScheduleNode node,
@@ -1206,7 +1289,7 @@ internal sealed class TimelineCalculationEngine
         }
 
         if (members.Any(value => value.Operation.LoadUnloadRequiresWorker
-                && value.Operation.LoadUnloadDuration > TimeSpan.Zero)
+                && LoadUnloadOccurrenceCount(value.Operation) > 0)
             && !resources.Any(value => value.Role == TimelineResourceRole.RegularWorker))
         {
             return "The operation requires manual load/unload time, but no active regular worker calendar is available within the Timeline horizon.";
@@ -1436,28 +1519,52 @@ internal sealed class TimelineCalculationEngine
                 : []
             : machineAvailability;
         var reservations = new List<ResourceReservation>();
-
-        var production = AllocateBackward(entry.Operation.ProductionDuration, latest, productionAvailability);
-        if (production is null) return null;
-        var productionStart = AllocationStart(production, latest);
-
-        ResourcePhase? loadPhase = null;
-        Allocation? loadUnload;
-        if (entry.Operation.LoadUnloadRequiresWorker)
+        var productionAllocations = new List<Allocation>();
+        var loadAllocations = new List<ScheduledLoad>();
+        var phaseLatest = latest;
+        var productionRuns = ProductionRuns(entry.Operation);
+        var loadOccurrenceCount = LoadUnloadOccurrenceCount(entry.Operation);
+        for (var runIndex = productionRuns.Count - 1; runIndex >= 0; runIndex--)
         {
-            loadPhase = AllocateResourcePhaseBackward(
-                entry.Operation.LoadUnloadDuration, productionStart, machineAvailability,
-                TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
-            loadUnload = loadPhase?.Allocation;
-            if (loadPhase is not null) AddReservation(reservations, loadPhase, entry.Operation);
-        }
-        else
-        {
-            loadUnload = AllocateBackward(entry.Operation.LoadUnloadDuration, productionStart, machineAvailability);
-        }
-        if (loadUnload is null) return null;
+            var run = productionRuns[runIndex];
+            var production = AllocateBackward(
+                ProductionRunDuration(entry.Operation, run),
+                phaseLatest,
+                productionAvailability);
+            if (production is null) return null;
+            productionAllocations.Insert(0, production);
+            phaseLatest = AllocationStart(production, phaseLatest);
 
-        var qaLatest = AllocationStart(loadUnload, productionStart);
+            if (!run.RequiresLoadUnload)
+            {
+                continue;
+            }
+
+            ResourcePhase? loadPhase = null;
+            Allocation? loadUnload;
+            if (entry.Operation.LoadUnloadRequiresWorker)
+            {
+                loadPhase = AllocateResourcePhaseBackward(
+                    entry.Operation.LoadUnloadDuration, phaseLatest, machineAvailability,
+                    TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
+                loadUnload = loadPhase?.Allocation;
+                if (loadPhase is not null) AddReservation(reservations, loadPhase, entry.Operation);
+            }
+            else
+            {
+                loadUnload = AllocateBackward(
+                    entry.Operation.LoadUnloadDuration, phaseLatest, machineAvailability);
+            }
+            if (loadUnload is null) return null;
+            loadAllocations.Insert(0, new ScheduledLoad(
+                loadUnload,
+                LoadUnloadDetail(
+                    entry.Operation, runIndex + 1, loadOccurrenceCount,
+                    loadPhase?.ResourceId)));
+            phaseLatest = AllocationStart(loadUnload, phaseLatest);
+        }
+
+        var qaLatest = phaseLatest;
         var qaPhase = AllocateResourcePhaseBackward(
             entry.Operation.QaDuration, qaLatest, machineAvailability,
             TimelineResourceRole.QaWorker, resources, occupiedResources, [], entry.Operation);
@@ -1486,13 +1593,11 @@ internal sealed class TimelineCalculationEngine
         var qaIntervals = ProjectBackwardIntervals(
             qaPhase.Allocation, TimelineIntervalType.Qa, entry,
             $"QA worker: {qaPhase.ResourceId}");
-        var loadIntervals = ProjectBackwardIntervals(
-            loadUnload, TimelineIntervalType.LoadUnload, entry,
-            entry.Operation.LoadUnloadRequiresWorker
-                ? $"Regular worker: {loadPhase!.ResourceId}"
-                : "Automatic load/unload");
-        var productionIntervals = ProjectBackwardIntervals(
-            production, TimelineIntervalType.Production, entry, null);
+        var loadIntervals = loadAllocations.SelectMany(load => ProjectBackwardIntervals(
+            load.Allocation, TimelineIntervalType.LoadUnload, entry, load.Detail)).ToArray();
+        var productionIntervals = productionAllocations.SelectMany(production =>
+            ProjectBackwardIntervals(
+                production, TimelineIntervalType.Production, entry, null)).ToArray();
         var work = setupIntervals.Concat(qaIntervals).Concat(loadIntervals)
             .Concat(productionIntervals).OrderBy(value => value.StartsAt).ToArray();
         var finish = work.Length == 0 ? latest : work.Max(value => value.EndsAt);
@@ -1603,7 +1708,8 @@ internal sealed class TimelineCalculationEngine
             {
                 phaseWindows.Add(Intersect(availability, setupWindows));
             }
-            else if (member.Operation.ProductionDuration > TimeSpan.Zero)
+            else if (member.Operation.ProductionDuration > TimeSpan.Zero
+                && member.Operation.PlannedQuantity > 0)
             {
                 phaseWindows.Add(availability);
             }
@@ -1744,59 +1850,81 @@ internal sealed class TimelineCalculationEngine
             machineAvailability, machineAvailability, null, downtimes,
             qaPhase.WaitingDetail ?? "Waiting for a QA worker."));
 
-        ResourcePhase? loadPhase = null;
-        Allocation? loadUnload;
-        if (entry.Operation.LoadUnloadRequiresWorker)
+        var productionAllocations = new List<Allocation>();
+        var loadAllocations = new List<ScheduledLoad>();
+        var phaseEarliest = qaPhase.Allocation.FinishesAt;
+        var productionRuns = ProductionRuns(entry.Operation);
+        var loadOccurrenceCount = LoadUnloadOccurrenceCount(entry.Operation);
+        for (var runIndex = 0; runIndex < productionRuns.Count; runIndex++)
         {
-            loadPhase = AllocateResourcePhase(
-                entry.Operation.LoadUnloadDuration, qaPhase.Allocation.FinishesAt, machineAvailability,
-                TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
-            loadUnload = loadPhase?.Allocation;
-            if (loadPhase is not null)
+            var run = productionRuns[runIndex];
+            if (run.RequiresLoadUnload)
             {
-                AddReservation(reservations, loadPhase, entry.Operation);
-                waitingIntervals.AddRange(PhaseWaiting(
-                    entry, qaPhase.Allocation.FinishesAt, loadPhase.Allocation,
-                    machineAvailability, machineAvailability, null, downtimes,
-                    loadPhase.WaitingDetail ?? "Waiting for a regular worker for load/unload."));
+                ResourcePhase? loadPhase = null;
+                Allocation? loadUnload;
+                if (entry.Operation.LoadUnloadRequiresWorker)
+                {
+                    loadPhase = AllocateResourcePhase(
+                        entry.Operation.LoadUnloadDuration, phaseEarliest, machineAvailability,
+                        TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
+                    loadUnload = loadPhase?.Allocation;
+                    if (loadPhase is not null)
+                    {
+                        AddReservation(reservations, loadPhase, entry.Operation);
+                        waitingIntervals.AddRange(PhaseWaiting(
+                            entry, phaseEarliest, loadPhase.Allocation,
+                            machineAvailability, machineAvailability, null, downtimes,
+                            loadPhase.WaitingDetail ?? "Waiting for a regular worker for load/unload."));
+                    }
+                }
+                else
+                {
+                    loadUnload = Allocate(
+                        entry.Operation.LoadUnloadDuration,
+                        phaseEarliest,
+                        machineAvailability);
+                }
+                if (loadUnload is null)
+                {
+                    return null;
+                }
+                if (!entry.Operation.LoadUnloadRequiresWorker)
+                {
+                    waitingIntervals.AddRange(PhaseWaiting(
+                        entry, phaseEarliest, loadUnload,
+                        machineAvailability, machineAvailability, null, downtimes,
+                        "Waiting for Machine availability for load/unload."));
+                }
+                loadAllocations.Add(new ScheduledLoad(
+                    loadUnload,
+                    LoadUnloadDetail(
+                        entry.Operation, runIndex + 1, loadOccurrenceCount,
+                        loadPhase?.ResourceId)));
+                phaseEarliest = loadUnload.FinishesAt;
             }
-        }
-        else
-        {
-            loadUnload = Allocate(
-                entry.Operation.LoadUnloadDuration,
-                qaPhase.Allocation.FinishesAt,
-                machineAvailability);
-        }
-        if (loadUnload is null)
-        {
-            return null;
-        }
-        if (!entry.Operation.LoadUnloadRequiresWorker)
-        {
-            waitingIntervals.AddRange(PhaseWaiting(
-                entry, qaPhase.Allocation.FinishesAt, loadUnload,
-                machineAvailability, machineAvailability, null, downtimes,
-                "Waiting for Machine availability for load/unload."));
-        }
 
-        var production = Allocate(
-            entry.Operation.ProductionDuration,
-            loadUnload.FinishesAt,
-            productionAvailability);
-        if (production is null)
-        {
-            return null;
+            var production = Allocate(
+                ProductionRunDuration(entry.Operation, run),
+                phaseEarliest,
+                productionAvailability);
+            if (production is null)
+            {
+                return null;
+            }
+            waitingIntervals.AddRange(PhaseWaiting(
+                entry, phaseEarliest, production,
+                machineAvailability, productionAvailability, null, downtimes,
+                "Waiting for Machine availability for production."));
+            productionAllocations.Add(production);
+            phaseEarliest = production.FinishesAt;
         }
-        waitingIntervals.AddRange(PhaseWaiting(
-            entry, loadUnload.FinishesAt, production,
-            machineAvailability, productionAvailability, null, downtimes,
-            "Waiting for Machine availability for production."));
 
         var startsAt = setupPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
             ?? qaPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
-            ?? loadUnload.Intervals.FirstOrDefault()?.StartsAt
-            ?? production.Intervals.FirstOrDefault()?.StartsAt
+            ?? loadAllocations.SelectMany(load => load.Allocation.Intervals)
+                .FirstOrDefault()?.StartsAt
+            ?? productionAllocations.SelectMany(production => production.Intervals)
+                .FirstOrDefault()?.StartsAt
             ?? earliest;
         var setupIntervals = setupPhase.Allocation.Intervals.Select(window => new TimelineInterval(
             TimelineIntervalType.Setup,
@@ -1805,7 +1933,9 @@ internal sealed class TimelineCalculationEngine
             window.StartsAt,
             window.EndsAt,
             $"Setup worker: {setupPhase.ResourceId}")).ToArray();
-        var productionIntervals = production.Intervals.Select(window => new TimelineInterval(
+        var productionIntervals = productionAllocations
+            .SelectMany(production => production.Intervals)
+            .Select(window => new TimelineInterval(
             TimelineIntervalType.Production,
             entry.MachineId,
             entry.Operation.OperationId,
@@ -1814,18 +1944,16 @@ internal sealed class TimelineCalculationEngine
         var qaIntervals = qaPhase.Allocation.Intervals.Select(window => new TimelineInterval(
             TimelineIntervalType.Qa, entry.MachineId, entry.Operation.OperationId,
             window.StartsAt, window.EndsAt, $"QA worker: {qaPhase.ResourceId}")).ToArray();
-        var loadUnloadIntervals = loadUnload.Intervals.Select(window => new TimelineInterval(
-            TimelineIntervalType.LoadUnload, entry.MachineId, entry.Operation.OperationId,
-            window.StartsAt, window.EndsAt,
-            entry.Operation.LoadUnloadRequiresWorker
-                ? $"Regular worker: {loadPhase!.ResourceId}"
-                : "Automatic load/unload")).ToArray();
+        var loadUnloadIntervals = loadAllocations.SelectMany(load =>
+            load.Allocation.Intervals.Select(window => new TimelineInterval(
+                TimelineIntervalType.LoadUnload, entry.MachineId, entry.Operation.OperationId,
+                window.StartsAt, window.EndsAt, load.Detail))).ToArray();
         var result = new TimelineOperationResult(
             entry.Operation.OperationId,
             entry.MachineId,
             entry.BacklogPosition,
             startsAt,
-            production.FinishesAt,
+            phaseEarliest,
             setupIntervals,
             productionIntervals,
             [],
@@ -2477,6 +2605,10 @@ internal sealed class TimelineCalculationEngine
         string ResourceId,
         Allocation Allocation,
         string? WaitingDetail);
+
+    private sealed record ProductionRun(int PartCount, bool RequiresLoadUnload);
+
+    private sealed record ScheduledLoad(Allocation Allocation, string Detail);
 
     private sealed record ResourceReservation(
         string ResourceId,

@@ -34,7 +34,10 @@ internal sealed record TimelineOperationInput(
     string? PriorityOrderNumber = null,
     DateTimeOffset? EarliestStart = null,
     DateTimeOffset? LatestFinish = null,
-    TimelinePlanningMode PlanningMode = TimelinePlanningMode.Manual);
+    TimelinePlanningMode PlanningMode = TimelinePlanningMode.Manual,
+    int PlannedQuantity = 1,
+    bool AutomaticLoading = false,
+    int? LoadUnloadEveryNParts = null);
 
 internal static class TimelinePriorityComparer
 {

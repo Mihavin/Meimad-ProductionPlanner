@@ -637,8 +637,10 @@ public sealed class PlannerApiClientTests
                   "machineAssignmentId":"assignment-1","workFinishDate":"2026-08-19",
                   "phases":[
                     {"type":"setup","startsAt":"2026-08-18T08:00:00Z","endsAt":"2026-08-18T08:15:00Z","detail":"Setup"},
-                    {"type":"loadunload","startsAt":"2026-08-18T08:15:00Z","endsAt":"2026-08-18T08:20:00Z","detail":"Manual load"},
-                    {"type":"production","startsAt":"2026-08-18T08:20:00Z","endsAt":"2026-08-18T09:00:00Z","detail":null}
+                    {"type":"loadunload","startsAt":"2026-08-18T08:15:00Z","endsAt":"2026-08-18T08:20:00Z","detail":"Part reload 1"},
+                    {"type":"production","startsAt":"2026-08-18T08:20:00Z","endsAt":"2026-08-18T08:40:00Z","detail":null},
+                    {"type":"loadunload","startsAt":"2026-08-18T08:40:00Z","endsAt":"2026-08-18T08:45:00Z","detail":"Part reload 2"},
+                    {"type":"production","startsAt":"2026-08-18T08:45:00Z","endsAt":"2026-08-18T09:00:00Z","detail":null}
                   ]
                 }]
               }],
@@ -661,8 +663,12 @@ public sealed class PlannerApiClientTests
         Assert.Equal("Backward", result.Machines[0].Intervals[0].PlanningModeLabel);
         Assert.Equal("assignment-1", result.Machines[0].Intervals[0].MachineAssignmentId);
         Assert.Equal(new DateOnly(2026, 8, 19), result.Machines[0].Intervals[0].WorkFinishDate);
-        Assert.Equal(["setup", "loadunload", "production"],
-            result.Machines[0].Intervals[0].Phases!.Select(phase => phase.Type));
+        var phases = result.Machines[0].Intervals[0].Phases!;
+        Assert.Equal(["setup", "loadunload", "production", "loadunload", "production"],
+            phases.Select(phase => phase.Type));
+        Assert.Equal(["Part reload 1", "Part reload 2"],
+            phases.Where(phase => phase.Type == "loadunload").Select(phase => phase.Detail));
+        Assert.True(phases[1].StartsAt < phases[3].StartsAt);
     }
 
     [Fact]

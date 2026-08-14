@@ -187,6 +187,53 @@ public sealed class TimelineBackwardCalculationTests
     }
 
     [Fact]
+    public void Backward_places_periodic_load_unload_before_each_production_run()
+    {
+        var operation = new TimelineOperationInput(
+            "op-periodic",
+            TimeSpan.Zero,
+            TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
+            PriorityOrderNumber: "SO-1",
+            EarliestStart: Start,
+            LatestFinish: End,
+            PlanningMode: TimelinePlanningMode.Backward,
+            PlannedQuantity: 5,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: 2);
+
+        var result = Calculate(
+            [Backlog("m-1", operation)],
+            [Calendar("m-1")]);
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        Assert.Equal(Utc(15, 55), scheduled.StartsAt);
+        Assert.Equal(End, scheduled.FinishesAt);
+        Assert.Equal(
+            [
+                (Utc(15, 55), Utc(16)),
+                (Utc(16, 20), Utc(16, 25)),
+                (Utc(16, 45), Utc(16, 50))
+            ],
+            scheduled.LoadUnloadIntervals!.Select(interval =>
+                (interval.StartsAt, interval.EndsAt)));
+        Assert.Equal(
+            [
+                (Utc(16), Utc(16, 20)),
+                (Utc(16, 25), Utc(16, 45)),
+                (Utc(16, 50), Utc(17))
+            ],
+            scheduled.ProductionIntervals.Select(interval =>
+                (interval.StartsAt, interval.EndsAt)));
+        Assert.Equal(
+            ["Part reload 1/3", "Part reload 2/3", "Part reload 3/3"],
+            scheduled.LoadUnloadIntervals!.Select(interval =>
+                interval.Detail!.Split(';')[0]));
+    }
+
+    [Fact]
     public void Backward_day_shift_only_production_uses_day_shift_calendar()
     {
         var operation = Operation("op-1", 2, End) with { DayShiftOnly = true };
@@ -377,6 +424,6 @@ public sealed class TimelineBackwardCalculationTests
     private static TimelineWindow Window(int startHour, int endHour) =>
         new(Utc(startHour), Utc(endHour));
 
-    private static DateTimeOffset Utc(int hour) =>
-        new(2026, 8, 11, hour, 0, 0, TimeSpan.Zero);
+    private static DateTimeOffset Utc(int hour, int minute = 0) =>
+        new(2026, 8, 11, hour, minute, 0, TimeSpan.Zero);
 }

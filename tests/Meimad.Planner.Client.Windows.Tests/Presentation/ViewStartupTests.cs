@@ -203,8 +203,10 @@ public sealed class ViewStartupTests
                             [
                                 new TimelinePhase("setup", renderStart.AddHours(2), renderStart.AddHours(3), "Setup"),
                                 new TimelinePhase("qa", renderStart.AddHours(3), renderStart.AddHours(3.5), "QC"),
-                                new TimelinePhase("loadunload", renderStart.AddHours(3.5), renderStart.AddHours(4), "Part reload"),
-                                new TimelinePhase("production", renderStart.AddHours(4), renderStart.AddHours(5), "Production")
+                                new TimelinePhase("loadunload", renderStart.AddHours(3.5), renderStart.AddHours(4), "Part reload 1"),
+                                new TimelinePhase("production", renderStart.AddHours(4), renderStart.AddHours(4.5), "Production 1"),
+                                new TimelinePhase("loadunload", renderStart.AddHours(4.5), renderStart.AddHours(4.75), "Part reload 2"),
+                                new TimelinePhase("production", renderStart.AddHours(4.75), renderStart.AddHours(5), "Production 2")
                             ]),
                         new TimelineInterval(
                             "operation", "machine-render", "op-render-2", "batch-render",
@@ -340,14 +342,21 @@ public sealed class ViewStartupTests
                 if (assignmentBlock.Child is Canvas phaseCanvas)
                 {
                     var phaseBorders = phaseCanvas.Children.OfType<Border>().ToArray();
-                    splitPhasesRenderedInsideOneHost = phaseBorders.Length == 4
+                    var reloadBorders = phaseBorders
+                        .Where(phase => phase.ToolTip?.ToString()?.StartsWith("PART RELOAD:", StringComparison.Ordinal) == true)
+                        .ToArray();
+                    splitPhasesRenderedInsideOneHost = phaseBorders.Length == 6
                         && phaseBorders.All(phase => phase.Tag is null)
                         && phaseBorders.Select(phase => ((SolidColorBrush)phase.Background).Color).ToHashSet().SetEquals(
                             [Color.FromRgb(251, 192, 45), Color.FromRgb(67, 160, 71), Color.FromRgb(123, 31, 162), Color.FromRgb(30, 136, 229)])
                         && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "SETUP: Setup")
                         && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "QC: QC")
-                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "PART RELOAD: Part reload")
-                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "PRODUCTION: Production")
+                        && reloadBorders.Length == 2
+                        && reloadBorders[0].ToolTip?.ToString() == "PART RELOAD: Part reload 1"
+                        && reloadBorders[1].ToolTip?.ToString() == "PART RELOAD: Part reload 2"
+                        && Canvas.GetLeft(reloadBorders[0]) < Canvas.GetLeft(reloadBorders[1])
+                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "PRODUCTION: Production 1")
+                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "PRODUCTION: Production 2")
                         && phaseBorders.Select(phase => ((SolidColorBrush)phase.Background).Color).Distinct().Count() == 4;
                 }
                 partialPrimaryIntervalsWerePartitioned =

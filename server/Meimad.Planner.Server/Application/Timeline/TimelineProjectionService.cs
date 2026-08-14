@@ -253,10 +253,9 @@ internal sealed class TimelineProjectionService
                     .Select(operation => new TimelineOperationInput(
                         operation.OperationId,
                         TimeSpan.FromSeconds(operation.SetupSeconds!.Value),
-                        TimeSpan.FromSeconds(checked(
-                            (long)operation.CycleSeconds!.Value * operation.PlannedQuantity)),
+                        TimeSpan.FromSeconds(operation.CycleSeconds!.Value),
                         TimeSpan.FromSeconds(operation.QaSeconds),
-                        TimeSpan.FromSeconds(LoadUnloadTotalSeconds(operation)),
+                        TimeSpan.FromSeconds(operation.LoadUnloadSeconds),
                         operation.LoadUnloadRequiresWorker,
                         operation.DayShiftOnly,
                         operation.PriorityWorkFinishDate,
@@ -269,7 +268,10 @@ internal sealed class TimelineProjectionService
                                 mappingConflicts,
                                 operation)
                             : null,
-                        CalculationPlanningMode(operation)))
+                        CalculationPlanningMode(operation),
+                        operation.PlannedQuantity,
+                        operation.AutomaticLoading,
+                        operation.LoadUnloadEveryNParts))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number

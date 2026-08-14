@@ -238,6 +238,45 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Locked_group_keeps_periodic_loads_and_reserves_the_shorter_member()
+    {
+        var periodic = new TimelineOperationInput(
+            "op-periodic", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PlannedQuantity: 4,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: 2);
+        var shorter = new TimelineOperationInput(
+            "op-shorter", TimeSpan.Zero, TimeSpan.FromMinutes(30));
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-periodic", [periodic]),
+                Backlog("machine-shorter", [shorter])
+            ],
+            [
+                Calendar("machine-periodic", Window(8, 17)),
+                Calendar("machine-shorter", Window(8, 17))
+            ],
+            SetupCalendar(Window(8, 17)), [],
+            [new TimelineDependency(
+                "locked-periodic", TimelineDependencyType.LockedSimultaneous,
+                periodic.OperationId, shorter.OperationId, "group-periodic")]));
+
+        Assert.Empty(result.Conflicts);
+        var periodicResult = Assert.Single(result.Operations,
+            operation => operation.OperationId == periodic.OperationId);
+        var shorterResult = Assert.Single(result.Operations,
+            operation => operation.OperationId == shorter.OperationId);
+        Assert.Equal(Utc(8), periodicResult.StartsAt);
+        Assert.Equal(Utc(8), shorterResult.StartsAt);
+        Assert.Equal(Utc(8, 50), periodicResult.FinishesAt);
+        Assert.Equal(periodicResult.FinishesAt, shorterResult.FinishesAt);
+        Assert.Equal(2, periodicResult.LoadUnloadIntervals!.Count);
+        AssertIntervals(shorterResult.ReservedIntervals,
+            (TimelineIntervalType.Reserved, Utc(8, 30), Utc(8, 50)));
+    }
+
+    [Fact]
     public void Locked_simultaneous_group_retries_at_common_worker_availability()
     {
         var result = new TimelineCalculationEngine().Calculate(Input(
@@ -633,6 +672,193 @@ public sealed class TimelineCalculationEngineTests
             (TimelineIntervalType.LoadUnload, Utc(12), Utc(12, 30)));
         AssertIntervals(scheduled.ProductionIntervals,
             (TimelineIntervalType.Production, Utc(12, 30), Utc(13, 30)));
+    }
+
+    [Fact]
+    public void Automatic_load_unload_repeats_before_each_every_n_parts_production_run()
+    {
+        var operation = new TimelineOperationInput(
+            "op-auto", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PlannedQuantity: 5,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: 2);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(8), Utc(8, 5)),
+            (TimelineIntervalType.LoadUnload, Utc(8, 25), Utc(8, 30)),
+            (TimelineIntervalType.LoadUnload, Utc(8, 50), Utc(8, 55)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 5), Utc(8, 25)),
+            (TimelineIntervalType.Production, Utc(8, 30), Utc(8, 50)),
+            (TimelineIntervalType.Production, Utc(8, 55), Utc(9, 5)));
+        Assert.Equal(
+            ["Part reload 1/3", "Part reload 2/3", "Part reload 3/3"],
+            scheduled.LoadUnloadIntervals!.Select(interval => interval.Detail!.Split(';')[0]));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0)]
+    [InlineData(2, 1, 25)]
+    [InlineData(5, 3, 65)]
+    public void Automatic_load_unload_handles_zero_partial_and_multiple_cadence_quantities(
+        int quantity,
+        int expectedLoads,
+        int expectedElapsedMinutes)
+    {
+        var operation = new TimelineOperationInput(
+            "op-quantity", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PlannedQuantity: quantity,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: 2);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        Assert.Equal(expectedLoads, scheduled.LoadUnloadIntervals!.Count);
+        Assert.Equal(Utc(8).AddMinutes(expectedElapsedMinutes), scheduled.FinishesAt);
+    }
+
+    [Fact]
+    public void Automatic_loading_without_frequency_has_no_load_events_and_one_production_run()
+    {
+        var operation = new TimelineOperationInput(
+            "op-no-frequency", TimeSpan.Zero, TimeSpan.FromMinutes(1),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PlannedQuantity: 100,
+            AutomaticLoading: true);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        Assert.Empty(scheduled.LoadUnloadIntervals!);
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8), Utc(9, 40)));
+    }
+
+    [Fact]
+    public void Zero_load_duration_collapses_manual_quantity_to_one_production_allocation()
+    {
+        var operation = new TimelineOperationInput(
+            "op-zero-load", TimeSpan.Zero, TimeSpan.FromMinutes(1),
+            LoadUnloadDuration: TimeSpan.Zero,
+            PlannedQuantity: 100);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        Assert.Empty(scheduled.LoadUnloadIntervals!);
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8), Utc(9, 40)));
+    }
+
+    [Fact]
+    public void Automatic_frequency_larger_than_quantity_has_one_initial_load()
+    {
+        var operation = new TimelineOperationInput(
+            "op-large-frequency", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PlannedQuantity: 2,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: 5);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(8), Utc(8, 5)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 5), Utc(8, 25)));
+    }
+
+    [Fact]
+    public void Manual_load_unload_reserves_worker_for_each_part_and_waits_between_cycles()
+    {
+        var operation = new TimelineOperationInput(
+            "op-manual", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            LoadUnloadRequiresWorker: true,
+            PlannedQuantity: 3);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar(
+                "regular", TimelineResourceRole.RegularWorker,
+                [
+                    new TimelineWindow(Utc(8), Utc(8, 5)),
+                    new TimelineWindow(Utc(8, 20), Utc(8, 25)),
+                    new TimelineWindow(Utc(8, 40), Utc(8, 45))
+                ])]));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(8), Utc(8, 5)),
+            (TimelineIntervalType.LoadUnload, Utc(8, 20), Utc(8, 25)),
+            (TimelineIntervalType.LoadUnload, Utc(8, 40), Utc(8, 45)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 5), Utc(8, 15)),
+            (TimelineIntervalType.Production, Utc(8, 25), Utc(8, 35)),
+            (TimelineIntervalType.Production, Utc(8, 45), Utc(8, 55)));
+        Assert.All(scheduled.LoadUnloadIntervals!, interval =>
+            Assert.Contains("regular", interval.Detail, StringComparison.Ordinal));
+        Assert.Contains(scheduled.WaitingIntervals, interval =>
+            interval.StartsAt == Utc(8, 15) && interval.EndsAt == Utc(8, 20));
+        Assert.Contains(scheduled.WaitingIntervals, interval =>
+            interval.StartsAt == Utc(8, 35) && interval.EndsAt == Utc(8, 40));
+    }
+
+    [Fact]
+    public void Periodic_load_unload_and_production_split_across_machine_calendar_windows()
+    {
+        var operation = new TimelineOperationInput(
+            "op-split", TimeSpan.Zero, TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            PlannedQuantity: 4,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: 2);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [new TimelineMachineCalendar("machine-1", [
+                new TimelineWindow(Utc(8), Utc(8, 30)),
+                new TimelineWindow(Utc(9), Utc(10))])],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(8), Utc(8, 5)),
+            (TimelineIntervalType.LoadUnload, Utc(8, 25), Utc(8, 30)));
+        AssertIntervals(scheduled.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 5), Utc(8, 25)),
+            (TimelineIntervalType.Production, Utc(9), Utc(9, 20)));
+        Assert.Contains(scheduled.WaitingIntervals, interval =>
+            interval.StartsAt == Utc(8, 30) && interval.EndsAt == Utc(9));
     }
 
     [Fact]

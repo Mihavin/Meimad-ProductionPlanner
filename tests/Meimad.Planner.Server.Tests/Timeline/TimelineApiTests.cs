@@ -879,6 +879,57 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Backward_with_no_pre_cutoff_capacity_uses_next_future_capacity_without_blocking()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T08:00:00Z");
+        var nextCapacity = DateTimeOffset.Parse("2026-08-12T08:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE orders SET work_finish_date = '2026-08-11' WHERE id = 'order-1';
+                    UPDATE machine_assignments SET planning_mode = 'backward';
+                    UPDATE working_calendars
+                    SET calendar_json = '{"availability":[{"startsAt":"2026-08-12T08:00:00Z","endsAt":"2026-08-12T18:00:00Z"},{"startsAt":"2026-08-13T08:00:00Z","endsAt":"2026-08-13T18:00:00Z"}]}'
+                    WHERE id = 'calendar-1';
+                    UPDATE application_settings
+                    SET value = '{"availability":[{"startsAt":"2026-08-12T08:00:00Z","endsAt":"2026-08-12T18:00:00Z"},{"startsAt":"2026-08-13T08:00:00Z","endsAt":"2026-08-13T18:00:00Z"}]}'
+                    WHERE key = 'timeline.setup_calendar_json';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .OrderBy(interval => interval.GetProperty("startsAt").GetDateTimeOffset())
+                .ToArray();
+
+            Assert.Equal(2, blocks.Length);
+            Assert.Equal(nextCapacity, blocks[0].GetProperty("startsAt").GetDateTimeOffset());
+            Assert.True(blocks[1].GetProperty("startsAt").GetDateTimeOffset()
+                >= blocks[0].GetProperty("endsAt").GetDateTimeOffset());
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_fallback_required");
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_deadline_missed");
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_schedule_cannot_fit");
+        }, serverNow);
+    }
+
+    [Fact]
     public async Task Missed_backward_chain_falls_forward_and_shifts_its_same_machine_child()
     {
         var serverNow = DateTimeOffset.Parse("2026-08-12T16:30:00Z");
