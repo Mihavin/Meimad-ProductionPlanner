@@ -185,7 +185,7 @@ public sealed class TimelineViewModelTests
     }
 
     [Fact]
-    public void Anonymous_waiting_remains_waiting_while_assignment_waiting_is_blocked()
+    public void Ordinary_waiting_is_not_rendered_but_blocked_waiting_remains_visible()
     {
         var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
         var waiting = new TimelineInterval(
@@ -193,7 +193,14 @@ public sealed class TimelineViewModelTests
             "Mill", start, start.AddHours(1), "Waiting for calendar.");
 
         Assert.False(waiting.IsBlocked);
-        Assert.Contains("WAITING", TimelineView.IntervalLabel(waiting), StringComparison.Ordinal);
+        Assert.False(TimelineView.IsDefaultTimelineIntervalVisible(waiting));
+
+        var blocked = waiting with { MachineAssignmentId = "assignment-1" };
+        Assert.True(TimelineView.IsDefaultTimelineIntervalVisible(blocked));
+
+        var hold = waiting with { TimingKind = "hold" };
+        Assert.True(hold.IsHold);
+        Assert.True(TimelineView.IsDefaultTimelineIntervalVisible(hold));
     }
 
     [Fact]
@@ -213,12 +220,21 @@ public sealed class TimelineViewModelTests
         Assert.True(TimelineView.HasRenderablePhases(operation));
         Assert.Equal(Color.FromRgb(30, 136, 229),
             Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("production")).Color);
-        Assert.Equal(Color.FromRgb(30, 136, 229),
+        Assert.Equal(Color.FromRgb(123, 31, 162),
             Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("loadunload")).Color);
+        Assert.Equal(Color.FromRgb(251, 192, 45),
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("setup")).Color);
+        Assert.Equal(Color.FromRgb(67, 160, 71),
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("qc")).Color);
+        Assert.NotEqual(
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("setup")).Color,
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("production")).Color);
         Assert.Equal(Color.FromRgb(245, 124, 0),
             Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("reserved")).Color);
         Assert.Equal(Brushes.Transparent, TimelineView.PhaseBrush("waiting"));
         Assert.True(TimelineView.IsRenderablePhaseType("loadunload"));
+        Assert.True(TimelineView.IsRenderablePhaseType("qc"));
+        Assert.True(TimelineView.IsRenderablePhaseType("part_reload"));
         Assert.False(TimelineView.IsRenderablePhaseType("waiting"));
     }
 

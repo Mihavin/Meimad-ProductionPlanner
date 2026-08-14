@@ -7,7 +7,10 @@ internal sealed record TimelineProjection(
     IReadOnlyList<TimelineProjectionBatch> Batches,
     IReadOnlyList<TimelineProjectionMachine> Machines,
     IReadOnlyList<TimelineProjectionDependency> Dependencies,
-    IReadOnlyList<TimelineProjectionConflict> Conflicts);
+    IReadOnlyList<TimelineProjectionConflict> Conflicts,
+    string DisplayTimeZoneId,
+    string DayStartsAtLocal,
+    string DayEndsAtLocal);
 
 internal sealed record TimelineProjectionBatch(
     string BatchId,

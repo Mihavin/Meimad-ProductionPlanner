@@ -42,8 +42,13 @@ public sealed class ViewStartupTests
         var boundaryBlockedMarkerRendered = false;
         var splitPhasesRenderedInsideOneHost = false;
         var idleIntervalsWereNotRendered = false;
+        var anonymousWaitingWasNotRendered = false;
         var nonWorkingCalendarWasBackgroundOnly = false;
         var nonWorkingCalendarWasBehindForeground = false;
+        var timeScaleShowHoursAndDaylightBands = false;
+        var currentTimeMarkerWasUniqueAndBounded = false;
+        var currentTimeTimerStoppedOnUnload = false;
+        string? renderedWaitingDescription = null;
         string? timelineStatusAfterClose = null;
         var thread = new Thread(() =>
         {
@@ -174,12 +179,18 @@ public sealed class ViewStartupTests
                     && Equals(modeItems[2].Header, "Set manual mode")
                     && modeItems[0].ToolTip?.ToString()?.Contains("existing assignment", StringComparison.Ordinal) == true;
 
-                var renderStart = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+                var renderStart = DateTimeOffset.Parse("2026-08-18T04:00:00Z");
                 var renderViewModel = new TimelineViewModel();
                 typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.HorizonStart))!
                     .SetValue(renderViewModel, renderStart);
                 typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.HorizonEnd))!
                     .SetValue(renderViewModel, renderStart.AddHours(8));
+                typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.DisplayTimeZoneId))!
+                    .SetValue(renderViewModel, "UTC");
+                typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.DayStartsAtLocal))!
+                    .SetValue(renderViewModel, "06:00");
+                typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.DayEndsAtLocal))!
+                    .SetValue(renderViewModel, "18:00");
                 renderViewModel.Machines.Add(new TimelineMachine(
                     "machine-render", "M-9", "Render verifier",
                     [
@@ -191,6 +202,8 @@ public sealed class ViewStartupTests
                             Phases:
                             [
                                 new TimelinePhase("setup", renderStart.AddHours(2), renderStart.AddHours(3), "Setup"),
+                                new TimelinePhase("qa", renderStart.AddHours(3), renderStart.AddHours(3.5), "QC"),
+                                new TimelinePhase("loadunload", renderStart.AddHours(3.5), renderStart.AddHours(4), "Part reload"),
                                 new TimelinePhase("production", renderStart.AddHours(4), renderStart.AddHours(5), "Production")
                             ]),
                         new TimelineInterval(
@@ -203,6 +216,10 @@ public sealed class ViewStartupTests
                             "B-R", "PN-R", 30, "Blocked operation", renderStart,
                             renderStart.AddHours(3), "Partially overlapping capacity wait.",
                             TimingKind: "blocked", MachineAssignmentId: "assignment-render-blocked"),
+                        new TimelineInterval(
+                            "waiting", "machine-render", "anonymous-wait", null,
+                            null, null, null, "Anonymous capacity wait", renderStart.AddHours(1),
+                            renderStart.AddHours(1.5), "Ordinary capacity wait."),
                         new TimelineInterval(
                             "downtime", "machine-render", null, null, null, null, null, null,
                             renderStart.AddHours(4), renderStart.AddHours(6),
@@ -227,7 +244,12 @@ public sealed class ViewStartupTests
                             renderStart.AddHours(1), renderStart.AddHours(2),
                             "Machine calendar: non-working time.")
                     ]));
-                var renderTimeline = new TimelineView { DataContext = renderViewModel };
+                var renderTimeline = new TimelineView(() => renderStart.AddHours(4))
+                {
+                    DataContext = renderViewModel
+                };
+                Assert.False(TimelineView.IsDefaultTimelineIntervalVisible(
+                    renderViewModel.Machines[0].Intervals.Single(interval => interval.OperationId == "anonymous-wait")));
                 timelineRenderWindow = new Window { Content = renderTimeline, Width = 1000, Height = 700 };
                 timelineRenderWindow.Show();
                 timelineRenderWindow.UpdateLayout();
@@ -239,13 +261,61 @@ public sealed class ViewStartupTests
                     .ToArray();
                 idleIntervalsWereNotRendered = !renderedIntervalBlocks.Any(border =>
                     border.Tag is TimelineInterval { Type: "idle" });
+                anonymousWaitingWasNotRendered = !renderedIntervalBlocks.Any(border =>
+                    border.Tag is TimelineInterval { Type: "waiting", OperationId: "anonymous-wait" });
+                renderedWaitingDescription = string.Join(" | ", renderedIntervalBlocks
+                    .Select(border => border.Tag is TimelineInterval interval
+                        ? $"{interval.Type}:{interval.OperationId}:{interval.MachineAssignmentId}:{interval.TimingKind}"
+                        : "non-interval"));
                 var calendarBackgrounds = Descendants<Border>(renderTimeline)
                     .Where(border => border.Tag is null
                         && border.ToolTip is string tooltip
                         && tooltip.Contains("NON-WORKING CALENDAR", StringComparison.Ordinal))
                     .ToArray();
+                var timeScaleBands = Descendants<Border>(renderTimeline)
+                    .Where(border => border.Tag is null
+                        && border.ToolTip is string tooltip
+                        && (tooltip.Contains("DAYLIGHT HOURS", StringComparison.Ordinal)
+                            || tooltip.Contains("DARK HOURS", StringComparison.Ordinal)))
+                    .ToArray();
+                var timeScaleLabels = Descendants<TextBlock>(renderTimeline)
+                    .Where(textBlock => textBlock.Text == "04")
+                    .ToArray();
+                timeScaleShowHoursAndDaylightBands =
+                    timeScaleBands.Any(border => border.ToolTip is string tooltip
+                        && tooltip.Contains("DAYLIGHT HOURS", StringComparison.Ordinal))
+                    && timeScaleBands.Any(border => border.ToolTip is string tooltip
+                        && tooltip.Contains("DARK HOURS", StringComparison.Ordinal))
+                    && timeScaleBands.All(border => Canvas.GetTop(border) == 0
+                        && border.Height == 42
+                        && border.Tag is not TimelineInterval)
+                    && timeScaleLabels.Length > 0
+                    && timeScaleBands.All(border => border.ToolTip is string tooltip
+                        && (tooltip.Contains("DAYLIGHT HOURS", StringComparison.Ordinal)
+                            || tooltip.Contains("DARK HOURS", StringComparison.Ordinal)));
                 var timelineCanvas = Descendants<Canvas>(renderTimeline)
                     .First(canvas => canvas.Width > 1000);
+                var markerUpdate = typeof(TimelineView).GetMethod(
+                    "UpdateCurrentTimeMarkerFromClock",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                markerUpdate.Invoke(renderTimeline, null);
+                markerUpdate.Invoke(renderTimeline, null);
+                var currentTimeMarkers = Descendants<Canvas>(renderTimeline)
+                    .Where(canvas => canvas.Uid == "CurrentTimeMarker")
+                    .ToArray();
+                var currentTimeMarker = Assert.Single(currentTimeMarkers);
+                var currentTimeBadge = Assert.Single(currentTimeMarker.Children.OfType<Border>());
+                var chartStart = TimelineView.LabelWidthForTests;
+                var chartEnd = chartStart + (timelineCanvas.Width - chartStart - 18);
+                var badgeLeft = Canvas.GetLeft(currentTimeBadge);
+                var badgeWidth = currentTimeBadge.DesiredSize.Width;
+                currentTimeMarkerWasUniqueAndBounded = currentTimeMarker.Children
+                        .OfType<FrameworkElement>()
+                        .All(element => element.Tag is not TimelineInterval)
+                    && badgeLeft >= chartStart
+                    && badgeLeft + badgeWidth <= chartEnd + 0.1
+                    && currentTimeBadge.Child is TextBlock { Text: var nowText }
+                    && nowText.StartsWith("NOW ", StringComparison.Ordinal);
                 var assignmentBlock = Assert.Single(renderedIntervalBlocks, border =>
                     border.Tag is TimelineInterval { MachineAssignmentId: "assignment-render" });
                 var secondAssignmentBlock = Assert.Single(renderedIntervalBlocks, border =>
@@ -270,13 +340,15 @@ public sealed class ViewStartupTests
                 if (assignmentBlock.Child is Canvas phaseCanvas)
                 {
                     var phaseBorders = phaseCanvas.Children.OfType<Border>().ToArray();
-                    splitPhasesRenderedInsideOneHost = phaseBorders.Length == 2
-                        && assignmentBlock.BorderThickness == new Thickness(0)
+                    splitPhasesRenderedInsideOneHost = phaseBorders.Length == 4
                         && phaseBorders.All(phase => phase.Tag is null)
-                        && phaseBorders.All(phase => phase.Background is SolidColorBrush brush
-                            && brush.Color == Color.FromRgb(30, 136, 229))
-                        && Canvas.GetLeft(phaseBorders[0]) == 0
-                        && Canvas.GetLeft(phaseBorders[1]) > phaseBorders[0].Width;
+                        && phaseBorders.Select(phase => ((SolidColorBrush)phase.Background).Color).ToHashSet().SetEquals(
+                            [Color.FromRgb(251, 192, 45), Color.FromRgb(67, 160, 71), Color.FromRgb(123, 31, 162), Color.FromRgb(30, 136, 229)])
+                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "SETUP: Setup")
+                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "QC: QC")
+                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "PART RELOAD: Part reload")
+                        && phaseBorders.Any(phase => phase.ToolTip?.ToString() == "PRODUCTION: Production")
+                        && phaseBorders.Select(phase => ((SolidColorBrush)phase.Background).Color).Distinct().Count() == 4;
                 }
                 partialPrimaryIntervalsWerePartitioned =
                     Canvas.GetTop(assignmentBlock) != Canvas.GetTop(secondAssignmentBlock);
@@ -346,17 +418,24 @@ public sealed class ViewStartupTests
                         .Any(textBlock => textBlock.Text == "ACTUAL HISTORY");
                 var blankSpaceLegendText = Assert.Single(
                     Descendants<TextBlock>(renderTimeline),
-                    textBlock => textBlock.Text == "BLANK = AVAILABLE / IDLE");
+                    textBlock => textBlock.Text == "BLANK = NO OPERATION");
                 var blankSpaceLegend = Assert.IsType<StackPanel>(
                     VisualTreeHelper.GetParent(blankSpaceLegendText));
                 var blankSpaceSwatch = Assert.Single(Descendants<Border>(blankSpaceLegend));
                 timelineLegendExplainedBlankSpace =
                     blankSpaceLegend.ToolTip is string tooltip
-                    && tooltip.Contains("machine is available and idle", StringComparison.OrdinalIgnoreCase)
+                    && tooltip.Contains("ordinary calculated waiting", StringComparison.OrdinalIgnoreCase)
                     && blankSpaceSwatch.Background is SolidColorBrush swatchBrush
                     && swatchBrush.Color == Color.FromRgb(250, 250, 250)
                     && blankSpaceSwatch.BorderBrush is SolidColorBrush borderBrush
                     && borderBrush.Color == Color.FromRgb(158, 158, 158);
+
+                renderTimeline.RaiseEvent(new RoutedEventArgs(UserControl.UnloadedEvent));
+                timelineRenderWindow.Close();
+                timelineRenderWindow = null;
+                currentTimeTimerStoppedOnUnload = typeof(TimelineView)
+                    .GetField("currentTimeTimer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .GetValue(renderTimeline) is null;
 
                 var openMethod = typeof(MainWindow).GetMethod(
                     "OpenTimelineWindow_Click",
@@ -444,8 +523,13 @@ public sealed class ViewStartupTests
         Assert.True(boundaryBlockedMarkerRendered);
         Assert.True(splitPhasesRenderedInsideOneHost);
         Assert.True(idleIntervalsWereNotRendered);
+        Assert.True(anonymousWaitingWasNotRendered,
+            $"Anonymous waiting was rendered in the Timeline visual tree: {renderedWaitingDescription}");
         Assert.True(nonWorkingCalendarWasBackgroundOnly);
         Assert.True(nonWorkingCalendarWasBehindForeground);
+        Assert.True(timeScaleShowHoursAndDaylightBands);
+        Assert.True(currentTimeMarkerWasUniqueAndBounded);
+        Assert.True(currentTimeTimerStoppedOnUnload);
         Assert.Contains("plan changed", timelineStatusAfterClose, StringComparison.OrdinalIgnoreCase);
     }
 

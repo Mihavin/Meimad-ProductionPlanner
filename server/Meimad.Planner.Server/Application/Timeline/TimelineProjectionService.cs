@@ -424,7 +424,10 @@ internal sealed class TimelineProjectionService
             batches,
             projectedMachines,
             dependencies.Select(dependency => dependency.Projection).ToArray(),
-            allConflicts);
+            allConflicts,
+            options.TimeZoneId,
+            options.DayShiftStartsAtLocal,
+            options.DayShiftEndsAtLocal);
         total.Stop();
         logger.LogInformation(
             "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",

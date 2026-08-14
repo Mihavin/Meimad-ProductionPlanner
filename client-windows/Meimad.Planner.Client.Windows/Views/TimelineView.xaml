@@ -37,22 +37,30 @@
                 CornerRadius="5" Padding="8" Margin="0,6,0,0">
             <WrapPanel>
                 <TextBlock Text="LEGEND" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0" />
-                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#1E88E5" /><TextBlock Text="WORK" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#1E88E5" /><TextBlock Text="PRODUCTION" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#FBC02D" /><TextBlock Text="SETUP" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#43A047" /><TextBlock Text="QC" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#7B1FA2" /><TextBlock Text="PART RELOAD" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
-                            ToolTip="Blank timeline space means the machine is available and idle. Idle is not drawn as a bar.">
+                            ToolTip="Blank timeline space means no operation block is rendered. It may be available/idle or ordinary calculated waiting; idle and ordinary waiting are not drawn as bars.">
                     <Border Width="12" Height="12" Background="#FAFAFA" BorderBrush="#9E9E9E" BorderThickness="1" />
-                    <TextBlock Text="BLANK = AVAILABLE / IDLE" Margin="5,0,0,0" />
+                    <TextBlock Text="BLANK = NO OPERATION" Margin="5,0,0,0" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
                             ToolTip="Gray columns indicate non-working time from the machine's configured calendar. They are not operation blocks.">
                     <Border Width="12" Height="12" Background="#E0E4E8" BorderBrush="#BDC6CD" BorderThickness="1" />
                     <TextBlock Text="NON-WORKING CALENDAR" Margin="5,0,0,0" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#7E57C2" /><TextBlock Text="WAITING" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0" ToolTip="Explicit blocked/conflict time is shown. Ordinary waiting is blank space."><Border Width="12" Height="12" Background="#7E57C2" /><TextBlock Text="BLOCKED" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#7E57C2" /><TextBlock Text="HOLD" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#C62828" /><TextBlock Text="DOWNTIME" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#F57C00" /><TextBlock Text="RESERVED" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#00897B" /><TextBlock Text="ACTUAL HISTORY" Margin="5,0,0,0" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
+                            ToolTip="The red vertical line marks the current time in the configured factory time zone.">
+                    <Border Width="12" Height="12" Background="#C62828" />
+                    <TextBlock Text="NOW = CURRENT TIME" Margin="5,0,0,0" />
+                </StackPanel>
             </WrapPanel>
         </Border>
 

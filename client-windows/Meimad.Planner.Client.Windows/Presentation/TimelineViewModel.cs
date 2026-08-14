@@ -22,6 +22,9 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     private string statusMessage = "Connect to the Server to calculate the Timeline.";
     private DateTimeOffset horizonStart;
     private DateTimeOffset horizonEnd;
+    private string? displayTimeZoneId;
+    private string? dayStartsAtLocal;
+    private string? dayEndsAtLocal;
     private long invalidationVersion;
 
     internal TimelineViewModel() =>
@@ -91,6 +94,24 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     {
         get => horizonEnd;
         private set => SetField(ref horizonEnd, value);
+    }
+
+    public string? DisplayTimeZoneId
+    {
+        get => displayTimeZoneId;
+        private set => SetField(ref displayTimeZoneId, value);
+    }
+
+    public string? DayStartsAtLocal
+    {
+        get => dayStartsAtLocal;
+        private set => SetField(ref dayStartsAtLocal, value);
+    }
+
+    public string? DayEndsAtLocal
+    {
+        get => dayEndsAtLocal;
+        private set => SetField(ref dayEndsAtLocal, value);
     }
 
     public bool IsBusy
@@ -208,6 +229,9 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         var selectedId = SelectedBatch?.BatchId;
         HorizonStart = snapshot.HorizonStart;
         HorizonEnd = snapshot.HorizonEnd;
+        DisplayTimeZoneId = snapshot.DisplayTimeZoneId;
+        DayStartsAtLocal = snapshot.DayStartsAtLocal;
+        DayEndsAtLocal = snapshot.DayEndsAtLocal;
         Replace(Batches, snapshot.Batches);
         var workFinishDates = snapshot.Batches.ToDictionary(
             batch => batch.BatchId,
@@ -279,6 +303,9 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         selectedBatch = null;
         HorizonStart = default;
         HorizonEnd = default;
+        DisplayTimeZoneId = null;
+        DayStartsAtLocal = null;
+        DayEndsAtLocal = null;
     }
 
     private bool CanRefresh() => apiClient is not null

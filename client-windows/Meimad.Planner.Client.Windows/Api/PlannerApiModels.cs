@@ -602,7 +602,10 @@ internal sealed record TimelineSnapshot(
     IReadOnlyList<TimelineBatch> Batches,
     IReadOnlyList<TimelineMachine> Machines,
     IReadOnlyList<TimelineDependency> Dependencies,
-    IReadOnlyList<TimelineConflict> Conflicts);
+    IReadOnlyList<TimelineConflict> Conflicts,
+    string? DisplayTimeZoneId = null,
+    string? DayStartsAtLocal = null,
+    string? DayEndsAtLocal = null);
 
 internal sealed record TimelineBatch(
     string BatchId,

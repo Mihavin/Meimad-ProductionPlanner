@@ -14,6 +14,27 @@ namespace Meimad.Planner.Server.Tests.Timeline;
 public sealed class TimelineApiTests
 {
     [Fact]
+    public async Task Timeline_exposes_configured_time_scale_context_for_display_only()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T00:00:00Z&to=2026-08-12T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal("UTC", document.RootElement.GetProperty("displayTimeZoneId").GetString());
+            Assert.Equal("07:30", document.RootElement.GetProperty("dayStartsAtLocal").GetString());
+            Assert.Equal("16:45", document.RootElement.GetProperty("dayEndsAtLocal").GetString());
+        }, configurationArguments:
+        [
+            "--Timeline:TimeZoneId=UTC",
+            "--Timeline:DayShiftStartsAtLocal=07:30",
+            "--Timeline:DayShiftEndsAtLocal=16:45"
+        ]);
+    }
+
+    [Fact]
     public async Task Timeline_mode_query_is_rejected_because_planning_mode_is_assignment_owned()
     {
         await RunWithServerAsync(async (_, client) =>
@@ -1975,16 +1996,20 @@ public sealed class TimelineApiTests
 
     private static async Task RunWithServerAsync(
         Func<WebApplication, HttpClient, Task> test,
-        DateTimeOffset? fixedUtcNow = null)
+        DateTimeOffset? fixedUtcNow = null,
+        params string[] configurationArguments)
     {
         var directoryPath = Path.Combine(
             Path.GetTempPath(), "MeimadPlanner.TimelineApi.Tests", Guid.NewGuid().ToString("N"));
+        var arguments = new List<string>
+        {
+            "--Server:Host=127.0.0.1",
+            "--Server:Port=5099",
+            $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}"
+        };
+        arguments.AddRange(configurationArguments);
         var application = ServerApplication.Build(
-            [
-                "--Server:Host=127.0.0.1",
-                "--Server:Port=5099",
-                $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}"
-            ],
+            [.. arguments],
             webHost =>
             {
                 webHost.UseTestServer();
