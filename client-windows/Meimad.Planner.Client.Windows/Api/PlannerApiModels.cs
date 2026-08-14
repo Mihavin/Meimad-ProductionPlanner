@@ -619,7 +619,13 @@ internal sealed record TimelineMachine(
     string MachineId,
     string Number,
     string Name,
-    IReadOnlyList<TimelineInterval> Intervals);
+    IReadOnlyList<TimelineInterval> Intervals,
+    IReadOnlyList<TimelineNonWorkingWindow>? NonWorkingWindows = null);
+
+internal sealed record TimelineNonWorkingWindow(
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    string? Detail = null);
 
 internal sealed record TimelineInterval(
     string Type,
@@ -641,7 +647,8 @@ internal sealed record TimelineInterval(
     DateTimeOffset? ActualEnd = null,
     string PlanningMode = "manual",
     DateOnly? WorkFinishDate = null,
-    string? MachineAssignmentId = null)
+    string? MachineAssignmentId = null,
+    IReadOnlyList<TimelinePhase>? Phases = null)
 {
     /// <summary>
     /// The server calculation is authoritative. These optional fields let newer
@@ -652,13 +659,25 @@ internal sealed record TimelineInterval(
 
     public bool IsActual => string.Equals(TimingKind, "actual", StringComparison.OrdinalIgnoreCase);
 
-    public string TimingLabel => IsForecast
-        ? "Forecast — not started"
-        : IsActual
-            ? "Actual"
-            : string.IsNullOrWhiteSpace(OperationStatus)
-                ? "Calculated"
-                : OperationStatus.Replace('_', ' ');
+    public bool IsHold => string.Equals(TimingKind, "hold", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(OperationStatus, "suspended", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsBlocked => !IsHold
+        && (string.Equals(TimingKind, "blocked", StringComparison.OrdinalIgnoreCase)
+            || (string.Equals(Type, "waiting", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(MachineAssignmentId)));
+
+    public string TimingLabel => IsBlocked
+        ? "Blocked — waiting"
+        : IsHold
+        ? "Hold — paused"
+        : IsForecast
+            ? "Forecast — not started"
+            : IsActual
+                ? "Actual"
+                : string.IsNullOrWhiteSpace(OperationStatus)
+                    ? "Calculated"
+                    : OperationStatus.Replace('_', ' ');
 
     public string PlanningModeLabel => PlanningMode?.Trim().ToLowerInvariant() switch
     {
@@ -668,6 +687,12 @@ internal sealed record TimelineInterval(
         var unknown => $"Unknown ({unknown})"
     };
 }
+
+internal sealed record TimelinePhase(
+    string Type,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    string? Detail = null);
 
 internal sealed record TimelineDependency(
     string DependencyId,

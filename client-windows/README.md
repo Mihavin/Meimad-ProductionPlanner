@@ -27,7 +27,7 @@ It currently provides:
 - manual drag-and-drop assignment, stable reorder, cross-Machine move, and drag-back unassignment;
 - Start, Suspend, resume, and Finish controls on assigned operation cards, with every transition validated by the Server;
 - a conflicts/feedback panel that clearly distinguishes unavailable conflict calculation from server-rejected assignment commands;
-- a read-only Timeline with UTC horizon controls, labeled setup, production, idle, downtime, and reserved intervals, and visible operation name/number markers;
+- a read-only Timeline with UTC horizon controls and one composite object per operation: setup/QA/load-unload/production work segments are blue, locked reservation is orange, internal gaps are transparent, paused hold is purple, generic idle is blank row space, and Server-expanded Machine-calendar closures are gray background columns rather than operation blocks;
 - Server-returned conflict explanations; and
 - dependency edges filtered to one selected Production Batch.
 

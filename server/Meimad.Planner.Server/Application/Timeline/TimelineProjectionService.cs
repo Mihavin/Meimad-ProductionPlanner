@@ -68,7 +68,7 @@ internal sealed class TimelineProjectionService
         var actualHistory = source.Operations
             .Where(operation => operation.ActualStart.HasValue
                 && operation.ActualMachineId is not null
-                && (operation.Status == "completed" || operation.Status == "in_progress"))
+                && operation.Status is "completed" or "in_progress" or "suspended")
             .ToArray();
 
         logger.LogInformation(
@@ -181,6 +181,9 @@ internal sealed class TimelineProjectionService
                 source.Holidays);
             calendars.Add(new TimelineMachineCalendar(machine.MachineId, windows, machine.SkillTokens));
         }
+        var machineCalendarsById = calendars.ToDictionary(
+            calendar => calendar.MachineId,
+            StringComparer.Ordinal);
 
         var setupAvailability = source.SetupCalendarJson is null
             ? DefaultSetupAvailability(horizonStart, horizonEnd, mappingConflicts)
@@ -371,7 +374,7 @@ internal sealed class TimelineProjectionService
             .Concat(missedStartWarnings).Concat(overdueWarnings)
             .GroupBy(conflict => conflict.ConflictId, StringComparer.Ordinal)
             .Select(group => group.First())
-            .ToArray();
+            .ToList();
         var projectedMachines = source.Machines.Select(machine =>
         {
             var rawIntervals = (intervalsByMachine.TryGetValue(machine.MachineId, out var timeline)
@@ -382,13 +385,26 @@ internal sealed class TimelineProjectionService
                 .Concat(PauseIntervals(machine.MachineId, source.Operations, horizonStart, horizonEnd))
                 .Concat(UnscheduledIntervals(
                     machine.MachineId, assigned, scheduledOperationIds,
-                    backlogBlockedOperationIds, allConflicts, horizonStart, horizonEnd));
+                    backlogBlockedOperationIds, resultsByOperation, allConflicts,
+                    horizonStart, horizonEnd));
             return new TimelineProjectionMachine(
                 machine.MachineId,
                 machine.Number,
                 machine.Name,
-                NormalizeMachineIntervals(rawIntervals, operationsById));
+                NormalizeMachineIntervals(rawIntervals, operationsById),
+                MachineCalendarBackgroundWindows(
+                    machineCalendarsById[machine.MachineId].Availability,
+                    horizonStart,
+                    horizonEnd));
         }).ToArray();
+        var resourceWaitIntervals = projectedMachines
+            .SelectMany(machine => machine.Intervals)
+            .Where(IsResourceWait)
+            .ToArray();
+        projectedMachines = NormalizeGlobalAssignmentIdentity(
+            projectedMachines,
+            source.Operations,
+            allConflicts);
         var batches = source.Operations
             .GroupBy(operation => operation.BatchId, StringComparer.Ordinal)
             .Select(group => new TimelineProjectionBatch(
@@ -432,11 +448,14 @@ internal sealed class TimelineProjectionService
                 string.Join(',', allConflicts.Where(conflict => conflict.OperationIds.Contains(operation.OperationId))
                     .Select(conflict => conflict.Code)));
         }
-        await LogProjectionEventsAsync(projection, cancellationToken);
+        await LogProjectionEventsAsync(projection, resourceWaitIntervals, cancellationToken);
         return projection;
     }
 
-    private async Task LogProjectionEventsAsync(TimelineProjection projection, CancellationToken token)
+    private async Task LogProjectionEventsAsync(
+        TimelineProjection projection,
+        IReadOnlyList<TimelineProjectionInterval> resourceWaitIntervals,
+        CancellationToken token)
     {
         var day = projection.ReadAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         foreach (var conflict in projection.Conflicts)
@@ -449,12 +468,7 @@ internal sealed class TimelineProjectionService
                 conflict.Code, conflict.Message, null, new { conflict.Severity },
                 $"timeline-conflict:{day}:{conflict.ConflictId}"), token);
 
-        foreach (var interval in projection.Machines.SelectMany(machine => machine.Intervals)
-                     .Where(interval => interval.Type == "waiting"
-                         && interval.OperationId is not null
-                         && interval.Detail is not null
-                         && (interval.Detail.Contains("worker", StringComparison.OrdinalIgnoreCase)
-                             || interval.Detail.StartsWith("resource", StringComparison.OrdinalIgnoreCase))))
+        foreach (var interval in resourceWaitIntervals)
             await eventLog.AppendAsync(new(
                 "resource_wait_detected", projection.ReadAt, "system",
                 new Dictionary<string,string> {
@@ -463,6 +477,13 @@ internal sealed class TimelineProjectionService
                 new { interval.StartsAt,interval.EndsAt },
                 $"resource-wait:{day}:{interval.OperationId}:{interval.MachineId}:{interval.Detail}"), token);
     }
+
+    private static bool IsResourceWait(TimelineProjectionInterval interval) =>
+        interval.Type == "waiting"
+        && interval.OperationId is not null
+        && interval.Detail is not null
+        && (interval.Detail.Contains("worker", StringComparison.OrdinalIgnoreCase)
+            || interval.Detail.StartsWith("resource", StringComparison.OrdinalIgnoreCase));
 
     private static IReadOnlyList<TimelineWindow> DefaultSetupAvailability(
         DateTimeOffset horizonStart,
@@ -477,6 +498,51 @@ internal sealed class TimelineProjectionService
             []));
         return [new TimelineWindow(horizonStart, horizonEnd)];
     }
+
+    private static IReadOnlyList<TimelineProjectionNonWorkingWindow> MachineCalendarBackgroundWindows(
+        IReadOnlyList<TimelineWindow> availability,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd)
+    {
+        var usableWindows = availability
+            .Where(window => window.EndsAt > window.StartsAt
+                && window.EndsAt > horizonStart
+                && window.StartsAt < horizonEnd)
+            .Select(window => new TimelineWindow(
+                window.StartsAt < horizonStart ? horizonStart : window.StartsAt,
+                window.EndsAt > horizonEnd ? horizonEnd : window.EndsAt))
+            .OrderBy(window => window.StartsAt)
+            .ThenBy(window => window.EndsAt)
+            .ToArray();
+        var windows = new List<TimelineProjectionNonWorkingWindow>();
+        var cursor = horizonStart;
+        foreach (var window in usableWindows)
+        {
+            if (window.StartsAt > cursor)
+            {
+                windows.Add(MachineCalendarBackgroundWindow(cursor, window.StartsAt));
+            }
+
+            if (window.EndsAt > cursor)
+            {
+                cursor = window.EndsAt;
+            }
+        }
+
+        if (cursor < horizonEnd)
+        {
+            windows.Add(MachineCalendarBackgroundWindow(cursor, horizonEnd));
+        }
+
+        return windows;
+    }
+
+    private static TimelineProjectionNonWorkingWindow MachineCalendarBackgroundWindow(
+        DateTimeOffset startsAt,
+        DateTimeOffset endsAt) => new(
+            startsAt,
+            endsAt,
+            "Machine calendar: non-working time.");
 
     private static IReadOnlyList<TimelineWindow> ReadAvailability(
         string json,
@@ -967,8 +1033,16 @@ internal sealed class TimelineProjectionService
         IReadOnlyList<TimelineSourceOperation> operations,
         DateTimeOffset forecastCursor)
     {
+        var movedAfterStarting = operation.Status == "in_progress"
+            && operation.ActualStart.HasValue
+            && operation.ActualMachineId is not null
+            && operation.MachineId is not null
+            && !string.Equals(
+                operation.ActualMachineId, operation.MachineId, StringComparison.Ordinal);
         var earliest = operation.Status == "in_progress" && operation.ActualStart.HasValue
-            ? operation.ActualStart.Value
+            ? movedAfterStarting
+                ? operation.MovePauseEndedAt ?? forecastCursor
+                : operation.ActualStart.Value
             : forecastCursor;
         if (operation.DependencyType != "sequential"
             || operation.PredecessorSourceCaseOperationId is null)
@@ -1000,13 +1074,26 @@ internal sealed class TimelineProjectionService
             var startsAt = operation.ActualStart!.Value < horizonStart
                 ? horizonStart : operation.ActualStart.Value;
             var rawEnd = operation.ActualEnd
-                ?? (asOf > operation.ActualStart.Value ? asOf : operation.ActualStart.Value);
+                ?? (operation.Status == "suspended" && operation.PauseStartedAt.HasValue
+                    ? operation.PauseStartedAt.Value
+                    : operation.Status == "in_progress"
+                      && operation.MachineId is not null
+                      && !string.Equals(
+                          operation.ActualMachineId, operation.MachineId, StringComparison.Ordinal)
+                      && operation.MovePauseStartedAt.HasValue
+                        ? operation.MovePauseStartedAt.Value
+                    : asOf > operation.ActualStart.Value ? asOf : operation.ActualStart.Value);
             var endsAt = rawEnd > horizonEnd ? horizonEnd : rawEnd;
             return new TimelineProjectionInterval(
                 "production", machineId, operation.OperationId, operation.BatchId,
                 operation.BatchNumber, operation.PartNumber, operation.OperationNumber,
                 operation.OperationName, startsAt, endsAt,
-                operation.Status == "completed" ? "Recorded actual work" : "Actual work elapsed; finish remains forecast",
+                operation.Status switch
+                {
+                    "completed" => "Recorded actual work",
+                    "suspended" => "Actual work elapsed before the active pause",
+                    _ => "Actual work elapsed; finish remains forecast"
+                },
                 "actual", operation.Status, null, null,
                 operation.ActualStart, operation.ActualEnd,
                 operation.MachineAssignmentId, operation.PlanningMode,
@@ -1021,16 +1108,33 @@ internal sealed class TimelineProjectionService
         .Where(operation => operation.MachineId == machineId
             && operation.ActivePauseReason is not null
             && operation.PauseStartedAt < horizonEnd)
-        .Select(operation => new TimelineProjectionInterval(
-            "waiting", machineId, operation.OperationId, operation.BatchId,
-            operation.BatchNumber, operation.PartNumber, operation.OperationNumber,
-            operation.OperationName,
-            operation.PauseStartedAt!.Value > horizonStart ? operation.PauseStartedAt.Value : horizonStart,
-            horizonEnd,
-            $"Operation paused by {operation.PausedBy}: {operation.ActivePauseReason}",
-            MachineAssignmentId: operation.MachineAssignmentId,
-            PlanningMode: operation.PlanningMode,
-            WorkFinishDate: operation.PriorityWorkFinishDate))
+        .Select(operation =>
+        {
+            var startsAt = operation.PauseStartedAt!.Value;
+            // A suspended assignment may be explicitly moved. The pause began on
+            // the recorded actual Machine, so it must not be backdated onto the
+            // current target Machine before that assignment mutation occurred.
+            if (operation.ActualMachineId is not null
+                && !string.Equals(operation.ActualMachineId, operation.MachineId, StringComparison.Ordinal)
+                && operation.MachineMovedAt is { } machineMovedAt
+                && machineMovedAt > startsAt)
+            {
+                startsAt = machineMovedAt;
+            }
+            if (startsAt < horizonStart)
+            {
+                startsAt = horizonStart;
+            }
+            return new TimelineProjectionInterval(
+                "waiting", machineId, operation.OperationId, operation.BatchId,
+                operation.BatchNumber, operation.PartNumber, operation.OperationNumber,
+                operation.OperationName, startsAt, horizonEnd,
+                $"Operation paused by {operation.PausedBy}: {operation.ActivePauseReason}",
+                MachineAssignmentId: operation.MachineAssignmentId,
+                PlanningMode: operation.PlanningMode,
+                WorkFinishDate: operation.PriorityWorkFinishDate);
+        })
+        .Where(interval => interval.EndsAt > interval.StartsAt)
         .ToArray();
 
     private static TimelineProjectionInterval[] UnscheduledIntervals(
@@ -1038,6 +1142,7 @@ internal sealed class TimelineProjectionService
         IReadOnlyList<TimelineSourceOperation> assigned,
         IReadOnlySet<string> scheduledOperationIds,
         IReadOnlySet<string> backlogBlockedOperationIds,
+        IReadOnlyDictionary<string, TimelineOperationResult> scheduledResults,
         IReadOnlyList<TimelineProjectionConflict> conflicts,
         DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd) => assigned
@@ -1046,6 +1151,21 @@ internal sealed class TimelineProjectionService
             && operation.ActivePauseReason is null)
         .Select(operation =>
         {
+            var precedingScheduledFinish = assigned
+                .Where(candidate => string.Equals(
+                        candidate.MachineId, operation.MachineId, StringComparison.Ordinal)
+                    && candidate.BacklogPosition < operation.BacklogPosition
+                    && scheduledResults.ContainsKey(candidate.OperationId))
+                .Select(candidate => scheduledResults[candidate.OperationId].FinishesAt)
+                .DefaultIfEmpty(horizonStart)
+                .Max();
+            var startsAt = precedingScheduledFinish > horizonStart
+                ? precedingScheduledFinish
+                : horizonStart;
+            if (startsAt > horizonEnd)
+            {
+                startsAt = horizonEnd;
+            }
             var ownConflict = conflicts.FirstOrDefault(conflict =>
                 conflict.OperationIds.Contains(operation.OperationId, StringComparer.Ordinal));
             var detail = ownConflict?.Message
@@ -1055,7 +1175,9 @@ internal sealed class TimelineProjectionService
             return new TimelineProjectionInterval(
                 "waiting", machineId, operation.OperationId, operation.BatchId,
                 operation.BatchNumber, operation.PartNumber, operation.OperationNumber,
-                operation.OperationName, horizonStart, horizonEnd, detail,
+                operation.OperationName, startsAt, horizonEnd, detail,
+                TimingKind: "blocked",
+                OperationStatus: operation.Status,
                 MachineAssignmentId: operation.MachineAssignmentId,
                 PlanningMode: operation.PlanningMode,
                 WorkFinishDate: operation.PriorityWorkFinishDate);
@@ -1077,11 +1199,23 @@ internal sealed class TimelineProjectionService
                 && !string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
             .Select(interval => interval.MachineAssignmentId!)
             .ToHashSet(StringComparer.Ordinal);
+        var activePauseAssignmentIdsWithCanonicalWork = materialized
+            .Where(interval => interval.OperationId is not null
+                && interval.Type is not ("waiting" or "downtime" or "idle")
+                && !string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
+            .Where(interval => operations.TryGetValue(interval.OperationId!, out var operation)
+                && operation.ActivePauseReason is not null
+                && string.Equals(operation.MachineId, interval.MachineId, StringComparison.Ordinal))
+            .Select(interval => interval.MachineAssignmentId!)
+            .ToHashSet(StringComparer.Ordinal);
         var machineOnly = materialized
             .Where(interval => interval.OperationId is null
                 || interval.Type is "waiting" or "downtime" or "idle"
                 && (string.IsNullOrWhiteSpace(interval.MachineAssignmentId)
                     || calculatedAssignmentIds.Contains(interval.MachineAssignmentId)))
+            .Where(interval => string.IsNullOrWhiteSpace(interval.MachineAssignmentId)
+                || !activePauseAssignmentIdsWithCanonicalWork.Contains(
+                    interval.MachineAssignmentId))
             .Select(interval => interval with { MachineAssignmentId = null })
             .OrderBy(interval => interval.StartsAt)
             .ThenBy(interval => interval.Type, StringComparer.Ordinal)
@@ -1096,12 +1230,26 @@ internal sealed class TimelineProjectionService
                 StringComparer.Ordinal)
             .Select(group =>
             {
-                var values = group.OrderBy(interval => interval.StartsAt).ThenBy(interval => interval.EndsAt).ToArray();
-                var operationId = values.Select(interval => interval.OperationId)
+                var workValues = group.OrderBy(interval => interval.StartsAt)
+                    .ThenBy(interval => interval.EndsAt).ToArray();
+                var operationId = workValues.Select(interval => interval.OperationId)
                     .First(value => value is not null)!;
                 var source = operations.GetValueOrDefault(operationId);
-                var actual = values.FirstOrDefault(interval => interval.TimingKind == "actual");
-                var representative = actual ?? values.First();
+                var pauseValues = source?.ActivePauseReason is not null
+                    && string.Equals(source.MachineId, workValues[0].MachineId, StringComparison.Ordinal)
+                    ? materialized.Where(interval => interval.Type == "waiting"
+                            && interval.OperationId == operationId
+                            && interval.MachineAssignmentId == source.MachineAssignmentId)
+                        .OrderBy(interval => interval.StartsAt)
+                        .ThenBy(interval => interval.EndsAt)
+                        .ToArray()
+                    : [];
+                var values = workValues.Concat(pauseValues)
+                    .OrderBy(interval => interval.StartsAt)
+                    .ThenBy(interval => interval.EndsAt)
+                    .ToArray();
+                var actual = workValues.FirstOrDefault(interval => interval.TimingKind == "actual");
+                var representative = actual ?? workValues[0];
                 var startsAt = values.Min(interval => interval.StartsAt);
                 var endsAt = values.Max(interval => interval.EndsAt);
                 var phases = values
@@ -1122,16 +1270,25 @@ internal sealed class TimelineProjectionService
                     StartsAt = startsAt,
                     EndsAt = endsAt,
                     Type = "operation",
-                    TimingKind = actual is not null ? "actual" : representative.TimingKind,
+                    TimingKind = pauseValues.Length > 0
+                        ? "hold"
+                        : actual is not null ? "actual" : representative.TimingKind,
+                    OperationStatus = source?.Status ?? representative.OperationStatus,
                     Detail = phaseDescription.Length == 0
                         ? representative.Detail
                         : $"Phases: {string.Join("; ", phaseDescription)}",
-                    ForecastStart = values.Select(interval => interval.ForecastStart).FirstOrDefault(value => value.HasValue),
-                    ForecastEnd = values.Select(interval => interval.ForecastEnd).LastOrDefault(value => value.HasValue),
+                    ForecastStart = workValues.Select(interval => interval.ForecastStart).FirstOrDefault(value => value.HasValue),
+                    ForecastEnd = workValues.Select(interval => interval.ForecastEnd).LastOrDefault(value => value.HasValue),
                     ActualStart = source?.ActualStart ?? values.Select(interval => interval.ActualStart).FirstOrDefault(value => value.HasValue),
                     ActualEnd = source?.ActualEnd ?? values.Select(interval => interval.ActualEnd).LastOrDefault(value => value.HasValue),
-                    MachineAssignmentId = source?.MachineAssignmentId ?? representative.MachineAssignmentId,
-                    PlanningMode = source?.PlanningMode ?? representative.PlanningMode,
+                    MachineAssignmentId = string.Equals(
+                            source?.MachineId, representative.MachineId, StringComparison.Ordinal)
+                        ? source?.MachineAssignmentId ?? representative.MachineAssignmentId
+                        : representative.MachineAssignmentId,
+                    PlanningMode = string.Equals(
+                            source?.MachineId, representative.MachineId, StringComparison.Ordinal)
+                        ? source?.PlanningMode ?? representative.PlanningMode
+                        : representative.PlanningMode,
                     WorkFinishDate = source?.PriorityWorkFinishDate ?? representative.WorkFinishDate,
                     Phases = phases
                 };
@@ -1151,10 +1308,25 @@ internal sealed class TimelineProjectionService
             {
                 var values = group.OrderBy(interval => interval.StartsAt).ToArray();
                 var first = values[0];
+                var source = first.OperationId is null
+                    ? null
+                    : operations.GetValueOrDefault(first.OperationId);
+                var isActivePause = source?.ActivePauseReason is not null;
                 return first with
                 {
                     StartsAt = values.Min(interval => interval.StartsAt),
                     EndsAt = values.Max(interval => interval.EndsAt),
+                    Type = isActivePause ? "operation" : first.Type,
+                    TimingKind = isActivePause ? "hold" : first.TimingKind,
+                    OperationStatus = source?.Status ?? first.OperationStatus,
+                    ActualStart = source?.ActualStart ?? first.ActualStart,
+                    ActualEnd = source?.ActualEnd ?? first.ActualEnd,
+                    Phases = isActivePause
+                        ? values.Select(interval => new TimelineProjectionPhase(
+                                "waiting", interval.StartsAt, interval.EndsAt, interval.Detail))
+                            .Distinct()
+                            .ToArray()
+                        : first.Phases,
                     Detail = string.Join("; ", values.Select(interval => interval.Detail)
                         .Where(detail => !string.IsNullOrWhiteSpace(detail))
                         .Distinct(StringComparer.Ordinal))
@@ -1186,6 +1358,711 @@ internal sealed class TimelineProjectionService
 
         return normalized;
     }
+
+    private TimelineProjectionMachine[] NormalizeGlobalAssignmentIdentity(
+        IReadOnlyList<TimelineProjectionMachine> machines,
+        IReadOnlyList<TimelineSourceOperation> operations,
+        ICollection<TimelineProjectionConflict> conflicts)
+    {
+        var operationById = operations.ToDictionary(
+            operation => operation.OperationId,
+            StringComparer.Ordinal);
+        var slots = machines.SelectMany((machine, machineIndex) =>
+                machine.Intervals.Select((interval, intervalIndex) => (
+                    MachineIndex: machineIndex,
+                    IntervalIndex: intervalIndex,
+                    Machine: machine,
+                    Interval: interval)))
+            .ToArray();
+        var replacements = slots.ToDictionary(
+            slot => (slot.MachineIndex, slot.IntervalIndex),
+            slot => (TimelineProjectionInterval?)slot.Interval);
+
+        foreach (var operationGroup in slots
+                     .Where(slot => slot.Interval.OperationId is not null)
+                     .GroupBy(slot => slot.Interval.OperationId!, StringComparer.Ordinal))
+        {
+            if (!operationById.TryGetValue(operationGroup.Key, out var operation))
+            {
+                continue;
+            }
+
+            var identified = operationGroup.ToArray();
+            var isActiveAssigned = operation.Status != "completed"
+                && operation.MachineId is not null
+                && !string.IsNullOrWhiteSpace(operation.MachineAssignmentId);
+            var canonical = isActiveAssigned
+                ? identified
+                    .OrderByDescending(slot => string.Equals(
+                        slot.Machine.MachineId, operation.MachineId, StringComparison.Ordinal))
+                    .ThenByDescending(slot => string.Equals(
+                        slot.Interval.MachineAssignmentId,
+                        operation.MachineAssignmentId,
+                        StringComparison.Ordinal))
+                    .ThenByDescending(slot => slot.Interval.Type == "operation")
+                    .ThenByDescending(slot => slot.Interval.TimingKind != "actual")
+                    .FirstOrDefault()
+                : identified
+                    .Where(slot => slot.Interval.TimingKind == "actual"
+                        || slot.Interval.Type == "actual_history")
+                    .OrderByDescending(slot => string.Equals(
+                        slot.Machine.MachineId,
+                        operation.ActualMachineId,
+                        StringComparison.Ordinal))
+                    .ThenBy(slot => slot.Interval.StartsAt)
+                    .FirstOrDefault();
+
+            if (canonical.Interval is null)
+            {
+                foreach (var capacity in identified.Where(slot => IsCapacityAnnotation(slot.Interval)))
+                {
+                    replacements[(capacity.MachineIndex, capacity.IntervalIndex)] =
+                        AnonymizeCapacityInterval(capacity.Interval);
+                }
+                continue;
+            }
+
+            var secondary = identified.Where(slot =>
+                    slot.MachineIndex != canonical.MachineIndex
+                    || slot.IntervalIndex != canonical.IntervalIndex)
+                .ToArray();
+            var canonicalInterval = FoldOperationFacts(
+                canonical.Interval,
+                canonical.Machine,
+                secondary,
+                operation,
+                isActiveAssigned);
+            if (!isActiveAssigned)
+            {
+                canonicalInterval = canonicalInterval with
+                {
+                    Type = "actual_history",
+                    TimingKind = "actual",
+                    MachineAssignmentId = null,
+                    PlanningMode = null,
+                    ForecastStart = null,
+                    ForecastEnd = null
+                };
+            }
+            replacements[(canonical.MachineIndex, canonical.IntervalIndex)] = canonicalInterval;
+
+            foreach (var extra in secondary)
+            {
+                if (IsCapacityAnnotation(extra.Interval))
+                {
+                    replacements[(extra.MachineIndex, extra.IntervalIndex)] =
+                        AnonymizeCapacityInterval(extra.Interval);
+                    continue;
+                }
+
+                var isExpectedPriorActual = isActiveAssigned
+                    && extra.Interval.TimingKind == "actual"
+                    && !string.Equals(
+                        extra.Machine.MachineId, operation.MachineId, StringComparison.Ordinal);
+                if (isExpectedPriorActual)
+                {
+                    replacements[(extra.MachineIndex, extra.IntervalIndex)] =
+                        AnonymizeCapacityInterval(extra.Interval with
+                        {
+                            Type = "actual_history",
+                            Detail = "Recorded actual Machine occupancy; operation details are attached to its current block."
+                        });
+                    continue;
+                }
+                else
+                {
+                    logger.LogError(
+                        "DUPLICATE_TIMELINE_BLOCK operationId={OperationId}, assignmentId={MachineAssignmentId}, Machine={MachineId}; the duplicate facts were folded into the canonical block and the duplicate block was dropped.",
+                        operation.OperationId,
+                        extra.Interval.MachineAssignmentId,
+                        extra.Machine.MachineId);
+                }
+                replacements[(extra.MachineIndex, extra.IntervalIndex)] = null;
+            }
+        }
+
+        var normalized = machines.Select((machine, machineIndex) => machine with
+        {
+            Intervals = machine.Intervals.Select((_, intervalIndex) =>
+                    replacements[(machineIndex, intervalIndex)])
+                .Where(interval => interval is not null)
+                .Select(interval => interval!)
+                .OrderBy(interval => interval.StartsAt)
+                .ThenBy(interval => interval.OperationId is null ? 0 : 1)
+                .ThenBy(interval => interval.Type, StringComparer.Ordinal)
+                .ToArray()
+        }).ToArray();
+
+        normalized = ReconcileMachineOperationOverlaps(normalized, operations, conflicts);
+
+        foreach (var operation in operations.Where(operation =>
+                     operation.Status != "completed"
+                     && operation.MachineId is not null
+                     && !string.IsNullOrWhiteSpace(operation.MachineAssignmentId)))
+        {
+            var publicBlockCount = normalized.SelectMany(machine => machine.Intervals)
+                .Count(interval => string.Equals(
+                    interval.OperationId, operation.OperationId, StringComparison.Ordinal));
+            if (publicBlockCount != 1)
+            {
+                logger.LogError(
+                    "TIMELINE_OPERATION_IDENTITY_INVARIANT operationId={OperationId}, assignmentId={MachineAssignmentId}; expected one public identified block but produced {BlockCount}.",
+                    operation.OperationId,
+                    operation.MachineAssignmentId,
+                    publicBlockCount);
+            }
+        }
+        logger.LogDebug(
+            "Timeline global operation identity normalization retained {OperationBlockCount} identified operation/history blocks.",
+            normalized.Sum(machine => machine.Intervals.Count(interval => interval.OperationId is not null)));
+        return normalized;
+    }
+
+    internal TimelineProjectionMachine[] ReconcileMachineOperationOverlaps(
+        IReadOnlyList<TimelineProjectionMachine> machines,
+        IReadOnlyList<TimelineSourceOperation> operations,
+        ICollection<TimelineProjectionConflict> conflicts)
+    {
+        var operationsById = operations.ToDictionary(
+            operation => operation.OperationId,
+            StringComparer.Ordinal);
+        var unresolvedOperationIds = new HashSet<string>(StringComparer.Ordinal);
+        var reconciled = machines.Select(machine =>
+        {
+            var intervals = machine.Intervals.ToArray();
+            var primary = intervals
+                .Select((interval, index) => (Interval: interval, Index: index))
+                .Where(slot => slot.Interval.Type == "operation"
+                    && slot.Interval.OperationId is not null)
+                .ToArray();
+            var authoritative = primary
+                .Where(slot => IsAuthoritativeMachineOccupancy(slot.Interval))
+                .OrderBy(slot => slot.Interval.StartsAt)
+                .ThenBy(slot => slot.Interval.OperationId, StringComparer.Ordinal)
+                .ToArray();
+
+            for (var index = 0; index < authoritative.Length; index++)
+            {
+                for (var otherIndex = index + 1; otherIndex < authoritative.Length; otherIndex++)
+                {
+                    var left = authoritative[index].Interval;
+                    var right = authoritative[otherIndex].Interval;
+                    if (!Overlaps(left, right))
+                    {
+                        continue;
+                    }
+
+                    AddConflictOnce(conflicts, Conflict(
+                        "machine_operation_overlap",
+                        "blocking",
+                        $"Machine {machine.Number} has overlapping authoritative actual/hold occupancy for operations '{left.OperationId}' and '{right.OperationId}'. The Timeline retained the recorded occupancy and did not alter the backlog.",
+                        [left.OperationId!, right.OperationId!],
+                        [machine.MachineId]));
+                    logger.LogError(
+                        "TIMELINE_MACHINE_OPERATION_OVERLAP Machine={MachineId}, authoritativeOperation={LeftOperationId} {LeftStart}..{LeftEnd}, authoritativeOperation={RightOperationId} {RightStart}..{RightEnd}; recorded occupancy was retained.",
+                        machine.MachineId, left.OperationId, left.StartsAt, left.EndsAt,
+                        right.OperationId, right.StartsAt, right.EndsAt);
+                }
+            }
+
+            var acceptedForecasts = new List<(TimelineProjectionInterval Interval, int Index)>();
+            TimelineProjectionInterval? blockedBacklogBarrier = intervals
+                .Where(interval => interval.OperationId is not null
+                    && interval.Type == "waiting"
+                    && interval.TimingKind == "blocked")
+                .OrderBy(interval => BacklogPosition(interval, operationsById))
+                .ThenBy(interval => interval.OperationId, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (blockedBacklogBarrier?.OperationId is not null)
+            {
+                unresolvedOperationIds.Add(blockedBacklogBarrier.OperationId);
+            }
+            foreach (var forecast in primary
+                         .Where(slot => !IsAuthoritativeMachineOccupancy(slot.Interval))
+                         .OrderBy(slot => BacklogPosition(slot.Interval, operationsById))
+                         .ThenBy(slot => slot.Interval.StartsAt)
+                         .ThenBy(slot => slot.Interval.OperationId, StringComparer.Ordinal))
+            {
+                if (blockedBacklogBarrier is not null
+                    && BacklogPosition(forecast.Interval, operationsById)
+                        > BacklogPosition(blockedBacklogBarrier, operationsById))
+                {
+                    var detail = $"Blocked because earlier backlog operation {blockedBacklogBarrier.OperationId} could not be placed; stored Machine backlog order was preserved.";
+                    intervals[forecast.Index] = DemoteOverlappingForecast(forecast.Interval, detail);
+                    AddConflictOnce(conflicts, Conflict(
+                        "dependency_unresolved",
+                        "blocking",
+                        $"Machine {machine.Number} operation '{forecast.Interval.OperationId}' could not remain calculated because earlier backlog operation '{blockedBacklogBarrier.OperationId}' is blocked. The Timeline did not leapfrog the stored backlog.",
+                        [blockedBacklogBarrier.OperationId!, forecast.Interval.OperationId!],
+                        [machine.MachineId]));
+                    logger.LogWarning(
+                        "TIMELINE_BACKLOG_BARRIER Machine={MachineId}, blockedOperation={BlockedOperationId}, laterOperation={LaterOperationId}; later forecast was demoted and stored order was preserved.",
+                        machine.MachineId, blockedBacklogBarrier.OperationId,
+                        forecast.Interval.OperationId);
+                    unresolvedOperationIds.Add(forecast.Interval.OperationId!);
+                    continue;
+                }
+
+                var actualOverlap = authoritative.FirstOrDefault(slot =>
+                    Overlaps(slot.Interval, forecast.Interval));
+                if (actualOverlap.Interval is not null)
+                {
+                    intervals[forecast.Index] = DemoteOverlappingForecast(
+                        forecast.Interval,
+                        $"Blocked because recorded actual/hold occupancy for operation {actualOverlap.Interval.OperationId} already uses this Machine time.");
+                    AddConflictOnce(conflicts, Conflict(
+                        "actual_backlog_overlap",
+                        "blocking",
+                        $"Machine {machine.Number} forecast operation '{forecast.Interval.OperationId}' overlaps authoritative actual/hold operation '{actualOverlap.Interval.OperationId}'. The forecast was shown as blocked waiting; stored backlog order was not changed.",
+                        [forecast.Interval.OperationId!, actualOverlap.Interval.OperationId!],
+                        [machine.MachineId]));
+                    logger.LogWarning(
+                        "TIMELINE_ACTUAL_BACKLOG_OVERLAP Machine={MachineId}, forecastOperation={ForecastOperationId} {ForecastStart}..{ForecastEnd}, authoritativeOperation={ActualOperationId} {ActualStart}..{ActualEnd}; forecast was demoted to blocked waiting.",
+                        machine.MachineId, forecast.Interval.OperationId,
+                        forecast.Interval.StartsAt, forecast.Interval.EndsAt,
+                        actualOverlap.Interval.OperationId,
+                        actualOverlap.Interval.StartsAt, actualOverlap.Interval.EndsAt);
+                    blockedBacklogBarrier = EarlierBacklogBarrier(
+                        blockedBacklogBarrier, forecast.Interval, operationsById);
+                    unresolvedOperationIds.Add(forecast.Interval.OperationId!);
+                    continue;
+                }
+
+                var forecastOverlap = acceptedForecasts.FirstOrDefault(slot =>
+                    Overlaps(slot.Interval, forecast.Interval));
+                if (forecastOverlap.Interval is not null)
+                {
+                    intervals[forecast.Index] = DemoteOverlappingForecast(
+                        forecast.Interval,
+                        $"Blocked because earlier backlog operation {forecastOverlap.Interval.OperationId} already uses this Machine time.");
+                    AddConflictOnce(conflicts, Conflict(
+                        "machine_operation_overlap",
+                        "blocking",
+                        $"Machine {machine.Number} calculated overlapping forecasts for operations '{forecastOverlap.Interval.OperationId}' and '{forecast.Interval.OperationId}'. The later stored-backlog operation was shown as blocked waiting; backlog order was not changed.",
+                        [forecastOverlap.Interval.OperationId!, forecast.Interval.OperationId!],
+                        [machine.MachineId]));
+                    logger.LogWarning(
+                        "TIMELINE_MACHINE_OPERATION_OVERLAP Machine={MachineId}, retainedForecast={RetainedOperationId} {RetainedStart}..{RetainedEnd}, blockedForecast={BlockedOperationId} {BlockedStart}..{BlockedEnd}; later backlog forecast was demoted.",
+                        machine.MachineId, forecastOverlap.Interval.OperationId,
+                        forecastOverlap.Interval.StartsAt, forecastOverlap.Interval.EndsAt,
+                        forecast.Interval.OperationId,
+                        forecast.Interval.StartsAt, forecast.Interval.EndsAt);
+                    blockedBacklogBarrier = EarlierBacklogBarrier(
+                        blockedBacklogBarrier, forecast.Interval, operationsById);
+                    unresolvedOperationIds.Add(forecast.Interval.OperationId!);
+                    continue;
+                }
+
+                acceptedForecasts.Add(forecast);
+            }
+
+            if (blockedBacklogBarrier is not null)
+            {
+                foreach (var actual in authoritative.Where(slot =>
+                             BacklogPosition(slot.Interval, operationsById)
+                             > BacklogPosition(blockedBacklogBarrier, operationsById)))
+                {
+                    AddConflictOnce(conflicts, Conflict(
+                        "dependency_unresolved",
+                        "blocking",
+                        $"Machine {machine.Number} authoritative operation '{actual.Interval.OperationId}' occurs after blocked backlog operation '{blockedBacklogBarrier.OperationId}'. Recorded occupancy was retained, but the stored backlog is unresolved.",
+                        [blockedBacklogBarrier.OperationId!, actual.Interval.OperationId!],
+                        [machine.MachineId]));
+                    unresolvedOperationIds.Add(actual.Interval.OperationId!);
+                    logger.LogError(
+                        "TIMELINE_BACKLOG_BARRIER Machine={MachineId}, blockedOperation={BlockedOperationId}, authoritativeLaterOperation={LaterOperationId}; recorded occupancy was retained and the backlog conflict was reported.",
+                        machine.MachineId, blockedBacklogBarrier.OperationId,
+                        actual.Interval.OperationId);
+                }
+            }
+
+            return machine with
+            {
+                Intervals = intervals
+                    .OrderBy(interval => interval.StartsAt)
+                    .ThenBy(interval => interval.OperationId is null ? 0 : 1)
+                    .ThenBy(interval => interval.Type, StringComparer.Ordinal)
+                    .ToArray()
+            };
+        }).ToArray();
+
+        return PropagateBlockedDependencies(
+            reconciled, operations, conflicts, unresolvedOperationIds);
+    }
+
+    private TimelineProjectionMachine[] PropagateBlockedDependencies(
+        IReadOnlyList<TimelineProjectionMachine> machines,
+        IReadOnlyList<TimelineSourceOperation> operations,
+        ICollection<TimelineProjectionConflict> conflicts,
+        ISet<string> unresolvedOperationIds)
+    {
+        var operationsBySource = operations
+            .GroupBy(operation => operation.BatchId, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.ToDictionary(
+                    operation => operation.SourceCaseOperationId,
+                    StringComparer.Ordinal),
+                StringComparer.Ordinal);
+        var slots = machines.SelectMany((machine, machineIndex) =>
+                machine.Intervals.Select((interval, intervalIndex) => (
+                    MachineIndex: machineIndex,
+                    IntervalIndex: intervalIndex,
+                    Machine: machine,
+                    Interval: interval)))
+            .Where(slot => slot.Interval.OperationId is not null)
+            .ToDictionary(
+                slot => slot.Interval.OperationId!,
+                slot => slot,
+                StringComparer.Ordinal);
+        var replacements = slots.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Interval,
+            StringComparer.Ordinal);
+        var blocked = replacements.Values
+            .Where(interval => interval.Type == "waiting"
+                && interval.TimingKind == "blocked")
+            .Select(interval => interval.OperationId!)
+            .ToHashSet(StringComparer.Ordinal);
+        blocked.UnionWith(unresolvedOperationIds);
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var machineBacklog in operations
+                         .Where(operation => operation.MachineId is not null
+                             && operation.BacklogPosition.HasValue)
+                         .GroupBy(operation => operation.MachineId!, StringComparer.Ordinal))
+            {
+                var ordered = machineBacklog
+                    .OrderBy(operation => operation.BacklogPosition)
+                    .ThenBy(operation => operation.OperationId, StringComparer.Ordinal)
+                    .ToArray();
+                var barrierIndex = Array.FindIndex(ordered,
+                    operation => blocked.Contains(operation.OperationId));
+                if (barrierIndex < 0)
+                {
+                    continue;
+                }
+
+                var barrier = ordered[barrierIndex];
+                foreach (var later in ordered.Skip(barrierIndex + 1)
+                             .Where(operation => !blocked.Contains(operation.OperationId)))
+                {
+                    if (!replacements.TryGetValue(later.OperationId, out var laterInterval))
+                    {
+                        continue;
+                    }
+
+                    if (IsAuthoritativeMachineOccupancy(laterInterval))
+                    {
+                        AddConflictOnce(conflicts, Conflict(
+                            "dependency_unresolved",
+                            "blocking",
+                            $"Machine backlog operation '{later.OperationId}' has authoritative actual/hold occupancy after blocked operation '{barrier.OperationId}'. Recorded occupancy was retained.",
+                            [barrier.OperationId, later.OperationId],
+                            [machineBacklog.Key]));
+                        logger.LogError(
+                            "TIMELINE_BACKLOG_BARRIER Machine={MachineId}, blockedOperation={BlockedOperationId}, authoritativeLaterOperation={LaterOperationId}; recorded occupancy was retained.",
+                            machineBacklog.Key, barrier.OperationId, later.OperationId);
+                    }
+                    else
+                    {
+                        var detail = $"Blocked because earlier backlog operation {barrier.OperationId} could not be calculated.";
+                        replacements[later.OperationId] =
+                            DemoteOverlappingForecast(laterInterval, detail);
+                        AddConflictOnce(conflicts, Conflict(
+                            "dependency_unresolved",
+                            "blocking",
+                            $"Machine backlog operation '{later.OperationId}' could not remain calculated because earlier operation '{barrier.OperationId}' is blocked. Stored backlog order was preserved.",
+                            [barrier.OperationId, later.OperationId],
+                            [machineBacklog.Key]));
+                        logger.LogWarning(
+                            "TIMELINE_BACKLOG_BARRIER Machine={MachineId}, blockedOperation={BlockedOperationId}, blockedLaterOperation={LaterOperationId}; later forecast was demoted.",
+                            machineBacklog.Key, barrier.OperationId, later.OperationId);
+                    }
+                    blocked.Add(later.OperationId);
+                    changed = true;
+                }
+            }
+
+            foreach (var child in operations.Where(operation =>
+                         operation.DependencyType == "sequential"
+                         && operation.PredecessorSourceCaseOperationId is not null))
+            {
+                if (!operationsBySource.TryGetValue(child.BatchId, out var batch)
+                    || !batch.TryGetValue(child.PredecessorSourceCaseOperationId!, out var parent)
+                    || !blocked.Contains(parent.OperationId)
+                    || blocked.Contains(child.OperationId)
+                    || !replacements.TryGetValue(child.OperationId, out var childInterval))
+                {
+                    continue;
+                }
+
+                var machineId = childInterval.MachineId;
+                if (IsAuthoritativeMachineOccupancy(childInterval))
+                {
+                    AddConflictOnce(conflicts, Conflict(
+                        "dependency_unresolved",
+                        "blocking",
+                        $"Operation '{child.OperationId}' has authoritative actual/hold occupancy even though sequential predecessor '{parent.OperationId}' is blocked. Recorded occupancy was retained.",
+                        [parent.OperationId, child.OperationId],
+                        [machineId]));
+                    logger.LogError(
+                        "TIMELINE_DEPENDENCY_BARRIER parentOperation={ParentOperationId}, authoritativeChildOperation={ChildOperationId}, Machine={MachineId}; recorded child occupancy was retained.",
+                        parent.OperationId, child.OperationId, machineId);
+                    blocked.Add(child.OperationId);
+                    changed = true;
+                    continue;
+                }
+
+                var detail = $"Blocked because sequential predecessor {parent.OperationId} could not be calculated.";
+                replacements[child.OperationId] = DemoteOverlappingForecast(childInterval, detail);
+                blocked.Add(child.OperationId);
+                changed = true;
+                AddConflictOnce(conflicts, Conflict(
+                    "dependency_unresolved",
+                    "blocking",
+                    $"Operation '{child.OperationId}' could not remain calculated because sequential predecessor '{parent.OperationId}' is blocked. Dependency order was preserved.",
+                    [parent.OperationId, child.OperationId],
+                    [machineId]));
+                logger.LogWarning(
+                    "TIMELINE_DEPENDENCY_BARRIER parentOperation={ParentOperationId}, blockedChildOperation={ChildOperationId}, Machine={MachineId}; child forecast was demoted.",
+                    parent.OperationId, child.OperationId, machineId);
+            }
+
+            foreach (var group in operations
+                         .Where(operation => operation.DependencyType == "locked_simultaneous"
+                             && !string.IsNullOrWhiteSpace(operation.SimultaneousGroupKey))
+                         .GroupBy(operation => (operation.BatchId, operation.SimultaneousGroupKey!)))
+            {
+                var blockedMember = group.FirstOrDefault(member => blocked.Contains(member.OperationId));
+                if (blockedMember is null)
+                {
+                    continue;
+                }
+
+                foreach (var member in group.Where(member => !blocked.Contains(member.OperationId)))
+                {
+                    if (!replacements.TryGetValue(member.OperationId, out var memberInterval))
+                    {
+                        continue;
+                    }
+
+                    var machineId = memberInterval.MachineId;
+                    if (IsAuthoritativeMachineOccupancy(memberInterval))
+                    {
+                        AddConflictOnce(conflicts, Conflict(
+                            "dependency_unresolved",
+                            "blocking",
+                            $"Locked-simultaneous operation '{member.OperationId}' has authoritative actual/hold occupancy while group member '{blockedMember.OperationId}' is blocked. Recorded occupancy was retained.",
+                            [blockedMember.OperationId, member.OperationId],
+                            [machineId]));
+                        logger.LogError(
+                            "TIMELINE_LOCKED_GROUP_BARRIER blockedOperation={BlockedOperationId}, authoritativeMemberOperation={MemberOperationId}, Machine={MachineId}; recorded occupancy was retained.",
+                            blockedMember.OperationId, member.OperationId, machineId);
+                    }
+                    else
+                    {
+                        var detail = $"Blocked because locked-simultaneous group member {blockedMember.OperationId} could not be calculated.";
+                        replacements[member.OperationId] =
+                            DemoteOverlappingForecast(memberInterval, detail);
+                        AddConflictOnce(conflicts, Conflict(
+                            "dependency_unresolved",
+                            "blocking",
+                            $"Locked-simultaneous operation '{member.OperationId}' could not remain calculated because group member '{blockedMember.OperationId}' is blocked.",
+                            [blockedMember.OperationId, member.OperationId],
+                            [machineId]));
+                        logger.LogWarning(
+                            "TIMELINE_LOCKED_GROUP_BARRIER blockedOperation={BlockedOperationId}, blockedMemberOperation={MemberOperationId}, Machine={MachineId}; group member forecast was demoted.",
+                            blockedMember.OperationId, member.OperationId, machineId);
+                    }
+                    blocked.Add(member.OperationId);
+                    changed = true;
+                }
+            }
+        }
+
+        return machines.Select((machine, machineIndex) => machine with
+        {
+            Intervals = machine.Intervals.Select((interval, intervalIndex) =>
+                    interval.OperationId is not null
+                    && replacements.TryGetValue(interval.OperationId, out var replacement)
+                        ? replacement
+                        : interval)
+                .OrderBy(interval => interval.StartsAt)
+                .ThenBy(interval => interval.OperationId is null ? 0 : 1)
+                .ThenBy(interval => interval.Type, StringComparer.Ordinal)
+                .ToArray()
+        }).ToArray();
+    }
+
+    private static TimelineProjectionInterval EarlierBacklogBarrier(
+        TimelineProjectionInterval? current,
+        TimelineProjectionInterval candidate,
+        IReadOnlyDictionary<string, TimelineSourceOperation> operations)
+    {
+        if (current is null)
+        {
+            return candidate;
+        }
+        return BacklogPosition(candidate, operations) < BacklogPosition(current, operations)
+            ? candidate
+            : current;
+    }
+
+    private static bool IsAuthoritativeMachineOccupancy(TimelineProjectionInterval interval) =>
+        interval.TimingKind is "actual" or "hold";
+
+    private static bool Overlaps(
+        TimelineProjectionInterval left,
+        TimelineProjectionInterval right) =>
+        left.StartsAt < right.EndsAt && right.StartsAt < left.EndsAt;
+
+    private static int BacklogPosition(
+        TimelineProjectionInterval interval,
+        IReadOnlyDictionary<string, TimelineSourceOperation> operations) =>
+        interval.OperationId is not null
+        && operations.TryGetValue(interval.OperationId, out var operation)
+            ? operation.BacklogPosition ?? int.MaxValue
+            : int.MaxValue;
+
+    private static TimelineProjectionInterval DemoteOverlappingForecast(
+        TimelineProjectionInterval interval,
+        string detail) => interval with
+    {
+        Type = "waiting",
+        TimingKind = "blocked",
+        Detail = detail,
+        Phases =
+        [
+            new TimelineProjectionPhase("waiting", interval.StartsAt, interval.EndsAt, detail)
+        ]
+    };
+
+    private static void AddConflictOnce(
+        ICollection<TimelineProjectionConflict> conflicts,
+        TimelineProjectionConflict conflict)
+    {
+        if (conflicts.Any(existing => string.Equals(
+                existing.ConflictId, conflict.ConflictId, StringComparison.Ordinal)))
+        {
+            return;
+        }
+        conflicts.Add(conflict);
+    }
+
+    private static TimelineProjectionInterval FoldOperationFacts(
+        TimelineProjectionInterval canonical,
+        TimelineProjectionMachine canonicalMachine,
+        IReadOnlyList<(int MachineIndex, int IntervalIndex, TimelineProjectionMachine Machine, TimelineProjectionInterval Interval)> secondary,
+        TimelineSourceOperation operation,
+        bool isActiveAssigned)
+    {
+        var phases = (canonical.Phases ?? [])
+            .Concat(secondary.SelectMany(slot => FoldedPhases(slot, operation, isActiveAssigned)))
+            .Distinct()
+            .OrderBy(phase => phase.StartsAt)
+            .ThenBy(phase => phase.EndsAt)
+            .ToArray();
+        var foldedDetails = secondary
+            .Select(slot => FoldedFactDescription(slot, operation, isActiveAssigned))
+            .Where(detail => !string.IsNullOrWhiteSpace(detail))
+            .Prepend(canonical.Detail)
+            .Where(detail => !string.IsNullOrWhiteSpace(detail))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return canonical with
+        {
+            // The current calculated/hold envelope belongs to the current Machine.
+            // Prior-Machine facts are tooltip phases and must never backdate it.
+            StartsAt = canonical.StartsAt,
+            EndsAt = canonical.EndsAt,
+            MachineId = canonicalMachine.MachineId,
+            Detail = foldedDetails.Length == 0
+                ? canonical.Detail
+                : string.Join("; ", foldedDetails),
+            Phases = phases
+        };
+    }
+
+    private static IEnumerable<TimelineProjectionPhase> FoldedPhases(
+        (int MachineIndex, int IntervalIndex, TimelineProjectionMachine Machine, TimelineProjectionInterval Interval) slot,
+        TimelineSourceOperation operation,
+        bool isActiveAssigned)
+    {
+        var isPriorActual = isActiveAssigned
+            && slot.Interval.TimingKind == "actual"
+            && !string.Equals(slot.Machine.MachineId, operation.MachineId, StringComparison.Ordinal);
+        if (isPriorActual)
+        {
+            return
+            [
+                new TimelineProjectionPhase(
+                    "actual_history",
+                    slot.Interval.StartsAt,
+                    slot.Interval.EndsAt,
+                    $"Recorded actual work on {slot.Machine.Number} — {slot.Machine.Name}")
+            ];
+        }
+
+        if (slot.Interval.Phases is { Count: > 0 })
+        {
+            return slot.Interval.Phases;
+        }
+        return
+        [
+            new TimelineProjectionPhase(
+                slot.Interval.Type,
+                slot.Interval.StartsAt,
+                slot.Interval.EndsAt,
+                slot.Interval.Detail)
+        ];
+    }
+
+    private static string? FoldedFactDescription(
+        (int MachineIndex, int IntervalIndex, TimelineProjectionMachine Machine, TimelineProjectionInterval Interval) slot,
+        TimelineSourceOperation operation,
+        bool isActiveAssigned)
+    {
+        var isPriorActual = isActiveAssigned
+            && slot.Interval.TimingKind == "actual"
+            && !string.Equals(slot.Machine.MachineId, operation.MachineId, StringComparison.Ordinal);
+        if (isPriorActual)
+        {
+            return $"Actual history on {slot.Machine.Number} — {slot.Machine.Name}: "
+                + $"{slot.Interval.StartsAt:O} to {slot.Interval.EndsAt:O}"
+                + (string.IsNullOrWhiteSpace(slot.Interval.Detail)
+                    ? string.Empty
+                    : $" ({slot.Interval.Detail})");
+        }
+        return slot.Interval.Detail;
+    }
+
+    private static bool IsCapacityAnnotation(TimelineProjectionInterval interval) =>
+        interval.Type is "waiting" or "downtime" or "idle";
+
+    private static TimelineProjectionInterval AnonymizeCapacityInterval(
+        TimelineProjectionInterval interval) => interval with
+    {
+        OperationId = null,
+        BatchId = null,
+        BatchNumber = null,
+        PartNumber = null,
+        OperationNumber = null,
+        OperationName = null,
+        TimingKind = null,
+        OperationStatus = null,
+        ForecastStart = null,
+        ForecastEnd = null,
+        ActualStart = null,
+        ActualEnd = null,
+        MachineAssignmentId = null,
+        PlanningMode = null,
+        WorkFinishDate = null,
+        Phases = null
+    };
 
     private static string PhaseLabel(string type) => type.ToLowerInvariant() switch
     {

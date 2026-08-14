@@ -293,14 +293,18 @@ public sealed class MachineOperationExecutionApiTests
                 using var timelineJson = JsonDocument.Parse(await timeline.Content.ReadAsStringAsync());
                 var intervals = timelineJson.RootElement.GetProperty("machines")[0]
                     .GetProperty("intervals").EnumerateArray().ToArray();
-                Assert.Contains(intervals, value =>
-                    value.GetProperty("type").GetString() == "waiting"
-                    && value.GetProperty("operationId").GetString() == "op-1"
-                    && value.GetProperty("detail").GetString()!.Contains("paused by planner", StringComparison.OrdinalIgnoreCase));
-                Assert.DoesNotContain(intervals, value =>
+                var canonical = Assert.Single(intervals, value =>
                     value.GetProperty("operationId").ValueKind == JsonValueKind.String
                     && value.GetProperty("operationId").GetString() == "op-1"
                     && value.GetProperty("type").GetString() == "operation");
+                Assert.Equal("assignment-1",
+                    canonical.GetProperty("machineAssignmentId").GetString());
+                Assert.Equal("hold", canonical.GetProperty("timingKind").GetString());
+                Assert.Contains("paused by planner", canonical.GetProperty("detail").GetString(),
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(intervals, value =>
+                    value.GetProperty("operationId").GetString() == "op-1"
+                    && value.GetProperty("type").GetString() == "waiting");
             }
 
             Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));

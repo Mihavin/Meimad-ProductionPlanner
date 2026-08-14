@@ -49,6 +49,7 @@ internal sealed record TimelineSourceOperation(
     string? MachineId,
     int? BacklogPosition,
     string? PlanningMode,
+    DateTimeOffset? MachineMovedAt,
     int QaSeconds,
     int LoadUnloadSeconds,
     bool LoadUnloadRequiresWorker,
@@ -60,6 +61,8 @@ internal sealed record TimelineSourceOperation(
     string? ActivePauseReason,
     string? PausedBy,
     DateTimeOffset? PauseStartedAt,
+    DateTimeOffset? MovePauseStartedAt,
+    DateTimeOffset? MovePauseEndedAt,
     DateTimeOffset? ActualStart,
     DateTimeOffset? ActualEnd,
     string? ActualMachineId);

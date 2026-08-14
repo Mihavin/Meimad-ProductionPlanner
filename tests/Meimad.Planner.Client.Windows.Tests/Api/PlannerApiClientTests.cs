@@ -634,7 +634,12 @@ public sealed class PlannerApiClientTests
                   "operationNumber":10,"operationName":"Mill",
                   "startsAt":"2026-08-18T08:00:00Z","endsAt":"2026-08-18T09:00:00Z",
                   "detail":null,"planningMode":"backward",
-                  "machineAssignmentId":"assignment-1","workFinishDate":"2026-08-19"
+                  "machineAssignmentId":"assignment-1","workFinishDate":"2026-08-19",
+                  "phases":[
+                    {"type":"setup","startsAt":"2026-08-18T08:00:00Z","endsAt":"2026-08-18T08:15:00Z","detail":"Setup"},
+                    {"type":"loadunload","startsAt":"2026-08-18T08:15:00Z","endsAt":"2026-08-18T08:20:00Z","detail":"Manual load"},
+                    {"type":"production","startsAt":"2026-08-18T08:20:00Z","endsAt":"2026-08-18T09:00:00Z","detail":null}
+                  ]
                 }]
               }],
               "dependencies": [], "conflicts": []
@@ -656,6 +661,8 @@ public sealed class PlannerApiClientTests
         Assert.Equal("Backward", result.Machines[0].Intervals[0].PlanningModeLabel);
         Assert.Equal("assignment-1", result.Machines[0].Intervals[0].MachineAssignmentId);
         Assert.Equal(new DateOnly(2026, 8, 19), result.Machines[0].Intervals[0].WorkFinishDate);
+        Assert.Equal(["setup", "loadunload", "production"],
+            result.Machines[0].Intervals[0].Phases!.Select(phase => phase.Type));
     }
 
     [Fact]

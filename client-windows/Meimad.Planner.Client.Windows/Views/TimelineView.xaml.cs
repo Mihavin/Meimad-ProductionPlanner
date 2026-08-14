@@ -13,8 +13,12 @@ public partial class TimelineView : UserControl
 {
     private const double LabelWidth = 185;
     private const double HeaderHeight = 24;
-    internal const double CompactRowHeight = 30;
+    internal const double CompactRowHeight = 38;
     private const double RowHeight = CompactRowHeight;
+    internal const double AssignmentLaneTop = 3;
+    internal const double AssignmentLaneHeight = 22;
+    internal const double CapacityLaneTop = 27;
+    internal const double CapacityLaneHeight = 8;
     private TimelineViewModel? viewModel;
     private bool isLoaded;
 
@@ -123,19 +127,75 @@ public partial class TimelineView : UserControl
         var chartWidth = Math.Max(900, Math.Min(6000, duration.TotalHours * 22));
         TimelineCanvas.Width = LabelWidth + chartWidth + 18;
         TimelineCanvas.Height = HeaderHeight + viewModel.Machines.Count * RowHeight + 12;
+        // Calendar closures are a background layer. Draw them before dependency
+        // grid lines, dependency arrows, and operation/capacity blocks so they
+        // never obscure a planning fact.
+        DrawCalendarBackgrounds(chartWidth, duration);
         DrawTimeGrid(viewModel.HorizonStart, viewModel.HorizonEnd, chartWidth);
-        DrawDependencyArrows(chartWidth, duration);
 
         for (var row = 0; row < viewModel.Machines.Count; row++)
         {
             DrawMachineRow(viewModel.Machines[row], row, chartWidth, duration);
         }
+        // Dependency arrows are the topmost layer so selected-batch links remain
+        // legible over operation blocks and calendar context.
+        DrawDependencyArrows(chartWidth, duration);
 
         stopwatch.Stop();
         Trace.WriteLine(
             $"Timeline render completed in {stopwatch.Elapsed.TotalMilliseconds:F1} ms " +
             $"({viewModel.Machines.Count} machines, {viewModel.Machines.Sum(machine => machine.Intervals.Count)} intervals, " +
             $"{TimelineCanvas.Children.Count} visual elements).");
+    }
+
+    private void DrawCalendarBackgrounds(double chartWidth, TimeSpan duration)
+    {
+        if (viewModel is null || duration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        for (var row = 0; row < viewModel.Machines.Count; row++)
+        {
+            var machine = viewModel.Machines[row];
+            var y = HeaderHeight + row * RowHeight;
+            foreach (var interval in machine.NonWorkingWindows ?? [])
+            {
+                var clippedStart = interval.StartsAt < viewModel.HorizonStart
+                    ? viewModel.HorizonStart
+                    : interval.StartsAt;
+                var clippedEnd = interval.EndsAt > viewModel.HorizonEnd
+                    ? viewModel.HorizonEnd
+                    : interval.EndsAt;
+                if (clippedEnd <= clippedStart)
+                {
+                    continue;
+                }
+
+                var x = LabelWidth
+                    + chartWidth * (clippedStart - viewModel.HorizonStart).TotalSeconds
+                        / duration.TotalSeconds;
+                var width = Math.Max(
+                    1,
+                    chartWidth * (clippedEnd - clippedStart).TotalSeconds
+                        / duration.TotalSeconds);
+                var background = new Border
+                {
+                    // Deliberately no TimelineInterval Tag: this is calendar
+                    // context, not a second operation/capacity block.
+                    Background = CalendarBackgroundBrush,
+                    BorderBrush = CalendarBackgroundEdgeBrush,
+                    BorderThickness = new Thickness(0, 0, 1, 0),
+                    Width = width,
+                    Height = RowHeight,
+                    ToolTip = CalendarBackgroundToolTip(interval),
+                    IsHitTestVisible = false
+                };
+                Canvas.SetLeft(background, x);
+                Canvas.SetTop(background, y);
+                TimelineCanvas.Children.Add(background);
+            }
+        }
     }
 
     private void DrawTimeGrid(DateTimeOffset start, DateTimeOffset end, double chartWidth)
@@ -163,67 +223,74 @@ public partial class TimelineView : UserControl
         TimeSpan duration)
     {
         var y = HeaderHeight + row * RowHeight;
-        var machineLabel = $"{machine.Number} — {machine.Name}";
+        var machineLabel = MachineDisplayLabel(machine);
         var machineLabelBlock = AddText(
-            machineLabel = MachineDisplayLabel(machine), 4, y + 7, 10, Brushes.Black, FontWeights.SemiBold);
+            machineLabel, 4, y + 7, 10, Brushes.Black, FontWeights.SemiBold);
         machineLabelBlock.Width = LabelWidth - 10;
         machineLabelBlock.TextTrimming = TextTrimming.CharacterEllipsis;
         machineLabelBlock.ToolTip = machineLabel;
         AddLine(0, y + RowHeight, TimelineCanvas.Width, y + RowHeight, Color.FromRgb(220, 224, 229), 1);
 
         var visibleIntervals = machine.Intervals
-            .Where(interval => interval.EndsAt > viewModel!.HorizonStart
-                && interval.StartsAt < viewModel.HorizonEnd)
+            .Where(interval =>
+                !string.Equals(interval.Type, "idle", StringComparison.OrdinalIgnoreCase)
+                && ((interval.EndsAt > viewModel!.HorizonStart
+                        && interval.StartsAt < viewModel!.HorizonEnd)
+                    || IsBoundaryBlockedMarker(
+                        interval, viewModel!.HorizonStart, viewModel.HorizonEnd)))
             .ToArray();
-        var exactOverlapGroups = visibleIntervals
-            .GroupBy(interval => (interval.StartsAt, interval.EndsAt))
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderBy(candidate => candidate.OperationNumber)
-                    .ThenBy(candidate => candidate.OperationId, StringComparer.Ordinal)
-                    .ToArray());
-        foreach (var interval in visibleIntervals)
+        var laneAssignments = PartitionIntervals(visibleIntervals);
+        var laneCounts = laneAssignments
+            .GroupBy(value => value.PrimaryLane)
+            .ToDictionary(group => group.Key, group => group.Max(value => value.Lane) + 1);
+        for (var intervalIndex = 0; intervalIndex < visibleIntervals.Length; intervalIndex++)
         {
+            var interval = visibleIntervals[intervalIndex];
             var clippedStart = interval.StartsAt < viewModel!.HorizonStart
                 ? viewModel.HorizonStart
                 : interval.StartsAt;
             var clippedEnd = interval.EndsAt > viewModel.HorizonEnd
                 ? viewModel.HorizonEnd
                 : interval.EndsAt;
-            if (clippedEnd <= clippedStart)
+            var boundaryBlockedMarker = IsBoundaryBlockedMarker(
+                interval, viewModel.HorizonStart, viewModel.HorizonEnd);
+            if (clippedEnd <= clippedStart && !boundaryBlockedMarker)
             {
                 continue;
             }
 
             var x = LabelWidth + chartWidth * (clippedStart - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
-            var width = Math.Max(8, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
-            var exactOverlaps = exactOverlapGroups[(interval.StartsAt, interval.EndsAt)];
-            var lane = Array.IndexOf(exactOverlaps, interval);
-            var laneHeight = (RowHeight - 6) / Math.Max(1, exactOverlaps.Length);
-            var label = $"{interval.TimingLabel}: {IntervalLabel(interval)}";
+            var width = boundaryBlockedMarker
+                ? 8
+                : Math.Max(8, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
+            if (boundaryBlockedMarker)
+            {
+                x = Math.Clamp(x, LabelWidth, LabelWidth + chartWidth - width);
+            }
+            var usesPrimaryLane = UsesPrimaryLane(interval);
+            var availableHeight = usesPrimaryLane ? AssignmentLaneHeight : CapacityLaneHeight;
+            var laneTop = usesPrimaryLane ? AssignmentLaneTop : CapacityLaneTop;
+            var lane = laneAssignments[intervalIndex].Lane;
+            var laneHeight = availableHeight / Math.Max(1, laneCounts[usesPrimaryLane]);
+            var label = TimelineBlockLabel(interval);
+            var hasRenderablePhases = HasRenderablePhases(interval);
             var block = new Border
             {
                 Tag = interval,
                 Width = width,
                 Height = laneHeight,
-                Background = IntervalBrush(interval.Type),
-                BorderBrush = Brushes.White,
-                BorderThickness = new Thickness(1),
+                Background = hasRenderablePhases
+                    ? Brushes.Transparent
+                    : IntervalBrush(interval),
+                BorderBrush = hasRenderablePhases ? Brushes.Transparent : Brushes.White,
+                BorderThickness = hasRenderablePhases ? new Thickness(0) : new Thickness(1),
                 ToolTip = $"{label}\nLocal: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} → {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}\n{interval.Detail}",
-                Child = new TextBlock
-                {
-                    Text = label,
-                    FontSize = 9,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = Brushes.White,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(5, 0, 5, 0)
-                }
+                Child = BuildIntervalContent(
+                    interval, label, width, laneHeight, clippedStart, clippedEnd)
             };
             block.ToolTip = IntervalToolTip(interval, label);
             Canvas.SetLeft(block, x);
-            Canvas.SetTop(block, y + 3 + lane * laneHeight);
+            Canvas.SetTop(block, y + laneTop + lane * laneHeight);
             TimelineCanvas.Children.Add(block);
         }
     }
@@ -272,8 +339,8 @@ public partial class TimelineView : UserControl
 
             var x1 = LabelWidth + chartWidth * (from.EndsAt - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
             var x2 = LabelWidth + chartWidth * (to.StartsAt - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
-            var y1 = HeaderHeight + from.Row * RowHeight + RowHeight / 2;
-            var y2 = HeaderHeight + to.Row * RowHeight + RowHeight / 2;
+            var y1 = HeaderHeight + from.Row * RowHeight + AssignmentLaneTop + AssignmentLaneHeight / 2;
+            var y2 = HeaderHeight + to.Row * RowHeight + AssignmentLaneTop + AssignmentLaneHeight / 2;
             var line = new System.Windows.Shapes.Line
             {
                 X1 = x1,
@@ -311,27 +378,226 @@ public partial class TimelineView : UserControl
 
     internal static string IntervalLabel(TimelineInterval interval)
     {
-        var type = interval.Type.ToUpperInvariant();
-        if (string.Equals(interval.Type, "waiting", StringComparison.OrdinalIgnoreCase))
+        var type = interval.IsBlocked ? "BLOCKED" : interval.IsHold ? "HOLD" : IntervalTypeLabel(interval.Type);
+        var ownsAssignment = !string.IsNullOrWhiteSpace(interval.MachineAssignmentId);
+        if (interval.IsBlocked)
         {
-            return string.IsNullOrWhiteSpace(interval.Detail)
-                ? type
-                : $"{type} • {interval.Detail}";
+            if (ownsAssignment && interval.OperationNumber.HasValue)
+            {
+                return $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}"
+                    + (string.IsNullOrWhiteSpace(interval.Detail) ? string.Empty : $" • {interval.Detail}");
+            }
+
+            return string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
         }
-        return interval.OperationNumber.HasValue
-            ? $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName} • {interval.PlanningModeLabel}".TrimEnd()
-            : string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
+
+        // Capacity annotations are deliberately anonymous in the bar itself.
+        // Their operation identity (when present) remains available in the
+        // tooltip, but must not look like a second operation block.
+        if (!ownsAssignment && !IsIdentifiedActualHistory(interval))
+        {
+            return string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
+        }
+
+        if (!interval.OperationNumber.HasValue)
+        {
+            return string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
+        }
+
+        var operationLabel =
+            $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd();
+        return ownsAssignment
+            ? $"{operationLabel} • {interval.PlanningModeLabel}"
+            : operationLabel;
+    }
+
+    internal static string TimelineBlockLabel(TimelineInterval interval) =>
+        UsesPrimaryLane(interval)
+            ? $"{interval.TimingLabel}: {IntervalLabel(interval)}"
+            : IntervalLabel(interval);
+
+    internal static string IntervalTypeLabel(string type) => type.Trim().ToLowerInvariant() switch
+    {
+        "actual_history" => "ACTUAL HISTORY",
+        "assignment_annotation" => "CAPACITY",
+        var normalized => normalized.Replace('_', ' ').ToUpperInvariant()
+    };
+
+    internal static bool IsIdentifiedActualHistory(TimelineInterval interval) =>
+        string.Equals(interval.Type, "actual_history", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(interval.OperationId);
+
+    internal static Brush CalendarBackgroundBrush => CreateFrozenBrush(
+        Color.FromArgb(224, 224, 228, 232));
+
+    internal static Brush CalendarBackgroundEdgeBrush => CreateFrozenBrush(
+        Color.FromRgb(189, 198, 205));
+
+    private static SolidColorBrush CreateFrozenBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    internal static string CalendarBackgroundToolTip(TimelineNonWorkingWindow interval)
+    {
+        var detail = string.IsNullOrWhiteSpace(interval.Detail)
+            ? string.Empty
+            : $"\n{interval.Detail}";
+        return $"NON-WORKING CALENDAR\nMachine unavailable according to its configured working calendar."
+            + detail;
     }
 
     internal static bool IsOperationWorkInterval(TimelineInterval interval) =>
-        string.Equals(interval.Type, "operation", StringComparison.OrdinalIgnoreCase);
+        string.Equals(interval.Type, "operation", StringComparison.OrdinalIgnoreCase)
+        || IsIdentifiedActualHistory(interval);
 
-    internal static Brush IntervalBrush(string type) => type switch
+    internal static bool HasRenderablePhases(TimelineInterval interval) =>
+        string.Equals(interval.Type, "operation", StringComparison.OrdinalIgnoreCase)
+        && !interval.IsHold
+        && interval.Phases is { Count: > 0 }
+        && interval.Phases.Any(phase =>
+            phase.EndsAt > phase.StartsAt && IsRenderablePhaseType(phase.Type));
+
+    private UIElement BuildIntervalContent(
+        TimelineInterval interval,
+        string label,
+        double hostWidth,
+        double hostHeight,
+        DateTimeOffset clippedHostStart,
+        DateTimeOffset clippedHostEnd)
+    {
+        var canvas = new Canvas
+        {
+            Width = hostWidth,
+            Height = hostHeight,
+            ClipToBounds = true
+        };
+        if (HasRenderablePhases(interval))
+        {
+            var hostDurationSeconds = (clippedHostEnd - clippedHostStart).TotalSeconds;
+            foreach (var phase in interval.Phases!.Where(phase =>
+                         phase.EndsAt > phase.StartsAt && IsRenderablePhaseType(phase.Type)))
+            {
+                var phaseStart = phase.StartsAt < clippedHostStart ? clippedHostStart : phase.StartsAt;
+                var phaseEnd = phase.EndsAt > clippedHostEnd ? clippedHostEnd : phase.EndsAt;
+                if (phaseEnd <= phaseStart)
+                {
+                    continue;
+                }
+
+                var phaseX = hostWidth * (phaseStart - clippedHostStart).TotalSeconds / hostDurationSeconds;
+                var phaseWidth = Math.Max(
+                    1,
+                    hostWidth * (phaseEnd - phaseStart).TotalSeconds / hostDurationSeconds);
+                var segment = new Border
+                {
+                    Width = phaseWidth,
+                    Height = hostHeight,
+                    Background = PhaseBrush(phase.Type),
+                    ToolTip = phase.Detail
+                };
+                Canvas.SetLeft(segment, phaseX);
+                Canvas.SetTop(segment, 0);
+                canvas.Children.Add(segment);
+            }
+        }
+
+        canvas.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = UsesPrimaryLane(interval) ? 9 : 7,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = HasRenderablePhases(interval) ? Brushes.Black : Brushes.White,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(UsesPrimaryLane(interval) ? 5 : 2, 0, UsesPrimaryLane(interval) ? 5 : 2, 0)
+        });
+        return canvas;
+    }
+
+    internal static bool IsRenderablePhaseType(string type) => type.Trim().ToLowerInvariant() is
+        "setup" or "qa" or "loadunload" or "load_unload" or "load/unload"
+        or "production" or "operation" or "reserved";
+
+    internal static Brush PhaseBrush(string type) => type.Trim().ToLowerInvariant() switch
+    {
+        "reserved" => new SolidColorBrush(Color.FromRgb(245, 124, 0)),
+        "setup" or "qa" or "loadunload" or "load_unload" or "load/unload"
+            or "production" or "operation"
+            => new SolidColorBrush(Color.FromRgb(30, 136, 229)),
+        _ => Brushes.Transparent
+    };
+
+    internal static bool IsBoundaryBlockedMarker(
+        TimelineInterval interval,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd) =>
+        interval.IsBlocked
+        && interval.StartsAt == interval.EndsAt
+        && interval.StartsAt >= horizonStart
+        && interval.StartsAt <= horizonEnd;
+
+    internal static bool UsesPrimaryLane(TimelineInterval interval) =>
+        !interval.IsBlocked
+        && (IsOperationWorkInterval(interval)
+        || !string.IsNullOrWhiteSpace(interval.MachineAssignmentId));
+
+    internal static IReadOnlyList<(bool PrimaryLane, int Lane)> PartitionIntervals(
+        IReadOnlyList<TimelineInterval> intervals)
+    {
+        var result = new (bool PrimaryLane, int Lane)[intervals.Count];
+        foreach (var group in intervals
+                     .Select((interval, index) => (interval, index))
+                     .GroupBy(value => UsesPrimaryLane(value.interval)))
+        {
+            var laneEnds = new List<(DateTimeOffset End, bool PointMarker)>();
+            foreach (var item in group
+                         .OrderBy(value => value.interval.StartsAt)
+                         .ThenBy(value => value.interval.EndsAt)
+                         .ThenBy(value => value.interval.OperationId, StringComparer.Ordinal)
+                         .ThenBy(value => value.interval.Type, StringComparer.Ordinal)
+                         .ThenBy(value => value.index))
+            {
+                var pointMarker = item.interval.IsBlocked
+                    && item.interval.StartsAt == item.interval.EndsAt;
+                var lane = 0;
+                while (lane < laneEnds.Count
+                    && (laneEnds[lane].End > item.interval.StartsAt
+                        || (laneEnds[lane].End == item.interval.StartsAt
+                            && (pointMarker || laneEnds[lane].PointMarker))))
+                {
+                    lane++;
+                }
+
+                if (lane == laneEnds.Count)
+                {
+                    laneEnds.Add((item.interval.EndsAt, pointMarker));
+                }
+                else
+                {
+                    laneEnds[lane] = (item.interval.EndsAt, pointMarker);
+                }
+
+                result[item.index] = (group.Key, lane);
+            }
+        }
+
+        return result;
+    }
+
+    internal static Brush IntervalBrush(TimelineInterval interval) => interval.IsHold
+        ? new SolidColorBrush(Color.FromRgb(126, 87, 194))
+        : IntervalBrush(interval.Type);
+
+    internal static Brush IntervalBrush(string type) => type.Trim().ToLowerInvariant() switch
     {
         "operation" => new SolidColorBrush(Color.FromRgb(30, 136, 229)),
         "waiting" => new SolidColorBrush(Color.FromRgb(126, 87, 194)),
         "downtime" => new SolidColorBrush(Color.FromRgb(198, 40, 40)),
         "reserved" => new SolidColorBrush(Color.FromRgb(245, 124, 0)),
+        "actual_history" => new SolidColorBrush(Color.FromRgb(0, 137, 123)),
         _ => new SolidColorBrush(Color.FromRgb(158, 158, 158))
     };
 
@@ -368,13 +634,17 @@ public partial class TimelineView : UserControl
             ? $"\nActual: {FormatLocal(interval.ActualStart)} → {FormatLocal(interval.ActualEnd)}"
             : string.Empty;
         var detail = string.IsNullOrWhiteSpace(interval.Detail) ? string.Empty : $"\n{interval.Detail}";
+        var operation = !string.IsNullOrWhiteSpace(interval.OperationId)
+            && interval.OperationNumber.HasValue
+            ? $"\nOperation: {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd()
+            : string.Empty;
         var workFinishDate = interval.WorkFinishDate?.ToString("yyyy-MM-dd") ?? "—";
         if (string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
         {
-            return $"{label}\nLocal: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} - {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{detail}";
+            return $"{label}{operation}\nLocal: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} - {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{detail}";
         }
 
-        return $"{label}\nPlanning mode: {interval.PlanningModeLabel}\nWork Finish Date: {workFinishDate}\n{interval.TimingLabel}\nCalculated start: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm}\nCalculated finish: {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
+        return $"{label}{operation}\nPlanning mode: {interval.PlanningModeLabel}\nWork Finish Date: {workFinishDate}\n{interval.TimingLabel}\nCalculated start: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm}\nCalculated finish: {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
     }
 
     private static string FormatLocal(DateTimeOffset? value) => value.HasValue

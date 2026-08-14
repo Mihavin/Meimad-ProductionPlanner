@@ -110,9 +110,14 @@ public sealed class MachineDowntimeApiTests
             var phases = operation.GetProperty("detail").GetString()!;
             Assert.Contains("to 2026-08-11T10:00:00", phases, StringComparison.Ordinal);
             Assert.Contains("Production 2026-08-11T11:00:00", phases, StringComparison.Ordinal);
+            Assert.Contains(operation.GetProperty("phases").EnumerateArray(), phase =>
+                phase.GetProperty("detail").GetString()?
+                    .Contains("Hydraulic pressure loss", StringComparison.Ordinal) == true);
             var downtime = Assert.Single(recalculatedJson.GetProperty("machines")[0].GetProperty("intervals").EnumerateArray(),
                 value => value.GetProperty("type").GetString() == "downtime");
-            Assert.Equal("operation-1", downtime.GetProperty("operationId").GetString());
+            Assert.Equal(JsonValueKind.Null, downtime.GetProperty("operationId").ValueKind);
+            Assert.Equal(JsonValueKind.Null, downtime.GetProperty("operationNumber").ValueKind);
+            Assert.Equal(JsonValueKind.Null, downtime.GetProperty("machineAssignmentId").ValueKind);
             Assert.Contains("Operation delayed by Breakdown: Hydraulic pressure loss", downtime.GetProperty("detail").GetString(), StringComparison.Ordinal);
             Assert.Contains("Repair: Replaced pressure hose", downtime.GetProperty("detail").GetString(), StringComparison.Ordinal);
 

@@ -19,7 +19,13 @@ internal sealed record TimelineProjectionMachine(
     string MachineId,
     string Number,
     string Name,
-    IReadOnlyList<TimelineProjectionInterval> Intervals);
+    IReadOnlyList<TimelineProjectionInterval> Intervals,
+    IReadOnlyList<TimelineProjectionNonWorkingWindow>? NonWorkingWindows = null);
+
+internal sealed record TimelineProjectionNonWorkingWindow(
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    string Detail);
 
 internal sealed record TimelineProjectionInterval(
     string Type,

@@ -1,4 +1,5 @@
 using Meimad.Planner.Client.Windows.Api;
+using System.Text.Json;
 using Meimad.Planner.Client.Windows.Presentation;
 using Meimad.Planner.Client.Windows.Views;
 using System.Windows.Media;
@@ -100,6 +101,257 @@ public sealed class TimelineViewModelTests
     }
 
     [Fact]
+    public void Assignment_and_capacity_intervals_use_separate_non_overlapping_vertical_lanes()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var operation = new TimelineInterval(
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(3), null,
+            MachineAssignmentId: "assignment-1");
+        var pausedAssignment = operation with
+        {
+            Type = "waiting",
+            Detail = "Operation paused",
+            MachineAssignmentId = "assignment-1"
+        };
+        var capacityWait = pausedAssignment with { MachineAssignmentId = null };
+        var downtime = capacityWait with { Type = "downtime", OperationId = null };
+
+        Assert.True(TimelineView.UsesPrimaryLane(operation));
+        Assert.False(TimelineView.UsesPrimaryLane(pausedAssignment));
+        Assert.True(pausedAssignment.IsBlocked);
+        Assert.False(TimelineView.UsesPrimaryLane(capacityWait));
+        Assert.False(TimelineView.UsesPrimaryLane(downtime));
+        Assert.True(
+            TimelineView.AssignmentLaneTop + TimelineView.AssignmentLaneHeight
+            < TimelineView.CapacityLaneTop);
+        Assert.True(
+            TimelineView.CapacityLaneTop + TimelineView.CapacityLaneHeight
+            <= TimelineView.CompactRowHeight);
+    }
+
+    [Fact]
+    public void Partially_overlapping_primary_intervals_are_partitioned_deterministically()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var intervals = new[]
+        {
+            new TimelineInterval("operation", "machine-1", "op-a", null, null, null, 10, "A", start, start.AddHours(3), null),
+            new TimelineInterval("operation", "machine-1", "op-b", null, null, null, 20, "B", start.AddHours(1), start.AddHours(4), null),
+            new TimelineInterval("operation", "machine-1", "op-c", null, null, null, 30, "C", start.AddHours(3), start.AddHours(5), null)
+        };
+
+        var lanes = TimelineView.PartitionIntervals(intervals);
+
+        Assert.Equal((true, 0), lanes[0]);
+        Assert.Equal((true, 1), lanes[1]);
+        Assert.Equal((true, 0), lanes[2]);
+    }
+
+    [Fact]
+    public void Assignment_owned_blocked_interval_is_capacity_only_and_remains_identified()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var blocked = new TimelineInterval(
+            "waiting", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), "Waiting for setup worker.",
+            TimingKind: "blocked", MachineAssignmentId: "assignment-1", PlanningMode: "backward");
+
+        Assert.True(blocked.IsBlocked);
+        Assert.False(TimelineView.UsesPrimaryLane(blocked));
+        Assert.False(TimelineView.IsOperationWorkInterval(blocked));
+        Assert.Contains("BLOCKED", TimelineView.IntervalLabel(blocked), StringComparison.Ordinal);
+        Assert.Contains("OP10", TimelineView.IntervalLabel(blocked), StringComparison.Ordinal);
+        Assert.Contains("Operation: PN-1/B-1 OP10 Mill",
+            TimelineView.IntervalToolTip(blocked, TimelineView.IntervalLabel(blocked)),
+            StringComparison.Ordinal);
+        Assert.Contains("Waiting for setup worker", TimelineView.IntervalToolTip(blocked, TimelineView.IntervalLabel(blocked)), StringComparison.Ordinal);
+        Assert.Contains("Planning mode: Backward", TimelineView.IntervalToolTip(blocked, TimelineView.IntervalLabel(blocked)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Suspended_operation_without_timing_kind_is_rendered_as_hold()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var suspended = new TimelineInterval(
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), null, OperationStatus: "suspended");
+
+        Assert.True(suspended.IsHold);
+        Assert.False(suspended.IsBlocked);
+        Assert.Contains("HOLD", TimelineView.IntervalLabel(suspended), StringComparison.Ordinal);
+        Assert.Equal(Color.FromRgb(126, 87, 194),
+            Assert.IsType<SolidColorBrush>(TimelineView.IntervalBrush(suspended)).Color);
+    }
+
+    [Fact]
+    public void Anonymous_waiting_remains_waiting_while_assignment_waiting_is_blocked()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var waiting = new TimelineInterval(
+            "waiting", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), "Waiting for calendar.");
+
+        Assert.False(waiting.IsBlocked);
+        Assert.Contains("WAITING", TimelineView.IntervalLabel(waiting), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Renderable_phases_preserve_work_and_reservation_colors()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var operation = new TimelineInterval(
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(4), null,
+            Phases:
+            [
+                new TimelinePhase("setup", start, start.AddHours(1)),
+                new TimelinePhase("reserved", start.AddHours(1), start.AddHours(2)),
+                new TimelinePhase("production", start.AddHours(3), start.AddHours(4))
+            ]);
+
+        Assert.True(TimelineView.HasRenderablePhases(operation));
+        Assert.Equal(Color.FromRgb(30, 136, 229),
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("production")).Color);
+        Assert.Equal(Color.FromRgb(30, 136, 229),
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("loadunload")).Color);
+        Assert.Equal(Color.FromRgb(245, 124, 0),
+            Assert.IsType<SolidColorBrush>(TimelineView.PhaseBrush("reserved")).Color);
+        Assert.Equal(Brushes.Transparent, TimelineView.PhaseBrush("waiting"));
+        Assert.True(TimelineView.IsRenderablePhaseType("loadunload"));
+        Assert.False(TimelineView.IsRenderablePhaseType("waiting"));
+    }
+
+    [Fact]
+    public void Calendar_closures_are_separate_machine_background_context_not_timeline_intervals()
+    {
+        var start = DateTimeOffset.Parse("2026-08-15T00:00:00Z");
+        var closure = new TimelineNonWorkingWindow(
+            start, start.AddDays(1), "Machine calendar: non-working time.");
+        var machine = new TimelineMachine(
+            "machine-1", "M-1", "Mill", [], [closure]);
+
+        Assert.Single(machine.NonWorkingWindows!);
+        Assert.Empty(machine.Intervals);
+        Assert.DoesNotContain("OP", TimelineView.CalendarBackgroundToolTip(closure),
+            StringComparison.Ordinal);
+        Assert.Equal(Color.FromArgb(224, 224, 228, 232),
+            Assert.IsType<SolidColorBrush>(TimelineView.CalendarBackgroundBrush).Color);
+    }
+
+    [Fact]
+    public void Timeline_machine_deserializes_non_working_windows_as_additive_context()
+    {
+        var machine = JsonSerializer.Deserialize<TimelineMachine>("""
+            {
+              "machineId":"machine-1",
+              "number":"M-1",
+              "name":"Mill",
+              "intervals":[],
+              "nonWorkingWindows":[
+                {"startsAt":"2026-08-15T00:00:00Z","endsAt":"2026-08-16T00:00:00Z","detail":"Machine calendar: non-working time."}
+              ]
+            }
+            """, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(machine);
+        Assert.Empty(machine!.Intervals);
+        var window = Assert.Single(machine.NonWorkingWindows!);
+        Assert.Equal(DateTimeOffset.Parse("2026-08-15T00:00:00Z"), window.StartsAt);
+        Assert.Equal("Machine calendar: non-working time.", window.Detail);
+    }
+
+    [Fact]
+    public void Identified_history_is_a_primary_operation_endpoint_while_anonymous_annotations_are_capacity_only()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var actualHistory = new TimelineInterval(
+            "actual_history", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), "Recorded on the prior Machine.",
+            TimingKind: "actual", OperationStatus: "completed", PlanningMode: "manual");
+        var annotation = actualHistory with
+        {
+            Type = "assignment_annotation",
+            TimingKind = null,
+            Detail = "Non-canonical assignment annotation."
+        };
+        var hold = actualHistory with
+        {
+            Type = "operation",
+            TimingKind = "hold",
+            OperationStatus = "suspended",
+            PlanningMode = "backward",
+            MachineAssignmentId = "assignment-1",
+            Detail = "Operation paused by planner."
+        };
+
+        var historyLabel = TimelineView.IntervalLabel(actualHistory);
+        var annotationLabel = TimelineView.IntervalLabel(annotation);
+        var holdLabel = TimelineView.IntervalLabel(hold);
+        var historyBrush = Assert.IsType<SolidColorBrush>(TimelineView.IntervalBrush(actualHistory));
+        var annotationBrush = Assert.IsType<SolidColorBrush>(TimelineView.IntervalBrush(annotation));
+        var holdBrush = Assert.IsType<SolidColorBrush>(TimelineView.IntervalBrush(hold));
+
+        Assert.Contains("ACTUAL HISTORY", historyLabel, StringComparison.Ordinal);
+        Assert.DoesNotContain("Manual", historyLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OP10", historyLabel, StringComparison.Ordinal);
+        Assert.True(TimelineView.IsOperationWorkInterval(actualHistory));
+        Assert.True(TimelineView.UsesPrimaryLane(actualHistory));
+        Assert.DoesNotContain("OP10", annotationLabel, StringComparison.Ordinal);
+        Assert.DoesNotContain("Mill", annotationLabel, StringComparison.Ordinal);
+        Assert.DoesNotContain("Manual", annotationLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ANNOTATION", annotationLabel, StringComparison.Ordinal);
+        Assert.False(TimelineView.IsOperationWorkInterval(annotation));
+        Assert.False(TimelineView.UsesPrimaryLane(annotation));
+        Assert.Equal(Color.FromRgb(0, 137, 123), historyBrush.Color);
+        Assert.Equal(Color.FromRgb(158, 158, 158), annotationBrush.Color);
+
+        Assert.True(hold.IsHold);
+        Assert.Equal("Hold — paused", hold.TimingLabel);
+        Assert.Contains("HOLD", holdLabel, StringComparison.Ordinal);
+        Assert.Contains("Backward", holdLabel, StringComparison.Ordinal);
+        Assert.True(TimelineView.UsesPrimaryLane(hold));
+        Assert.Equal(Color.FromRgb(126, 87, 194), holdBrush.Color);
+    }
+
+    [Fact]
+    public void Anonymous_capacity_interval_keeps_operation_identity_only_in_tooltip()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var waiting = new TimelineInterval(
+            "waiting", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), "Waiting for Machine calendar.");
+
+        var label = TimelineView.IntervalLabel(waiting);
+        var tooltip = TimelineView.IntervalToolTip(waiting, label);
+
+        Assert.DoesNotContain("OP10", label, StringComparison.Ordinal);
+        Assert.DoesNotContain("Mill", label, StringComparison.Ordinal);
+        Assert.Contains("Waiting for Machine calendar", label, StringComparison.Ordinal);
+        Assert.Contains("Operation: PN-1/B-1 OP10 Mill", tooltip, StringComparison.Ordinal);
+        Assert.Contains("Waiting for Machine calendar", tooltip, StringComparison.Ordinal);
+        Assert.False(TimelineView.UsesPrimaryLane(waiting));
+        Assert.Equal(label, TimelineView.TimelineBlockLabel(waiting));
+        Assert.DoesNotContain("Calculated:", TimelineView.TimelineBlockLabel(waiting),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Anonymous_actual_history_has_no_calculated_layer_prefix()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var history = new TimelineInterval(
+            "actual_history", "machine-1", null, null, null, null, null, null,
+            start, start.AddHours(1), "Recorded prior-Machine occupancy.");
+
+        Assert.False(TimelineView.UsesPrimaryLane(history));
+        Assert.StartsWith("ACTUAL HISTORY", TimelineView.TimelineBlockLabel(history),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Calculated", TimelineView.TimelineBlockLabel(history),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task View_model_preserves_server_intervals_and_filters_dependencies_by_batch()
     {
         var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
@@ -158,7 +410,7 @@ public sealed class TimelineViewModelTests
         Assert.Equal("warning", Assert.Single(viewModel.Conflicts).Severity);
         Assert.Equal(start, api.RequestedFrom);
         Assert.Equal(end, api.RequestedTo);
-        Assert.Equal(30, TimelineView.CompactRowHeight);
+        Assert.Equal(38, TimelineView.CompactRowHeight);
         Assert.Equal("M-1 — Mill", TimelineView.MachineDisplayLabel(viewModel.Machines[0]));
 
         viewModel.Invalidate();

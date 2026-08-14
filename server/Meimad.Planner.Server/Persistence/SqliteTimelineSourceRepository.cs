@@ -119,6 +119,67 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
+            WITH ranked_machine_moves AS (
+                SELECT json_extract(related_entity_ids_json, '$.batchOperationId') AS operation_id,
+                       occurred_at,
+                       json_extract(after_data_json, '$.machineId') AS after_machine_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY json_extract(related_entity_ids_json, '$.batchOperationId')
+                           ORDER BY occurred_at DESC, id DESC) AS move_rank
+                FROM structured_event_log
+                WHERE event_type = 'manual_backlog_reorder'
+                  AND json_extract(related_entity_ids_json, '$.batchOperationId') IS NOT NULL
+                  AND json_extract(before_data_json, '$.machineId') IS NOT NULL
+                  AND json_extract(after_data_json, '$.machineId') IS NOT NULL
+                  AND json_extract(before_data_json, '$.machineId')
+                      <> json_extract(after_data_json, '$.machineId')
+            ),
+            latest_machine_moves AS (
+                SELECT operation_id, occurred_at, after_machine_id
+                FROM ranked_machine_moves
+                WHERE move_rank = 1
+            ),
+            effective_machine_moves AS (
+                SELECT batch_operations.id AS operation_id,
+                       CASE
+                           WHEN latest_machine_moves.after_machine_id = machine_assignments.machine_id
+                            AND julianday(latest_machine_moves.occurred_at)
+                                >= julianday(machine_assignments.created_at)
+                               THEN latest_machine_moves.occurred_at
+                           WHEN batch_operations.actual_machine_id IS NOT NULL
+                            AND machine_assignments.machine_id IS NOT NULL
+                            AND batch_operations.actual_machine_id <> machine_assignments.machine_id
+                               THEN machine_assignments.created_at
+                           ELSE NULL
+                       END AS occurred_at
+                FROM batch_operations
+                LEFT JOIN machine_assignments
+                  ON machine_assignments.batch_operation_id = batch_operations.id
+                LEFT JOIN latest_machine_moves
+                  ON latest_machine_moves.operation_id = batch_operations.id
+            ),
+            ranked_move_pauses AS (
+                SELECT operation_pause_events.batch_operation_id,
+                       operation_pause_events.pause_started_at,
+                       operation_pause_events.pause_ended_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY operation_pause_events.batch_operation_id
+                           ORDER BY operation_pause_events.pause_started_at DESC,
+                                    operation_pause_events.id DESC) AS pause_rank
+                FROM operation_pause_events
+                JOIN effective_machine_moves
+                  ON effective_machine_moves.operation_id = operation_pause_events.batch_operation_id
+                WHERE julianday(operation_pause_events.pause_started_at)
+                          <= julianday(effective_machine_moves.occurred_at)
+                  AND (operation_pause_events.pause_ended_at IS NULL
+                       OR julianday(operation_pause_events.pause_ended_at)
+                          >= julianday(effective_machine_moves.occurred_at))
+            ),
+            relevant_move_pauses AS (
+                SELECT batch_operation_id, pause_started_at, pause_ended_at
+                FROM ranked_move_pauses
+                WHERE pause_rank = 1
+            )
             SELECT batch_operations.id, production_batches.id,
                    production_batches.batch_number, cases.id, cases.part_number,
                    batch_operations.operation_number, batch_operations.name,
@@ -164,7 +225,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                             operation_pause_events.comment),
                    batch_operations.actual_start,
                    batch_operations.actual_end,
-                   batch_operations.actual_machine_id
+                   batch_operations.actual_machine_id,
+                   effective_machine_moves.occurred_at,
+                   relevant_move_pauses.pause_started_at,
+                   relevant_move_pauses.pause_ended_at
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -174,6 +238,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             LEFT JOIN operation_pause_events
               ON operation_pause_events.batch_operation_id = batch_operations.id
              AND operation_pause_events.status = 'active'
+            LEFT JOIN effective_machine_moves
+              ON effective_machine_moves.operation_id = batch_operations.id
+            LEFT JOIN relevant_move_pauses
+              ON relevant_move_pauses.batch_operation_id = batch_operations.id
             ORDER BY production_batches.id, batch_operations.route_position;
             """;
         var values = new List<TimelineSourceOperation>();
@@ -192,12 +260,16 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetInt32(8), NullableInt(reader, 9), NullableInt(reader, 10),
                 reader.GetString(11), reader.GetString(12), NullableString(reader, 13),
                 NullableString(reader, 14), NullableString(reader, 15), NullableString(reader, 16), NullableInt(reader, 17),
-                NullableString(reader, 18), reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21) == 1,
+                NullableString(reader, 18),
+                NullableString(reader, 34) is { } machineMovedAt ? Parse(machineMovedAt) : null,
+                reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21) == 1,
                 reader.GetInt32(22) == 1, NullableInt(reader, 23), reader.GetInt32(24) == 1,
                 priorityDate, priorityOrder,
                 reader.IsDBNull(27) ? null : $"{reader.GetString(27).Replace('_', ' ')}: {reader.GetString(30)}",
                 NullableString(reader, 28),
                 NullableString(reader, 29) is { } pauseAt ? Parse(pauseAt) : null,
+                NullableString(reader, 35) is { } movePauseStart ? Parse(movePauseStart) : null,
+                NullableString(reader, 36) is { } movePauseEnd ? Parse(movePauseEnd) : null,
                 NullableString(reader, 31) is { } actualStart ? Parse(actualStart) : null,
                 NullableString(reader, 32) is { } actualEnd ? Parse(actualEnd) : null,
                 NullableString(reader, 33)));
