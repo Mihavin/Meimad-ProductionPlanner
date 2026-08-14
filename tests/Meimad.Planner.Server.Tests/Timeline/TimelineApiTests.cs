@@ -404,7 +404,7 @@ public sealed class TimelineApiTests
             Assert.DoesNotContain(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 value => value.GetProperty("code").GetString() == "calendar_configuration_missing");
-        });
+        }, DateTimeOffset.Parse("2026-08-11T03:00:00Z"));
     }
 
     [Fact]
@@ -696,6 +696,438 @@ public sealed class TimelineApiTests
             Assert.Equal("not_started", await status.ExecuteScalarAsync());
             Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
         });
+    }
+
+    [Fact]
+    public async Task Normal_refresh_uses_server_read_time_as_the_not_started_forecast_cursor()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T09:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(serverNow, document.RootElement.GetProperty("readAt").GetDateTimeOffset());
+            var operationBlocks = document.RootElement.GetProperty("machines")
+                .EnumerateArray().SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("operationStatus").GetString() == "not_started"
+                    && interval.GetProperty("type").GetString() == "operation")
+                .ToArray();
+            Assert.NotEmpty(operationBlocks);
+            Assert.All(operationBlocks, interval => Assert.True(
+                interval.GetProperty("startsAt").GetDateTimeOffset() >= serverNow));
+            Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Manual_and_forward_same_machine_chain_stays_at_or_after_server_now()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T10:30:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE machine_assignments SET planning_mode = 'manual'
+                    WHERE id = 'assignment-1';
+                    UPDATE machine_assignments SET planning_mode = 'forward'
+                    WHERE id = 'assignment-2';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToDictionary(
+                    interval => interval.GetProperty("operationId").GetString()!,
+                    interval => interval,
+                    StringComparer.Ordinal);
+
+            Assert.True(blocks["op-1"].GetProperty("startsAt").GetDateTimeOffset() >= serverNow);
+            Assert.True(blocks["op-2"].GetProperty("startsAt").GetDateTimeOffset()
+                >= blocks["op-1"].GetProperty("endsAt").GetDateTimeOffset());
+            Assert.Equal("manual", blocks["op-1"].GetProperty("planningMode").GetString());
+            Assert.Equal("forward", blocks["op-2"].GetProperty("planningMode").GetString());
+            Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Not_started_operation_waits_until_the_calendar_reopens_after_server_now()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T11:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE working_calendars
+                    SET calendar_json = '{"availability":[{"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T10:00:00Z"},{"startsAt":"2026-08-11T13:00:00Z","endsAt":"2026-08-11T18:00:00Z"}]}'
+                    WHERE id = 'calendar-1';
+                    UPDATE application_settings
+                    SET value = '{"availability":[{"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T10:00:00Z"},{"startsAt":"2026-08-11T13:00:00Z","endsAt":"2026-08-11T18:00:00Z"}]}'
+                    WHERE key = 'timeline.setup_calendar_json';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var first = Assert.Single(document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), interval =>
+                    interval.GetProperty("operationId").GetString() == "op-1"
+                    && interval.GetProperty("type").GetString() == "operation");
+            Assert.Equal(DateTimeOffset.Parse("2026-08-11T13:00:00Z"),
+                first.GetProperty("startsAt").GetDateTimeOffset());
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Future_backward_slot_remains_latest_fit_when_it_is_after_server_now()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-12T16:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            await ConfigureThreeDayAvailabilityAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE machine_assignments SET planning_mode = 'backward';";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToArray();
+
+            Assert.Equal(2, blocks.Length);
+            Assert.Equal(serverNow, blocks.Single(interval =>
+                    interval.GetProperty("operationId").GetString() == "op-1")
+                .GetProperty("startsAt").GetDateTimeOffset());
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed");
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Expired_backward_cutoff_that_fits_forward_has_warnings_but_no_stale_blocking_conflict()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T08:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            await ConfigureThreeDayAvailabilityAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE orders SET work_finish_date = '2026-08-10' WHERE id = 'order-1';
+                    UPDATE machine_assignments SET planning_mode = 'backward';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToArray();
+
+            Assert.Equal(2, blocks.Length);
+            Assert.All(blocks, block => Assert.True(
+                block.GetProperty("startsAt").GetDateTimeOffset() >= serverNow));
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_fallback_required");
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed");
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_deadline_missed");
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_schedule_cannot_fit");
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Missed_backward_chain_falls_forward_and_shifts_its_same_machine_child()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-12T16:30:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            await ConfigureThreeDayAvailabilityAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE machine_assignments SET planning_mode = 'backward';";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToDictionary(
+                    interval => interval.GetProperty("operationId").GetString()!,
+                    interval => interval,
+                    StringComparer.Ordinal);
+
+            Assert.True(blocks["op-1"].GetProperty("startsAt").GetDateTimeOffset() >= serverNow);
+            Assert.True(blocks["op-2"].GetProperty("startsAt").GetDateTimeOffset()
+                >= blocks["op-1"].GetProperty("endsAt").GetDateTimeOffset());
+            Assert.All(blocks.Values, block =>
+                Assert.Equal("backward", block.GetProperty("planningMode").GetString()));
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed"
+                    && conflict.GetProperty("operationIds").EnumerateArray()
+                        .Any(id => id.GetString() == "op-1"));
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed"
+                    && conflict.GetProperty("operationIds").EnumerateArray()
+                        .Any(id => id.GetString() == "op-2"));
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_fallback_required"
+                    && conflict.GetProperty("operationIds").EnumerateArray()
+                        .Any(id => id.GetString() == "op-2"));
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_deadline_missed");
+            Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Missed_backward_predecessor_shifts_cross_machine_sequential_child_after_its_finish()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-12T16:30:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            await ConfigureThreeDayAvailabilityAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO machines (
+                        id, number, name, machine_type, working_calendar_id, status, is_active)
+                    VALUES ('machine-2', 'M-2', 'Mill Two', 'mill', 'calendar-1', 'active', 1);
+                    UPDATE employee_resources
+                    SET skills_json = '["machine-1","machine-2"]'
+                    WHERE id = 'resource-setup';
+                    UPDATE machine_assignments SET planning_mode = 'backward'
+                    WHERE id = 'assignment-1';
+                    UPDATE machine_assignments
+                    SET machine_id = 'machine-2', backlog_position = 0,
+                        planning_mode = 'backward'
+                    WHERE id = 'assignment-2';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")
+                .EnumerateArray().SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToDictionary(
+                    interval => interval.GetProperty("operationId").GetString()!,
+                    interval => interval,
+                    StringComparer.Ordinal);
+
+            Assert.True(blocks["op-1"].GetProperty("startsAt").GetDateTimeOffset() >= serverNow);
+            Assert.True(blocks["op-2"].GetProperty("startsAt").GetDateTimeOffset()
+                >= blocks["op-1"].GetProperty("endsAt").GetDateTimeOffset());
+            Assert.Equal("machine-1", blocks["op-1"].GetProperty("machineId").GetString());
+            Assert.Equal("machine-2", blocks["op-2"].GetProperty("machineId").GetString());
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed"
+                    && conflict.GetProperty("operationIds").EnumerateArray()
+                        .Any(id => id.GetString() == "op-1"));
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed"
+                    && conflict.GetProperty("operationIds").EnumerateArray()
+                        .Any(id => id.GetString() == "op-2"));
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_fallback_required"
+                    && conflict.GetProperty("operationIds").EnumerateArray()
+                        .Any(id => id.GetString() == "op-2"));
+
+            await using var verify = await database.OpenConnectionAsync();
+            await using var verifyCommand = verify.CreateCommand();
+            verifyCommand.CommandText = """
+                SELECT id || ':' || machine_id || ':' || backlog_position || ':' || planning_mode
+                FROM machine_assignments ORDER BY id;
+                """;
+            var stored = new List<string>();
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) stored.Add(reader.GetString(0));
+            Assert.Equal([
+                "assignment-1:machine-1:0:backward",
+                "assignment-2:machine-2:0:backward"
+            ], stored);
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Missed_all_backward_locked_group_falls_forward_together()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-12T16:45:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            await ConfigureThreeDayAvailabilityAsync(application.Services);
+            await ConfigureLockedGroupAsync(application.Services, secondPlanningMode: "backward");
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")
+                .EnumerateArray().SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToDictionary(
+                    interval => interval.GetProperty("operationId").GetString()!,
+                    interval => interval,
+                    StringComparer.Ordinal);
+
+            Assert.Equal(2, blocks.Count);
+            Assert.True(blocks["op-1"].GetProperty("startsAt").GetDateTimeOffset() >= serverNow);
+            Assert.Equal(blocks["op-1"].GetProperty("startsAt").GetDateTimeOffset(),
+                blocks["op-2"].GetProperty("startsAt").GetDateTimeOffset());
+            Assert.Equal(blocks["op-1"].GetProperty("endsAt").GetDateTimeOffset(),
+                blocks["op-2"].GetProperty("endsAt").GetDateTimeOffset());
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "locked_group_planning_mode_conflict");
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed");
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Originally_mixed_locked_group_remains_a_structured_mode_conflict()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-12T16:45:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            await ConfigureThreeDayAvailabilityAsync(application.Services);
+            await ConfigureLockedGroupAsync(application.Services, secondPlanningMode: "forward");
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-14T00:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "locked_group_planning_mode_conflict");
+            Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "backward_start_missed");
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Missed_backward_without_future_capacity_is_blocked_at_server_now()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T17:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE machine_assignments SET planning_mode = 'backward';";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var first = Assert.Single(document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), interval =>
+                    interval.GetProperty("operationId").GetString() == "op-1");
+
+            Assert.Equal("waiting", first.GetProperty("type").GetString());
+            Assert.Equal("blocked", first.GetProperty("timingKind").GetString());
+            Assert.Equal(serverNow, first.GetProperty("startsAt").GetDateTimeOffset());
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString()
+                    == "backward_schedule_cannot_fit");
+        }, serverNow);
+    }
+
+    [Fact]
+    public async Task Elapsed_horizon_returns_end_boundary_blocks_instead_of_historical_forecasts()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-14T08:00:00Z");
+        var horizonEnd = DateTimeOffset.Parse("2026-08-11T18:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var identified = document.RootElement.GetProperty("machines")
+                .EnumerateArray().SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("operationId").ValueKind == JsonValueKind.String)
+                .ToArray();
+
+            Assert.Equal(2, identified.Length);
+            Assert.All(identified, interval =>
+            {
+                Assert.Equal("waiting", interval.GetProperty("type").GetString());
+                Assert.Equal("blocked", interval.GetProperty("timingKind").GetString());
+                Assert.Equal(horizonEnd, interval.GetProperty("startsAt").GetDateTimeOffset());
+                Assert.Equal(horizonEnd, interval.GetProperty("endsAt").GetDateTimeOffset());
+            });
+            Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(),
+                conflict => conflict.GetProperty("code").GetString() == "timeline_horizon_elapsed");
+            Assert.DoesNotContain(identified, interval =>
+                interval.GetProperty("timingKind").GetString() == "forecast");
+        }, serverNow);
     }
 
     [Fact]
@@ -1869,6 +2301,58 @@ public sealed class TimelineApiTests
         Assert.False(window.TryGetProperty("machineAssignmentId", out _));
     }
 
+    private static async Task ConfigureThreeDayAvailabilityAsync(IServiceProvider services)
+    {
+        const string availability = """
+            {"availability":[
+              {"startsAt":"2026-08-11T08:00:00Z","endsAt":"2026-08-11T18:00:00Z"},
+              {"startsAt":"2026-08-12T08:00:00Z","endsAt":"2026-08-12T18:00:00Z"},
+              {"startsAt":"2026-08-13T08:00:00Z","endsAt":"2026-08-13T18:00:00Z"}
+            ]}
+            """;
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE working_calendars SET calendar_json = $availability
+            WHERE id = 'calendar-1';
+            UPDATE application_settings SET value = $availability
+            WHERE key = 'timeline.setup_calendar_json';
+            """;
+        command.Parameters.AddWithValue("$availability", availability);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ConfigureLockedGroupAsync(
+        IServiceProvider services,
+        string secondPlanningMode)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO machines (
+                id, number, name, machine_type, working_calendar_id, status, is_active)
+            VALUES ('machine-2', 'M-2', 'Mill Two', 'mill', 'calendar-1', 'active', 1);
+            UPDATE employee_resources
+            SET skills_json = '["machine-1","machine-2"]'
+            WHERE id = 'resource-setup';
+            UPDATE batch_operations
+            SET dependency_type = 'locked_simultaneous',
+                simultaneous_group_key = 'locked-1',
+                predecessor_source_case_operation_id = NULL
+            WHERE id IN ('op-1', 'op-2');
+            UPDATE machine_assignments SET planning_mode = 'backward'
+            WHERE id = 'assignment-1';
+            UPDATE machine_assignments
+            SET machine_id = 'machine-2', backlog_position = 0,
+                planning_mode = $secondPlanningMode
+            WHERE id = 'assignment-2';
+            """;
+        command.Parameters.AddWithValue("$secondPlanningMode", secondPlanningMode);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task SeedTimelineAsync(IServiceProvider services)
     {
         var database = services.GetRequiredService<SqliteDatabase>();
@@ -1999,6 +2483,7 @@ public sealed class TimelineApiTests
         DateTimeOffset? fixedUtcNow = null,
         params string[] configurationArguments)
     {
+        fixedUtcNow ??= DateTimeOffset.Parse("2026-08-11T08:00:00Z");
         var directoryPath = Path.Combine(
             Path.GetTempPath(), "MeimadPlanner.TimelineApi.Tests", Guid.NewGuid().ToString("N"));
         var arguments = new List<string>
@@ -2013,15 +2498,12 @@ public sealed class TimelineApiTests
             webHost =>
             {
                 webHost.UseTestServer();
-                if (fixedUtcNow.HasValue)
+                webHost.ConfigureServices(services =>
                 {
-                    webHost.ConfigureServices(services =>
-                    {
-                        services.RemoveAll<TimeProvider>();
-                        services.AddSingleton<TimeProvider>(
-                            new FixedTimeProvider(fixedUtcNow.Value));
-                    });
-                }
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton<TimeProvider>(
+                        new FixedTimeProvider(fixedUtcNow.Value));
+                });
             });
         try
         {

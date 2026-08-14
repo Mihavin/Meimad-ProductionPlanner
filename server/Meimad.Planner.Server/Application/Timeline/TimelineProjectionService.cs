@@ -48,11 +48,12 @@ internal sealed class TimelineProjectionService
         var sourceRead = Stopwatch.StartNew();
         var source = await repository.ReadAsync(horizonStart, horizonEnd, cancellationToken);
         sourceRead.Stop();
-        var forecastCursor = (asOf ?? source.ReadAt).ToUniversalTime();
-        if (forecastCursor < horizonStart || forecastCursor >= horizonEnd)
-        {
-            forecastCursor = horizonStart;
-        }
+        var requestedForecastCursor = (asOf ?? source.ReadAt).ToUniversalTime();
+        var forecastCursor = requestedForecastCursor < horizonStart
+            ? horizonStart
+            : requestedForecastCursor >= horizonEnd
+                ? horizonEnd
+                : requestedForecastCursor;
         var mappingConflicts = new List<TimelineProjectionConflict>();
         var machinesById = source.Machines.ToDictionary(
             machine => machine.MachineId,
@@ -65,6 +66,20 @@ internal sealed class TimelineProjectionService
                 && operation.MachineId is not null
                 && operation.BacklogPosition.HasValue)
             .ToArray();
+
+        if (requestedForecastCursor >= horizonEnd)
+        {
+            foreach (var operation in assigned.Where(operation =>
+                         operation.Status == "not_started"))
+            {
+                mappingConflicts.Add(Conflict(
+                    "timeline_horizon_elapsed",
+                    "blocking",
+                    $"Batch {operation.BatchNumber} OP{operation.OperationNumber} is not started, but the requested Timeline horizon has already elapsed; no historical forecast was created.",
+                    [operation.OperationId],
+                    [operation.MachineId!]));
+            }
+        }
         var actualHistory = source.Operations
             .Where(operation => operation.ActualStart.HasValue
                 && operation.ActualMachineId is not null
@@ -72,8 +87,9 @@ internal sealed class TimelineProjectionService
             .ToArray();
 
         logger.LogInformation(
-            "Timeline source loaded for {HorizonStart} to {HorizonEnd}: {MachineCount} Machines, {OperationCount} Batch Operations, {AssignedCount} assigned, {ResourceCount} active resources, {DowntimeCount} downtime windows.",
-            horizonStart, horizonEnd, source.Machines.Count, source.Operations.Count,
+            "Timeline source loaded for {HorizonStart} to {HorizonEnd} at {SourceReadAt}; effective forecast cursor {ForecastCursor}: {MachineCount} Machines, {OperationCount} Batch Operations, {AssignedCount} assigned, {ResourceCount} active resources, {DowntimeCount} downtime windows.",
+            horizonStart, horizonEnd, source.ReadAt, forecastCursor,
+            source.Machines.Count, source.Operations.Count,
             assigned.Length, source.Resources.Count, source.Downtimes.Count);
         foreach (var operation in assigned)
         {
@@ -227,7 +243,7 @@ internal sealed class TimelineProjectionService
                 && blocker.BacklogPosition <= operation.BacklogPosition))
             .Select(operation => operation.OperationId)
             .ToHashSet(StringComparer.Ordinal);
-        var backlogs = usableOperations
+        var requestedBacklogs = usableOperations
             .Where(operation => !dependencyBlockedOperationIds.Contains(operation.OperationId))
             .Where(operation => !backlogBlockedOperationIds.Contains(operation.OperationId))
             .GroupBy(operation => operation.MachineId!, StringComparer.Ordinal)
@@ -249,7 +265,6 @@ internal sealed class TimelineProjectionService
                         CalculationPlanningMode(operation) == TimelinePlanningMode.Backward
                             ? BackwardFinishCutoff(
                                 operation.PriorityWorkFinishDate,
-                                horizonStart,
                                 horizonEnd,
                                 mappingConflicts,
                                 operation)
@@ -260,7 +275,7 @@ internal sealed class TimelineProjectionService
                 ? machine.Number
                 : backlog.MachineId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var calculationOperationIds = backlogs
+        var calculationOperationIds = requestedBacklogs
             .SelectMany(backlog => backlog.Operations)
             .Select(operation => operation.OperationId)
             .ToHashSet(StringComparer.Ordinal);
@@ -277,15 +292,15 @@ internal sealed class TimelineProjectionService
         }
         logger.LogInformation(
             "Timeline calculation input contains {CalculationOperationCount} operations in {BacklogCount} Machine backlogs and {DependencyCount} dependencies; {ExcludedCount} assigned operations are represented as blocked waiting rather than calculation nodes. Resource roles: setup={SetupWorkers}, QA={QaWorkers}, regular={RegularWorkers}.",
-            calculationOperationIds.Count, backlogs.Length, calculationDependencies.Length,
+            calculationOperationIds.Count, requestedBacklogs.Length, calculationDependencies.Length,
             assigned.Length - calculationOperationIds.Count,
             resourceCalendars.Count(value => value.Role == TimelineResourceRole.SetupWorker),
             resourceCalendars.Count(value => value.Role == TimelineResourceRole.QaWorker),
             resourceCalendars.Count(value => value.Role == TimelineResourceRole.RegularWorker));
-        var calculationInput = new TimelineCalculationInput(
+        var requestedCalculationInput = new TimelineCalculationInput(
             horizonStart,
             horizonEnd,
-            backlogs,
+            requestedBacklogs,
             calendars,
             new TimelineSetupCalendar(setupAvailability),
             source.Downtimes.Select(downtime => new TimelineDowntime(
@@ -297,17 +312,21 @@ internal sealed class TimelineProjectionService
             calculationDependencies.Select(dependency => dependency.Domain).ToArray(),
             resourceCalendars,
             dayShiftCalendars);
-        var calculationStopwatch = Stopwatch.StartNew();
-        var calculation = engine.Calculate(calculationInput);
-        calculationStopwatch.Stop();
         var requiresMissedStartBaseline = forecastCursor > horizonStart
-            && backlogs.SelectMany(backlog => backlog.Operations).Any(operation =>
+            && requestedBacklogs.SelectMany(backlog => backlog.Operations).Any(operation =>
                 operationsById[operation.OperationId].Status == "not_started");
+        var backwardOperationIds = requestedBacklogs
+            .SelectMany(backlog => backlog.Operations)
+            .Where(operation => operation.PlanningMode == TimelinePlanningMode.Backward
+                && operationsById[operation.OperationId].Status == "not_started")
+            .Select(operation => operation.OperationId)
+            .ToHashSet(StringComparer.Ordinal);
         var baselineStopwatch = Stopwatch.StartNew();
         var baselineStarts = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-        if (requiresMissedStartBaseline)
+        TimelineCalculationResult? baselineCalculation = null;
+        if (requiresMissedStartBaseline || backwardOperationIds.Count > 0)
         {
-            var baselineBacklogs = backlogs.Select(backlog => backlog with
+            var baselineBacklogs = requestedBacklogs.Select(backlog => backlog with
             {
                 Operations = backlog.Operations.Select(operation => operation with
                 {
@@ -316,13 +335,88 @@ internal sealed class TimelineProjectionService
                         : operation.EarliestStart
                 }).ToArray()
             }).ToArray();
-            baselineStarts = engine.Calculate(calculationInput with { MachineBacklogs = baselineBacklogs })
-                .Operations.ToDictionary(
+            baselineCalculation = engine.Calculate(
+                requestedCalculationInput with { MachineBacklogs = baselineBacklogs });
+            baselineStarts = baselineCalculation.Operations.ToDictionary(
                     operation => operation.OperationId,
                     operation => operation.StartsAt,
                     StringComparer.Ordinal);
         }
         baselineStopwatch.Stop();
+
+        var backwardMissedStartOperationIds = backwardOperationIds
+            .Where(operationId => baselineStarts.TryGetValue(operationId, out var baselineStart)
+                && baselineStart < forecastCursor)
+            .ToHashSet(StringComparer.Ordinal);
+        var backwardUnavailableOperationIds = backwardOperationIds
+            .Where(operationId => !baselineStarts.ContainsKey(operationId)
+                && baselineCalculation?.Conflicts.Any(conflict =>
+                    conflict.Code == "backward_schedule_cannot_fit"
+                    && conflict.OperationIds.Contains(operationId, StringComparer.Ordinal)) == true)
+            .ToHashSet(StringComparer.Ordinal);
+        var backwardFallbackOperationIds = backwardMissedStartOperationIds
+            .Concat(backwardUnavailableOperationIds)
+            .ToHashSet(StringComparer.Ordinal);
+        ExpandLockedBackwardFallback(
+            backwardFallbackOperationIds,
+            backwardOperationIds,
+            calculationDependencies.Select(dependency => dependency.Domain));
+        var propagatedBackwardFallbackOperationIds = backwardFallbackOperationIds
+            .Where(operationId => !backwardMissedStartOperationIds.Contains(operationId)
+                && !backwardUnavailableOperationIds.Contains(operationId))
+            .ToHashSet(StringComparer.Ordinal);
+        var backlogs = ApplyBackwardFallback(
+            requestedBacklogs, backwardFallbackOperationIds);
+        var calculationInput = requestedCalculationInput with { MachineBacklogs = backlogs };
+        var calculationStopwatch = Stopwatch.StartNew();
+        var calculation = forecastCursor == horizonStart
+            && backwardFallbackOperationIds.Count == 0
+            && baselineCalculation is not null
+                ? baselineCalculation
+                : engine.Calculate(calculationInput);
+
+        // A missed backward predecessor may make a later backward node infeasible only
+        // after the predecessor is reclassified. Re-run deterministically until every
+        // newly exposed missed node has joined the same forward fallback. Stored modes
+        // and backlog order remain untouched.
+        while (true)
+        {
+            var newlyMissed = calculation.Conflicts
+                .Where(conflict => conflict.Code == "backward_schedule_cannot_fit")
+                .SelectMany(conflict => conflict.OperationIds)
+                .Where(operationId => backwardOperationIds.Contains(operationId)
+                    && !backwardFallbackOperationIds.Contains(operationId))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (newlyMissed.Length == 0)
+            {
+                break;
+            }
+
+            var priorFallbackOperationIds = backwardFallbackOperationIds
+                .ToHashSet(StringComparer.Ordinal);
+            backwardFallbackOperationIds.UnionWith(newlyMissed);
+            ExpandLockedBackwardFallback(
+                backwardFallbackOperationIds,
+                backwardOperationIds,
+                calculationDependencies.Select(dependency => dependency.Domain));
+            propagatedBackwardFallbackOperationIds.UnionWith(
+                backwardFallbackOperationIds.Where(operationId =>
+                    !priorFallbackOperationIds.Contains(operationId)));
+            backlogs = ApplyBackwardFallback(
+                requestedBacklogs, backwardFallbackOperationIds);
+            calculationInput = requestedCalculationInput with { MachineBacklogs = backlogs };
+            calculation = engine.Calculate(calculationInput);
+        }
+        calculationStopwatch.Stop();
+        if (backwardFallbackOperationIds.Count > 0)
+        {
+            logger.LogWarning(
+                "Timeline moved {BackwardFallbackCount} not-started backward assignments to transient forward calculation at cursor {ForecastCursor}; stored planning modes and backlog order were unchanged. Operations: {OperationIds}.",
+                backwardFallbackOperationIds.Count,
+                forecastCursor,
+                string.Join(',', backwardFallbackOperationIds.OrderBy(value => value, StringComparer.Ordinal)));
+        }
 
         var intervalsByMachine = calculation.Machines.ToDictionary(
             machine => machine.MachineId,
@@ -345,10 +439,81 @@ internal sealed class TimelineProjectionService
             conflict.Message,
             conflict.OperationIds,
             conflict.MachineIds)).ToArray();
+        var requestedInputsById = requestedBacklogs
+            .SelectMany(backlog => backlog.Operations)
+            .ToDictionary(operation => operation.OperationId, StringComparer.Ordinal);
+        var backwardStartWarnings = backwardMissedStartOperationIds
+            .OrderBy(operationId => operationId, StringComparer.Ordinal)
+            .Select(operationId =>
+            {
+                var operation = operationsById[operationId];
+                var priorStart = baselineStarts[operationId];
+                return Conflict(
+                    "backward_start_missed",
+                    "attention",
+                    $"Batch {operation.BatchNumber} OP{operation.OperationNumber} was moved to the nearest feasible forward slot at or after {forecastCursor:O} because its latest-fit start {priorStart:O} was not reported as started. The stored backward mode and Machine backlog order were not changed.",
+                    [operationId],
+                    [operation.MachineId!]);
+            })
+            .ToArray();
+        var backwardFallbackWarnings = backwardFallbackOperationIds
+            .Where(operationId => !backwardMissedStartOperationIds.Contains(operationId))
+            .OrderBy(operationId => operationId, StringComparer.Ordinal)
+            .Select(operationId =>
+            {
+                var operation = operationsById[operationId];
+                var reason = backwardUnavailableOperationIds.Contains(operationId)
+                    ? "no latest-fit slot was available before its backward cutoff"
+                    : propagatedBackwardFallbackOperationIds.Contains(operationId)
+                        ? "an upstream Machine-backlog or dependency fallback made its backward slot infeasible"
+                        : "its locked-simultaneous group required one shared calculation direction";
+                return Conflict(
+                    "backward_fallback_required",
+                    "attention",
+                    $"Batch {operation.BatchNumber} OP{operation.OperationNumber} was recalculated from the nearest feasible slot at or after {forecastCursor:O} because {reason}. The stored backward mode and Machine backlog order were not changed.",
+                    [operationId],
+                    [operation.MachineId!]);
+            })
+            .ToArray();
+        var backwardDeadlineWarnings = backwardFallbackOperationIds
+            .Where(operationId => requestedInputsById[operationId].LatestFinish is { } deadline
+                && (!resultsByOperation.TryGetValue(operationId, out var result)
+                    || result.FinishesAt > deadline))
+            .OrderBy(operationId => operationId, StringComparer.Ordinal)
+            .Select(operationId =>
+            {
+                var operation = operationsById[operationId];
+                var deadline = requestedInputsById[operationId].LatestFinish!.Value;
+                var finishDetail = resultsByOperation.TryGetValue(operationId, out var result)
+                    ? $"the recalculated finish is {result.FinishesAt:O}"
+                    : "no future feasible slot exists inside the selected horizon";
+                return Conflict(
+                    "backward_deadline_missed",
+                    "attention",
+                    $"Batch {operation.BatchNumber} OP{operation.OperationNumber} can no longer meet its backward cutoff {deadline:O}; {finishDetail}.",
+                    [operationId],
+                    [operation.MachineId!]);
+            })
+            .ToArray();
+        var backwardBlockedConflicts = backwardFallbackOperationIds
+            .Where(operationId => !resultsByOperation.ContainsKey(operationId))
+            .OrderBy(operationId => operationId, StringComparer.Ordinal)
+            .Select(operationId =>
+            {
+                var operation = operationsById[operationId];
+                return Conflict(
+                    "backward_schedule_cannot_fit",
+                    "blocking",
+                    $"Batch {operation.BatchNumber} OP{operation.OperationNumber} missed its backward start and cannot fit at or after {forecastCursor:O} inside the selected Timeline horizon.",
+                    [operationId],
+                    [operation.MachineId!]);
+            })
+            .ToArray();
         var missedStartWarnings = requiresMissedStartBaseline
             ? calculation.Operations
                 .Where(result => operationsById.TryGetValue(result.OperationId, out var operation)
                     && operation.Status == "not_started"
+                    && !backwardFallbackOperationIds.Contains(result.OperationId)
                     && baselineStarts.TryGetValue(result.OperationId, out var priorStart)
                     && priorStart < forecastCursor)
                 .Select(result => Conflict(
@@ -371,6 +536,10 @@ internal sealed class TimelineProjectionService
                 [result.MachineId]))
             .ToArray();
         var allConflicts = mappingConflicts.Concat(domainConflicts)
+            .Concat(backwardStartWarnings)
+            .Concat(backwardFallbackWarnings)
+            .Concat(backwardDeadlineWarnings)
+            .Concat(backwardBlockedConflicts)
             .Concat(missedStartWarnings).Concat(overdueWarnings)
             .GroupBy(conflict => conflict.ConflictId, StringComparer.Ordinal)
             .Select(group => group.First())
@@ -386,7 +555,7 @@ internal sealed class TimelineProjectionService
                 .Concat(UnscheduledIntervals(
                     machine.MachineId, assigned, scheduledOperationIds,
                     backlogBlockedOperationIds, resultsByOperation, allConflicts,
-                    horizonStart, horizonEnd));
+                    horizonStart, horizonEnd, forecastCursor));
             return new TimelineProjectionMachine(
                 machine.MachineId,
                 machine.Number,
@@ -430,9 +599,10 @@ internal sealed class TimelineProjectionService
             options.DayShiftEndsAtLocal);
         total.Stop();
         logger.LogInformation(
-            "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",
+            "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; backward fallbacks {BackwardFallbackCount}; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",
             total.ElapsedMilliseconds, sourceRead.ElapsedMilliseconds, calculationStopwatch.ElapsedMilliseconds,
-            baselineStopwatch.ElapsedMilliseconds, calculation.Operations.Count,
+            baselineStopwatch.ElapsedMilliseconds, backwardFallbackOperationIds.Count,
+            calculation.Operations.Count,
             projectedMachines.Sum(machine => machine.Intervals.Count), projection.Conflicts.Count);
         foreach (var result in calculation.Operations)
         {
@@ -973,7 +1143,6 @@ internal sealed class TimelineProjectionService
 
     private DateTimeOffset BackwardFinishCutoff(
         DateOnly? workFinishDate,
-        DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd,
         ICollection<TimelineProjectionConflict> conflicts,
         TimelineSourceOperation operation)
@@ -1005,15 +1174,6 @@ internal sealed class TimelineProjectionService
                 [operation.MachineId!]));
             return horizonEnd;
         }
-        if (target <= horizonStart)
-        {
-            conflicts.Add(Conflict(
-                "backward_schedule_cannot_fit",
-                "blocking",
-                $"Batch {operation.BatchNumber} OP{operation.OperationNumber} is due {workFinishDate:yyyy-MM-dd}, at or before the selected Timeline horizon.",
-                [operation.OperationId],
-                [operation.MachineId!]));
-        }
         return target;
     }
 
@@ -1030,6 +1190,47 @@ internal sealed class TimelineProjectionService
             && PlanningMode(operation) == TimelinePlanningMode.Backward
                 ? TimelinePlanningMode.Manual
                 : PlanningMode(operation);
+
+    private static TimelineMachineBacklog[] ApplyBackwardFallback(
+        IReadOnlyList<TimelineMachineBacklog> requestedBacklogs,
+        IReadOnlySet<string> fallbackOperationIds) => requestedBacklogs
+        .Select(backlog => backlog with
+        {
+            Operations = backlog.Operations.Select(operation =>
+                    fallbackOperationIds.Contains(operation.OperationId)
+                        ? operation with { PlanningMode = TimelinePlanningMode.Forward }
+                        : operation)
+                .ToArray()
+        })
+        .ToArray();
+
+    private static void ExpandLockedBackwardFallback(
+        ISet<string> fallbackOperationIds,
+        IReadOnlySet<string> backwardOperationIds,
+        IEnumerable<TimelineDependency> dependencies)
+    {
+        var locked = dependencies
+            .Where(dependency => dependency.Type == TimelineDependencyType.LockedSimultaneous)
+            .ToArray();
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var dependency in locked)
+            {
+                if (!backwardOperationIds.Contains(dependency.FromOperationId)
+                    || !backwardOperationIds.Contains(dependency.ToOperationId)
+                    || (!fallbackOperationIds.Contains(dependency.FromOperationId)
+                        && !fallbackOperationIds.Contains(dependency.ToOperationId)))
+                {
+                    continue;
+                }
+
+                changed |= fallbackOperationIds.Add(dependency.FromOperationId);
+                changed |= fallbackOperationIds.Add(dependency.ToOperationId);
+            }
+        }
+    }
 
     private static DateTimeOffset EarliestForecastStart(
         TimelineSourceOperation operation,
@@ -1148,7 +1349,8 @@ internal sealed class TimelineProjectionService
         IReadOnlyDictionary<string, TimelineOperationResult> scheduledResults,
         IReadOnlyList<TimelineProjectionConflict> conflicts,
         DateTimeOffset horizonStart,
-        DateTimeOffset horizonEnd) => assigned
+        DateTimeOffset horizonEnd,
+        DateTimeOffset forecastCursor) => assigned
         .Where(operation => operation.MachineId == machineId
             && !scheduledOperationIds.Contains(operation.OperationId)
             && operation.ActivePauseReason is null)
@@ -1162,9 +1364,12 @@ internal sealed class TimelineProjectionService
                 .Select(candidate => scheduledResults[candidate.OperationId].FinishesAt)
                 .DefaultIfEmpty(horizonStart)
                 .Max();
-            var startsAt = precedingScheduledFinish > horizonStart
-                ? precedingScheduledFinish
+            var blockedCursor = operation.Status == "not_started"
+                ? forecastCursor
                 : horizonStart;
+            var startsAt = precedingScheduledFinish > blockedCursor
+                ? precedingScheduledFinish
+                : blockedCursor;
             if (startsAt > horizonEnd)
             {
                 startsAt = horizonEnd;

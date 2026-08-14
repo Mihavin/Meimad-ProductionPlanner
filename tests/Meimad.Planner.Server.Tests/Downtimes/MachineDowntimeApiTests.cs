@@ -77,7 +77,7 @@ public sealed class MachineDowntimeApiTests
             var id = reported.GetProperty("downtimeId").GetString()!;
             Assert.Equal(JsonValueKind.Null, reported.GetProperty("endsAt").ValueKind);
 
-            using var blocked = await client.GetAsync("/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            using var blocked = await client.GetAsync("/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:00:00Z");
             blocked.EnsureSuccessStatusCode();
             var blockedJson = await blocked.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Contains(blockedJson.GetProperty("conflicts").EnumerateArray(),
@@ -98,7 +98,7 @@ public sealed class MachineDowntimeApiTests
             using var restored = await client.SendAsync(restoreRequest);
             Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
 
-            using var recalculated = await client.GetAsync("/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            using var recalculated = await client.GetAsync("/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:00:00Z");
             recalculated.EnsureSuccessStatusCode();
             var recalculatedJson = await recalculated.Content.ReadFromJsonAsync<JsonElement>();
             Assert.DoesNotContain(recalculatedJson.GetProperty("conflicts").EnumerateArray(),

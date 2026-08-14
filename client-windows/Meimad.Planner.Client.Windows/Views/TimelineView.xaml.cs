@@ -189,7 +189,7 @@ public partial class TimelineView : UserControl
         };
         currentTimeTimer.Tick += OnCurrentTimeTimerTick;
         currentTimeTimer.Start();
-        UpdateCurrentTimeMarkerFromClock();
+        UpdateCurrentTimeMarkerFromClockCore(requestForecastRefresh: false);
     }
 
     private void StopCurrentTimeTimer()
@@ -206,9 +206,14 @@ public partial class TimelineView : UserControl
     }
 
     private void OnCurrentTimeTimerTick(object? sender, EventArgs args) =>
-        UpdateCurrentTimeMarkerFromClock();
+        UpdateCurrentTimeMarkerFromClockCore(requestForecastRefresh: true);
 
-    private void UpdateCurrentTimeMarkerFromClock()
+    // Kept as the marker-only entry point for rendering and focused WPF checks.
+    // Automatic forecast requests are deliberately restricted to timer ticks.
+    private void UpdateCurrentTimeMarkerFromClock() =>
+        UpdateCurrentTimeMarkerFromClockCore(requestForecastRefresh: false);
+
+    private void UpdateCurrentTimeMarkerFromClockCore(bool requestForecastRefresh)
     {
         if (!isLoaded || viewModel is null || viewModel.HorizonEnd <= viewModel.HorizonStart)
         {
@@ -218,10 +223,37 @@ public partial class TimelineView : UserControl
 
         var duration = viewModel.HorizonEnd - viewModel.HorizonStart;
         var chartWidth = Math.Max(900, Math.Min(6000, duration.TotalHours * 22));
-        UpdateCurrentTimeMarker(chartWidth);
+        var clientNow = nowProvider();
+        var now = CurrentTimelineNow(viewModel, clientNow);
+        UpdateCurrentTimeMarker(chartWidth, now);
+        if (requestForecastRefresh)
+        {
+            _ = RequestAutomaticForecastRefreshSafelyAsync(clientNow);
+        }
+    }
+
+    private async Task RequestAutomaticForecastRefreshSafelyAsync(DateTimeOffset now)
+    {
+        try
+        {
+            await viewModel!.RequestAutomaticForecastRefreshAsync(now);
+        }
+        catch (Exception exception)
+        {
+            // Expected request failures are handled in the view model.  Do not
+            // let an unexpected background refresh failure tear down the WPF UI.
+            Trace.WriteLine($"Timeline automatic forecast refresh failed: {exception}");
+        }
     }
 
     private void UpdateCurrentTimeMarker(double chartWidth)
+        => UpdateCurrentTimeMarker(chartWidth, CurrentTimelineNow(viewModel, nowProvider()));
+
+    internal static DateTimeOffset CurrentTimelineNow(
+        TimelineViewModel? timeline,
+        DateTimeOffset clientNow) => timeline?.EstimatedServerNow(clientNow) ?? clientNow;
+
+    private void UpdateCurrentTimeMarker(double chartWidth, DateTimeOffset now)
     {
         RemoveCurrentTimeMarker();
         if (viewModel is null || viewModel.Machines.Count == 0)
@@ -229,7 +261,6 @@ public partial class TimelineView : UserControl
             return;
         }
 
-        var now = nowProvider();
         if (!IsCurrentTimeWithinHorizon(now, viewModel.HorizonStart, viewModel.HorizonEnd))
         {
             return;

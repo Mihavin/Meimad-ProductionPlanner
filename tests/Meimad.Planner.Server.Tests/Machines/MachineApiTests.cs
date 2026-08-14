@@ -251,7 +251,7 @@ public sealed class MachineApiTests
                 await timelineSetup.ExecuteNonQueryAsync();
             }
             using var timeline = await client.GetAsync(
-                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:00:00Z");
             timeline.EnsureSuccessStatusCode();
             using var timelineJson = JsonDocument.Parse(await timeline.Content.ReadAsStringAsync());
             Assert.Contains(timelineJson.RootElement.GetProperty("machines").EnumerateArray()

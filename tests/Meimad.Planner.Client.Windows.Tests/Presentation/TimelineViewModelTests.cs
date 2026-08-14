@@ -531,6 +531,177 @@ public sealed class TimelineViewModelTests
     }
 
     [Fact]
+    public async Task Automatic_forecast_refresh_replaces_not_started_operation_positions_from_the_server()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var initial = ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(2));
+        var refreshed = ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(5));
+        var api = new FakeApiClient(initial, refreshed);
+        var viewModel = await LoadedTimelineAsync(api, horizonStart, horizonEnd);
+
+        await viewModel.RequestAutomaticForecastRefreshAsync(horizonStart.AddMinutes(30));
+
+        Assert.Equal(2, api.RequestCount);
+        Assert.Equal(0, api.MutationRequestCount);
+        var interval = Assert.Single(viewModel.Machines.Single().Intervals);
+        Assert.True(interval.IsForecast);
+        Assert.Equal(horizonStart.AddHours(5), interval.StartsAt);
+        Assert.Equal(horizonStart.AddHours(6), interval.EndsAt);
+    }
+
+    [Fact]
+    public async Task Automatic_forecast_refresh_is_throttled_once_for_two_shared_timeline_viewport_ticks()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var api = new FakeApiClient(ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(2)));
+        var viewModel = await LoadedTimelineAsync(api, horizonStart, horizonEnd);
+        var now = horizonStart.AddMinutes(30);
+        api.PauseRequestNumber = 2;
+
+        var firstViewportTick = viewModel.RequestAutomaticForecastRefreshAsync(now);
+        await api.FirstRequestStarted.Task;
+        var secondViewportTick = viewModel.RequestAutomaticForecastRefreshAsync(now);
+        api.ReleaseFirstRequest.SetResult();
+        await Task.WhenAll(firstViewportTick, secondViewportTick);
+
+        Assert.Equal(2, api.RequestCount); // Initial projection plus one shared GET.
+        Assert.Equal(0, api.MutationRequestCount);
+    }
+
+    [Fact]
+    public async Task Automatic_forecast_refresh_is_a_no_op_without_a_loaded_in_horizon_projection()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var now = horizonStart.AddHours(1);
+
+        var noSession = new TimelineViewModel();
+        await noSession.RequestAutomaticForecastRefreshAsync(now);
+
+        var unloadedApi = new FakeApiClient(ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(2)));
+        var notLoaded = new TimelineViewModel
+        {
+            FromDate = horizonStart.UtcDateTime,
+            ToDate = horizonEnd.UtcDateTime
+        };
+        notLoaded.AttachSession(unloadedApi);
+        await notLoaded.RequestAutomaticForecastRefreshAsync(now);
+        Assert.Equal(0, unloadedApi.RequestCount);
+
+        var loadedApi = new FakeApiClient(ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(2)));
+        var loaded = await LoadedTimelineAsync(loadedApi, horizonStart, horizonEnd);
+        await loaded.RequestAutomaticForecastRefreshAsync(horizonEnd);
+
+        Assert.Equal(1, loadedApi.RequestCount); // Initial GET only.
+        Assert.Equal(0, loadedApi.MutationRequestCount);
+    }
+
+    [Fact]
+    public async Task Automatic_forecast_refresh_handles_an_expected_server_failure_without_mutating_the_projection()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var api = new FakeApiClient(ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(2)))
+        {
+            ExceptionOnRequestNumber = 2
+        };
+        var viewModel = await LoadedTimelineAsync(api, horizonStart, horizonEnd);
+        var existingStart = Assert.Single(viewModel.Machines.Single().Intervals).StartsAt;
+
+        await viewModel.RequestAutomaticForecastRefreshAsync(horizonStart.AddMinutes(30));
+
+        Assert.Equal(2, api.RequestCount);
+        Assert.Equal(0, api.MutationRequestCount);
+        Assert.Equal(existingStart, Assert.Single(viewModel.Machines.Single().Intervals).StartsAt);
+        Assert.Contains("could not be reached", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Automatic_forecast_refresh_does_not_poll_a_projection_without_floating_not_started_assignment_work()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var snapshot = new TimelineSnapshot(
+            horizonStart, horizonStart, horizonEnd, [],
+            [new TimelineMachine("machine-1", "M-1", "Mill",
+            [
+                new TimelineInterval(
+                    "actual_history", "machine-1", "op-complete", "batch-1", "B-1", "PN-1", 10,
+                    "Completed", horizonStart, horizonStart.AddHours(1), null,
+                    TimingKind: "actual", OperationStatus: "completed", MachineAssignmentId: "assignment-complete"),
+                new TimelineInterval(
+                    "operation", "machine-1", "op-hold", "batch-1", "B-1", "PN-1", 20,
+                    "Paused", horizonStart.AddHours(2), horizonStart.AddHours(3), null,
+                    TimingKind: "hold", OperationStatus: "suspended", MachineAssignmentId: "assignment-hold"),
+                new TimelineInterval(
+                    "waiting", "machine-1", null, null, null, null, null,
+                    null, horizonStart.AddHours(3), horizonStart.AddHours(4), "Available capacity.")
+            ])],
+            [], []);
+        var api = new FakeApiClient(snapshot);
+        var viewModel = await LoadedTimelineAsync(api, horizonStart, horizonEnd);
+
+        await viewModel.RequestAutomaticForecastRefreshAsync(horizonStart.AddMinutes(30));
+
+        Assert.Equal(1, api.RequestCount); // Initial projection only.
+        Assert.Equal(0, api.MutationRequestCount);
+    }
+
+    [Fact]
+    public async Task Automatic_forecast_refresh_uses_server_snapshot_time_for_marker_and_horizon_decision()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var serverReadAt = horizonStart.AddHours(1);
+        var workstationAppliedAt = horizonEnd.AddDays(10);
+        var workstationNow = workstationAppliedAt.AddSeconds(30);
+        var snapshot = ForecastSnapshot(horizonStart, horizonEnd, horizonStart.AddHours(2)) with
+        {
+            ReadAt = serverReadAt
+        };
+        var api = new FakeApiClient(snapshot);
+        var viewModel = await LoadedTimelineAsync(
+            api, horizonStart, horizonEnd, workstationAppliedAt);
+
+        Assert.Equal(
+            serverReadAt.AddSeconds(30),
+            TimelineView.CurrentTimelineNow(viewModel, workstationNow));
+
+        await viewModel.RequestAutomaticForecastRefreshAsync(workstationNow);
+
+        // The raw workstation time is outside the horizon; the aligned server
+        // time is inside it, so exactly one automatic GET is made.
+        Assert.Equal(2, api.RequestCount);
+        Assert.Equal(0, api.MutationRequestCount);
+    }
+
+    [Fact]
+    public async Task Automatic_forecast_refresh_includes_an_identified_blocked_not_started_assignment()
+    {
+        var horizonStart = DateTimeOffset.Parse("2026-08-18T00:00:00Z");
+        var horizonEnd = horizonStart.AddDays(2);
+        var blockedSnapshot = new TimelineSnapshot(
+            horizonStart, horizonStart, horizonEnd, [],
+            [new TimelineMachine("machine-1", "M-1", "Mill",
+            [
+                new TimelineInterval(
+                    "waiting", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+                    "Mill", horizonStart.AddHours(1), horizonStart.AddHours(2), "Waiting for setup worker.",
+                    TimingKind: "blocked", OperationStatus: "not_started", MachineAssignmentId: "assignment-1")
+            ])],
+            [], []);
+        var api = new FakeApiClient(blockedSnapshot);
+        var viewModel = await LoadedTimelineAsync(api, horizonStart, horizonEnd);
+
+        await viewModel.RequestAutomaticForecastRefreshAsync(horizonStart.AddMinutes(30));
+
+        Assert.Equal(2, api.RequestCount);
+        Assert.Equal(0, api.MutationRequestCount);
+    }
+
+    [Fact]
     public async Task Short_horizon_with_an_unschedulable_predecessor_explains_how_to_view_the_chain()
     {
         var start = DateTimeOffset.Parse("2026-08-13T00:00:00Z");
@@ -554,6 +725,42 @@ public sealed class TimelineViewModelTests
         DateTimeOffset.UtcNow, start, end, [],
         [new TimelineMachine("machine-1", "M-1", machineName, [])], [], []);
 
+    private static TimelineSnapshot ForecastSnapshot(
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        DateTimeOffset forecastStart) => new(
+        horizonStart,
+        horizonStart,
+        horizonEnd,
+        [],
+        [new TimelineMachine("machine-1", "M-1", "Mill",
+        [
+            new TimelineInterval(
+                "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+                "Mill", forecastStart, forecastStart.AddHours(1), null,
+                TimingKind: "forecast", OperationStatus: "not_started",
+                ForecastStart: forecastStart, ForecastEnd: forecastStart.AddHours(1),
+                MachineAssignmentId: "assignment-1")
+        ])],
+        [], []);
+
+    private static async Task<TimelineViewModel> LoadedTimelineAsync(
+        FakeApiClient api,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        DateTimeOffset? clientObservedAt = null)
+    {
+        var observedAt = clientObservedAt ?? horizonStart;
+        var viewModel = new TimelineViewModel(() => observedAt)
+        {
+            FromDate = horizonStart.UtcDateTime,
+            ToDate = horizonEnd.UtcDateTime
+        };
+        viewModel.AttachSession(api);
+        await viewModel.RefreshAsync();
+        return viewModel;
+    }
+
     private static TimelineDependency Dependency(
         string id,
         string batchId,
@@ -567,7 +774,6 @@ public sealed class TimelineViewModelTests
     {
         private readonly TimelineSnapshot snapshot;
         private readonly TimelineSnapshot? nextSnapshot;
-        private readonly bool pauseFirstRequest;
 
         internal FakeApiClient(
             TimelineSnapshot snapshot,
@@ -576,7 +782,7 @@ public sealed class TimelineViewModelTests
         {
             this.snapshot = snapshot;
             this.nextSnapshot = nextSnapshot;
-            this.pauseFirstRequest = pauseFirstRequest;
+            PauseRequestNumber = pauseFirstRequest ? 1 : null;
         }
 
         internal TaskCompletionSource FirstRequestStarted { get; } = new(
@@ -591,6 +797,12 @@ public sealed class TimelineViewModelTests
 
         internal int RequestCount { get; private set; }
 
+        internal int MutationRequestCount { get; private set; }
+
+        internal int? PauseRequestNumber { get; set; }
+
+        internal int? ExceptionOnRequestNumber { get; set; }
+
         public async Task<TimelineSnapshot> GetTimelineAsync(
             DateTimeOffset from,
             DateTimeOffset to,
@@ -599,7 +811,12 @@ public sealed class TimelineViewModelTests
             RequestedFrom = from;
             RequestedTo = to;
             RequestCount++;
-            if (RequestCount == 1 && pauseFirstRequest)
+            if (RequestCount == ExceptionOnRequestNumber)
+            {
+                throw new HttpRequestException("Test server unavailable.");
+            }
+
+            if (RequestCount == PauseRequestNumber)
             {
                 FirstRequestStarted.SetResult();
                 await ReleaseFirstRequest.Task.WaitAsync(cancellationToken);
@@ -620,8 +837,17 @@ public sealed class TimelineViewModelTests
         public Task<IReadOnlyList<ProductionBatch>> ListBatchesAsync(string caseId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<byte[]?> GetCasePreviewAsync(string caseId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PlanningBoardSnapshot> GetPlanningBoardAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task AssignOrMoveOperationAsync(string batchOperationId, string machineId, int backlogPosition, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task UnassignOperationAsync(string batchOperationId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task AssignOrMoveOperationAsync(string batchOperationId, string machineId, int backlogPosition, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+        {
+            MutationRequestCount++;
+            throw new NotSupportedException();
+        }
+
+        public Task UnassignOperationAsync(string batchOperationId, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+        {
+            MutationRequestCount++;
+            throw new NotSupportedException();
+        }
         public void Dispose() { }
     }
 }

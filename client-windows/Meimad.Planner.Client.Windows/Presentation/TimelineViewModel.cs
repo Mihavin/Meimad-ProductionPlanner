@@ -9,7 +9,12 @@ namespace Meimad.Planner.Client.Windows.Presentation;
 
 internal sealed class TimelineViewModel : INotifyPropertyChanged
 {
+    // Forecast positions for not-started operations are calculated by the Server
+    // relative to its current clock.  Viewports may ask for a fresh projection,
+    // but the shared view model limits those read-only requests.
+    internal static readonly TimeSpan AutomaticForecastRefreshInterval = TimeSpan.FromSeconds(30);
     private IPlannerApiClient? apiClient;
+    private readonly Func<DateTimeOffset> clientNowProvider;
     private IReadOnlyList<TimelineDependency> allDependencies = [];
     private bool hasLoaded;
     private bool isBusy;
@@ -26,9 +31,20 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     private string? dayStartsAtLocal;
     private string? dayEndsAtLocal;
     private long invalidationVersion;
+    private DateTimeOffset? lastAutomaticForecastRefreshAt;
+    private DateTimeOffset? serverReadAt;
+    private DateTimeOffset? serverReadObservedAt;
 
-    internal TimelineViewModel() =>
+    internal TimelineViewModel()
+        : this(static () => DateTimeOffset.UtcNow)
+    {
+    }
+
+    internal TimelineViewModel(Func<DateTimeOffset> clientNowProvider)
+    {
+        this.clientNowProvider = clientNowProvider ?? throw new ArgumentNullException(nameof(clientNowProvider));
         RefreshCommand = new AsyncCommand(RefreshAsync, CanRefresh);
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -136,6 +152,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         apiClient = newApiClient;
         invalidationVersion++;
         hasLoaded = false;
+        lastAutomaticForecastRefreshAt = null;
         ClearProjection();
         RefreshCommand.RaiseCanExecuteChanged();
     }
@@ -154,6 +171,53 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         hasLoaded = false;
         StatusMessage = "The plan changed. The Timeline will be recalculated from the Server.";
     }
+
+    /// <summary>
+    /// Requests a server-authoritative refresh of the already-loaded forecast.
+    /// This never changes assignments, backlog order, status, or timeline times
+    /// in the client.  Multiple Timeline windows share this gate through their
+    /// common view model.
+    /// </summary>
+    internal async Task RequestAutomaticForecastRefreshAsync(DateTimeOffset now)
+    {
+        var serverNow = EstimatedServerNow(now);
+        if (!hasLoaded
+            || apiClient is null
+            || IsBusy
+            || HorizonEnd <= HorizonStart
+            || serverNow < HorizonStart
+            || serverNow >= HorizonEnd
+            || !HasFloatingNotStartedAssignment()
+            || lastAutomaticForecastRefreshAt is { } lastRefresh
+                && serverNow - lastRefresh < AutomaticForecastRefreshInterval)
+        {
+            return;
+        }
+
+        // Claim the shared throttle before the first await.  This coalesces
+        // simultaneous timer ticks from embedded and separate Timeline windows.
+        lastAutomaticForecastRefreshAt = serverNow;
+        Trace.WriteLine(
+            $"Timeline automatic forecast refresh requested at server time {serverNow:O}; " +
+            "requesting the Server's current projection.");
+        await RefreshAsync();
+    }
+
+    /// <summary>
+    /// Estimates the Server's current instant from its most recent Timeline
+    /// snapshot. Until a snapshot is loaded, the supplied client instant is
+    /// retained as the deterministic fallback.
+    /// </summary>
+    internal DateTimeOffset EstimatedServerNow(DateTimeOffset clientNow) =>
+        serverReadAt is { } readAt && serverReadObservedAt is { } observedAt
+            ? readAt + (clientNow - observedAt)
+            : clientNow;
+
+    private bool HasFloatingNotStartedAssignment() => Machines
+        .SelectMany(machine => machine.Intervals)
+        .Any(interval => !string.IsNullOrWhiteSpace(interval.MachineAssignmentId)
+            && string.Equals(interval.OperationStatus, "not_started", StringComparison.OrdinalIgnoreCase)
+            && (interval.IsForecast || interval.IsBlocked));
 
     internal async Task RefreshAsync()
     {
@@ -229,6 +293,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         var selectedId = SelectedBatch?.BatchId;
         HorizonStart = snapshot.HorizonStart;
         HorizonEnd = snapshot.HorizonEnd;
+        serverReadAt = snapshot.ReadAt;
+        serverReadObservedAt = clientNowProvider();
         DisplayTimeZoneId = snapshot.DisplayTimeZoneId;
         DayStartsAtLocal = snapshot.DayStartsAtLocal;
         DayEndsAtLocal = snapshot.DayEndsAtLocal;
@@ -303,6 +369,8 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         selectedBatch = null;
         HorizonStart = default;
         HorizonEnd = default;
+        serverReadAt = null;
+        serverReadObservedAt = null;
         DisplayTimeZoneId = null;
         DayStartsAtLocal = null;
         DayEndsAtLocal = null;
