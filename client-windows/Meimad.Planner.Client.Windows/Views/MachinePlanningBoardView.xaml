@@ -152,11 +152,21 @@
                     CornerRadius="3" Padding="4" Margin="1,1,1,3">
                 <Border.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="View backward from delivery date"
-                                  ToolTip="Open a visual-only backward Timeline projection. Nothing is saved or reordered."
-                                  IsEnabled="{Binding CanViewBackward}"
-                                  Click="ViewBackwardTimeline_Click"
-                                  AutomationProperties.Name="View backward from delivery date" />
+                        <MenuItem Header="Schedule from delivery date"
+                                  ToolTip="Set Backward mode on this existing assignment. The Timeline will calculate the same block near its Work Finish Date."
+                                  IsEnabled="{Binding CanScheduleBackward}"
+                                  Click="ScheduleBackward_Click"
+                                  AutomationProperties.Name="Schedule from delivery date" />
+                        <MenuItem Header="Schedule forward"
+                                  ToolTip="Set Forward mode on this existing assignment."
+                                  IsEnabled="{Binding CanScheduleForward}"
+                                  Click="ScheduleForward_Click"
+                                  AutomationProperties.Name="Schedule forward" />
+                        <MenuItem Header="Set manual mode"
+                                  ToolTip="Use the stored manual Machine backlog order for this existing assignment."
+                                  IsEnabled="{Binding CanSetManualMode}"
+                                  Click="SetManualMode_Click"
+                                  AutomationProperties.Name="Set manual mode" />
                     </ContextMenu>
                 </Border.ContextMenu>
                 <Grid>
@@ -197,9 +207,14 @@
                         </DockPanel>
                         <TextBlock Grid.Row="1" Text="{Binding OperationText}" FontSize="11"
                                    TextTrimming="CharacterEllipsis" ToolTip="{Binding OperationText}" />
-                        <TextBlock Grid.Row="2" Text="{Binding BatchOrderText}" FontSize="10"
-                                   Foreground="{StaticResource MutedTextBrush}"
-                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding BatchOrderText}" />
+                        <DockPanel Grid.Row="2">
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding PlanningModeText}" FontSize="10"
+                                       FontWeight="SemiBold" Margin="6,0,0,0"
+                                       ToolTip="Planning mode for this Machine assignment" />
+                            <TextBlock Text="{Binding BatchOrderText}" FontSize="10"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding BatchOrderText}" />
+                        </DockPanel>
                     </Grid>
 
                     <StackPanel Grid.Column="3" Margin="5,0,0,0" VerticalAlignment="Center">

@@ -137,7 +137,7 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
-    public async Task Viewer_can_request_visual_backward_timeline_without_mutating_plan_or_history()
+    public async Task Viewer_cannot_change_assignment_planning_mode()
     {
         var assigned = Operation("machine-1", 0);
         var snapshot = BoardBefore() with
@@ -152,19 +152,62 @@ public sealed class MachinePlanningBoardViewModelTests
             State = ClientEditState.Viewer
         });
         await viewModel.EnsureLoadedAsync();
-        BackwardTimelineRequest? request = null;
-        viewModel.BackwardTimelineRequested += (_, value) => request = value;
 
         var operation = viewModel.Machines.Single().Backlog.Single();
-        viewModel.RequestBackwardTimeline(operation);
+        await viewModel.ChangePlanningModeAsync(operation, "backward");
 
-        Assert.NotNull(request);
-        Assert.Equal("batch-1", request!.BatchId);
-        Assert.Equal("operation-1", request.BatchOperationId);
-        Assert.Null(api.AssignedOperationId);
+        Assert.Null(api.PlanningModeAssignmentId);
         Assert.False(viewModel.CanUndo);
         Assert.False(viewModel.CanRedo);
-        Assert.Contains("No plan data will be changed", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Equal("Edit Mode required", viewModel.Feedback[0].Title);
+    }
+
+    [Fact]
+    public async Task Editor_changes_mode_on_same_assignment_refreshes_board_and_invalidates_timeline()
+    {
+        var assigned = Operation("machine-1", 0);
+        var before = BoardBefore() with
+        {
+            Pool = [],
+            Machines = [Machine([assigned])]
+        };
+        var afterOperation = assigned with { PlanningMode = "backward", AssignmentVersion = 4 };
+        var api = new FakeApiClient(before)
+        {
+            SnapshotAfterPlanningMode = before with
+            {
+                Machines = [Machine([afterOperation])]
+            }
+        };
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(13));
+        await viewModel.EnsureLoadedAsync();
+        var planChanged = 0;
+        viewModel.PlanChanged += (_, _) => planChanged++;
+        var original = viewModel.Machines.Single().Backlog.Single();
+        Assert.True(original.CanScheduleBackward);
+        Assert.True(original.CanScheduleForward);
+        Assert.False(original.CanSetManualMode);
+
+        await viewModel.ChangePlanningModeAsync(
+            original,
+            "backward");
+
+        Assert.Equal("assignment-1", api.PlanningModeAssignmentId);
+        Assert.Equal(3, api.PlanningModeAssignmentVersion);
+        Assert.Equal("backward", api.PlanningMode);
+        Assert.Equal("windows-1", api.ClientId);
+        Assert.Equal(13, api.Generation);
+        var refreshed = viewModel.Machines.Single().Backlog.Single();
+        Assert.Equal("operation-1", refreshed.BatchOperationId);
+        Assert.Equal("assignment-1", refreshed.MachineAssignmentId);
+        Assert.Equal("backward", refreshed.PlanningMode);
+        Assert.Equal("Mode Backward", refreshed.PlanningModeText);
+        Assert.False(refreshed.CanScheduleBackward);
+        Assert.True(refreshed.CanSetManualMode);
+        Assert.Equal(1, planChanged);
+        Assert.False(viewModel.CanUndo);
+        Assert.False(viewModel.CanRedo);
     }
 
     [Fact]
@@ -416,20 +459,31 @@ public sealed class MachinePlanningBoardViewModelTests
         [],
         [Machine([Operation("machine-1", 0)])]);
 
-    private static PlanningBoardOperation Operation(string? machineId, int? position) => new(
-        "operation-1",
-        "batch-1",
-        "B-1",
-        "case-1",
-        "PN-1",
-        10,
-        "Mill first side",
-        "mill",
-        300,
-        60,
-        "not_started",
-        machineId,
-        position);
+    private static PlanningBoardOperation Operation(string? machineId, int? position)
+    {
+        var operation = new PlanningBoardOperation(
+            "operation-1",
+            "batch-1",
+            "B-1",
+            "case-1",
+            "PN-1",
+            10,
+            "Mill first side",
+            "mill",
+            300,
+            60,
+            "not_started",
+            machineId,
+            position);
+        return machineId is null
+            ? operation
+            : operation with
+            {
+                MachineAssignmentId = "assignment-1",
+                AssignmentVersion = 3,
+                PlanningMode = "manual"
+            };
+    }
 
     private static PlanningBoardMachine Machine(IReadOnlyList<PlanningBoardOperation> backlog) => new(
         "machine-1",
@@ -473,12 +527,16 @@ public sealed class MachinePlanningBoardViewModelTests
         internal MachineCreate? CreatedMachine { get; private set; }
         internal WorkingCalendarCreate? CreatedCalendar { get; private set; }
         internal PlanningBoardSnapshot? SnapshotAfterExecution { get; init; }
+        internal PlanningBoardSnapshot? SnapshotAfterPlanningMode { get; init; }
         internal string? ExecutionOperationId { get; private set; }
         internal string? ExecutionAction { get; private set; }
         internal MachineCreate? UpdatedMachine { get; private set; }
         internal string? UpdatedMachineId { get; private set; }
         internal string? UpdatedEntityTag { get; private set; }
         internal string? DeletedMachineId { get; private set; }
+        internal string? PlanningModeAssignmentId { get; private set; }
+        internal int PlanningModeAssignmentVersion { get; private set; }
+        internal string? PlanningMode { get; private set; }
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
             CancellationToken cancellationToken = default) =>
@@ -575,6 +633,35 @@ public sealed class MachinePlanningBoardViewModelTests
             string clientId,
             long editGeneration,
             CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<MachineAssignment> ChangeMachineAssignmentPlanningModeAsync(
+            string machineAssignmentId,
+            int assignmentVersion,
+            string planningMode,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            PlanningModeAssignmentId = machineAssignmentId;
+            PlanningModeAssignmentVersion = assignmentVersion;
+            PlanningMode = planningMode;
+            ClientId = clientId;
+            Generation = editGeneration;
+            if (SnapshotAfterPlanningMode is not null)
+            {
+                snapshot = SnapshotAfterPlanningMode;
+            }
+
+            return Task.FromResult(new MachineAssignment(
+                machineAssignmentId,
+                "operation-1",
+                "machine-1",
+                0,
+                assignmentVersion + 1,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                planningMode));
+        }
 
         public Task<BatchOperationExecution> ChangeOperationExecutionAsync(
             string batchOperationId,

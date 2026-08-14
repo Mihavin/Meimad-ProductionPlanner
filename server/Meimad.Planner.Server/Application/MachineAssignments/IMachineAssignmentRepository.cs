@@ -28,6 +28,14 @@ internal interface IMachineAssignmentRepository
         string machineId,
         CancellationToken cancellationToken);
 
+    Task<MachineAssignmentPlanningModeMutationResult> ChangePlanningModeAsync(
+        string machineAssignmentId,
+        int expectedVersion,
+        MachineAssignmentPlanningMode planningMode,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
     Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
@@ -40,6 +48,10 @@ internal interface IMachineAssignmentRepository
 internal sealed record AssignmentMutationResult(
     MachineAssignment Assignment,
     bool WasCreated);
+
+internal sealed record MachineAssignmentPlanningModeMutationResult(
+    MachineAssignment Assignment,
+    bool Changed);
 
 internal sealed record MachineAssignmentOverrideConfirmation(
     bool Confirmed,

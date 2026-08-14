@@ -128,8 +128,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    batch_operations.dependency_type,
                    batch_operations.predecessor_source_case_operation_id,
                    batch_operations.simultaneous_group_key,
+                   machine_assignments.id,
                    machine_assignments.machine_id,
                    machine_assignments.backlog_position,
+                   machine_assignments.planning_mode,
                    batch_operations.qa_seconds,
                    batch_operations.load_unload_seconds,
                    batch_operations.load_unload_requires_worker,
@@ -178,10 +180,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            DateOnly? priorityDate = NullableString(reader, 23) is { } date
+            DateOnly? priorityDate = NullableString(reader, 25) is { } date
                 ? DateOnly.ParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture)
                 : null;
-            var priorityOrder = (JsonSerializer.Deserialize<string[]>(reader.GetString(24)) ?? [])
+            var priorityOrder = (JsonSerializer.Deserialize<string[]>(reader.GetString(26)) ?? [])
                 .OrderBy(value => value, Comparer<string>.Create(TimelinePriorityComparer.CompareOrderNumbers))
                 .FirstOrDefault();
             values.Add(new TimelineSourceOperation(
@@ -189,16 +191,16 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetString(4), reader.GetInt32(5), reader.GetString(6), reader.GetString(7),
                 reader.GetInt32(8), NullableInt(reader, 9), NullableInt(reader, 10),
                 reader.GetString(11), reader.GetString(12), NullableString(reader, 13),
-                NullableString(reader, 14), NullableString(reader, 15), NullableInt(reader, 16),
-                reader.GetInt32(17), reader.GetInt32(18), reader.GetInt32(19) == 1,
-                reader.GetInt32(20) == 1, NullableInt(reader, 21), reader.GetInt32(22) == 1,
+                NullableString(reader, 14), NullableString(reader, 15), NullableString(reader, 16), NullableInt(reader, 17),
+                NullableString(reader, 18), reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21) == 1,
+                reader.GetInt32(22) == 1, NullableInt(reader, 23), reader.GetInt32(24) == 1,
                 priorityDate, priorityOrder,
-                reader.IsDBNull(25) ? null : $"{reader.GetString(25).Replace('_', ' ')}: {reader.GetString(28)}",
-                NullableString(reader, 26),
-                NullableString(reader, 27) is { } pauseAt ? Parse(pauseAt) : null,
-                NullableString(reader, 29) is { } actualStart ? Parse(actualStart) : null,
-                NullableString(reader, 30) is { } actualEnd ? Parse(actualEnd) : null,
-                NullableString(reader, 31)));
+                reader.IsDBNull(27) ? null : $"{reader.GetString(27).Replace('_', ' ')}: {reader.GetString(30)}",
+                NullableString(reader, 28),
+                NullableString(reader, 29) is { } pauseAt ? Parse(pauseAt) : null,
+                NullableString(reader, 31) is { } actualStart ? Parse(actualStart) : null,
+                NullableString(reader, 32) is { } actualEnd ? Parse(actualEnd) : null,
+                NullableString(reader, 33)));
         }
 
         return values;

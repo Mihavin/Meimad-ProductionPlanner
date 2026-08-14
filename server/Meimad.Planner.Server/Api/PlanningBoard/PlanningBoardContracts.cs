@@ -55,7 +55,10 @@ internal sealed record PlanningBoardOperationResponse(
     string? CaseName,
     DateTimeOffset? ActualStart,
     DateTimeOffset? ActualEnd,
-    string? ActualMachineId)
+    string? ActualMachineId,
+    string? MachineAssignmentId,
+    int? AssignmentVersion,
+    string PlanningMode)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -87,7 +90,10 @@ internal sealed record PlanningBoardOperationResponse(
         operation.CaseName,
         operation.ActualStart,
         operation.ActualEnd,
-        operation.ActualMachineId);
+        operation.ActualMachineId,
+        operation.MachineAssignmentId,
+        operation.AssignmentVersion,
+        operation.PlanningMode);
 }
 
 internal sealed record PlanningBoardMachineResponse(

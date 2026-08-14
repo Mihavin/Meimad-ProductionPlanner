@@ -1,6 +1,5 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Timeline;
-using Meimad.Planner.Server.Domain.Timeline;
 
 namespace Meimad.Planner.Server.Api.Timeline;
 
@@ -49,24 +48,16 @@ internal static class TimelineEndpoints
             }
         }
 
-        var modeValue = context.Request.Query["mode"].ToString();
-        var mode = modeValue switch
-        {
-            "" or "manual" => TimelineCalculationMode.Forward,
-            "backward" => TimelineCalculationMode.Backward,
-            _ => (TimelineCalculationMode?)null
-        };
-        if (!mode.HasValue)
+        if (context.Request.Query.ContainsKey("mode"))
         {
             return PlanningHttpSupport.Error(
                 StatusCodes.Status400BadRequest,
-                "invalid_timeline_mode",
-                "Optional query parameter 'mode' must be 'manual' or 'backward'.",
+                "timeline_mode_is_assignment_owned",
+                "Timeline planning mode is configured per Machine assignment and cannot be supplied as a global query parameter.",
                 context);
         }
 
-        return Results.Ok(await service.CalculateAsync(
-            from, to, asOf, mode.Value, cancellationToken));
+        return Results.Ok(await service.CalculateAsync(from, to, asOf, cancellationToken));
     }
 
     private static bool TryReadInstant(string? value, out DateTimeOffset instant) =>

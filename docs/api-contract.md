@@ -1,6 +1,6 @@
 # API Contract
 
-- **Status:** Draft target contract; schema-v17 planning-resource, Setup/Calendar/Machine-Type/Machine-Availability/administrative, Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
+- **Status:** Draft target contract; schema-v24 planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -595,6 +595,7 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `POST` | `/api/v1/machines/{machineId}/backlog/reorder` | Atomically submit desired backlog order. |
 | `GET` | `/api/v1/machine-assignments` | Query assignments by Machine or Batch Operation. |
 | `GET` | `/api/v1/machine-assignments/{assignmentId}` | Read one assignment. |
+| `PATCH` | `/api/v1/machine-assignments/{assignmentId}` | Change planning mode on the existing assignment under Edit Mode and an assignment ETag. |
 | `PUT` | `/api/v1/batch-operations/{batchOperationId}/assignment` | Assign or move one Batch Operation to a Machine/position. |
 | `DELETE` | `/api/v1/batch-operations/{batchOperationId}/assignment` | Unassign one Batch Operation. |
 | `GET` | `/api/v1/batch-operations/{batchOperationId}/assignment-overrides` | Read immutable cross-type assignment confirmations. |
@@ -625,7 +626,7 @@ Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`
 
 An accepted assignment may produce warnings/conflicts; it must not cause silent rescheduling. Which structural errors reject versus which planning conflicts are accepted and reported is TBD.
 
-**Implemented now:** Machine collection GET/POST, GET/PATCH/DELETE by ID, guarded Case/Operation/Order/Batch deletes, Machine picture GET, Machine backlog GET, assignment PUT/DELETE, Batch Operation execution POST commands, Machine Type CRUD, Working Calendar CRUD with usage/work/break/dated-exception data, dedicated Setup Calendar read/set/clear, and Machine downtime list/read/create/planned-edit/breakdown-restore. Backlog reorder POST, Machine Assignment query routes, downtime recurrence/cancellation, overnight Calendar windows, automatic holiday linkage, and calendar archive remain Proposed. E-Ink binding administration is implemented separately under `/api/v1/eink/device-registrations`.
+**Implemented now:** Machine collection GET/POST, GET/PATCH/DELETE by ID, guarded Case/Operation/Order/Batch deletes, Machine picture GET, Machine backlog GET, assignment PUT/DELETE, assignment planning-mode PATCH, Batch Operation execution POST commands, Machine Type CRUD, Working Calendar CRUD with usage/work/break/dated-exception data, dedicated Setup Calendar read/set/clear, and Machine downtime list/read/create/planned-edit/breakdown-restore. Backlog reorder POST, Machine Assignment query/read routes, downtime recurrence/cancellation, overnight Calendar windows, automatic holiday linkage, and calendar archive remain Proposed. E-Ink binding administration is implemented separately under `/api/v1/eink/device-registrations`.
 
 Schema-v11-v14 Setup administration adds active-editor CRUD at `/api/v1/resources` and `/api/v1/israeli-holidays`, plus optimistic `GET/PUT /api/v1/report-email-settings`. Employee Resource `skills` is the complete collection of stable Machine IDs that the employee knows how to operate; create/update rejects a submitted missing Machine with `422 unknown_machine`. The Windows Setup editor presents this collection as Machine-number/name checkboxes. Legacy textual skill tokens remain readable for upgrade compatibility and are replaced by selected Machine IDs on the employee's next Setup save. `POST /api/v1/israeli-holidays/sync` accepts `fromYear`/`toYear`, explicitly fetches Hebcal, atomically updates local provider rows, preserves manual overrides, and returns counts plus attempt/success/error state. Provider failure returns `succeeded: false` without changing cached holidays. Holiday status is `non_working`, `working`, or `partial_working`; partial working requires one same-day local start/end range. Working Calendar create/update includes `useIsraeliHolidays` (default false). A calendar-specific dated exception takes precedence; cached non-working closes the day, working preserves the recurring schedule, and partial-working replaces it with the holiday range. Timeline and employee-availability reads use SQLite only and never require internet. Resource updates use `ETag: "resource:{id}:v{version}"`; holiday updates use `ETag: "israeli-holiday:{id}:v{version}"`; report settings use `ETag: "report-email-settings:1:v{version}"`.
 
@@ -633,7 +634,7 @@ Schema v20 extends report settings with `weeklyMaterialReportEnabled`, lowercase
 
 Schema v21 adds `weeklyEmployeeEfficiencyEnabled`, `weeklyEmployeeEfficiencySendDay`, and `weeklyEmployeeEfficiencyTimeLocal`. `POST /api/v1/employee-work-measurements` requires current Edit Mode and user identity and records employee/date planned and actual seconds plus optional source reference/notes. `GET /api/v1/reports/weekly-employee-efficiency` returns the previous completed Sunday-Saturday week grouped by employee with planned, actual, signed difference, nullable percentage difference, available calendar capacity, and nullable planned/actual capacity percentages. Capacity respects employee calendars, breaks, cached holidays, and employee exceptions. `POST /api/v1/reports/weekly-employee-efficiency/send` requires Edit Mode; automatic delivery is idempotent per completed week. No payroll, employee ranking, Machine efficiency, or Machine maintenance fields are returned.
 
-Schema v22 adds read-only `GET /api/v1/event-log?from=<RFC3339>&to=<RFC3339>&eventType=<token>&limit=<1..5000>`. Items contain `eventId`, `eventType`, `timestamp`, `user`, structured `relatedEntityIds`, nullable `reasonCode`/`comment`, and nullable `beforeData`/`afterData`. Cross-type override, backlog reorder, Operation execution/pause, and downtime events commit atomically with their source mutation. Timeline conflict and resource-wait detections use `user: system` and stable daily keys so polling does not duplicate identical detections. The endpoint exports evidence only and never runs analytics or mutates the plan.
+Schema v22 adds read-only `GET /api/v1/event-log?from=<RFC3339>&to=<RFC3339>&eventType=<token>&limit=<1..5000>`. Items contain `eventId`, `eventType`, `timestamp`, `user`, structured `relatedEntityIds`, nullable `reasonCode`/`comment`, and nullable `beforeData`/`afterData`. Cross-type override, planning-mode change, backlog reorder, Operation execution/pause, and downtime events commit atomically with their source mutation. The schema-v24 planning-mode event type is `machine_assignment_planning_mode_changed`; it records assignment/operation/Machine IDs and before/after mode tokens and is not appended for an idempotent no-op. Timeline conflict and resource-wait detections use `user: system` and stable daily keys so polling does not duplicate identical detections. The endpoint exports evidence only and never runs analytics or mutates the plan.
 
 The implemented Machine collection returns the complete catalog ordered by Machine Number with `nextCursor: null`. Proposed filters are `processType`, `isActive`, `search`, `cursor`, and `limit`.
 
@@ -716,13 +717,30 @@ Implemented assignment command response:
   "batchOperationId": "opaque-batch-operation-id",
   "machineId": "opaque-machine-id",
   "backlogPosition": 2,
+  "planningMode": "manual",
   "version": 1,
   "createdAt": "2026-08-11T11:10:00Z",
   "updatedAt": "2026-08-11T11:10:00Z"
 }
 ```
 
-The `PUT` returns `201` for a first assignment or `200` for a move. It changes only the named assignment plus necessary backlog-position normalization as one explicit atomic command and returns the assignment record.
+The `PUT` returns `201` for a first assignment or `200` for a move. It changes only the named assignment plus necessary backlog-position normalization as one explicit atomic command and returns the assignment record with `ETag: "machine-assignment:{machineAssignmentId}:v{version}"`. A new assignment starts in `manual`; moving or reordering an existing assignment preserves its planning mode.
+
+Implemented per-assignment planning-mode update:
+
+```http
+PATCH /api/v1/machine-assignments/opaque-assignment-id
+If-Match: "machine-assignment:opaque-assignment-id:v1"
+X-Meimad-Client-Id: planner-client-id
+X-Meimad-Edit-Generation: 17
+Content-Type: application/json
+```
+
+```json
+{ "planningMode": "backward" }
+```
+
+`planningMode` is required and must be exactly lowercase `forward`, `backward`, or `manual`; unknown/case-varied values return `422 validation_failed`. A missing `If-Match` returns `428 precondition_required`, a malformed or stale assignment ETag returns `412 resource_version_stale`, and an unknown assignment returns `404 resource_not_found`. The Server revalidates Edit Mode inside the same immediate SQLite transaction as the update. A real change updates only that assignment's `planning_mode`, version, and timestamp and atomically appends `machine_assignment_planning_mode_changed` with actor, assignment/operation/Machine IDs, and before/after mode data. Submitting the current mode is idempotent: it returns the same representation/ETag and changes no timestamp, version, or event. Changing the mode of an in-progress operation returns `409 operation_in_progress` because its actual start is authoritative. The operation ID, assignment ID, Machine ID, and backlog position are unchanged; no calculated date is stored and no second assignment is created.
 
 Assignment without an override requires an active Machine and a case-insensitive match between `requiredMachineType` and its process/Machine Type name; a missing requirement accepts any active Machine. Axis and Machine/linked-type capability matches do not suppress the warning when the selected Machine Type differs. A different active Machine Type returns `409 machine_type_override_required` without changing the backlog. To proceed, the caller resubmits the same explicit Machine/position with:
 
@@ -754,7 +772,7 @@ Proposed backlog reorder request:
 
 The list must contain every currently assigned operation for that Machine exactly once. The Server rejects omissions, duplicates, foreign-Machine operations, and stale revisions atomically. A successful response returns the full backlog projection and new `planRevision`.
 
-Unassignment removes only the Machine Assignment. It does not cancel the Batch Operation or assign it elsewhere. Current assignment responses contain no timeline/conflict calculation. A future conflict-aware response may report consequences but must never repair them silently.
+Unassignment removes only the Machine Assignment. It does not cancel the Batch Operation or assign it elsewhere. Current assignment responses contain planning intent but no calculated start/end or conflict calculation. A future conflict-aware response may report consequences but must never repair them silently.
 
 Start, Finish, and Reset requests have no body; Suspend has the structured pause-reason body described below. All require the active Edit Mode headers. A successful command returns:
 
@@ -767,7 +785,7 @@ Start, Finish, and Reset requests have no body; Suspend has the structured pause
 }
 ```
 
-Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. Reset accepts only `suspended`, returns the operation to `not_started`, retains its assignment and backlog position, closes the active pause event, and rejects a running operation so the operator must Pause first. Suspend requires `reasonType`: `additional_qa`, `tooling_problem`, `customer_request`, or `other`. Their required fields are respectively `problemDescription`, `toolingItemDescription`, both `customerContactName` and `requestDescription`, or `comment`; an optional comment is retained for every type. Missing data returns `422 validation_failed` without mutation. The Server records `pausedBy` from Edit Mode authority and the start timestamp; Resume or Reset atomically closes the event with its end timestamp. An in-progress operation cannot be moved, unassigned, or reset; it must be suspended first, otherwise the relevant command returns `409`. Suspend retains assignment and position. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish/Reset transition recomputes the parent Production Batch and linked Order statuses in the same transaction; rows and versions change only when their derived tokens change. Suspended work remains `in_production`, Reset returns it to waiting/active facts when no other work has started, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again.
+Start accepts `not_started` or `suspended`, requires an assignment at backlog position zero, and rejects a Machine that already has another `in_progress` operation. Suspend and Finish accept only `in_progress`. Reset accepts only `suspended`, returns the operation to `not_started`, retains its assignment, backlog position, and planning mode, closes the active pause event, and rejects a running operation so the operator must Pause first. Suspend requires `reasonType`: `additional_qa`, `tooling_problem`, `customer_request`, or `other`. Their required fields are respectively `problemDescription`, `toolingItemDescription`, both `customerContactName` and `requestDescription`, or `comment`; an optional comment is retained for every type. Missing data returns `422 validation_failed` without mutation. The Server records `pausedBy` from Edit Mode authority and the start timestamp; Resume or Reset atomically closes the event with its end timestamp. An in-progress operation cannot be moved, unassigned, reset, or switched to another planning mode; it must be suspended first, otherwise the relevant command returns `409`. Suspend retains assignment, position, and mode. Finish changes status to `completed`, deletes the active assignment, and compacts remaining positions without starting or moving anything else. Every accepted Start/Suspend/Finish/Reset transition recomputes the parent Production Batch and linked Order statuses in the same transaction; rows and versions change only when their derived tokens change. Suspended work remains `in_production`, Reset returns it to waiting/active facts when no other work has started, and the final Finish makes a non-empty Batch `complete`. Completed operations are omitted from the active Planning Board and cannot be assigned again.
 
 The implemented Machine master requires an existing Working Calendar. Clients obtain the opaque `workingCalendarId` from `GET /working-calendars`; users are not expected to know or type it. `picturePath` is optional, must be an absolute filesystem path, and is stored as text only. The Server does not require the file to exist during create/update. `GET /machines/{machineId}/picture` returns PNG, JPEG, BMP, or GIF bytes, `404 picture_not_found` for a missing/unavailable path, and `415 picture_format_unsupported` for another extension; errors do not expose the path. `deviceId` is a read-only projection of the optional enabled E-Ink binding administered through the active-editor device-registration API. PATCH requires the Machine ETag and rejects changes that would make assigned operations incompatible. Setting `isActive` false therefore requires an empty backlog. `displayEnabled` does not affect assignment compatibility.
 
@@ -820,7 +838,7 @@ The dedicated Setup Calendar selection is a separate singleton projection:
 | `GET` | `/api/v1/conflicts` | Current explained conflicts, optionally filtered by Machine, Case, Batch, or severity. |
 | `GET` | `/api/v1/tv-dashboard` | Compact, read-only kiosk projection. |
 
-**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing all unfinished Batch Operations partitioned into the unassigned `pool` or exactly one Machine `backlog`. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, and nullable estimated seconds. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
+**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing all unfinished Batch Operations partitioned into the unassigned `pool` or exactly one Machine `backlog`. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, nullable estimated seconds, nullable `machineAssignmentId`/`assignmentVersion`, and `planningMode`. Unassigned pool rows use null assignment identity/version and `manual`; an assigned backlog row carries its authoritative schema-v24 values. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
 
 The added operation fields are:
 
@@ -828,7 +846,10 @@ The added operation fields are:
 {
   "plannedQuantity": 53,
   "orderReferences": ["WO-2026-1042", "WO-2026-1043"],
-  "estimatedTimeSeconds": 10740
+  "estimatedTimeSeconds": 10740,
+  "machineAssignmentId": "opaque-assignment-id",
+  "assignmentVersion": 4,
+  "planningMode": "backward"
 }
 ```
 
@@ -846,9 +867,9 @@ The current schema has no durable `planRevision`, so transitional read projectio
 |---|---|---|
 | `from` | Yes | Inclusive RFC 3339 UTC horizon start. |
 | `to` | Yes | Exclusive RFC 3339 UTC horizon end. |
-| `mode` | No | `manual` (default forward/earliest-fit projection) or `backward` (visual-only latest-fit from allocated Order Work Finish Date). |
 | `asOf` | No | RFC 3339 diagnostic calculation cursor inside the requested horizon. |
-Invalid/missing instants or a non-positive horizon return `400 invalid_timeline_horizon`; another mode returns `400 invalid_timeline_mode`. Maximum horizon/filter policy remains TBD.
+
+Invalid/missing instants or a non-positive horizon return `400 invalid_timeline_horizon`. A supplied global `mode` query returns `400 timeline_mode_is_assignment_owned`: planning mode belongs to each Machine Assignment and does not select another Timeline view. Maximum horizon/filter policy remains TBD.
 
 Implemented response shape:
 
@@ -857,7 +878,6 @@ Implemented response shape:
   "readAt": "2026-08-11T11:10:00Z",
   "horizonStart": "2026-08-11T00:00:00Z",
   "horizonEnd": "2026-08-18T00:00:00Z",
-  "planningMode": "manual",
   "batches": [
     { "batchId": "batch-1", "batchNumber": "B-1", "partNumber": "PN-1", "workFinishDate": "2026-08-17" }
   ],
@@ -868,7 +888,7 @@ Implemented response shape:
       "name": "Mill One",
       "intervals": [
         {
-          "type": "setup",
+          "type": "operation",
           "machineId": "machine-1",
           "operationId": "operation-1",
           "batchId": "batch-1",
@@ -877,8 +897,17 @@ Implemented response shape:
           "operationNumber": 10,
           "operationName": "Rough milling",
           "startsAt": "2026-08-11T08:00:00Z",
-          "endsAt": "2026-08-11T08:20:00Z",
-          "detail": null
+          "endsAt": "2026-08-11T12:20:00Z",
+          "detail": "Phases: Setup 2026-08-11T08:00:00Z to 2026-08-11T08:20:00Z; Production 2026-08-11T08:20:00Z to 2026-08-11T12:20:00Z",
+          "timingKind": "forecast",
+          "operationStatus": "not_started",
+          "forecastStart": "2026-08-11T08:00:00Z",
+          "forecastEnd": "2026-08-11T12:20:00Z",
+          "actualStart": null,
+          "actualEnd": null,
+          "machineAssignmentId": "assignment-1",
+          "planningMode": "backward",
+          "workFinishDate": "2026-08-17"
         }
       ]
     }
@@ -888,15 +917,15 @@ Implemented response shape:
 }
 ```
 
-Interval `type` is `setup`, `production`, `waiting`, `idle`, `reserved`, or `downtime`. A `waiting` interval is Machine-available time held by a Sequential predecessor constraint; its detail explains the latest blocking predecessor (for example, `Waiting for OP10 on Machine M01 to finish.`). Operation metadata, including `operationName`, is null for Machine-only intervals. The Windows client uses operation number/name to render a visible marker even when a duration bar is too narrow for its full label. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations, `dependency_predecessor_unassigned`, missing/invalid timing or Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
+Normalized scheduled work uses `type: "operation"`: all setup/QA/load-unload/production/reservation phase segments for one assignment are summarized into one operation block spanning their calculated start/end, with phase detail retained. A blocked assignment without a calculable work block uses one operation-linked `waiting` block. Machine-only `idle`, `waiting`, `reserved`, or `downtime` intervals carry no assignment ID and do not duplicate work. Operation metadata is null for Machine-only intervals. Every operation block carries `machineAssignmentId`, `planningMode`, and the earliest linked `workFinishDate` when present. The Server logs `DUPLICATE_TIMELINE_BLOCK operationAssignmentId=<id>` if normalized producer output still contains more than one block for an assignment; this is a producer defect, not a UI hiding rule. The Windows client uses operation number/name to render a visible marker even when a duration bar is too narrow for its full label. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations, `dependency_predecessor_unassigned`, missing/invalid timing, or missing Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
 
-Timeline calculation is read-only with respect to authoritative planning inputs and never changes Machine assignment, backlog position, dependency, quantity, duration input, or Work Finish Date. It reloads assignments from SQLite on every request and calculates the nearest feasible start/end from setup, QA, applicable load/unload, `cycleSeconds x plannedQuantity`, calendars, resources, dependencies, pause state, and downtime; no `plannedStart` or `plannedEnd` input is accepted or required. Different operations from one Case/Batch may be present in different Machine backlogs, but every later row remains behind earlier stored rows. Machine/setup/day-shift calendars, setup/QA/regular workers, maintenance, breakdown, pause, and sequential-predecessor delays use `type: "waiting"` with human-readable `detail`. An assigned operation blocked by invalid input, an earlier paused/blocked row, or insufficient horizon availability remains present as operation-linked waiting with its structured conflict instead of disappearing into Machine Idle. Sequential edges constrain the child earliest start to calculated predecessor finish. Locked-simultaneous members retry at common Machine/resource availability, share start/finish, and reserve shorter Machines. Missing required worker roles return `insufficient_availability` with the specific role.
+Timeline calculation is read-only with respect to authoritative planning inputs and never changes Machine assignment, planning mode, backlog position, dependency, quantity, duration input, or Work Finish Date. It reloads assignments and their modes from SQLite on every request and calculates start/end from setup, QA, applicable load/unload, `cycleSeconds x plannedQuantity`, calendars, resources, dependencies, pause state, and downtime; no `plannedStart` or `plannedEnd` input is accepted or required. `forward` earliest-fits an assignment. `manual` keeps the planner-authored Machine/backlog placement and calculates its valid visible consequence without persisting a date. `backward` latest-fits that same assignment. Different operations from one Case/Batch may be present in different Machine backlogs, but every later row remains behind earlier stored rows. Mixed modes reserve the same Machine lanes, so forward/manual/backward blocks cannot overlap on one Machine. Machine/setup/day-shift calendars, setup/QA/regular workers, maintenance, breakdown, pause, and sequential-predecessor delays use operation-linked waiting with human-readable `detail`. An assigned operation blocked by invalid input, an earlier paused/blocked row, or insufficient horizon availability remains present as one waiting block with its structured conflict instead of disappearing into Machine Idle. Sequential edges constrain every child after its calculated predecessor finish regardless of mode. Locked-simultaneous members retry at common Machine/resource availability, share start/finish, and reserve shorter Machines. Missing required worker roles return `insufficient_availability` with the specific role.
 
-Backward mode reverse-traverses those same fixed backlog and Sequential edges and selects the latest feasible phase windows before the earliest allocated Order Work Finish Date, interpreted as the exclusive next midnight in `Timeline:TimeZoneId`. It never post-shifts forward intervals. Production, load/unload, QA, and setup are allocated in reverse but returned chronologically. Equal-date resource contention uses shorter total duration, then naturally smaller Order Number. Missing dates use the selected horizon end with `backward_deadline_missing`; dates after the horizon use its end with `backward_deadline_outside_horizon`; impossible latest-fit placement returns blocking `backward_schedule_cannot_fit`. If actual work is in progress, its recorded start is never moved: the response returns `backward_in_progress_fallback` and shows the manual projection. Backward GET requests do not append observation events to the structured event log.
+For each `backward` assignment, the projection reverse-traverses those same fixed backlog and Sequential edges and selects the latest feasible phase windows before the earliest Work Finish Date among linked Order allocations, interpreted as the exclusive next midnight in `Timeline:TimeZoneId`. The cutoff is transient response/calculation input only. It never post-shifts forward intervals or creates a hold/backward layer. Production, load/unload, QA, and setup are allocated in reverse but summarized chronologically. Equal-date resource contention uses shorter total duration, then naturally smaller Order Number. A date after the selected horizon uses its end with `backward_deadline_outside_horizon`; impossible latest-fit placement returns blocking `backward_schedule_cannot_fit`. Empty time before a future block is free capacity, not a conflict. Actual schema-v23 timestamps remain authoritative, and the assignment mode cannot be changed while the operation is in progress. Timeline GET requests never persist mode or dates.
 
 The endpoint accepts optional RFC3339 `asOf` inside the requested horizon for deterministic diagnostics/tests; normal refreshes omit it and use the Server snapshot time. Operation intervals may include `timingKind`, `operationStatus`, `forecastStart`, `forecastEnd`, `actualStart`, and `actualEnd`. Not-started work floats as a forecast without changing status. In-progress work retains its recorded actual start and is never completed automatically when its forecast is overdue. Completed schema-v23 work is immutable actual history, and sequential children use the predecessor's recorded actual finish. Missing legacy actual history is returned as a structured conflict rather than inferred.
 
-The embedded and separate-window Windows Timeline surfaces consume this same GET response through one shared read-only view model. Opening or closing the separate window adds no endpoint and grants no mutation authority.
+The embedded and separate-window Windows Timeline surfaces consume this same GET response through one shared read-only view model. The separate window is the same canonical Timeline, not a mode-specific view/layer. Opening or closing it adds no endpoint and grants no mutation authority.
 
 Each active Machine's Working Calendar is expanded in its timezone with breaks, exceptions, and cached-holiday policy. The selected Setup Calendar is an additional setup constraint. The Timeline also expands every active employee's assigned Calendar and exceptions, then reserves one eligible employee per worker phase. Setup eligibility requires an exact case-insensitive employee skill match against the Machine number, name, type, axis, or effective capability; `*` explicitly matches any Machine. QA and worker-required load/unload use QA and regular-worker roles. A resource already reserved by another calculated phase is unavailable. Among simultaneously ready contenders, the Batch with the earliest allocated-Order Work Finish Date is calculated first; equal dates use the naturally smaller Order Number, followed by stable operation identity only for an exact tie. Contention inserts `waiting` intervals whose `detail` identifies whether due date or Order Number granted the blocking operation priority. Calculated employee choice and priority are not persisted, and stored Machine backlog order is unchanged. Dependencies remain immutable Batch snapshots. Plan revisions/cache/freshness, skill qualification expiry, and persisted worker assignment remain open.
 

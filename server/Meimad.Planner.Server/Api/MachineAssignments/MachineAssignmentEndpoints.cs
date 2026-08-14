@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.MachineAssignments;
+using Microsoft.Extensions.Primitives;
 
 namespace Meimad.Planner.Server.Api.MachineAssignments;
 
@@ -7,6 +8,9 @@ internal static class MachineAssignmentEndpoints
 {
     internal static void MapMachineAssignmentEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapPatch(
+            "/api/v1/machine-assignments/{assignmentId}",
+            ChangePlanningModeAsync);
         var operations = endpoints.MapGroup("/api/v1/batch-operations");
         operations.MapPut("/{batchOperationId}/assignment", AssignOrMoveAsync);
         operations.MapDelete("/{batchOperationId}/assignment", UnassignAsync);
@@ -46,11 +50,60 @@ internal static class MachineAssignmentEndpoints
                 authority!,
                 cancellationToken);
             var response = MachineAssignmentResponse.FromDomain(result.Assignment);
+            SetEntityTag(httpContext.Response, result.Assignment);
             return result.WasCreated
                 ? Results.Created(
                     $"/api/v1/machine-assignments/{result.Assignment.MachineAssignmentId}",
                     response)
                 : Results.Ok(response);
+        }
+        catch (Exception exception) when (TryMapError(exception, httpContext, out var error))
+        {
+            return error!;
+        }
+    }
+
+    private static async Task<IResult> ChangePlanningModeAsync(
+        string assignmentId,
+        PatchMachineAssignmentRequest request,
+        HttpContext httpContext,
+        MachineAssignmentService service,
+        CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(
+                httpContext,
+                out var authority,
+                out var accessError))
+        {
+            return accessError!;
+        }
+
+        if (!PlanningHttpSupport.TryReadExpectedVersion(
+                httpContext.Request.Headers.IfMatch,
+                "machine-assignment",
+                assignmentId,
+                out var expectedVersion))
+        {
+            var missing = StringValues.IsNullOrEmpty(httpContext.Request.Headers.IfMatch);
+            return PlanningHttpSupport.Error(
+                missing
+                    ? StatusCodes.Status428PreconditionRequired
+                    : StatusCodes.Status412PreconditionFailed,
+                missing ? "precondition_required" : "resource_version_stale",
+                "A matching Machine Assignment If-Match header is required.",
+                httpContext);
+        }
+
+        try
+        {
+            var result = await service.ChangePlanningModeAsync(
+                assignmentId,
+                expectedVersion,
+                request.PlanningMode,
+                authority!,
+                cancellationToken);
+            SetEntityTag(httpContext.Response, result.Assignment);
+            return Results.Ok(MachineAssignmentResponse.FromDomain(result.Assignment));
         }
         catch (Exception exception) when (TryMapError(exception, httpContext, out var error))
         {
@@ -204,6 +257,21 @@ internal static class MachineAssignmentEndpoints
                     "resource_not_found",
                     exception.Message,
                     context),
+            MachineAssignmentNotFoundException => PlanningHttpSupport.Error(
+                StatusCodes.Status404NotFound,
+                "resource_not_found",
+                exception.Message,
+                context),
+            MachineAssignmentVersionConflictException => PlanningHttpSupport.Error(
+                StatusCodes.Status412PreconditionFailed,
+                "resource_version_stale",
+                exception.Message,
+                context),
+            RunningMachineAssignmentPlanningModeException => PlanningHttpSupport.Error(
+                StatusCodes.Status409Conflict,
+                "operation_in_progress",
+                exception.Message,
+                context),
             IncompatibleMachineException => PlanningHttpSupport.Error(
                 StatusCodes.Status422UnprocessableEntity,
                 "incompatible_machine",
@@ -266,4 +334,10 @@ internal static class MachineAssignmentEndpoints
         };
         return result is not null;
     }
+
+    private static void SetEntityTag(
+        HttpResponse response,
+        Domain.Machines.MachineAssignment assignment) =>
+        response.Headers.ETag =
+            $"\"machine-assignment:{assignment.MachineAssignmentId}:v{assignment.Version}\"";
 }

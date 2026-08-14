@@ -19,18 +19,13 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     // the first long predecessor as outside a one-week calculation horizon.
     private DateTime? toDate = DateTime.UtcNow.Date.AddDays(30);
     private TimelineBatch? selectedBatch;
-    private TimelinePlanningModeOption selectedPlanningMode;
-    private string? pendingBatchSelectionId;
     private string statusMessage = "Connect to the Server to calculate the Timeline.";
     private DateTimeOffset horizonStart;
     private DateTimeOffset horizonEnd;
     private long invalidationVersion;
 
-    internal TimelineViewModel()
-    {
-        selectedPlanningMode = PlanningModes[0];
+    internal TimelineViewModel() =>
         RefreshCommand = new AsyncCommand(RefreshAsync, CanRefresh);
-    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -41,18 +36,6 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     public ObservableCollection<TimelineConflict> Conflicts { get; } = [];
 
     public ObservableCollection<TimelineDependency> SelectedDependencies { get; } = [];
-
-    public IReadOnlyList<TimelinePlanningModeOption> PlanningModes { get; } =
-    [
-        new(
-            "manual",
-            "Manual",
-            "Stored Machine backlog order, projected forward from current availability."),
-        new(
-            "backward",
-            "Backward",
-            "Visual calculation from allocated Order Work Finish Dates. Nothing is saved or reordered.")
-    ];
 
     public AsyncCommand RefreshCommand { get; }
 
@@ -91,27 +74,6 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             }
         }
     }
-
-    public TimelinePlanningModeOption SelectedPlanningMode
-    {
-        get => selectedPlanningMode;
-        set
-        {
-            if (value is null || !SetField(ref selectedPlanningMode, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(PlanningModeBanner));
-            invalidationVersion++;
-            hasLoaded = false;
-            StatusMessage = $"Calculating the {value.Label} Timeline projection from the Server.";
-            _ = EnsureLoadedAsync();
-        }
-    }
-
-    public string PlanningModeBanner =>
-        $"{SelectedPlanningMode.Label.ToUpperInvariant()} • {SelectedPlanningMode.Description}";
 
     public string StatusMessage
     {
@@ -172,29 +134,6 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         StatusMessage = "The plan changed. The Timeline will be recalculated from the Server.";
     }
 
-    internal void ShowBackwardForBatch(string batchId)
-    {
-        if (string.IsNullOrWhiteSpace(batchId))
-        {
-            return;
-        }
-
-        pendingBatchSelectionId = batchId;
-        var backward = PlanningModes.Single(mode => mode.Token == "backward");
-        if (SelectedPlanningMode != backward)
-        {
-            SelectedPlanningMode = backward;
-            return;
-        }
-
-        SelectedBatch = Batches.FirstOrDefault(batch => batch.BatchId == batchId)
-            ?? SelectedBatch;
-        if (!hasLoaded)
-        {
-            _ = EnsureLoadedAsync();
-        }
-    }
-
     internal async Task RefreshAsync()
     {
         if (apiClient is null || !FromDate.HasValue || !ToDate.HasValue
@@ -209,34 +148,22 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             return;
         }
 
-        var from = new DateTimeOffset(DateTime.SpecifyKind(FromDate!.Value.Date, DateTimeKind.Utc));
-        var to = new DateTimeOffset(DateTime.SpecifyKind(ToDate!.Value.Date, DateTimeKind.Utc));
+        var from = new DateTimeOffset(DateTime.SpecifyKind(FromDate.Value.Date, DateTimeKind.Utc));
+        var to = new DateTimeOffset(DateTime.SpecifyKind(ToDate.Value.Date, DateTimeKind.Utc));
         while (apiClient is not null)
         {
             var requestedVersion = invalidationVersion;
-            var requestedMode = SelectedPlanningMode.Token;
             IsBusy = true;
             try
             {
                 var requestStopwatch = Stopwatch.StartNew();
-                var snapshot = await apiClient.GetTimelineAsync(from, to, requestedMode);
+                var snapshot = await apiClient.GetTimelineAsync(from, to);
                 requestStopwatch.Stop();
-                if (requestedVersion != invalidationVersion
-                    || !string.Equals(
-                        requestedMode,
-                        SelectedPlanningMode.Token,
-                        StringComparison.Ordinal))
+                if (requestedVersion != invalidationVersion)
                 {
                     hasLoaded = false;
-                    StatusMessage = "The Timeline projection mode changed during calculation. Recalculating from the Server.";
+                    StatusMessage = "The plan changed during calculation. Recalculating from the Server.";
                     continue;
-                }
-
-                var returnedMode = NormalizePlanningMode(snapshot.PlanningMode);
-                if (!string.Equals(returnedMode, requestedMode, StringComparison.Ordinal))
-                {
-                    throw new PlannerProtocolException(
-                        $"Server returned the '{returnedMode}' Timeline projection after the client requested '{requestedMode}'.");
                 }
 
                 var applyStopwatch = Stopwatch.StartNew();
@@ -251,22 +178,13 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
                 hasLoaded = true;
                 var hasInsufficientHorizon = snapshot.Conflicts.Any(conflict =>
                     string.Equals(conflict.Code, "insufficient_availability", StringComparison.Ordinal));
-                var backwardConflictCount = requestedMode == "backward"
-                    ? snapshot.Conflicts.Count(conflict =>
-                        conflict.Code.StartsWith("backward_", StringComparison.Ordinal))
-                    : 0;
-                var backwardFellBack = requestedMode == "backward"
-                    && snapshot.Conflicts.Any(conflict => string.Equals(
-                        conflict.Code, "backward_in_progress_fallback", StringComparison.Ordinal));
-                StatusMessage = hasLoaded
-                    ? backwardFellBack
-                        ? "Backward was requested, but the Manual visual projection is shown because an operation is already in progress. Its actual start remains fixed; no dates or backlog positions were saved."
-                        : backwardConflictCount > 0
-                        ? $"Backward visual projection loaded with {backwardConflictCount} delivery-date warning(s). No dates or backlog positions were saved."
-                        : hasInsufficientHorizon
+                var planningWarningCount = snapshot.Conflicts.Count(conflict =>
+                    conflict.Code.StartsWith("backward_", StringComparison.Ordinal));
+                StatusMessage = planningWarningCount > 0
+                    ? $"Server calculation loaded with {planningWarningCount} assignment planning warning(s)."
+                    : hasInsufficientHorizon
                         ? "Some operations do not fit in the selected date range. Extend the To date to see their sequential forecast."
-                        : $"Server calculation loaded in {SelectedPlanningMode.Label} projection mode at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}."
-                    : "The plan changed during calculation. Recalculating from the Server.";
+                        : $"Server calculation loaded at {snapshot.ReadAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}. Planning modes are applied per operation assignment.";
             }
             catch (Exception exception) when (IsExpected(exception))
             {
@@ -287,19 +205,59 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
 
     private void Apply(TimelineSnapshot snapshot)
     {
-        var selectedId = pendingBatchSelectionId ?? SelectedBatch?.BatchId;
+        var selectedId = SelectedBatch?.BatchId;
         HorizonStart = snapshot.HorizonStart;
         HorizonEnd = snapshot.HorizonEnd;
         Replace(Batches, snapshot.Batches);
-        Replace(Machines, snapshot.Machines);
+        var workFinishDates = snapshot.Batches.ToDictionary(
+            batch => batch.BatchId,
+            batch => batch.WorkFinishDate,
+            StringComparer.Ordinal);
+        Replace(
+            Machines,
+            snapshot.Machines.Select(machine => machine with
+            {
+                Intervals = machine.Intervals.Select(interval =>
+                    interval.WorkFinishDate.HasValue
+                        ? interval
+                        : interval with
+                        {
+                            WorkFinishDate = interval.BatchId is { } batchId
+                                && workFinishDates.TryGetValue(batchId, out var workFinishDate)
+                                    ? workFinishDate
+                                    : null
+                        }).ToArray()
+            }));
+        TraceDuplicateBlocks(Machines);
         Replace(Conflicts, snapshot.Conflicts);
         allDependencies = snapshot.Dependencies;
         SelectedBatch = Batches.FirstOrDefault(batch => batch.BatchId == selectedId)
             ?? Batches.FirstOrDefault();
-        pendingBatchSelectionId = null;
         ApplyDependencyFilter();
         OnPropertyChanged(nameof(Machines));
     }
+
+    private static void TraceDuplicateBlocks(IEnumerable<TimelineMachine> machines)
+    {
+        var duplicateIds = DuplicateMachineAssignmentIds(machines);
+        Trace.WriteLine(
+            $"Timeline duplicate assignment-block detection: {duplicateIds.Count} duplicate assignment ID(s).");
+        foreach (var duplicateId in duplicateIds)
+        {
+            Trace.WriteLine(
+                $"DUPLICATE_TIMELINE_BLOCK operationAssignmentId={duplicateId}");
+        }
+    }
+
+    internal static IReadOnlyList<string> DuplicateMachineAssignmentIds(
+        IEnumerable<TimelineMachine> machines) => machines
+        .SelectMany(machine => machine.Intervals)
+        .Where(interval => !string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
+        .GroupBy(interval => interval.MachineAssignmentId!, StringComparer.Ordinal)
+        .Where(group => group.Count() > 1)
+        .Select(group => group.Key)
+        .Order(StringComparer.Ordinal)
+        .ToArray();
 
     private void ApplyDependencyFilter()
     {
@@ -349,15 +307,6 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
         _ => exception.Message
     };
 
-    private static string NormalizePlanningMode(string? value) =>
-        value?.Trim().ToLowerInvariant() switch
-        {
-            null or "" or "manual" => "manual",
-            "backward" => "backward",
-            _ => throw new PlannerProtocolException(
-                $"Server returned unknown Timeline planning mode '{value}'.")
-        };
-
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
@@ -373,8 +322,3 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
-
-internal sealed record TimelinePlanningModeOption(
-    string Token,
-    string Label,
-    string Description);

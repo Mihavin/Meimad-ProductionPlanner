@@ -456,10 +456,14 @@ internal sealed class JobPackageService
             horizonStart,
             horizonStart.AddDays(31),
             cancellationToken);
-        var intervals = timeline.Machines
+        var operationBlocks = timeline.Machines
             .SelectMany(machine => machine.Intervals)
-            .Where(interval => interval.OperationId == operationId && interval.Type == "setup")
-            .OrderBy(interval => interval.StartsAt)
+            .Where(interval => interval.OperationId == operationId && interval.Type == "operation")
+            .ToArray();
+        var intervals = operationBlocks
+            .SelectMany(block => block.Phases ?? [])
+            .Where(phase => phase.Type == "setup")
+            .OrderBy(phase => phase.StartsAt)
             .ToArray();
         if (intervals.Length == 0)
         {

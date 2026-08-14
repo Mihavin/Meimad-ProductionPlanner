@@ -14,6 +14,9 @@ internal sealed record AssignMachineRequest(
 internal sealed record MachineAssignmentOverrideRequest(bool Confirmed, string? Reason);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record PatchMachineAssignmentRequest(string? PlanningMode);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record SuspendOperationRequest(
     string? ReasonType, string? ProblemDescription, string? ToolingItemDescription,
     string? CustomerContactName, string? RequestDescription, string? Comment);
@@ -23,6 +26,7 @@ internal sealed record MachineAssignmentResponse(
     string BatchOperationId,
     string MachineId,
     int BacklogPosition,
+    string PlanningMode,
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
@@ -32,6 +36,7 @@ internal sealed record MachineAssignmentResponse(
         assignment.BatchOperationId,
         assignment.MachineId,
         assignment.BacklogPosition,
+        assignment.PlanningMode.ToToken(),
         assignment.Version,
         assignment.CreatedAt,
         assignment.UpdatedAt);

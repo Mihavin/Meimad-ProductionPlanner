@@ -142,6 +142,46 @@ internal sealed class MachineAssignmentService
         CancellationToken cancellationToken = default) =>
         repository.GetBacklogAsync(machineId, cancellationToken);
 
+    internal Task<MachineAssignmentPlanningModeMutationResult> ChangePlanningModeAsync(
+        string machineAssignmentId,
+        int expectedVersion,
+        string? planningMode,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(machineAssignmentId))
+        {
+            throw new MachineAssignmentValidationException(
+                "assignmentId",
+                "required",
+                "assignmentId is required.");
+        }
+
+        if (string.IsNullOrEmpty(planningMode))
+        {
+            throw new MachineAssignmentValidationException(
+                "planningMode",
+                "required",
+                "planningMode is required.");
+        }
+
+        if (!MachineAssignmentPlanningModes.TryParse(planningMode, out var parsedMode))
+        {
+            throw new MachineAssignmentValidationException(
+                "planningMode",
+                "invalid_planning_mode",
+                "planningMode must be exactly 'forward', 'backward', or 'manual'.");
+        }
+
+        return repository.ChangePlanningModeAsync(
+            machineAssignmentId.Trim(),
+            expectedVersion,
+            parsedMode,
+            timeProvider.GetUtcNow(),
+            editAuthority,
+            cancellationToken);
+    }
+
     internal Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
@@ -319,4 +359,22 @@ internal sealed class RunningBatchOperationCannotMoveException : Exception
 {
     internal RunningBatchOperationCannotMoveException(string batchOperationId)
         : base($"In-progress Batch Operation '{batchOperationId}' must be suspended before its Machine assignment can change.") { }
+}
+
+internal sealed class MachineAssignmentNotFoundException : Exception
+{
+    internal MachineAssignmentNotFoundException(string machineAssignmentId)
+        : base($"Machine Assignment '{machineAssignmentId}' was not found.") { }
+}
+
+internal sealed class MachineAssignmentVersionConflictException : Exception
+{
+    internal MachineAssignmentVersionConflictException(string machineAssignmentId, int expectedVersion)
+        : base($"Machine Assignment '{machineAssignmentId}' is no longer at version {expectedVersion}.") { }
+}
+
+internal sealed class RunningMachineAssignmentPlanningModeException : Exception
+{
+    internal RunningMachineAssignmentPlanningModeException(string machineAssignmentId)
+        : base($"In-progress Machine Assignment '{machineAssignmentId}' cannot change planning mode because its actual start is authoritative.") { }
 }

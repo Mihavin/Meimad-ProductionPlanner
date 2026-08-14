@@ -18,6 +18,14 @@ public partial class TimelineView : UserControl
     private TimelineViewModel? viewModel;
     private bool isLoaded;
 
+    internal IReadOnlyList<string> RenderedMachineAssignmentIds => TimelineCanvas.Children
+        .OfType<Border>()
+        .Select(element => element.Tag)
+        .OfType<TimelineInterval>()
+        .Where(interval => !string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
+        .Select(interval => interval.MachineAssignmentId!)
+        .ToArray();
+
     public TimelineView()
     {
         InitializeComponent();
@@ -195,6 +203,7 @@ public partial class TimelineView : UserControl
             var label = $"{interval.TimingLabel}: {IntervalLabel(interval)}";
             var block = new Border
             {
+                Tag = interval,
                 Width = width,
                 Height = laneHeight,
                 Background = IntervalBrush(interval.Type),
@@ -206,7 +215,7 @@ public partial class TimelineView : UserControl
                     Text = label,
                     FontSize = 9,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = interval.Type == "setup" ? Brushes.Black : Brushes.White,
+                    Foreground = Brushes.White,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(5, 0, 5, 0)
@@ -310,21 +319,16 @@ public partial class TimelineView : UserControl
                 : $"{type} • {interval.Detail}";
         }
         return interval.OperationNumber.HasValue
-            ? $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd()
+            ? $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName} • {interval.PlanningModeLabel}".TrimEnd()
             : string.IsNullOrWhiteSpace(interval.Detail) ? type : $"{type} • {interval.Detail}";
     }
 
     internal static bool IsOperationWorkInterval(TimelineInterval interval) =>
-        string.Equals(interval.Type, "setup", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(interval.Type, "qa", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(interval.Type, "loadunload", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(interval.Type, "production", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(interval.Type, "reserved", StringComparison.OrdinalIgnoreCase);
+        string.Equals(interval.Type, "operation", StringComparison.OrdinalIgnoreCase);
 
-    private static Brush IntervalBrush(string type) => type switch
+    internal static Brush IntervalBrush(string type) => type switch
     {
-        "setup" => new SolidColorBrush(Color.FromRgb(251, 192, 45)),
-        "production" => new SolidColorBrush(Color.FromRgb(30, 136, 229)),
+        "operation" => new SolidColorBrush(Color.FromRgb(30, 136, 229)),
         "waiting" => new SolidColorBrush(Color.FromRgb(126, 87, 194)),
         "downtime" => new SolidColorBrush(Color.FromRgb(198, 40, 40)),
         "reserved" => new SolidColorBrush(Color.FromRgb(245, 124, 0)),
@@ -364,7 +368,13 @@ public partial class TimelineView : UserControl
             ? $"\nActual: {FormatLocal(interval.ActualStart)} → {FormatLocal(interval.ActualEnd)}"
             : string.Empty;
         var detail = string.IsNullOrWhiteSpace(interval.Detail) ? string.Empty : $"\n{interval.Detail}";
-        return $"{label}\n{interval.PlanningModeLabel} • visual only\n{interval.TimingLabel}\nDisplayed: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} → {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
+        var workFinishDate = interval.WorkFinishDate?.ToString("yyyy-MM-dd") ?? "—";
+        if (string.IsNullOrWhiteSpace(interval.MachineAssignmentId))
+        {
+            return $"{label}\nLocal: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm} - {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{detail}";
+        }
+
+        return $"{label}\nPlanning mode: {interval.PlanningModeLabel}\nWork Finish Date: {workFinishDate}\n{interval.TimingLabel}\nCalculated start: {interval.StartsAt.ToLocalTime():yyyy-MM-dd HH:mm}\nCalculated finish: {interval.EndsAt.ToLocalTime():yyyy-MM-dd HH:mm}{forecast}{actual}{detail}";
     }
 
     private static string FormatLocal(DateTimeOffset? value) => value.HasValue

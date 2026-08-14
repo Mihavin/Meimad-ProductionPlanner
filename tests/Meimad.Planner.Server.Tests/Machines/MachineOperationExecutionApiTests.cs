@@ -300,7 +300,7 @@ public sealed class MachineOperationExecutionApiTests
                 Assert.DoesNotContain(intervals, value =>
                     value.GetProperty("operationId").ValueKind == JsonValueKind.String
                     && value.GetProperty("operationId").GetString() == "op-1"
-                    && value.GetProperty("type").GetString() is "setup" or "production");
+                    && value.GetProperty("type").GetString() == "operation");
             }
 
             Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));

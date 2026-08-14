@@ -9,11 +9,11 @@ internal sealed record TimelineCalculationInput(
     IReadOnlyList<TimelineDowntime> Downtimes,
     IReadOnlyList<TimelineDependency> Dependencies,
     IReadOnlyList<TimelineResourceCalendar>? ResourceCalendars = null,
-    IReadOnlyList<TimelineMachineCalendar>? DayShiftCalendars = null,
-    TimelineCalculationMode Mode = TimelineCalculationMode.Forward);
+    IReadOnlyList<TimelineMachineCalendar>? DayShiftCalendars = null);
 
-internal enum TimelineCalculationMode
+internal enum TimelinePlanningMode
 {
+    Manual,
     Forward,
     Backward
 }
@@ -33,7 +33,8 @@ internal sealed record TimelineOperationInput(
     DateOnly? PriorityWorkFinishDate = null,
     string? PriorityOrderNumber = null,
     DateTimeOffset? EarliestStart = null,
-    DateTimeOffset? LatestFinish = null);
+    DateTimeOffset? LatestFinish = null,
+    TimelinePlanningMode PlanningMode = TimelinePlanningMode.Manual);
 
 internal static class TimelinePriorityComparer
 {

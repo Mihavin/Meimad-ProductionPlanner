@@ -131,7 +131,10 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    cases.name,
                    batch_operations.actual_start,
                    batch_operations.actual_end,
-                   batch_operations.actual_machine_id
+                   batch_operations.actual_machine_id,
+                   machine_assignments.id,
+                   machine_assignments.version,
+                   COALESCE(machine_assignments.planning_mode, 'manual')
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -181,7 +184,10 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 reader.GetString(25),
                 GetNullableString(reader, 26) is { } actualStart ? DateTimeOffset.Parse(actualStart) : null,
                 GetNullableString(reader, 27) is { } actualEnd ? DateTimeOffset.Parse(actualEnd) : null,
-                GetNullableString(reader, 28)));
+                GetNullableString(reader, 28),
+                GetNullableString(reader, 29),
+                GetNullableInt32(reader, 30),
+                reader.GetString(31)));
         }
 
         return operations;

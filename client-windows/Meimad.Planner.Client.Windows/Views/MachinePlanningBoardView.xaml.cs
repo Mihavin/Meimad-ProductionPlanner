@@ -72,7 +72,16 @@ public partial class MachinePlanningBoardView : UserControl
     private async void ResetOperation_Click(object sender, RoutedEventArgs e) =>
         await ChangeOperationExecutionAsync(sender, "reset");
 
-    private void ViewBackwardTimeline_Click(object sender, RoutedEventArgs e)
+    private async void ScheduleBackward_Click(object sender, RoutedEventArgs e) =>
+        await ChangePlanningModeAsync(sender, "backward");
+
+    private async void ScheduleForward_Click(object sender, RoutedEventArgs e) =>
+        await ChangePlanningModeAsync(sender, "forward");
+
+    private async void SetManualMode_Click(object sender, RoutedEventArgs e) =>
+        await ChangePlanningModeAsync(sender, "manual");
+
+    private async Task ChangePlanningModeAsync(object sender, string planningMode)
     {
         if (sender is not MenuItem menuItem
             || ItemsControl.ItemsControlFromItemContainer(menuItem) is not ContextMenu contextMenu
@@ -85,7 +94,7 @@ public partial class MachinePlanningBoardView : UserControl
             return;
         }
 
-        viewModel.RequestBackwardTimeline(operation);
+        await viewModel.ChangePlanningModeAsync(operation, planningMode);
     }
 
     private async Task ChangeOperationExecutionAsync(object sender, string action)

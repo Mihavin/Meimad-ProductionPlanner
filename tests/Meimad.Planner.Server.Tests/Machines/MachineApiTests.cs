@@ -258,7 +258,195 @@ public sealed class MachineApiTests
                 .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray()), interval =>
                     interval.GetProperty("operationId").ValueKind == JsonValueKind.String
                     && interval.GetProperty("operationId").GetString() == "op-laser"
-                    && interval.GetProperty("type").GetString() == "production");
+                    && interval.GetProperty("type").GetString() == "operation"
+                    && interval.GetProperty("detail").GetString()!
+                        .Contains("Production", StringComparison.Ordinal));
+        });
+    }
+
+    [Fact]
+    public async Task Planning_mode_patch_updates_the_existing_assignment_once_and_is_concurrent_and_audited()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var machineId = await CreateMachineAsync(client, "M-MODE", "mill", ["mill"]);
+
+            using var createdResponse = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-a/assignment",
+                new { machineId, backlogPosition = 0 });
+            Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+            using var createdJson = JsonDocument.Parse(
+                await createdResponse.Content.ReadAsStringAsync());
+            var assignmentId = createdJson.RootElement
+                .GetProperty("machineAssignmentId").GetString()!;
+            var originalVersion = createdJson.RootElement.GetProperty("version").GetInt32();
+            var originalTag = createdResponse.Headers.ETag?.Tag;
+            Assert.Equal("manual", createdJson.RootElement.GetProperty("planningMode").GetString());
+            Assert.Equal(
+                $"\"machine-assignment:{assignmentId}:v{originalVersion}\"",
+                originalTag);
+
+            using var secondResponse = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-b/assignment",
+                new { machineId, backlogPosition = 1 });
+            secondResponse.EnsureSuccessStatusCode();
+            using var secondJson = JsonDocument.Parse(
+                await secondResponse.Content.ReadAsStringAsync());
+            var secondAssignmentId = secondJson.RootElement
+                .GetProperty("machineAssignmentId").GetString()!;
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var beforeConnection = await database.OpenConnectionAsync();
+            var secondVersionBefore = await ScalarAsync(beforeConnection,
+                $"SELECT version FROM machine_assignments WHERE id='{secondAssignmentId}';");
+            var secondUpdatedBefore = await ScalarAsync(beforeConnection,
+                $"SELECT updated_at FROM machine_assignments WHERE id='{secondAssignmentId}';");
+
+            using var missingPrecondition = await client.PatchAsJsonAsync(
+                $"/api/v1/machine-assignments/{assignmentId}",
+                new { planningMode = "backward" });
+            Assert.Equal((HttpStatusCode)428, missingPrecondition.StatusCode);
+
+            using (var invalidRequest = CreatePlanningModePatch(
+                       assignmentId, originalTag!, "Backward"))
+            using (var invalid = await client.SendAsync(invalidRequest))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+            }
+
+            using var patchRequest = CreatePlanningModePatch(
+                assignmentId, originalTag!, "backward");
+            using var patched = await client.SendAsync(patchRequest);
+            Assert.Equal(HttpStatusCode.OK, patched.StatusCode);
+            using var patchedJson = JsonDocument.Parse(await patched.Content.ReadAsStringAsync());
+            var patchedVersion = patchedJson.RootElement.GetProperty("version").GetInt32();
+            var patchedTag = patched.Headers.ETag?.Tag;
+            Assert.Equal(assignmentId, patchedJson.RootElement
+                .GetProperty("machineAssignmentId").GetString());
+            Assert.Equal("op-a", patchedJson.RootElement.GetProperty("batchOperationId").GetString());
+            Assert.Equal(machineId, patchedJson.RootElement.GetProperty("machineId").GetString());
+            Assert.Equal(0, patchedJson.RootElement.GetProperty("backlogPosition").GetInt32());
+            Assert.Equal("backward", patchedJson.RootElement.GetProperty("planningMode").GetString());
+            Assert.Equal(originalVersion + 1, patchedVersion);
+
+            await using (var afterConnection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("backward", await ScalarAsync(afterConnection,
+                    $"SELECT planning_mode FROM machine_assignments WHERE id='{assignmentId}';"));
+                Assert.Equal(secondVersionBefore, await ScalarAsync(afterConnection,
+                    $"SELECT version FROM machine_assignments WHERE id='{secondAssignmentId}';"));
+                Assert.Equal(secondUpdatedBefore, await ScalarAsync(afterConnection,
+                    $"SELECT updated_at FROM machine_assignments WHERE id='{secondAssignmentId}';"));
+            }
+
+            using var board = await client.GetAsync("/api/v1/planning-board");
+            board.EnsureSuccessStatusCode();
+            using var boardJson = JsonDocument.Parse(await board.Content.ReadAsStringAsync());
+            var boardOperation = Assert.Single(boardJson.RootElement.GetProperty("machines")
+                .EnumerateArray()
+                .Single(machine => machine.GetProperty("machineId").GetString() == machineId)
+                .GetProperty("backlog")
+                .EnumerateArray(),
+                operation => operation.GetProperty("batchOperationId").GetString() == "op-a");
+            Assert.Equal(assignmentId, boardOperation.GetProperty("machineAssignmentId").GetString());
+            Assert.Equal(patchedVersion, boardOperation.GetProperty("assignmentVersion").GetInt32());
+            Assert.Equal("backward", boardOperation.GetProperty("planningMode").GetString());
+
+            using var events = await client.GetAsync(
+                "/api/v1/event-log?eventType=machine_assignment_planning_mode_changed");
+            events.EnsureSuccessStatusCode();
+            using var eventsJson = JsonDocument.Parse(await events.Content.ReadAsStringAsync());
+            var logged = Assert.Single(eventsJson.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("machine-api-user", logged.GetProperty("user").GetString());
+            Assert.Equal(assignmentId, logged.GetProperty("relatedEntityIds")
+                .GetProperty("machineAssignmentId").GetString());
+            Assert.Equal("manual", logged.GetProperty("beforeData").GetProperty("planningMode").GetString());
+            Assert.Equal("backward", logged.GetProperty("afterData").GetProperty("planningMode").GetString());
+
+            var updatedAtBeforeNoOp = patchedJson.RootElement.GetProperty("updatedAt").GetDateTimeOffset();
+            using (var noOpRequest = CreatePlanningModePatch(
+                       assignmentId, patchedTag!, "backward"))
+            using (var noOp = await client.SendAsync(noOpRequest))
+            {
+                noOp.EnsureSuccessStatusCode();
+                using var noOpJson = JsonDocument.Parse(await noOp.Content.ReadAsStringAsync());
+                Assert.Equal(patchedVersion, noOpJson.RootElement.GetProperty("version").GetInt32());
+                Assert.Equal(updatedAtBeforeNoOp, noOpJson.RootElement.GetProperty("updatedAt").GetDateTimeOffset());
+                Assert.Equal(patchedTag, noOp.Headers.ETag?.Tag);
+            }
+
+            using (var staleRequest = CreatePlanningModePatch(
+                       assignmentId, originalTag!, "manual"))
+            using (var stale = await client.SendAsync(staleRequest))
+            {
+                Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+            }
+
+            using (var unknownRequest = CreatePlanningModePatch(
+                       "missing-assignment",
+                       "\"machine-assignment:missing-assignment:v1\"",
+                       "forward"))
+            using (var unknown = await client.SendAsync(unknownRequest))
+            {
+                Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+            }
+
+            using var movedResponse = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-a/assignment",
+                new { machineId, backlogPosition = 1 });
+            movedResponse.EnsureSuccessStatusCode();
+            using var movedJson = JsonDocument.Parse(await movedResponse.Content.ReadAsStringAsync());
+            Assert.Equal(assignmentId, movedJson.RootElement.GetProperty("machineAssignmentId").GetString());
+            Assert.Equal("backward", movedJson.RootElement.GetProperty("planningMode").GetString());
+
+            using var movedBackResponse = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-a/assignment",
+                new { machineId, backlogPosition = 0 });
+            movedBackResponse.EnsureSuccessStatusCode();
+            using var movedBackJson = JsonDocument.Parse(
+                await movedBackResponse.Content.ReadAsStringAsync());
+            var runningTag = movedBackResponse.Headers.ETag?.Tag;
+
+            using var started = await client.PostAsync(
+                "/api/v1/batch-operations/op-a/start", null);
+            started.EnsureSuccessStatusCode();
+            using var runningRequest = CreatePlanningModePatch(
+                assignmentId, runningTag!, "forward");
+            using var running = await client.SendAsync(runningRequest);
+            Assert.Equal(HttpStatusCode.Conflict, running.StatusCode);
+
+            using var suspended = await client.PostAsJsonAsync(
+                "/api/v1/batch-operations/op-a/suspend",
+                new { reasonType = "other", comment = "Mode persistence verification" });
+            suspended.EnsureSuccessStatusCode();
+            using var reset = await client.PostAsync(
+                "/api/v1/batch-operations/op-a/reset", null);
+            reset.EnsureSuccessStatusCode();
+
+            using var resetBacklog = await client.GetAsync(
+                $"/api/v1/machines/{machineId}/backlog");
+            resetBacklog.EnsureSuccessStatusCode();
+            using var resetBacklogJson = JsonDocument.Parse(
+                await resetBacklog.Content.ReadAsStringAsync());
+            var resetAssignment = resetBacklogJson.RootElement.GetProperty("items")
+                .EnumerateArray()
+                .Single(item => item.GetProperty("assignment")
+                    .GetProperty("machineAssignmentId").GetString() == assignmentId)
+                .GetProperty("assignment");
+            Assert.Equal("backward", resetAssignment.GetProperty("planningMode").GetString());
+            Assert.Equal(
+                movedBackJson.RootElement.GetProperty("version").GetInt32(),
+                resetAssignment.GetProperty("version").GetInt32());
+
+            using var finalEvents = await client.GetAsync(
+                "/api/v1/event-log?eventType=machine_assignment_planning_mode_changed");
+            finalEvents.EnsureSuccessStatusCode();
+            using var finalEventsJson = JsonDocument.Parse(
+                await finalEvents.Content.ReadAsStringAsync());
+            Assert.Single(finalEventsJson.RootElement.GetProperty("items").EnumerateArray());
         });
     }
 
@@ -377,6 +565,21 @@ public sealed class MachineApiTests
     {
         client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "machine-api-client");
         client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+    }
+
+    private static HttpRequestMessage CreatePlanningModePatch(
+        string assignmentId,
+        string entityTag,
+        string planningMode)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/api/v1/machine-assignments/{assignmentId}")
+        {
+            Content = JsonContent.Create(new { planningMode })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        return request;
     }
 
     private static async Task SeedCalendarAndOperationsAsync(IServiceProvider services)

@@ -21,8 +21,6 @@ public partial class MainWindow : Window
             new PlannerApiClientFactory(),
             RequestAssignmentOverrideReason);
         DataContext = viewModel;
-        viewModel.TimelineViewRequested += (_, _) =>
-            WorkspaceTabs.SelectedItem = TimelineTab;
         refreshTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(5)

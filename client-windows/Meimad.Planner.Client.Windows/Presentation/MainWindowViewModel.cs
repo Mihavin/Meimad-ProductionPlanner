@@ -42,11 +42,6 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
         MachinePlanningBoard.HistoryChanged += (_, _) => RaiseCommandStates();
-        MachinePlanningBoard.BackwardTimelineRequested += (_, request) =>
-        {
-            Timeline.ShowBackwardForBatch(request.BatchId);
-            TimelineViewRequested?.Invoke(this, EventArgs.Empty);
-        };
         CaseWorkspace.PlanChanged += (_, _) => RefreshTimelineAfterPlanChange();
         MachinePlanningBoard.PlanChanged += (_, _) =>
         {
@@ -86,8 +81,6 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
-
-    internal event EventHandler? TimelineViewRequested;
 
     public AsyncCommand RequestEditCommand { get; }
 

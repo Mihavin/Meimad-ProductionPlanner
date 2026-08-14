@@ -60,8 +60,6 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     public event EventHandler? PlanChanged;
 
-    internal event EventHandler<BackwardTimelineRequest>? BackwardTimelineRequested;
-
     internal event EventHandler? HistoryChanged;
 
     public ObservableCollection<PlanningOperationViewModel> Pool { get; } = [];
@@ -225,6 +223,10 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         clientId = newClientId;
         isEditor = editStatus?.State == ClientEditState.Editor;
         editGeneration = editStatus?.Generation ?? 0;
+        foreach (var operation in Pool.Concat(Machines.SelectMany(machine => machine.Backlog)))
+        {
+            operation.SetPlanningModeEditAvailability(isEditor);
+        }
         OnPropertyChanged(nameof(CanDrag));
         OnPropertyChanged(nameof(CanAddMachine));
         OnPropertyChanged(nameof(CanAddCalendar));
@@ -652,17 +654,95 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
-    internal void RequestBackwardTimeline(PlanningOperationViewModel operation)
+    internal async Task ChangePlanningModeAsync(
+        PlanningOperationViewModel operation,
+        string planningMode)
     {
-        if (!operation.CanViewBackward)
+        var normalizedMode = planningMode?.Trim().ToLowerInvariant();
+        if (normalizedMode is not ("forward" or "backward" or "manual"))
         {
+            throw new ArgumentException(
+                "Planning mode must be forward, backward, or manual.",
+                nameof(planningMode));
+        }
+
+        if (apiClient is null || !isEditor || IsBusy)
+        {
+            AddFeedback(
+                "attention",
+                "Edit Mode required",
+                $"The planning mode for {operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
             return;
         }
 
-        StatusMessage = $"Opening a visual backward projection for {operation.DisplayTitle}. No plan data will be changed.";
-        BackwardTimelineRequested?.Invoke(
-            this,
-            new BackwardTimelineRequest(operation.BatchId, operation.BatchOperationId));
+        if (!operation.CanChangePlanningMode
+            || operation.MachineAssignmentId is null
+            || !operation.AssignmentVersion.HasValue)
+        {
+            AddFeedback(
+                "blocking",
+                "Machine assignment required",
+                $"{operation.DisplayTitle} must have a current Machine assignment before its planning mode can change.");
+            return;
+        }
+
+        if (string.Equals(operation.PlanningMode, normalizedMode, StringComparison.Ordinal))
+        {
+            StatusMessage = $"{operation.DisplayTitle} is already in {operation.PlanningModeLabel} mode.";
+            return;
+        }
+
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            var assignment = await apiClient.ChangeMachineAssignmentPlanningModeAsync(
+                operation.MachineAssignmentId,
+                operation.AssignmentVersion.Value,
+                normalizedMode,
+                clientId,
+                editGeneration);
+            if (!string.Equals(
+                    assignment.MachineAssignmentId,
+                    operation.MachineAssignmentId,
+                    StringComparison.Ordinal)
+                || !string.Equals(
+                    assignment.BatchOperationId,
+                    operation.BatchOperationId,
+                    StringComparison.Ordinal)
+                || !string.Equals(
+                    assignment.PlanningMode,
+                    normalizedMode,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PlannerProtocolException(
+                    "Server returned a different assignment or planning mode after the update.");
+            }
+            AddFeedback(
+                "information",
+                "Planning mode updated",
+                $"{operation.DisplayTitle} now uses {PlanningModeLabel(assignment.PlanningMode)} mode on its existing Machine assignment.");
+            StatusMessage = $"The Server set {operation.DisplayTitle} to {PlanningModeLabel(assignment.PlanningMode)} mode. The Timeline will recalculate the same assignment block.";
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Planning mode rejected", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (succeeded)
+        {
+            // Placement Undo/Redo remains placement-only. A planning-mode mutation
+            // does not alter or clear that history, so it cannot replay a stale
+            // Machine assignment or backlog position.
+            await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     internal async Task UndoAsync() =>
@@ -770,13 +850,13 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         Pool.Clear();
         foreach (var operation in snapshot.Pool)
         {
-            Pool.Add(new PlanningOperationViewModel(operation));
+            Pool.Add(new PlanningOperationViewModel(operation, isEditor));
         }
 
         Machines.Clear();
         foreach (var machine in snapshot.Machines)
         {
-            Machines.Add(new PlanningMachineColumnViewModel(machine));
+            Machines.Add(new PlanningMachineColumnViewModel(machine, isEditor));
         }
 
         ServerConflicts.Clear();
@@ -886,6 +966,15 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     private static string? NullIfBlank(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    private static string PlanningModeLabel(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "manual" => "Manual",
+            "backward" => "Backward",
+            "forward" => "Forward",
+            var unknown => $"Unknown ({unknown})"
+        };
+
     private void RaiseMachineCommandStates()
     {
         BeginAddMachineCommand.RaiseCanExecuteChanged();
@@ -967,8 +1056,11 @@ internal sealed record ManualPlacementChange(
 internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
 {
     private BitmapImage? preview;
+    private bool planningModeEditAvailable;
 
-    internal PlanningOperationViewModel(PlanningBoardOperation operation)
+    internal PlanningOperationViewModel(
+        PlanningBoardOperation operation,
+        bool planningModeEditAvailable = false)
     {
         BatchOperationId = operation.BatchOperationId;
         BatchId = operation.BatchId;
@@ -989,6 +1081,10 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         Status = operation.Status;
         MachineId = operation.MachineId;
         BacklogPosition = operation.BacklogPosition;
+        MachineAssignmentId = operation.MachineAssignmentId;
+        AssignmentVersion = operation.AssignmentVersion;
+        PlanningMode = NormalizePlanningMode(operation.PlanningMode);
+        this.planningModeEditAvailable = planningModeEditAvailable;
         ActivePauseReason = operation.ActivePauseReason;
         PausedBy = operation.PausedBy;
         PauseStartedAt = operation.PauseStartedAt;
@@ -1009,6 +1105,9 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string Status { get; }
     public string? MachineId { get; }
     public int? BacklogPosition { get; }
+    public string? MachineAssignmentId { get; }
+    public int? AssignmentVersion { get; }
+    public string PlanningMode { get; }
     public BitmapImage? Preview
     {
         get => preview;
@@ -1048,6 +1147,14 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string StatusDetail => ActivePauseReason is null
         ? StatusText
         : $"Paused by {PausedBy} at {PauseStartedAt:g}. {ActivePauseReason}";
+    public string PlanningModeLabel => PlanningMode switch
+    {
+        "manual" => "Manual",
+        "backward" => "Backward",
+        "forward" => "Forward",
+        _ => $"Unknown ({PlanningMode})"
+    };
+    public string PlanningModeText => $"Mode {PlanningModeLabel}";
     public string StatusGlyph => Status switch
     {
         "not_started" => "○",
@@ -1063,7 +1170,37 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public bool CanFinish => MachineId is not null && Status == "in_progress";
     public bool CanReset => MachineId is not null && Status == "suspended";
     public bool CanMove => Status != "in_progress";
-    public bool CanViewBackward => MachineId is not null && Status != "completed";
+    public bool CanChangePlanningMode => planningModeEditAvailable
+        && MachineId is not null
+        && MachineAssignmentId is not null
+        && AssignmentVersion.HasValue
+        && Status is "not_started" or "suspended";
+    public bool CanScheduleBackward => CanChangePlanningMode && PlanningMode != "backward";
+    public bool CanScheduleForward => CanChangePlanningMode && PlanningMode != "forward";
+    public bool CanSetManualMode => CanChangePlanningMode && PlanningMode != "manual";
+
+    internal void SetPlanningModeEditAvailability(bool value)
+    {
+        if (planningModeEditAvailable == value)
+        {
+            return;
+        }
+
+        planningModeEditAvailable = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanChangePlanningMode)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanScheduleBackward)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanScheduleForward)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanSetManualMode)));
+    }
+
+    private static string NormalizePlanningMode(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "manual" => "manual",
+            "backward" => "backward",
+            "forward" => "forward",
+            var unknown => unknown
+        };
 
     private static long? CalculateEstimatedTime(
         int? setupTimeSeconds,
@@ -1097,24 +1234,13 @@ internal sealed record AssignmentOverridePrompt(
     string MachineDisplayName,
     string SelectedMachineType);
 
-internal sealed class BackwardTimelineRequest : EventArgs
-{
-    internal BackwardTimelineRequest(string batchId, string batchOperationId)
-    {
-        BatchId = batchId;
-        BatchOperationId = batchOperationId;
-    }
-
-    internal string BatchId { get; }
-
-    internal string BatchOperationId { get; }
-}
-
 internal sealed class PlanningMachineColumnViewModel : INotifyPropertyChanged
 {
     private BitmapImage? picture;
 
-    internal PlanningMachineColumnViewModel(PlanningBoardMachine machine)
+    internal PlanningMachineColumnViewModel(
+        PlanningBoardMachine machine,
+        bool planningModeEditAvailable = false)
     {
         MachineId = machine.MachineId;
         Number = machine.Number;
@@ -1124,7 +1250,8 @@ internal sealed class PlanningMachineColumnViewModel : INotifyPropertyChanged
         Capabilities = machine.Capabilities;
         IsActive = machine.IsActive;
         Backlog = new ObservableCollection<PlanningOperationViewModel>(
-            machine.Backlog.Select(operation => new PlanningOperationViewModel(operation)));
+            machine.Backlog.Select(operation =>
+                new PlanningOperationViewModel(operation, planningModeEditAvailable)));
     }
 
     public string MachineId { get; }

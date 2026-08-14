@@ -565,6 +565,9 @@ public sealed class PlannerApiClientTests
         Assert.Equal("SO-1", Assert.Single(operation.OrderReferences!));
         Assert.Equal(1_080, operation.EstimatedTimeSeconds);
         Assert.Equal("Widget case", operation.CaseName);
+        Assert.Null(operation.MachineAssignmentId);
+        Assert.Null(operation.AssignmentVersion);
+        Assert.Equal("manual", operation.PlanningMode);
         Assert.Equal("/api/v1/planning-board", handler.Requests[0].Path);
         Assert.Equal(HttpMethod.Put, handler.Requests[1].Method);
         Assert.Equal("/api/v1/batch-operations/op%2F1/assignment", handler.Requests[1].Path);
@@ -588,7 +591,7 @@ public sealed class PlannerApiClientTests
               "machines": [{
                 "machineId":"machine-1","number":"M-1","name":"Mill",
                 "intervals":[{
-                  "type":"production","machineId":"machine-1","operationId":"op-1",
+                  "type":"operation","machineId":"machine-1","operationId":"op-1",
                   "batchId":"batch-1","batchNumber":"B-1","partNumber":"PN-1",
                   "operationNumber":10,"startsAt":"2026-08-11T08:00:00Z",
                   "endsAt":"2026-08-11T09:00:00Z","detail":null
@@ -604,23 +607,21 @@ public sealed class PlannerApiClientTests
             DateTimeOffset.Parse("2026-08-11T11:00:00+03:00"),
             DateTimeOffset.Parse("2026-08-12T11:00:00+03:00"));
 
-        Assert.Equal("production", result.Machines[0].Intervals[0].Type);
+        Assert.Equal("operation", result.Machines[0].Intervals[0].Type);
         Assert.Equal("B-1", result.Batches[0].BatchNumber);
-        Assert.Equal("manual", result.PlanningMode);
         Assert.Contains("from=2026-08-11T08%3A00%3A00", handler.Requests[0].Path, StringComparison.Ordinal);
         Assert.Contains("to=2026-08-12T08%3A00%3A00", handler.Requests[0].Path, StringComparison.Ordinal);
-        Assert.Contains("mode=manual", handler.Requests[0].Path, StringComparison.Ordinal);
+        Assert.DoesNotContain("mode=", handler.Requests[0].Path, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Timeline_backward_projection_sends_mode_and_reads_due_date_metadata_without_edit_headers()
+    public async Task Timeline_reads_per_assignment_mode_and_due_date_without_a_global_mode_query()
     {
         var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
             {
               "readAt": "2026-08-11T10:00:00Z",
               "horizonStart": "2026-08-11T08:00:00Z",
               "horizonEnd": "2026-08-20T08:00:00Z",
-              "planningMode": "backward",
               "batches": [{
                 "batchId":"batch-1","batchNumber":"B-1","partNumber":"PN-1",
                 "workFinishDate":"2026-08-19"
@@ -628,11 +629,12 @@ public sealed class PlannerApiClientTests
               "machines": [{
                 "machineId":"machine-1","number":"M-1","name":"Mill",
                 "intervals":[{
-                  "type":"production","machineId":"machine-1","operationId":"op-1",
+                  "type":"operation","machineId":"machine-1","operationId":"op-1",
                   "batchId":"batch-1","batchNumber":"B-1","partNumber":"PN-1",
                   "operationNumber":10,"operationName":"Mill",
                   "startsAt":"2026-08-18T08:00:00Z","endsAt":"2026-08-18T09:00:00Z",
-                  "detail":null,"planningMode":"backward"
+                  "detail":null,"planningMode":"backward",
+                  "machineAssignmentId":"assignment-1","workFinishDate":"2026-08-19"
                 }]
               }],
               "dependencies": [], "conflicts": []
@@ -643,17 +645,50 @@ public sealed class PlannerApiClientTests
         var result = await api.GetTimelineAsync(
             DateTimeOffset.Parse("2026-08-11T08:00:00Z"),
             DateTimeOffset.Parse("2026-08-20T08:00:00Z"),
-            DateTimeOffset.Parse("2026-08-11T10:30:00+03:00"),
-            "backward");
+            DateTimeOffset.Parse("2026-08-11T10:30:00+03:00"));
 
         var request = Assert.Single(handler.Requests);
-        Assert.Contains("mode=backward", request.Path, StringComparison.Ordinal);
+        Assert.DoesNotContain("mode=", request.Path, StringComparison.Ordinal);
         Assert.Contains("asOf=2026-08-11T07%3A30%3A00", request.Path, StringComparison.Ordinal);
         Assert.Null(request.ClientId);
         Assert.Null(request.Generation);
-        Assert.Equal("backward", result.PlanningMode);
         Assert.Equal(new DateOnly(2026, 8, 19), result.Batches[0].WorkFinishDate);
-        Assert.Equal("Backward projection", result.Machines[0].Intervals[0].PlanningModeLabel);
+        Assert.Equal("Backward", result.Machines[0].Intervals[0].PlanningModeLabel);
+        Assert.Equal("assignment-1", result.Machines[0].Intervals[0].MachineAssignmentId);
+        Assert.Equal(new DateOnly(2026, 8, 19), result.Machines[0].Intervals[0].WorkFinishDate);
+    }
+
+    [Fact]
+    public async Task Planning_mode_patch_targets_the_existing_assignment_with_concurrency_headers()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "machineAssignmentId":"assignment/1",
+              "batchOperationId":"operation-1",
+              "machineId":"machine-1",
+              "backlogPosition":2,
+              "version":8,
+              "createdAt":"2026-08-11T08:00:00Z",
+              "updatedAt":"2026-08-13T08:00:00Z",
+              "planningMode":"backward"
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var result = await api.ChangeMachineAssignmentPlanningModeAsync(
+            "assignment/1", 7, "BACKWARD", "windows-1", 19);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.Equal("/api/v1/machine-assignments/assignment%2F1", request.Path);
+        Assert.Equal("\"machine-assignment:assignment/1:v7\"", request.IfMatch);
+        Assert.Equal("windows-1", request.ClientId);
+        Assert.Equal("19", request.Generation);
+        Assert.Equal("{\"planningMode\":\"backward\"}", request.Body);
+        Assert.Equal("assignment/1", result.MachineAssignmentId);
+        Assert.Equal("operation-1", result.BatchOperationId);
+        Assert.Equal("backward", result.PlanningMode);
+        Assert.Equal(8, result.Version);
     }
 
     [Fact]

@@ -12,50 +12,16 @@ namespace Meimad.Planner.Server.Tests.Timeline;
 public sealed class TimelineApiTests
 {
     [Fact]
-    public async Task Backward_mode_uses_order_finish_date_without_writing_or_reordering_plan()
+    public async Task Timeline_mode_query_is_rejected_because_planning_mode_is_assignment_owned()
     {
-        await RunWithServerAsync(async (application, client) =>
+        await RunWithServerAsync(async (_, client) =>
         {
-            await SeedTimelineAsync(application.Services);
-            var beforePositions = await ReadPositionsAsync(application.Services);
-            var beforeOperationState = await ReadOperationTimingStateAsync(application.Services);
-            var database = application.Services.GetRequiredService<SqliteDatabase>();
-            long beforeEvents;
-            await using (var connection = await database.OpenConnectionAsync())
-            await using (var count = connection.CreateCommand())
-            {
-                count.CommandText = "SELECT COUNT(*) FROM structured_event_log;";
-                beforeEvents = (long)(await count.ExecuteScalarAsync())!;
-            }
-
             using var response = await client.GetAsync(
                 "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T08:00:00Z");
-            response.EnsureSuccessStatusCode();
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var root = document.RootElement;
-            Assert.Equal("backward", root.GetProperty("planningMode").GetString());
-            Assert.Equal("2026-08-12", root.GetProperty("batches")[0]
-                .GetProperty("workFinishDate").GetString());
-
-            var work = root.GetProperty("machines")[0].GetProperty("intervals")
-                .EnumerateArray()
-                .Where(value => value.TryGetProperty("operationId", out var operationId)
-                    && operationId.ValueKind == JsonValueKind.String
-                    && value.GetProperty("type").GetString() is "setup" or "production")
-                .ToArray();
-            var op1Finish = work.Where(value => value.GetProperty("operationId").GetString() == "op-1")
-                .Max(value => value.GetProperty("endsAt").GetDateTimeOffset());
-            var op2Start = work.Where(value => value.GetProperty("operationId").GetString() == "op-2")
-                .Min(value => value.GetProperty("startsAt").GetDateTimeOffset());
-            Assert.True(op2Start >= op1Finish);
-            Assert.Equal(beforePositions, await ReadPositionsAsync(application.Services));
-            Assert.Equal(beforeOperationState,
-                await ReadOperationTimingStateAsync(application.Services));
-
-            await using var verify = await database.OpenConnectionAsync();
-            await using var eventCount = verify.CreateCommand();
-            eventCount.CommandText = "SELECT COUNT(*) FROM structured_event_log;";
-            Assert.Equal(beforeEvents, (long)(await eventCount.ExecuteScalarAsync())!);
+            Assert.Equal("timeline_mode_is_assignment_owned",
+                document.RootElement.GetProperty("error").GetProperty("code").GetString());
         });
     }
 
@@ -68,13 +34,13 @@ public sealed class TimelineApiTests
                 "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-12T08:00:00Z&mode=persisted");
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            Assert.Equal("invalid_timeline_mode",
+            Assert.Equal("timeline_mode_is_assignment_owned",
                 document.RootElement.GetProperty("error").GetProperty("code").GetString());
         });
     }
 
     [Fact]
-    public async Task Backward_deadline_before_horizon_is_reported_once_and_waiting_keeps_mode()
+    public async Task Timeline_projects_assignment_identity_mode_and_work_finish_date_once_per_active_assignment()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -83,35 +49,73 @@ public sealed class TimelineApiTests
             await using (var connection = await database.OpenConnectionAsync())
             await using (var command = connection.CreateCommand())
             {
-                command.CommandText = "UPDATE orders SET work_finish_date = '2026-08-10' WHERE id = 'order-1';";
+                command.CommandText = "UPDATE machine_assignments SET planning_mode = 'backward' WHERE id = 'assignment-1';";
                 await command.ExecuteNonQueryAsync();
             }
 
             using var response = await client.GetAsync(
-                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T08:00:00Z");
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&asOf=2026-08-11T08:00:00Z");
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var conflicts = document.RootElement.GetProperty("conflicts").EnumerateArray().ToArray();
-            Assert.Single(conflicts, conflict =>
-                conflict.GetProperty("code").GetString() == "backward_schedule_cannot_fit"
-                && conflict.GetProperty("operationIds").EnumerateArray()
-                    .Any(value => value.GetString() == "op-1"));
-            Assert.Equal(conflicts.Length, conflicts
-                .Select(conflict => conflict.GetProperty("conflictId").GetString())
-                .Distinct(StringComparer.Ordinal).Count());
-
-            var blockedIntervals = document.RootElement.GetProperty("machines")[0]
+            var operationBlocks = document.RootElement.GetProperty("machines")[0]
                 .GetProperty("intervals").EnumerateArray()
-                .Where(interval => interval.GetProperty("operationId").GetString() is "op-1" or "op-2")
+                .Where(interval => interval.GetProperty("operationId").ValueKind == JsonValueKind.String)
                 .ToArray();
-            Assert.NotEmpty(blockedIntervals);
-            Assert.All(blockedIntervals, interval =>
-                Assert.Equal("backward", interval.GetProperty("planningMode").GetString()));
+            Assert.Equal(operationBlocks.Length, operationBlocks
+                .Select(interval => interval.GetProperty("operationId").GetString())
+                .Distinct(StringComparer.Ordinal).Count());
+            var first = Assert.Single(operationBlocks, interval =>
+                interval.GetProperty("operationId").GetString() == "op-1");
+            Assert.Equal("assignment-1", first.GetProperty("machineAssignmentId").GetString());
+            Assert.Equal("backward", first.GetProperty("planningMode").GetString());
+            Assert.Equal("2026-08-12", first.GetProperty("workFinishDate").GetString());
         });
     }
 
     [Fact]
-    public async Task Backward_actual_history_interval_keeps_visual_mode_label()
+    public async Task Persisted_mixed_modes_share_one_machine_without_overlap_or_plan_mutation()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE machine_assignments SET planning_mode = 'forward'
+                    WHERE id = 'assignment-1';
+                    UPDATE machine_assignments SET planning_mode = 'backward'
+                    WHERE id = 'assignment-2';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+            var beforePositions = await ReadPositionsAsync(application.Services);
+            var beforeState = await ReadOperationTimingStateAsync(application.Services);
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&asOf=2026-08-11T08:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var blocks = document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray()
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToArray();
+            var forward = Assert.Single(blocks, interval =>
+                interval.GetProperty("machineAssignmentId").GetString() == "assignment-1");
+            var backward = Assert.Single(blocks, interval =>
+                interval.GetProperty("machineAssignmentId").GetString() == "assignment-2");
+            Assert.Equal("forward", forward.GetProperty("planningMode").GetString());
+            Assert.Equal("backward", backward.GetProperty("planningMode").GetString());
+            Assert.True(forward.GetProperty("endsAt").GetDateTimeOffset()
+                <= backward.GetProperty("startsAt").GetDateTimeOffset());
+            Assert.Equal(beforePositions, await ReadPositionsAsync(application.Services));
+            Assert.Equal(beforeState, await ReadOperationTimingStateAsync(application.Services));
+        });
+    }
+
+    [Fact]
+    public async Task Completed_historical_interval_has_no_active_assignment_identity()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -132,14 +136,14 @@ public sealed class TimelineApiTests
             }
 
             using var response = await client.GetAsync(
-                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T09:00:00Z");
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&asOf=2026-08-11T09:00:00Z");
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var actual = Assert.Single(document.RootElement.GetProperty("machines")[0]
                 .GetProperty("intervals").EnumerateArray(), interval =>
                     interval.GetProperty("operationId").GetString() == "op-1"
                     && interval.GetProperty("timingKind").GetString() == "actual");
-            Assert.Equal("backward", actual.GetProperty("planningMode").GetString());
+            Assert.Equal(JsonValueKind.Null, actual.GetProperty("machineAssignmentId").ValueKind);
         });
     }
 
@@ -175,7 +179,7 @@ public sealed class TimelineApiTests
                 value => value.GetProperty("code").GetString() == "insufficient_availability");
             Assert.DoesNotContain(document.RootElement.GetProperty("machines").EnumerateArray()
                     .SelectMany(value => value.GetProperty("intervals").EnumerateArray()),
-                value => value.GetProperty("type").GetString() == "setup");
+                value => value.GetProperty("type").GetString() == "operation");
         });
     }
 
@@ -239,8 +243,9 @@ public sealed class TimelineApiTests
             Assert.Single(root.GetProperty("batches").EnumerateArray());
             var intervals = root.GetProperty("machines")[0].GetProperty("intervals")
                 .EnumerateArray().ToArray();
-            Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "setup");
-            Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "production");
+            Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "operation"
+                && value.GetProperty("detail").GetString()!.Contains("Setup", StringComparison.Ordinal)
+                && value.GetProperty("detail").GetString()!.Contains("Production", StringComparison.Ordinal));
             Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "idle");
             Assert.Contains(intervals, value => value.GetProperty("type").GetString() == "downtime");
             Assert.Contains(intervals, value =>
@@ -282,7 +287,9 @@ public sealed class TimelineApiTests
                 document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
                     .EnumerateArray(),
                 interval => interval.GetProperty("operationId").GetString() == "op-1"
-                    && interval.GetProperty("type").GetString() == "setup");
+                    && interval.GetProperty("type").GetString() == "operation"
+                    && interval.GetProperty("detail").GetString()!
+                        .Contains("Setup", StringComparison.Ordinal));
         });
     }
 
@@ -321,12 +328,14 @@ public sealed class TimelineApiTests
                 "/api/v1/timeline?from=2026-08-11T02:00:00Z&to=2026-08-11T18:00:00Z");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var setup = document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
-                .EnumerateArray().First(value => value.GetProperty("type").GetString() == "setup");
-            Assert.Equal("2026-08-11T03:00:00+00:00", setup.GetProperty("startsAt").GetString());
-            Assert.Equal(2, document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
-                .EnumerateArray().Count(value => value.GetProperty("type").GetString() == "production"
-                    && value.GetProperty("operationId").GetString() == "op-1"));
+            var operation = document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
+                .EnumerateArray().First(value => value.GetProperty("type").GetString() == "operation"
+                    && value.GetProperty("operationId").GetString() == "op-1");
+            Assert.Equal("2026-08-11T03:00:00+00:00", operation.GetProperty("startsAt").GetString());
+            Assert.Contains("Setup 2026-08-11T03:00", operation.GetProperty("detail").GetString(),
+                StringComparison.Ordinal);
+            Assert.Equal(2, operation.GetProperty("detail").GetString()!
+                .Split("Production", StringSplitOptions.None).Length - 1);
             Assert.DoesNotContain(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 value => value.GetProperty("code").GetString() == "calendar_configuration_missing");
@@ -359,12 +368,14 @@ public sealed class TimelineApiTests
                 "/api/v1/timeline?from=2026-08-10T16:00:00Z&to=2026-08-11T09:00:00Z&asOf=2026-08-10T16:00:00Z");
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var production = document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
-                .EnumerateArray().Where(value => value.GetProperty("operationId").GetString() == "op-1"
-                    && value.GetProperty("type").GetString() == "production").ToArray();
-            Assert.NotEmpty(production);
-            Assert.Equal("2026-08-10T17:30:00+00:00", production[0].GetProperty("startsAt").GetString());
-            Assert.True(production[^1].GetProperty("endsAt").GetDateTimeOffset()
+            var operation = Assert.Single(document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), value =>
+                    value.GetProperty("operationId").GetString() == "op-1"
+                    && value.GetProperty("type").GetString() == "operation");
+            Assert.Equal("2026-08-10T17:00:00+00:00", operation.GetProperty("startsAt").GetString());
+            Assert.Contains("Production 2026-08-10T17:30", operation.GetProperty("detail").GetString(),
+                StringComparison.Ordinal);
+            Assert.True(operation.GetProperty("endsAt").GetDateTimeOffset()
                 > DateTimeOffset.Parse("2026-08-11T00:00:00Z"));
             Assert.DoesNotContain(document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 value => value.GetProperty("code").GetString() == "calendar_configuration_invalid");
@@ -385,7 +396,7 @@ public sealed class TimelineApiTests
             var originalStart = original.RootElement.GetProperty("machines")[0]
                 .GetProperty("intervals").EnumerateArray()
                 .Where(interval => interval.GetProperty("operationId").GetString() == "op-1"
-                    && interval.GetProperty("type").GetString() is "setup" or "production")
+                    && interval.GetProperty("type").GetString() == "operation")
                 .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
 
             using var floatedResponse = await client.GetAsync(
@@ -395,7 +406,7 @@ public sealed class TimelineApiTests
             var floatedStart = floated.RootElement.GetProperty("machines")[0]
                 .GetProperty("intervals").EnumerateArray()
                 .Where(interval => interval.GetProperty("operationId").GetString() == "op-1"
-                    && interval.GetProperty("type").GetString() is "setup" or "production")
+                    && interval.GetProperty("type").GetString() == "operation")
                 .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
             Assert.True(floatedStart >= DateTimeOffset.Parse("2026-08-11T10:30:00Z"));
             Assert.True(floatedStart > originalStart);
@@ -452,17 +463,17 @@ public sealed class TimelineApiTests
                 interval.GetProperty("operationId").GetString() == "op-1"
                 && interval.GetProperty("timingKind").GetString() == "actual");
             Assert.Equal("2026-08-11T08:30:00+00:00", actual.GetProperty("actualStart").GetString());
-            Assert.Equal("2026-08-11T09:00:00+00:00", actual.GetProperty("endsAt").GetString());
-            Assert.Contains(intervals, interval =>
-                interval.GetProperty("operationId").GetString() == "op-1"
-                && interval.GetProperty("timingKind").GetString() == "forecast"
-                && interval.GetProperty("forecastStart").GetDateTimeOffset()
-                    == DateTimeOffset.Parse("2026-08-11T08:30:00Z"));
+            Assert.Equal("operation", actual.GetProperty("type").GetString());
+            Assert.Equal("2026-08-11T08:30:00+00:00", actual.GetProperty("forecastStart").GetString());
+            Assert.True(actual.GetProperty("endsAt").GetDateTimeOffset()
+                >= DateTimeOffset.Parse("2026-08-11T09:00:00Z"));
+            Assert.Single(intervals, interval =>
+                interval.GetProperty("machineAssignmentId").GetString() == "assignment-1");
         });
     }
 
     [Fact]
-    public async Task Backward_request_with_in_progress_work_reports_manual_projection_fallback()
+    public async Task Backward_assignment_with_in_progress_work_keeps_actual_start_and_reports_fallback()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -476,24 +487,26 @@ public sealed class TimelineApiTests
                     SET status = 'in_progress', actual_start = '2026-08-11T08:30:00Z',
                         actual_machine_id = 'machine-1'
                     WHERE id = 'op-1';
+                    UPDATE machine_assignments SET planning_mode = 'backward'
+                    WHERE id = 'assignment-1';
                     """;
                 await command.ExecuteNonQueryAsync();
             }
 
             using var response = await client.GetAsync(
-                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&mode=backward&asOf=2026-08-11T09:00:00Z");
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-13T00:00:00Z&asOf=2026-08-11T09:00:00Z");
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            Assert.Equal("backward", document.RootElement.GetProperty("planningMode").GetString());
             Assert.Contains(document.RootElement.GetProperty("conflicts").EnumerateArray(), conflict =>
                 conflict.GetProperty("code").GetString() == "backward_in_progress_fallback");
-            var calculated = document.RootElement.GetProperty("machines")[0]
-                .GetProperty("intervals").EnumerateArray()
-                .Where(interval => interval.GetProperty("timingKind").GetString() == "forecast")
-                .ToArray();
-            Assert.NotEmpty(calculated);
-            Assert.All(calculated, interval =>
-                Assert.Equal("manual", interval.GetProperty("planningMode").GetString()));
+            var calculated = Assert.Single(document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), interval =>
+                    interval.GetProperty("machineAssignmentId").GetString() == "assignment-1");
+            Assert.Equal("backward", calculated.GetProperty("planningMode").GetString());
+            Assert.Equal("2026-08-11T08:30:00+00:00",
+                calculated.GetProperty("actualStart").GetString());
+            Assert.Equal("2026-08-11T08:30:00+00:00",
+                calculated.GetProperty("forecastStart").GetString());
         });
     }
 
@@ -595,9 +608,15 @@ public sealed class TimelineApiTests
                 .ToArray();
             Assert.Contains(intervals, value => value.GetProperty("operationId").GetString() == "op-1");
             Assert.Contains(intervals, value => value.GetProperty("operationId").GetString() == "op-2");
-            Assert.Equal(TimeSpan.FromMinutes(30), TotalDuration(intervals, "op-1", "setup"));
-            Assert.Equal(TimeSpan.FromHours(1), TotalDuration(intervals, "op-1", "production"));
-            Assert.Equal(TimeSpan.FromMinutes(30), TotalDuration(intervals, "op-2", "production"));
+            var firstBlock = Assert.Single(intervals, value =>
+                value.GetProperty("operationId").GetString() == "op-1"
+                && value.GetProperty("type").GetString() == "operation");
+            var secondBlock = Assert.Single(intervals, value =>
+                value.GetProperty("operationId").GetString() == "op-2"
+                && value.GetProperty("type").GetString() == "operation");
+            Assert.Contains("Setup", firstBlock.GetProperty("detail").GetString(), StringComparison.Ordinal);
+            Assert.Contains("Production", firstBlock.GetProperty("detail").GetString(), StringComparison.Ordinal);
+            Assert.Contains("Production", secondBlock.GetProperty("detail").GetString(), StringComparison.Ordinal);
             Assert.DoesNotContain(timeline.RootElement.GetProperty("conflicts").EnumerateArray(),
                 value => value.GetProperty("code").GetString() == "dependency_cycle");
 
@@ -644,7 +663,9 @@ public sealed class TimelineApiTests
                 .EnumerateArray().Where(IsWork).ToArray();
             Assert.NotEmpty(exceptionWork);
             Assert.Equal("2026-08-11T11:00:00+00:00", exceptionWork[0].GetProperty("startsAt").GetString());
-            Assert.DoesNotContain(exceptionWork, interval => Overlaps(interval, "2026-08-11T12:00:00Z", "2026-08-11T13:00:00Z"));
+            var exceptionPhases = exceptionWork[0].GetProperty("detail").GetString()!;
+            Assert.Contains("to 2026-08-11T12:00:00", exceptionPhases, StringComparison.Ordinal);
+            Assert.Contains("Production 2026-08-11T13:00:00", exceptionPhases, StringComparison.Ordinal);
             Assert.Contains(exceptionDocument.RootElement.GetProperty("machines")[0]
                     .GetProperty("intervals").EnumerateArray(),
                 interval => interval.GetProperty("type").GetString() == "waiting"
@@ -660,7 +681,9 @@ public sealed class TimelineApiTests
                 .EnumerateArray().Where(IsWork).ToArray();
             Assert.NotEmpty(weeklyWork);
             Assert.Equal("2026-08-18T08:00:00+00:00", weeklyWork[0].GetProperty("startsAt").GetString());
-            Assert.DoesNotContain(weeklyWork, interval => Overlaps(interval, "2026-08-18T09:00:00Z", "2026-08-18T10:00:00Z"));
+            var weeklyPhases = weeklyWork[0].GetProperty("detail").GetString()!;
+            Assert.Contains("to 2026-08-18T09:00:00", weeklyPhases, StringComparison.Ordinal);
+            Assert.Contains("Production 2026-08-18T10:00:00", weeklyPhases, StringComparison.Ordinal);
         });
     }
 
@@ -712,9 +735,12 @@ public sealed class TimelineApiTests
                 "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var setup = document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
-                .EnumerateArray().First(value => value.GetProperty("type").GetString() == "setup");
-            Assert.Equal("2026-08-11T12:00:00+00:00", setup.GetProperty("startsAt").GetString());
+            var operation = document.RootElement.GetProperty("machines")[0].GetProperty("intervals")
+                .EnumerateArray().First(value => value.GetProperty("type").GetString() == "operation"
+                    && value.GetProperty("operationId").GetString() == "op-1");
+            Assert.Equal("2026-08-11T12:00:00+00:00", operation.GetProperty("startsAt").GetString());
+            Assert.Contains("Setup 2026-08-11T12:00", operation.GetProperty("detail").GetString(),
+                StringComparison.Ordinal);
             Assert.DoesNotContain(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 value => value.GetProperty("code").GetString() == "setup_calendar_defaulted");
@@ -836,7 +862,7 @@ public sealed class TimelineApiTests
                 .Where(interval => interval.GetProperty("operationId").GetString() is "op-1" or "op-2" or "op-3")
                 .ToArray();
             var work = intervals.Where(interval => interval.GetProperty("type").GetString()
-                is "setup" or "qa" or "loadunload" or "production" or "reserved").ToArray();
+                == "operation").ToArray();
             var op1End = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-1")
                 .Max(interval => interval.GetProperty("endsAt").GetDateTimeOffset());
             var op2Start = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-2")
@@ -964,7 +990,7 @@ public sealed class TimelineApiTests
                 && interval.GetProperty("type").GetString() == "waiting");
             Assert.DoesNotContain(operationIntervals, interval =>
                 interval.GetProperty("operationId").GetString() == "op-2"
-                && interval.GetProperty("type").GetString() is "setup" or "production");
+                && interval.GetProperty("type").GetString() == "operation");
             Assert.Equal(["op-1:0", "op-2:1"], await ReadPositionsAsync(application.Services));
         });
     }
@@ -1004,23 +1030,7 @@ public sealed class TimelineApiTests
     }
 
     private static bool IsWork(JsonElement interval) =>
-        interval.GetProperty("type").GetString() is "setup" or "production";
-
-    private static bool Overlaps(JsonElement interval, string startsAt, string endsAt)
-    {
-        var start = DateTimeOffset.Parse(startsAt);
-        var end = DateTimeOffset.Parse(endsAt);
-        return interval.GetProperty("endsAt").GetDateTimeOffset() > start
-            && interval.GetProperty("startsAt").GetDateTimeOffset() < end;
-    }
-
-    private static TimeSpan TotalDuration(
-        IEnumerable<JsonElement> intervals, string operationId, string type) =>
-        intervals.Where(value => value.GetProperty("operationId").GetString() == operationId
-                && value.GetProperty("type").GetString() == type)
-            .Aggregate(TimeSpan.Zero, (total, value) => total
-                + (value.GetProperty("endsAt").GetDateTimeOffset()
-                   - value.GetProperty("startsAt").GetDateTimeOffset()));
+        interval.GetProperty("type").GetString() == "operation";
 
     private static async Task SeedTimelineAsync(IServiceProvider services)
     {

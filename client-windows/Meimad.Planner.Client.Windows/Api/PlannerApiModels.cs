@@ -552,7 +552,10 @@ internal sealed record PlanningBoardOperation(
     string? ActivePauseReason = null,
     string? PausedBy = null,
     DateTimeOffset? PauseStartedAt = null,
-    string? CaseName = null);
+    string? CaseName = null,
+    string? MachineAssignmentId = null,
+    int? AssignmentVersion = null,
+    string PlanningMode = "manual");
 
 internal sealed record PlanningBoardMachine(
     string MachineId,
@@ -582,6 +585,16 @@ internal sealed record MachineAssignmentCompatibilityOverride(
     bool Confirmed,
     string Reason);
 
+internal sealed record MachineAssignment(
+    string MachineAssignmentId,
+    string BatchOperationId,
+    string MachineId,
+    int BacklogPosition,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    string PlanningMode = "manual");
+
 internal sealed record TimelineSnapshot(
     DateTimeOffset ReadAt,
     DateTimeOffset HorizonStart,
@@ -589,8 +602,7 @@ internal sealed record TimelineSnapshot(
     IReadOnlyList<TimelineBatch> Batches,
     IReadOnlyList<TimelineMachine> Machines,
     IReadOnlyList<TimelineDependency> Dependencies,
-    IReadOnlyList<TimelineConflict> Conflicts,
-    string PlanningMode = "manual");
+    IReadOnlyList<TimelineConflict> Conflicts);
 
 internal sealed record TimelineBatch(
     string BatchId,
@@ -627,7 +639,9 @@ internal sealed record TimelineInterval(
     DateTimeOffset? ForecastEnd = null,
     DateTimeOffset? ActualStart = null,
     DateTimeOffset? ActualEnd = null,
-    string PlanningMode = "manual")
+    string PlanningMode = "manual",
+    DateOnly? WorkFinishDate = null,
+    string? MachineAssignmentId = null)
 {
     /// <summary>
     /// The server calculation is authoritative. These optional fields let newer
@@ -646,10 +660,13 @@ internal sealed record TimelineInterval(
                 ? "Calculated"
                 : OperationStatus.Replace('_', ' ');
 
-    public string PlanningModeLabel => string.Equals(
-        PlanningMode, "backward", StringComparison.OrdinalIgnoreCase)
-            ? "Backward projection"
-            : "Manual backlog projection";
+    public string PlanningModeLabel => PlanningMode?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "manual" => "Manual",
+        "backward" => "Backward",
+        "forward" => "Forward",
+        var unknown => $"Unknown ({unknown})"
+    };
 }
 
 internal sealed record TimelineDependency(

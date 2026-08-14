@@ -30,8 +30,9 @@ public sealed class ViewStartupTests
         var editModeButtonWasCompactAndStateful = false;
         var operationActionsWereCompactPlayerIcons = false;
         var operationRowWasDenseAndComplete = false;
-        var backwardContextActionWasReadOnlyAndVisible = false;
-        var timelineModeSelectorWasSharedAndAccessible = false;
+        var assignmentModeActionsWereVisible = false;
+        var timelineHadNoGlobalModeSelector = false;
+        var oneAssignmentRenderedAsOneCanvasBlock = false;
         string? timelineStatusAfterClose = null;
         var thread = new Thread(() =>
         {
@@ -40,6 +41,7 @@ public sealed class ViewStartupTests
             MainWindow? plannerWindow = null;
             TimelineWindow? timelineWindow = null;
             Window? playerWindow = null;
+            Window? timelineRenderWindow = null;
             try
             {
                 application = new App
@@ -151,12 +153,42 @@ public sealed class ViewStartupTests
                     && rowText.Contains("B-1 / SO-1")
                     && rowText.Contains("Qty 4")
                     && rowText.Contains("Time 00:03:00")
+                    && rowText.Contains("Mode Manual")
                     && Descendants<Ellipse>(operationCard).Any(ellipse => ellipse.Width <= 8 && ellipse.ToolTip is not null);
                 var operationBorder = Assert.IsType<Border>(operationCard);
-                var backwardItem = Assert.IsType<MenuItem>(Assert.Single(operationBorder.ContextMenu!.Items));
-                backwardContextActionWasReadOnlyAndVisible =
-                    Equals(backwardItem.Header, "View backward from delivery date")
-                    && backwardItem.ToolTip?.ToString()?.Contains("visual-only", StringComparison.Ordinal) == true;
+                var modeItems = operationBorder.ContextMenu!.Items.Cast<MenuItem>().ToArray();
+                assignmentModeActionsWereVisible = modeItems.Length == 3
+                    && Equals(modeItems[0].Header, "Schedule from delivery date")
+                    && Equals(modeItems[1].Header, "Schedule forward")
+                    && Equals(modeItems[2].Header, "Set manual mode")
+                    && modeItems[0].ToolTip?.ToString()?.Contains("existing assignment", StringComparison.Ordinal) == true;
+
+                var renderStart = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+                var renderViewModel = new TimelineViewModel();
+                typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.HorizonStart))!
+                    .SetValue(renderViewModel, renderStart);
+                typeof(TimelineViewModel).GetProperty(nameof(TimelineViewModel.HorizonEnd))!
+                    .SetValue(renderViewModel, renderStart.AddHours(8));
+                renderViewModel.Machines.Add(new TimelineMachine(
+                    "machine-render", "M-9", "Render verifier",
+                    [
+                        new TimelineInterval(
+                            "operation", "machine-render", "op-render", "batch-render",
+                            "B-R", "PN-R", 10, "Rendered once", renderStart.AddHours(2),
+                            renderStart.AddHours(3), null, PlanningMode: "backward",
+                            MachineAssignmentId: "assignment-render"),
+                        new TimelineInterval(
+                            "waiting", "machine-render", "op-render", "batch-render",
+                            "B-R", "PN-R", 10, "Rendered once", renderStart,
+                            renderStart.AddHours(2), "Available capacity before placement.")
+                    ]));
+                var renderTimeline = new TimelineView { DataContext = renderViewModel };
+                timelineRenderWindow = new Window { Content = renderTimeline, Width = 1000, Height = 700 };
+                timelineRenderWindow.Show();
+                timelineRenderWindow.UpdateLayout();
+                timelineRenderWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                oneAssignmentRenderedAsOneCanvasBlock =
+                    renderTimeline.RenderedMachineAssignmentIds.SequenceEqual(["assignment-render"]);
 
                 var openMethod = typeof(MainWindow).GetMethod(
                     "OpenTimelineWindow_Click",
@@ -174,11 +206,8 @@ public sealed class ViewStartupTests
                     && ReferenceEquals(
                         timelineViewModel,
                         Descendants<TimelineView>(timelineWindow).Single().DataContext);
-                var modeSelector = Descendants<ComboBox>(timelineWindow).Single(combo =>
+                timelineHadNoGlobalModeSelector = !Descendants<ComboBox>(timelineWindow).Any(combo =>
                     AutomationProperties.GetName(combo) == "Timeline projection mode");
-                timelineModeSelectorWasSharedAndAccessible = modeSelector.Items.Count == 2
-                    && ReferenceEquals(modeSelector.SelectedItem, timelineViewModel.SelectedPlanningMode)
-                    && timelineViewModel.PlanningModeBanner.Contains("stored Machine backlog order", StringComparison.OrdinalIgnoreCase);
                 timelineWindowWasReadOnlyAndSecondMonitorReady = timelineWindow.ResizeMode == ResizeMode.CanResizeWithGrip
                     && timelineWindow.ShowInTaskbar
                     && Descendants<UIElement>(timelineWindow).All(element => !element.AllowDrop);
@@ -213,6 +242,7 @@ public sealed class ViewStartupTests
 
                 plannerWindow?.Close();
                 playerWindow?.Close();
+                timelineRenderWindow?.Close();
                 window?.Close();
                 application?.Shutdown();
             }
@@ -234,8 +264,9 @@ public sealed class ViewStartupTests
         Assert.True(editModeButtonWasCompactAndStateful);
         Assert.True(operationActionsWereCompactPlayerIcons);
         Assert.True(operationRowWasDenseAndComplete);
-        Assert.True(backwardContextActionWasReadOnlyAndVisible);
-        Assert.True(timelineModeSelectorWasSharedAndAccessible);
+        Assert.True(assignmentModeActionsWereVisible);
+        Assert.True(timelineHadNoGlobalModeSelector);
+        Assert.True(oneAssignmentRenderedAsOneCanvasBlock);
         Assert.Contains("plan changed", timelineStatusAfterClose, StringComparison.OrdinalIgnoreCase);
     }
 

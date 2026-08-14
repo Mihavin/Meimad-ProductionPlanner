@@ -104,9 +104,33 @@ internal sealed class TimelineCalculationEngine
             operationEntries,
             predecessors,
             conflicts);
-        var invalidNodes = ValidateLockedMachineMembership(nodes, operationEntries, conflicts);
+        var invalidNodes = ValidateLockedMachineMembership(nodes, operationEntries, conflicts)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var node in nodes.Values.Where(value => value.Members.Count > 1))
+        {
+            var modes = node.Members
+                .Select(operationId => operationEntries[operationId].Operation.PlanningMode)
+                .Distinct()
+                .ToArray();
+            if (modes.Length <= 1)
+            {
+                continue;
+            }
 
-        var scheduledByOperation = input.Mode == TimelineCalculationMode.Backward
+            invalidNodes.Add(node.Key);
+            conflicts.Add(
+                "locked_group_planning_mode_conflict",
+                TimelineConflictSeverity.Blocking,
+                "Locked-simultaneous operations must use one shared planning mode; the engine did not silently choose a mode.",
+                node.Members,
+                node.Members.Select(id => operationEntries[id].MachineId).Distinct().ToArray());
+        }
+
+        var nodeModes = nodes.ToDictionary(
+            pair => pair.Key,
+            pair => NodePlanningMode(pair.Value, operationEntries),
+            StringComparer.Ordinal);
+        var scheduledByOperation = nodeModes.Values.All(mode => mode == TimelinePlanningMode.Backward)
             ? ScheduleNodesBackward(
                 nodes,
                 predecessors,
@@ -122,9 +146,25 @@ internal sealed class TimelineCalculationEngine
                 input.Dependencies,
                 invalidNodes,
                 conflicts)
-            : ScheduleNodes(
+            : nodeModes.Values.All(mode => mode != TimelinePlanningMode.Backward)
+                ? ScheduleNodes(
+                    nodes,
+                    predecessors,
+                    operationEntries,
+                    machineWindows,
+                    setupWindows,
+                    resources,
+                    machineSkills,
+                    dayShiftWindows,
+                    horizonStart,
+                    input.Downtimes,
+                    input.Dependencies,
+                    invalidNodes,
+                    conflicts)
+                : ScheduleNodesMixed(
                 nodes,
                 predecessors,
+                nodeModes,
                 operationEntries,
                 machineWindows,
                 setupWindows,
@@ -132,6 +172,7 @@ internal sealed class TimelineCalculationEngine
                 machineSkills,
                 dayShiftWindows,
                 horizonStart,
+                horizonEnd,
                 input.Downtimes,
                 input.Dependencies,
                 invalidNodes,
@@ -822,6 +863,252 @@ internal sealed class TimelineCalculationEngine
                         occupied.Add(reservation);
                     }
                     scheduledStarts[nodeKey] = scheduled.Results.Min(result => result.StartsAt);
+                }
+
+                if (restart)
+                {
+                    break;
+                }
+            }
+
+            if (restart)
+            {
+                continue;
+            }
+
+            return AddDependencyWaitingIntervals(results, dependencies, machineWindows, horizonStart);
+        }
+    }
+
+    private static TimelinePlanningMode NodePlanningMode(
+        ScheduleNode node,
+        IReadOnlyDictionary<string, BacklogEntry> operations)
+    {
+        var modes = node.Members
+            .Select(operationId => operations[operationId].Operation.PlanningMode)
+            .ToArray();
+        if (modes.Contains(TimelinePlanningMode.Backward))
+        {
+            return TimelinePlanningMode.Backward;
+        }
+
+        return modes.Contains(TimelinePlanningMode.Forward)
+            ? TimelinePlanningMode.Forward
+            : TimelinePlanningMode.Manual;
+    }
+
+    private static IReadOnlyDictionary<string, TimelineOperationResult> ScheduleNodesMixed(
+        IReadOnlyDictionary<string, ScheduleNode> nodes,
+        IReadOnlyDictionary<string, HashSet<string>> predecessors,
+        IReadOnlyDictionary<string, TimelinePlanningMode> nodeModes,
+        IReadOnlyDictionary<string, BacklogEntry> operations,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> machineWindows,
+        IReadOnlyList<InstantWindow> setupWindows,
+        IReadOnlyList<ResourceAvailability> resources,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> machineSkills,
+        IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
+        DateTimeOffset horizonStart,
+        DateTimeOffset horizonEnd,
+        IReadOnlyList<TimelineDowntime> downtimes,
+        IReadOnlyList<TimelineDependency> dependencies,
+        IReadOnlySet<string> invalidNodes,
+        ConflictCollector conflicts)
+    {
+        var successors = nodes.Keys.ToDictionary(
+            key => key,
+            _ => new HashSet<string>(StringComparer.Ordinal),
+            StringComparer.Ordinal);
+        foreach (var (node, requiredPredecessors) in predecessors)
+        {
+            foreach (var predecessor in requiredPredecessors)
+            {
+                successors[predecessor].Add(node);
+            }
+        }
+
+        var failed = invalidNodes.ToHashSet(StringComparer.Ordinal);
+        while (true)
+        {
+            var pending = nodes.Keys.Where(node => !failed.Contains(node))
+                .ToHashSet(StringComparer.Ordinal);
+            var scheduled = new Dictionary<string, ScheduledNode>(StringComparer.Ordinal);
+            var results = new Dictionary<string, TimelineOperationResult>(StringComparer.Ordinal);
+            var occupiedResources = new Dictionary<string, List<ResourceReservation>>(StringComparer.Ordinal);
+            var restart = false;
+
+            while (pending.Count > 0)
+            {
+                var blocked = pending.Where(node =>
+                        predecessors[node].Any(failed.Contains))
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray();
+                if (blocked.Length > 0)
+                {
+                    foreach (var nodeKey in blocked)
+                    {
+                        failed.Add(nodeKey);
+                        pending.Remove(nodeKey);
+                        var node = nodes[nodeKey];
+                        conflicts.Add(
+                            "dependency_unresolved",
+                            TimelineConflictSeverity.Blocking,
+                            "An operation could not be calculated because a required predecessor or earlier Machine backlog operation failed.",
+                            node.Members,
+                            node.Members.Select(id => operations[id].MachineId).ToArray());
+                    }
+
+                    restart = true;
+                    break;
+                }
+
+                var backwardReady = pending
+                    .Where(node => nodeModes[node] == TimelinePlanningMode.Backward)
+                    .Where(node => successors[node]
+                        .Where(successor => nodeModes[successor] == TimelinePlanningMode.Backward)
+                        .All(scheduled.ContainsKey))
+                    .Where(node => predecessors[node]
+                        .Where(predecessor => nodeModes[predecessor] != TimelinePlanningMode.Backward)
+                        .All(scheduled.ContainsKey))
+                    .OrderBy(value => value, Comparer<string>.Create((left, right) =>
+                        CompareBackwardReadyNodes(left, right, nodes, operations)))
+                    .ToArray();
+                var forwardReady = pending
+                    .Where(node => nodeModes[node] != TimelinePlanningMode.Backward)
+                    .Where(node => predecessors[node].All(scheduled.ContainsKey))
+                    .OrderBy(value => value, Comparer<string>.Create((left, right) =>
+                        CompareReadyNodes(left, right, nodes, operations)))
+                    .ToArray();
+
+                var ready = backwardReady.Length > 0 ? backwardReady : forwardReady;
+                if (ready.Length == 0)
+                {
+                    var cycleOperations = pending.SelectMany(node => nodes[node].Members)
+                        .OrderBy(value => value, StringComparer.Ordinal).ToArray();
+                    conflicts.Add(
+                        "dependency_cycle",
+                        TimelineConflictSeverity.Blocking,
+                        "Backlog order and sequential dependencies contain a cycle; the engine did not reorder them.",
+                        cycleOperations,
+                        cycleOperations.Select(id => operations[id].MachineId).Distinct().ToArray());
+                    return AddDependencyWaitingIntervals(results, dependencies, machineWindows, horizonStart);
+                }
+
+                foreach (var nodeKey in ready)
+                {
+                    if (!pending.Contains(nodeKey))
+                    {
+                        continue;
+                    }
+
+                    var node = nodes[nodeKey];
+                    ScheduledNode? nodeResult;
+                    if (nodeModes[nodeKey] == TimelinePlanningMode.Backward)
+                    {
+                        var backwardSuccessors = successors[nodeKey]
+                            .Where(successor => nodeModes[successor] == TimelinePlanningMode.Backward)
+                            .Select(successor => scheduled[successor].Results.Min(result => result.StartsAt))
+                            .ToArray();
+                        var latest = backwardSuccessors.Length == 0
+                            ? horizonEnd
+                            : backwardSuccessors.Min();
+                        var cutoffs = node.Members
+                            .Select(operationId => operations[operationId].Operation.LatestFinish)
+                            .Where(value => value.HasValue)
+                            .Select(value => value!.Value.ToUniversalTime())
+                            .ToArray();
+                        if (cutoffs.Length > 0)
+                        {
+                            latest = cutoffs.Min() < latest ? cutoffs.Min() : latest;
+                        }
+
+                        var forwardPredecessorFinish = predecessors[nodeKey]
+                            .Where(predecessor => nodeModes[predecessor] != TimelinePlanningMode.Backward)
+                            .Select(predecessor => scheduled[predecessor].FinishesAt)
+                            .DefaultIfEmpty(horizonStart)
+                            .Max();
+                        var adjustedOperations = operations;
+                        if (forwardPredecessorFinish > horizonStart)
+                        {
+                            adjustedOperations = operations.ToDictionary(
+                                pair => pair.Key,
+                                pair => node.Members.Contains(pair.Key, StringComparer.Ordinal)
+                                    ? pair.Value with
+                                    {
+                                        Operation = pair.Value.Operation with
+                                        {
+                                            EarliestStart = pair.Value.Operation.EarliestStart is { } current
+                                                && current > forwardPredecessorFinish
+                                                    ? current
+                                                    : forwardPredecessorFinish
+                                        }
+                                    }
+                                    : pair.Value,
+                                StringComparer.Ordinal);
+                        }
+
+                        nodeResult = node.Members.Count == 1
+                            ? ScheduleSingleBackward(
+                                adjustedOperations[node.Members[0]], latest, machineWindows, setupWindows,
+                                resources, machineSkills, occupiedResources, dayShiftWindows, downtimes)
+                            : ScheduleLockedGroupBackward(
+                                node, adjustedOperations, latest, machineWindows, setupWindows,
+                                resources, machineSkills, occupiedResources, dayShiftWindows, downtimes);
+                    }
+                    else
+                    {
+                        var earliest = predecessors[nodeKey].Count == 0
+                            ? horizonStart
+                            : predecessors[nodeKey].Max(predecessor => scheduled[predecessor].FinishesAt);
+                        var memberEarliest = node.Members
+                            .Select(operationId => operations[operationId].Operation.EarliestStart)
+                            .Where(value => value.HasValue)
+                            .Select(value => value!.Value.ToUniversalTime())
+                            .DefaultIfEmpty(earliest)
+                            .Max();
+                        earliest = memberEarliest > earliest ? memberEarliest : earliest;
+                        nodeResult = node.Members.Count == 1
+                            ? ScheduleSingle(
+                                operations[node.Members[0]], earliest, machineWindows, setupWindows,
+                                resources, machineSkills, occupiedResources, dayShiftWindows, downtimes)
+                            : ScheduleLockedGroup(
+                                node, operations, earliest, machineWindows, setupWindows,
+                                resources, machineSkills, occupiedResources, dayShiftWindows, downtimes);
+                    }
+
+                    pending.Remove(nodeKey);
+                    if (nodeResult is null
+                        || nodeResult.Results.Any(result => result.StartsAt < horizonStart
+                            || result.FinishesAt > horizonEnd))
+                    {
+                        failed.Add(nodeKey);
+                        conflicts.Add(
+                            nodeModes[nodeKey] == TimelinePlanningMode.Backward
+                                ? "backward_schedule_cannot_fit"
+                                : "insufficient_availability",
+                            TimelineConflictSeverity.Blocking,
+                            nodeModes[nodeKey] == TimelinePlanningMode.Backward
+                                ? "The operation cannot fit before its Work Finish Date inside the selected horizon and configured availability."
+                                : InsufficientAvailabilityMessage(node, operations, resources, machineSkills),
+                            node.Members,
+                            node.Members.Select(id => operations[id].MachineId).ToArray());
+                        restart = true;
+                        break;
+                    }
+
+                    scheduled[nodeKey] = nodeResult;
+                    foreach (var result in nodeResult.Results)
+                    {
+                        results[result.OperationId] = result;
+                    }
+                    foreach (var reservation in nodeResult.ResourceReservations)
+                    {
+                        if (!occupiedResources.TryGetValue(reservation.ResourceId, out var occupied))
+                        {
+                            occupied = [];
+                            occupiedResources.Add(reservation.ResourceId, occupied);
+                        }
+                        occupied.Add(reservation);
+                    }
                 }
 
                 if (restart)

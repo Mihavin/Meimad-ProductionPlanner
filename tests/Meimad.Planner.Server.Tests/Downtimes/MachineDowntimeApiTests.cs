@@ -103,11 +103,13 @@ public sealed class MachineDowntimeApiTests
             var recalculatedJson = await recalculated.Content.ReadFromJsonAsync<JsonElement>();
             Assert.DoesNotContain(recalculatedJson.GetProperty("conflicts").EnumerateArray(),
                 value => value.GetProperty("code").GetString() == "insufficient_availability");
-            var production = recalculatedJson.GetProperty("machines")[0].GetProperty("intervals").EnumerateArray()
-                .Where(value => value.GetProperty("type").GetString() == "production").ToArray();
-            Assert.Equal(2, production.Length);
-            Assert.Equal("2026-08-11T10:00:00+00:00", production[0].GetProperty("endsAt").GetString());
-            Assert.Equal("2026-08-11T11:00:00+00:00", production[1].GetProperty("startsAt").GetString());
+            var operation = Assert.Single(recalculatedJson.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), value =>
+                    value.GetProperty("operationId").GetString() == "operation-1"
+                    && value.GetProperty("type").GetString() == "operation");
+            var phases = operation.GetProperty("detail").GetString()!;
+            Assert.Contains("to 2026-08-11T10:00:00", phases, StringComparison.Ordinal);
+            Assert.Contains("Production 2026-08-11T11:00:00", phases, StringComparison.Ordinal);
             var downtime = Assert.Single(recalculatedJson.GetProperty("machines")[0].GetProperty("intervals").EnumerateArray(),
                 value => value.GetProperty("type").GetString() == "downtime");
             Assert.Equal("operation-1", downtime.GetProperty("operationId").GetString());

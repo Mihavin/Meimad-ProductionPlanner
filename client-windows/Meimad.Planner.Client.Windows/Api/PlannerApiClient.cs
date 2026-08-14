@@ -358,13 +358,6 @@ internal interface IPlannerApiClient : IDisposable
         DateTimeOffset to,
         CancellationToken cancellationToken = default);
 
-    Task<TimelineSnapshot> GetTimelineAsync(
-        DateTimeOffset from,
-        DateTimeOffset to,
-        string planningMode,
-        CancellationToken cancellationToken = default) =>
-        GetTimelineAsync(from, to, cancellationToken);
-
     /// <summary>
     /// Allows deterministic Timeline requests in diagnostics and tests. Normal
     /// interactive refreshes omit <paramref name="asOf"/> and use Server time.
@@ -375,14 +368,6 @@ internal interface IPlannerApiClient : IDisposable
         DateTimeOffset? asOf,
         CancellationToken cancellationToken = default) =>
         GetTimelineAsync(from, to, cancellationToken);
-
-    Task<TimelineSnapshot> GetTimelineAsync(
-        DateTimeOffset from,
-        DateTimeOffset to,
-        DateTimeOffset? asOf,
-        string planningMode,
-        CancellationToken cancellationToken = default) =>
-        GetTimelineAsync(from, to, asOf, cancellationToken);
 
     Task AssignOrMoveOperationAsync(
         string batchOperationId,
@@ -407,6 +392,15 @@ internal interface IPlannerApiClient : IDisposable
         string clientId,
         long editGeneration,
         CancellationToken cancellationToken = default);
+
+    Task<MachineAssignment> ChangeMachineAssignmentPlanningModeAsync(
+        string machineAssignmentId,
+        int assignmentVersion,
+        string planningMode,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
 
     Task<BatchOperationExecution> ChangeOperationExecutionAsync(
         string batchOperationId,
@@ -1231,46 +1225,21 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
         => await GetTimelineAsync(
-            from, to, asOf: null, planningMode: "manual", cancellationToken: cancellationToken);
-
-    public async Task<TimelineSnapshot> GetTimelineAsync(
-        DateTimeOffset from,
-        DateTimeOffset to,
-        string planningMode,
-        CancellationToken cancellationToken = default)
-        => await GetTimelineAsync(
-            from, to, asOf: null, planningMode: planningMode, cancellationToken: cancellationToken);
+            from, to, asOf: null, cancellationToken: cancellationToken);
 
     public async Task<TimelineSnapshot> GetTimelineAsync(
         DateTimeOffset from,
         DateTimeOffset to,
         DateTimeOffset? asOf,
-        CancellationToken cancellationToken = default)
-        => await GetTimelineAsync(
-            from, to, asOf, planningMode: "manual", cancellationToken: cancellationToken);
-
-    public async Task<TimelineSnapshot> GetTimelineAsync(
-        DateTimeOffset from,
-        DateTimeOffset to,
-        DateTimeOffset? asOf,
-        string planningMode,
         CancellationToken cancellationToken = default)
     {
-        var normalizedMode = planningMode?.Trim().ToLowerInvariant();
-        if (normalizedMode is not ("manual" or "backward"))
-        {
-            throw new ArgumentException(
-                "Timeline planning mode must be 'manual' or 'backward'.",
-                nameof(planningMode));
-        }
-
         var fromValue = Uri.EscapeDataString(from.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         var toValue = Uri.EscapeDataString(to.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         var asOfQuery = asOf.HasValue
             ? $"&asOf={Uri.EscapeDataString(asOf.Value.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture))}"
             : string.Empty;
         using var response = await httpClient.GetAsync(
-            $"api/v1/timeline?from={fromValue}&to={toValue}{asOfQuery}&mode={normalizedMode}",
+            $"api/v1/timeline?from={fromValue}&to={toValue}{asOfQuery}",
             cancellationToken);
         return await ReadSuccessAsync<TimelineSnapshot>(response, cancellationToken);
     }
@@ -1351,6 +1320,49 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
+    public async Task<MachineAssignment> ChangeMachineAssignmentPlanningModeAsync(
+        string machineAssignmentId,
+        int assignmentVersion,
+        string planningMode,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedMode = planningMode?.Trim().ToLowerInvariant();
+        if (normalizedMode is not ("forward" or "backward" or "manual"))
+        {
+            throw new ArgumentException(
+                "Assignment planning mode must be 'forward', 'backward', or 'manual'.",
+                nameof(planningMode));
+        }
+
+        if (string.IsNullOrWhiteSpace(machineAssignmentId))
+        {
+            throw new ArgumentException("Machine assignment ID is required.", nameof(machineAssignmentId));
+        }
+
+        if (assignmentVersion < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(assignmentVersion),
+                "Machine assignment version must be positive.");
+        }
+
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/machine-assignments/{Uri.EscapeDataString(machineAssignmentId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation(
+            "If-Match",
+            $"\"machine-assignment:{machineAssignmentId}:v{assignmentVersion}\"");
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new { planningMode = normalizedMode }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<MachineAssignment>(response, cancellationToken);
     }
 
     public async Task<BatchOperationExecution> ChangeOperationExecutionAsync(

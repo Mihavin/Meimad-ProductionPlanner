@@ -345,8 +345,7 @@ public sealed class TimelineBackwardCalculationTests
         [],
         dependencies,
         resources,
-        calendars,
-        TimelineCalculationMode.Backward);
+        calendars);
 
     private static TimelineMachineBacklog Backlog(
         string machineId,
@@ -369,7 +368,8 @@ public sealed class TimelineBackwardCalculationTests
         PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
         PriorityOrderNumber: order,
         EarliestStart: Start,
-        LatestFinish: latest);
+        LatestFinish: latest,
+        PlanningMode: TimelinePlanningMode.Backward);
 
     private static TimelineOperationResult Result(TimelineCalculationResult result, string operationId) =>
         Assert.Single(result.Operations, value => value.OperationId == operationId);

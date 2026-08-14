@@ -98,6 +98,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             batchOperationId,
             machineId,
             backlogPosition,
+            MachineAssignmentPlanningMode.Manual,
             1,
             now,
             now);
@@ -265,6 +266,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                    machine_assignments.version,
                    machine_assignments.created_at,
                    machine_assignments.updated_at,
+                   machine_assignments.planning_mode,
                    batch_operations.production_batch_id,
                    batch_operations.operation_number,
                    batch_operations.name,
@@ -285,16 +287,127 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         {
             items.Add(new MachineBacklogItem(
                 ReadAssignment(reader),
-                reader.GetString(7),
-                reader.GetInt32(8),
-                reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : ParseInstant(reader.GetString(11)),
+                reader.GetString(8),
+                reader.GetInt32(9),
+                reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : ParseInstant(reader.GetString(12)),
-                reader.IsDBNull(13) ? null : reader.GetString(13)));
+                reader.IsDBNull(13) ? null : ParseInstant(reader.GetString(13)),
+                reader.IsDBNull(14) ? null : reader.GetString(14)));
         }
 
         return items;
+    }
+
+    public async Task<MachineAssignmentPlanningModeMutationResult> ChangePlanningModeAsync(
+        string machineAssignmentId,
+        int expectedVersion,
+        MachineAssignmentPlanningMode planningMode,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(
+            connection, transaction, editAuthority, cancellationToken);
+
+        MachineAssignment assignment;
+        string operationStatus;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT machine_assignments.id,
+                       machine_assignments.batch_operation_id,
+                       machine_assignments.machine_id,
+                       machine_assignments.backlog_position,
+                       machine_assignments.version,
+                       machine_assignments.created_at,
+                       machine_assignments.updated_at,
+                       machine_assignments.planning_mode,
+                       batch_operations.status
+                FROM machine_assignments
+                JOIN batch_operations
+                  ON batch_operations.id = machine_assignments.batch_operation_id
+                WHERE machine_assignments.id = $assignmentId;
+                """;
+            read.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new MachineAssignmentNotFoundException(machineAssignmentId);
+            }
+
+            assignment = ReadAssignment(reader);
+            operationStatus = reader.GetString(8);
+        }
+
+        if (assignment.Version != expectedVersion)
+        {
+            throw new MachineAssignmentVersionConflictException(
+                machineAssignmentId, expectedVersion);
+        }
+
+        if (assignment.PlanningMode == planningMode)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new MachineAssignmentPlanningModeMutationResult(assignment, Changed: false);
+        }
+
+        if (operationStatus == "in_progress")
+        {
+            throw new RunningMachineAssignmentPlanningModeException(machineAssignmentId);
+        }
+
+        var updated = assignment with
+        {
+            PlanningMode = planningMode,
+            Version = assignment.Version + 1,
+            UpdatedAt = now
+        };
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE machine_assignments
+                SET planning_mode = $planningMode,
+                    version = version + 1,
+                    updated_at = $updatedAt
+                WHERE id = $assignmentId AND version = $expectedVersion;
+                """;
+            update.Parameters.AddWithValue("$planningMode", planningMode.ToToken());
+            update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
+            update.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
+            update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new MachineAssignmentVersionConflictException(
+                    machineAssignmentId, expectedVersion);
+            }
+        }
+
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection,
+            transaction,
+            new(
+                "machine_assignment_planning_mode_changed",
+                now,
+                actor,
+                new Dictionary<string, string>
+                {
+                    ["machineAssignmentId"] = assignment.MachineAssignmentId,
+                    ["batchOperationId"] = assignment.BatchOperationId,
+                    ["machineId"] = assignment.MachineId
+                },
+                "planner_selected",
+                null,
+                new { planningMode = assignment.PlanningMode.ToToken() },
+                new { planningMode = updated.PlanningMode.ToToken() }),
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return new MachineAssignmentPlanningModeMutationResult(updated, Changed: true);
     }
 
     public async Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
@@ -681,6 +794,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             string.Empty,
             string.Empty,
             0,
+            MachineAssignmentPlanningMode.Manual,
             0,
             default,
             default);
@@ -727,6 +841,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             UPDATE machine_assignments
             SET machine_id = $machineId,
                 backlog_position = $position,
+                planning_mode = $planningMode,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id;
@@ -746,10 +861,10 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.CommandText = """
             INSERT INTO machine_assignments (
                 id, batch_operation_id, machine_id, backlog_position,
-                version, created_at, updated_at)
+                planning_mode, version, created_at, updated_at)
             VALUES (
                 $id, $operationId, $machineId, $position,
-                $version, $createdAt, $updatedAt);
+                $planningMode, $version, $createdAt, $updatedAt);
             """;
         AddAssignmentParameters(command, assignment);
         command.Parameters.AddWithValue("$operationId", assignment.BatchOperationId);
@@ -764,6 +879,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Parameters.AddWithValue("$id", assignment.MachineAssignmentId);
         command.Parameters.AddWithValue("$machineId", assignment.MachineId);
         command.Parameters.AddWithValue("$position", assignment.BacklogPosition);
+        command.Parameters.AddWithValue("$planningMode", assignment.PlanningMode.ToToken());
         command.Parameters.AddWithValue("$version", assignment.Version);
         command.Parameters.AddWithValue("$updatedAt", FormatInstant(assignment.UpdatedAt));
     }
@@ -900,7 +1016,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, batch_operation_id, machine_id, backlog_position,
-                   version, created_at, updated_at
+                   version, created_at, updated_at, planning_mode
             FROM machine_assignments
             WHERE batch_operation_id = $operationId;
             """;
@@ -919,7 +1035,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, batch_operation_id, machine_id, backlog_position,
-                   version, created_at, updated_at
+                   version, created_at, updated_at, planning_mode
             FROM machine_assignments
             WHERE machine_id = $machineId
             ORDER BY backlog_position;
@@ -940,9 +1056,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         reader.GetString(1),
         reader.GetString(2),
         reader.GetInt32(3),
+        ReadPlanningMode(reader.GetString(7)),
         reader.GetInt32(4),
         ParseInstant(reader.GetString(5)),
         ParseInstant(reader.GetString(6)));
+
+    private static MachineAssignmentPlanningMode ReadPlanningMode(string value) =>
+        MachineAssignmentPlanningModes.TryParse(value, out var mode)
+            ? mode
+            : throw new InvalidDataException(
+                $"Stored Machine Assignment planning mode '{value}' is invalid.");
 
     private static async Task InsertOverrideLogAsync(
         SqliteConnection connection,

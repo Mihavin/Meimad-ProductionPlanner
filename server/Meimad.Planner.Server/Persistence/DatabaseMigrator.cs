@@ -28,7 +28,8 @@ internal sealed class DatabaseMigrator
         new SchemaV20WeeklyMaterialReportMigration(),
         new SchemaV21WeeklyEmployeeEfficiencyReportMigration(),
         new SchemaV22StructuredEventLogMigration(),
-        new SchemaV23OperationActualTimesMigration()
+        new SchemaV23OperationActualTimesMigration(),
+        new SchemaV24MachineAssignmentPlanningModeMigration()
     ];
 
     private readonly SqliteDatabase database;

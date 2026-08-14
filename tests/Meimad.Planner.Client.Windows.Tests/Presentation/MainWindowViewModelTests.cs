@@ -192,17 +192,22 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task Backlog_context_request_opens_shared_backward_projection_without_edit_mutation()
+    public async Task Assignment_mode_change_recalculates_the_existing_shared_timeline()
     {
         var operation = new PlanningBoardOperation(
             "operation-1", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
-            "mill", 60, 30, "not_started", "machine-1", 0, 2, ["SO-1"], 120);
+            "mill", 60, 30, "not_started", "machine-1", 0, 2, ["SO-1"], 120) with
+        {
+            MachineAssignmentId = "assignment-1",
+            AssignmentVersion = 2,
+            PlanningMode = "manual"
+        };
         var machine = new PlanningBoardMachine(
             "machine-1", "M-1", "Mill 1", "mill", "3-axis", [], true, [operation]);
         var api = new FakeApiClient
         {
             Health = Healthy(),
-            EditMode = Editor() with { State = ClientEditState.Viewer },
+            EditMode = Editor(),
             Board = new PlanningBoardSnapshot(
                 DateTimeOffset.UtcNow, "available", "Calculated", [], [], [machine])
         };
@@ -210,17 +215,19 @@ public sealed class MainWindowViewModelTests
             new FakeSettingsStore(Settings),
             new FakeApiClientFactory(api));
         await viewModel.InitializeAsync();
-        var navigationRequested = false;
-        viewModel.TimelineViewRequested += (_, _) => navigationRequested = true;
+        var sharedTimeline = viewModel.Timeline;
+        var timelineRequestsBeforeChange = api.TimelineRequestCount;
 
-        viewModel.MachinePlanningBoard.RequestBackwardTimeline(
-            viewModel.MachinePlanningBoard.Machines.Single().Backlog.Single());
+        await viewModel.MachinePlanningBoard.ChangePlanningModeAsync(
+            viewModel.MachinePlanningBoard.Machines.Single().Backlog.Single(),
+            "backward");
         await Task.Yield();
 
-        Assert.True(navigationRequested);
-        Assert.Equal("backward", viewModel.Timeline.SelectedPlanningMode.Token);
-        Assert.Contains("backward", api.TimelineModes, StringComparer.Ordinal);
-        Assert.Null(api.AssignedOperationId);
+        Assert.Same(sharedTimeline, viewModel.Timeline);
+        Assert.Equal("assignment-1", api.PlanningModeAssignmentId);
+        Assert.Equal("backward", api.PlanningMode);
+        Assert.Equal("backward", viewModel.MachinePlanningBoard.Machines.Single().Backlog.Single().PlanningMode);
+        Assert.True(api.TimelineRequestCount > timelineRequestsBeforeChange);
         Assert.False(viewModel.MachinePlanningBoard.CanUndo);
     }
 
@@ -282,9 +289,13 @@ public sealed class MainWindowViewModelTests
 
         internal Exception? Failure { get; init; }
 
-        internal PlanningBoardSnapshot? Board { get; init; }
+        internal PlanningBoardSnapshot? Board { get; set; }
 
         internal string? AssignedOperationId { get; private set; }
+
+        internal string? PlanningModeAssignmentId { get; private set; }
+
+        internal string? PlanningMode { get; private set; }
 
         public Task<ServerHealth> GetHealthAsync(CancellationToken cancellationToken = default) =>
             HealthTask
@@ -374,23 +385,13 @@ public sealed class MainWindowViewModelTests
             DateTimeOffset from,
             DateTimeOffset to,
             CancellationToken cancellationToken = default)
-            => GetTimelineAsync(from, to, "manual", cancellationToken);
-
-        public Task<TimelineSnapshot> GetTimelineAsync(
-            DateTimeOffset from,
-            DateTimeOffset to,
-            string planningMode,
-            CancellationToken cancellationToken = default)
         {
             TimelineRequestCount++;
-            TimelineModes.Add(planningMode);
             return Task.FromResult(new TimelineSnapshot(
-                DateTimeOffset.UtcNow, from, to, [], [], [], [], planningMode));
+                DateTimeOffset.UtcNow, from, to, [], [], [], []));
         }
 
         public int TimelineRequestCount { get; private set; }
-
-        public List<string> TimelineModes { get; } = [];
 
         public Task AssignOrMoveOperationAsync(
             string batchOperationId,
@@ -410,6 +411,40 @@ public sealed class MainWindowViewModelTests
             long editGeneration,
             CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+
+        public Task<MachineAssignment> ChangeMachineAssignmentPlanningModeAsync(
+            string machineAssignmentId,
+            int assignmentVersion,
+            string planningMode,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            PlanningModeAssignmentId = machineAssignmentId;
+            PlanningMode = planningMode;
+            if (Board is not null)
+            {
+                Board = Board with
+                {
+                    Machines = Board.Machines.Select(machine => machine with
+                    {
+                        Backlog = machine.Backlog.Select(operation =>
+                            operation.MachineAssignmentId == machineAssignmentId
+                                ? operation with
+                                {
+                                    PlanningMode = planningMode,
+                                    AssignmentVersion = assignmentVersion + 1
+                                }
+                                : operation).ToArray()
+                    }).ToArray()
+                };
+            }
+
+            return Task.FromResult(new MachineAssignment(
+                machineAssignmentId, "operation-1", "machine-1", 0,
+                assignmentVersion + 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+                planningMode));
+        }
 
         public void Dispose()
         {

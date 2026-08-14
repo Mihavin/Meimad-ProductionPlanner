@@ -1,6 +1,7 @@
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
 using Meimad.Planner.Client.Windows.Views;
+using System.Windows.Media;
 
 namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
@@ -12,79 +13,28 @@ public sealed class TimelineViewModelTests
         var viewModel = new TimelineViewModel();
 
         Assert.Equal(30, (viewModel.ToDate!.Value.Date - viewModel.FromDate!.Value.Date).TotalDays);
-        Assert.Equal("manual", viewModel.SelectedPlanningMode.Token);
-        Assert.Contains("stored Machine backlog order", viewModel.PlanningModeBanner, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Backward_mode_is_a_read_only_server_projection_with_due_date_warnings()
+    public async Task One_backward_assignment_is_one_normalized_operation_block_plus_capacity_annotation()
     {
         var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
         var end = start.AddDays(10);
+        var due = new DateOnly(2026, 8, 19);
         var snapshot = new TimelineSnapshot(
             start, start, end,
-            [new TimelineBatch("batch-1", "B-1", "PN-1", new DateOnly(2026, 8, 19))],
-            [new TimelineMachine("machine-1", "M-1", "Mill", [])],
-            [],
-            [new TimelineConflict(
-                "warning-1", "backward_deadline_missing", "attention",
-                "Another operation has no delivery date.", ["op-2"], ["machine-1"])],
-            "backward");
+            [new TimelineBatch("batch-1", "B-1", "PN-1", due)],
+            [new TimelineMachine("machine-1", "M-1", "Mill", [
+                new TimelineInterval(
+                    "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+                    "Mill", start.AddHours(2), start.AddHours(3), null,
+                    PlanningMode: "backward", MachineAssignmentId: "assignment-1"),
+                new TimelineInterval(
+                    "waiting", "machine-1", null, null, null, null, null, null,
+                    start, start.AddHours(2), "Available capacity before delivery-date placement.")
+            ])],
+            [], []);
         var api = new FakeApiClient(snapshot);
-        var viewModel = new TimelineViewModel
-        {
-            FromDate = start.UtcDateTime,
-            ToDate = end.UtcDateTime,
-            SelectedPlanningMode = new(
-                "backward", "Backward",
-                "Visual calculation from allocated Order Work Finish Dates. Nothing is saved or reordered.")
-        };
-        viewModel.AttachSession(api);
-
-        await viewModel.RefreshAsync();
-
-        Assert.Equal("backward", api.RequestedModes.Single());
-        Assert.Equal(new DateOnly(2026, 8, 19), viewModel.Batches.Single().WorkFinishDate);
-        Assert.Contains("visual projection", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("No dates or backlog positions were saved", viewModel.StatusMessage, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Backward_in_progress_fallback_status_says_manual_projection_is_shown()
-    {
-        var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
-        var end = start.AddDays(10);
-        var snapshot = new TimelineSnapshot(
-            start, start, end, [],
-            [new TimelineMachine("machine-1", "M-1", "Mill", [])], [],
-            [new TimelineConflict(
-                "fallback", "backward_in_progress_fallback", "attention",
-                "Actual work is fixed.", ["op-1"], ["machine-1"])],
-            "backward");
-        var viewModel = new TimelineViewModel
-        {
-            FromDate = start.UtcDateTime,
-            ToDate = end.UtcDateTime,
-            SelectedPlanningMode = new(
-                "backward", "Backward",
-                "Visual calculation from allocated Order Work Finish Dates. Nothing is saved or reordered.")
-        };
-        viewModel.AttachSession(new FakeApiClient(snapshot));
-
-        await viewModel.RefreshAsync();
-
-        Assert.Contains("Manual visual projection is shown", viewModel.StatusMessage, StringComparison.Ordinal);
-        Assert.Contains("actual start remains fixed", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task Mode_change_during_refresh_discards_stale_manual_response()
-    {
-        var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
-        var end = start.AddDays(10);
-        var manual = Snapshot("Stale manual", start, end);
-        var backward = Snapshot("Current backward", start, end) with { PlanningMode = "backward" };
-        var api = new FakeApiClient(manual, backward, pauseFirstRequest: true);
         var viewModel = new TimelineViewModel
         {
             FromDate = start.UtcDateTime,
@@ -92,15 +42,61 @@ public sealed class TimelineViewModelTests
         };
         viewModel.AttachSession(api);
 
-        var refresh = viewModel.RefreshAsync();
-        await api.FirstRequestStarted.Task;
-        viewModel.SelectedPlanningMode = viewModel.PlanningModes.Single(mode => mode.Token == "backward");
-        api.ReleaseFirstRequest.SetResult();
-        await refresh;
+        await viewModel.RefreshAsync();
 
-        Assert.Equal(["manual", "backward"], api.RequestedModes);
-        Assert.Equal("Current backward", viewModel.Machines.Single().Name);
-        Assert.Equal("backward", viewModel.SelectedPlanningMode.Token);
+        Assert.Equal(1, api.RequestCount);
+        var intervals = viewModel.Machines.Single().Intervals;
+        Assert.Equal(2, intervals.Count);
+        var interval = Assert.Single(intervals, TimelineView.IsOperationWorkInterval);
+        Assert.Equal("backward", interval.PlanningMode);
+        Assert.Equal("assignment-1", interval.MachineAssignmentId);
+        Assert.Equal(due, interval.WorkFinishDate);
+        Assert.True(TimelineView.IsOperationWorkInterval(interval));
+        Assert.Null(Assert.Single(intervals, value => value.Type == "waiting").MachineAssignmentId);
+        Assert.Empty(TimelineViewModel.DuplicateMachineAssignmentIds(viewModel.Machines));
+        Assert.Contains("per operation assignment", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Duplicate_diagnostic_groups_only_by_machine_assignment_identity()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var first = new TimelineInterval(
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), null,
+            MachineAssignmentId: "assignment-1");
+        var duplicateAtAnotherTime = first with
+        {
+            StartsAt = start.AddHours(4),
+            EndsAt = start.AddHours(5)
+        };
+        var capacityAnnotation = new TimelineInterval(
+            "waiting", "machine-1", null, null, null, null, null, null,
+            start.AddHours(1), start.AddHours(4), "Available capacity before delivery-date placement.");
+        var machine = new TimelineMachine(
+            "machine-1", "M-1", "Mill", [first, duplicateAtAnotherTime, capacityAnnotation]);
+
+        Assert.Equal(
+            ["assignment-1"],
+            TimelineViewModel.DuplicateMachineAssignmentIds([machine]));
+        Assert.Null(capacityAnnotation.MachineAssignmentId);
+    }
+
+    [Fact]
+    public void Normalized_operation_block_has_the_operation_color_and_is_the_only_dependency_endpoint_type()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var operation = new TimelineInterval(
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), null,
+            MachineAssignmentId: "assignment-1");
+        var legacyPhase = operation with { Type = "production", MachineAssignmentId = null };
+        var operationBrush = Assert.IsType<SolidColorBrush>(TimelineView.IntervalBrush("operation"));
+
+        Assert.Equal(Color.FromRgb(30, 136, 229), operationBrush.Color);
+        Assert.True(TimelineView.IsOperationWorkInterval(operation));
+        Assert.False(TimelineView.IsOperationWorkInterval(legacyPhase));
+        Assert.Contains("OP10", TimelineView.IntervalLabel(operation), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -108,8 +104,8 @@ public sealed class TimelineViewModelTests
     {
         var start = DateTimeOffset.Parse("2026-08-11T00:00:00Z");
         var end = DateTimeOffset.Parse("2026-08-13T00:00:00Z");
-        var setupStart = DateTimeOffset.Parse("2026-08-11T08:15:00Z");
-        var setupEnd = DateTimeOffset.Parse("2026-08-11T08:45:00Z");
+        var operationStart = DateTimeOffset.Parse("2026-08-11T08:15:00Z");
+        var operationEnd = DateTimeOffset.Parse("2026-08-11T08:45:00Z");
         var snapshot = new TimelineSnapshot(
             DateTimeOffset.Parse("2026-08-11T07:00:00Z"),
             start,
@@ -119,16 +115,18 @@ public sealed class TimelineViewModelTests
                 "machine-1", "M-1", "Mill",
                 [
                     new TimelineInterval(
-                        "setup", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
-                        "Rough mill", setupStart, setupEnd, "server detail"),
+                        "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+                        "Rough mill", operationStart, operationEnd, "server detail",
+                        MachineAssignmentId: "assignment-1"),
                     new TimelineInterval(
-                        "waiting", "machine-1", "op-2", "batch-1", "B-1", "PN-1", 20,
-                        "Finish mill", setupEnd, setupEnd.AddHours(1),
+                        "waiting", "machine-1", null, null, null, null, null,
+                        null, operationEnd, operationEnd.AddHours(1),
                         "Waiting for OP10 on Machine M-1 to finish."),
                     new TimelineInterval(
-                        "production", "machine-1", "op-3", "batch-1", "B-1", "PN-1", 30,
-                        "Forecast finish", setupEnd.AddHours(1), setupEnd.AddHours(2), null,
-                        "forecast", "not_started", setupEnd.AddHours(1), setupEnd.AddHours(2))
+                        "operation", "machine-1", "op-3", "batch-1", "B-1", "PN-1", 30,
+                        "Forecast finish", operationEnd.AddHours(1), operationEnd.AddHours(2), null,
+                        "forecast", "not_started", operationEnd.AddHours(1), operationEnd.AddHours(2),
+                        MachineAssignmentId: "assignment-3")
                 ])],
             [
                 Dependency("dep-1", "batch-1", 10, 20),
@@ -145,11 +143,12 @@ public sealed class TimelineViewModelTests
 
         await viewModel.RefreshAsync();
 
-        Assert.Equal(setupStart, viewModel.Machines[0].Intervals[0].StartsAt);
-        Assert.Equal(setupEnd, viewModel.Machines[0].Intervals[0].EndsAt);
+        Assert.Equal(operationStart, viewModel.Machines[0].Intervals[0].StartsAt);
+        Assert.Equal(operationEnd, viewModel.Machines[0].Intervals[0].EndsAt);
         Assert.Equal("Rough mill", viewModel.Machines[0].Intervals[0].OperationName);
         Assert.Equal("server detail", viewModel.Machines[0].Intervals[0].Detail);
         Assert.Equal("waiting", viewModel.Machines[0].Intervals[1].Type);
+        Assert.Null(viewModel.Machines[0].Intervals[1].MachineAssignmentId);
         Assert.Equal("Waiting for OP10 on Machine M-1 to finish.", viewModel.Machines[0].Intervals[1].Detail);
         Assert.True(viewModel.Machines[0].Intervals[2].IsForecast);
         Assert.Equal("Forecast — not started", viewModel.Machines[0].Intervals[2].TimingLabel);
@@ -184,35 +183,57 @@ public sealed class TimelineViewModelTests
     {
         var start = DateTimeOffset.Parse("2026-08-11T08:00:00Z");
         var wait = new TimelineInterval(
-            "waiting", "machine-2", "op-2", "batch-1", "B-1", "PN-1", 20,
-            "Finish", start, start.AddHours(2), "Waiting for OP10 on Machine M-1 to finish.");
-        var production = wait with
-        {
-            Type = "production",
-            StartsAt = start.AddHours(2),
-            EndsAt = start.AddHours(3),
-            Detail = null
-        };
+            "waiting", "machine-2", null, null, null, null, null,
+            null, start, start.AddHours(2), "Waiting for OP10 on Machine M-1 to finish.");
+        var operation = new TimelineInterval(
+            "operation", "machine-2", "op-2", "batch-1", "B-1", "PN-1", 20,
+            "Finish", start.AddHours(2), start.AddHours(3), null,
+            MachineAssignmentId: "assignment-2");
 
         Assert.False(TimelineView.IsOperationWorkInterval(wait));
-        Assert.True(TimelineView.IsOperationWorkInterval(production));
+        Assert.True(TimelineView.IsOperationWorkInterval(operation));
+        Assert.Null(wait.MachineAssignmentId);
         Assert.DoesNotContain("OP20", TimelineView.IntervalLabel(wait), StringComparison.Ordinal);
         Assert.Contains("Waiting for OP10", TimelineView.IntervalLabel(wait), StringComparison.Ordinal);
-        Assert.Contains("OP20", TimelineView.IntervalLabel(production), StringComparison.Ordinal);
+        Assert.Contains("OP20", TimelineView.IntervalLabel(operation), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Backward_interval_tooltip_is_explicitly_visual_only()
+    public void Backward_interval_tooltip_shows_assignment_mode_due_date_and_calculated_times()
     {
         var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
         var interval = new TimelineInterval(
-            "production", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
-            "Mill", start, start.AddHours(1), null, PlanningMode: "backward");
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), null, PlanningMode: "backward",
+            WorkFinishDate: new DateOnly(2026, 8, 21), MachineAssignmentId: "assignment-1");
 
         var tooltip = TimelineView.IntervalToolTip(interval, TimelineView.IntervalLabel(interval));
 
-        Assert.Contains("Backward projection", tooltip, StringComparison.Ordinal);
-        Assert.Contains("visual only", tooltip, StringComparison.Ordinal);
+        Assert.Contains("Planning mode: Backward", tooltip, StringComparison.Ordinal);
+        Assert.Contains("Work Finish Date: 2026-08-21", tooltip, StringComparison.Ordinal);
+        Assert.Contains(
+            $"Calculated start: {start.ToLocalTime():yyyy-MM-dd HH:mm}",
+            tooltip,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"Calculated finish: {start.AddHours(1).ToLocalTime():yyyy-MM-dd HH:mm}",
+            tooltip,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Capacity_annotation_tooltip_does_not_claim_an_assignment_planning_mode()
+    {
+        var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");
+        var interval = new TimelineInterval(
+            "waiting", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddHours(1), "Waiting for Machine calendar.");
+
+        var tooltip = TimelineView.IntervalToolTip(interval, TimelineView.IntervalLabel(interval));
+
+        Assert.DoesNotContain("Planning mode", tooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Work Finish Date", tooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Waiting for Machine calendar", tooltip, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -302,20 +323,13 @@ public sealed class TimelineViewModelTests
 
         internal int RequestCount { get; private set; }
 
-        internal List<string> RequestedModes { get; } = [];
-
-        public async Task<TimelineSnapshot> GetTimelineAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
-            => await GetTimelineAsync(from, to, "manual", cancellationToken);
-
         public async Task<TimelineSnapshot> GetTimelineAsync(
             DateTimeOffset from,
             DateTimeOffset to,
-            string planningMode,
             CancellationToken cancellationToken = default)
         {
             RequestedFrom = from;
             RequestedTo = to;
-            RequestedModes.Add(planningMode);
             RequestCount++;
             if (RequestCount == 1 && pauseFirstRequest)
             {

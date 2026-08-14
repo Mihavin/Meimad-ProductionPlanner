@@ -39,7 +39,10 @@ internal sealed record PlanningBoardOperation(
     string? CaseName = null,
     DateTimeOffset? ActualStart = null,
     DateTimeOffset? ActualEnd = null,
-    string? ActualMachineId = null);
+    string? ActualMachineId = null,
+    string? MachineAssignmentId = null,
+    int? AssignmentVersion = null,
+    string PlanningMode = "manual");
 
 internal sealed record PlanningBoardMachine(
     string MachineId,
