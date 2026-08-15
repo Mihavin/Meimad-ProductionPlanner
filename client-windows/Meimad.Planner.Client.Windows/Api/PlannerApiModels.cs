@@ -145,7 +145,16 @@ internal sealed record LegacyImportWorkbook(
     string FileName,
     IReadOnlyList<LegacyImportSheet> Sheets);
 
-internal sealed record LegacyImportSheet(string Name, int RowCount, int ColumnCount);
+internal sealed record LegacyImportSheet(
+    string Name,
+    int RowCount,
+    int ColumnCount,
+    IReadOnlyList<LegacyImportSourceColumn>? Columns = null)
+{
+    public string DisplayName => $"{Name} ({RowCount} rows, {ColumnCount} columns)";
+}
+
+internal sealed record LegacyImportSourceColumn(string Column, string? Header, string? Sample);
 
 internal sealed record LegacyImportSuggestions(
     string? PlanningSheet,
@@ -157,7 +166,8 @@ internal sealed record LegacyImportColumnSuggestion(
     string Field,
     string? Column,
     string? Header,
-    decimal Confidence);
+    decimal Confidence,
+    bool? Required = null);
 
 internal sealed record LegacyImportMachineSection(
     string SectionKey,
@@ -327,7 +337,8 @@ internal sealed record LegacyImportIssue(
     string? SheetName,
     int? RowNumber,
     string? Field,
-    string? SectionKey);
+    string? SectionKey,
+    string? Scope = null);
 
 internal sealed record LegacyWorkingPlanCommit(
     int SchemaVersion,
@@ -348,7 +359,8 @@ internal sealed record LegacyImportOpenOrderSelection(
     string Action,
     string? ExistingCaseId,
     LegacyImportNewCase? NewCase,
-    LegacyImportOrderInput? Order);
+    LegacyImportOrderInput? Order,
+    string? CaseSourceRowKey = null);
 
 internal sealed record LegacyImportNewCase(
     string? PartNumber,
@@ -375,7 +387,10 @@ internal sealed record LegacyImportPlanningSelection(
     string? BatchNumber,
     IReadOnlyList<LegacyImportAllocation>? Allocations,
     string? MachineId,
-    LegacyImportCompatibilityOverride? CompatibilityOverride = null);
+    LegacyImportCompatibilityOverride? CompatibilityOverride = null,
+    IReadOnlyList<LegacyImportExpectedCaseRoute>? ExpectedCaseRoute = null);
+
+internal sealed record LegacyImportExpectedCaseRoute(string CaseOperationId, int Version);
 
 internal sealed record LegacyImportAllocation(
     string Type,

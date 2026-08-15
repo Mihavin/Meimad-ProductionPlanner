@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 
 namespace Meimad.Planner.Client.Windows.Api;
@@ -422,6 +423,15 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<LegacyWorkingPlanPreview> PreviewLegacyWorkingPlanAsync(
+        Stream workbook,
+        string fileName,
+        string? planningSheet,
+        string? openOrdersSheet,
+        IReadOnlyList<LegacyImportColumnMapping>? columnMappings,
+        CancellationToken cancellationToken = default) =>
+        PreviewLegacyWorkingPlanAsync(workbook, fileName, cancellationToken);
+
     Task<LegacyWorkingPlanCommitReceipt> CommitLegacyWorkingPlanAsync(
         LegacyWorkingPlanCommit commit,
         string clientId,
@@ -738,12 +748,42 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         Stream workbook,
         string fileName,
         CancellationToken cancellationToken = default)
+        => await PreviewLegacyWorkingPlanAsync(
+            workbook,
+            fileName,
+            planningSheet: null,
+            openOrdersSheet: null,
+            columnMappings: null,
+            cancellationToken);
+
+    public async Task<LegacyWorkingPlanPreview> PreviewLegacyWorkingPlanAsync(
+        Stream workbook,
+        string fileName,
+        string? planningSheet,
+        string? openOrdersSheet,
+        IReadOnlyList<LegacyImportColumnMapping>? columnMappings,
+        CancellationToken cancellationToken = default)
     {
         using var content = new MultipartFormDataContent();
         using var fileContent = new StreamContent(workbook);
         fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         content.Add(fileContent, "workbook", fileName);
+        if (planningSheet is not null)
+        {
+            content.Add(new StringContent(planningSheet, Encoding.UTF8), "planningSheet");
+        }
+        if (openOrdersSheet is not null)
+        {
+            content.Add(new StringContent(openOrdersSheet, Encoding.UTF8), "openOrdersSheet");
+        }
+        if (columnMappings is not null)
+        {
+            content.Add(new StringContent(
+                JsonSerializer.Serialize(columnMappings, JsonOptions),
+                Encoding.UTF8,
+                "application/json"), "columnMappings");
+        }
         using var response = await importHttpClient.PostAsync(
             "api/v1/imports/legacy-working-plan/preview", content, cancellationToken);
         return await ReadSuccessAsync<LegacyWorkingPlanPreview>(response, cancellationToken);

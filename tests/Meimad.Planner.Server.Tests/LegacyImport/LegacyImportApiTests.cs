@@ -36,6 +36,410 @@ public sealed class LegacyImportApiTests
     }
 
     [Fact]
+    public async Task Generic_flat_order_headers_are_detected_and_mapped_from_actual_columns()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders());
+
+            Assert.Null(preview.RootElement.GetProperty("suggestions").GetProperty("planningSheet").GetString());
+            Assert.Equal("Orders", preview.RootElement.GetProperty("suggestions").GetProperty("openOrdersSheet").GetString());
+            var suggestions = preview.RootElement.GetProperty("suggestions").GetProperty("openOrderColumns")
+                .EnumerateArray().ToDictionary(value => value.GetProperty("field").GetString()!);
+            Assert.Equal("A", suggestions["partNumber"].GetProperty("column").GetString());
+            Assert.Equal("Part Number", suggestions["partNumber"].GetProperty("header").GetString());
+            Assert.Equal(0.98m, suggestions["partNumber"].GetProperty("confidence").GetDecimal());
+            Assert.True(suggestions["partNumber"].GetProperty("required").GetBoolean());
+            Assert.Equal("B", suggestions["orderNumber"].GetProperty("column").GetString());
+            Assert.Equal("C", suggestions["outstandingQuantity"].GetProperty("column").GetString());
+            Assert.Equal("D", suggestions["deliveryDate"].GetProperty("column").GetString());
+            Assert.DoesNotContain(suggestions.Values, value =>
+                value.GetProperty("confidence").GetDecimal() == 1.0m);
+
+            var row = Assert.Single(preview.RootElement.GetProperty("openOrderRows").EnumerateArray());
+            Assert.Equal("PN-1001", row.GetProperty("values").GetProperty("partNumber").GetString());
+            Assert.Equal("ORD-001", row.GetProperty("values").GetProperty("orderNumber").GetString());
+            Assert.Equal(50, row.GetProperty("values").GetProperty("outstandingQuantity").GetInt32());
+            Assert.Equal("2026-09-10", row.GetProperty("values").GetProperty("deliveryDate").GetString());
+            Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "planning_sheet_not_found"
+                && issue.GetProperty("severity").GetString() == "warning");
+        });
+    }
+
+    [Fact]
+    public async Task Supplied_legacy_layout_keeps_known_part_column_when_two_headers_are_ambiguous()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(
+                client,
+                LegacyWorkbookFixture.Create(planningCustomerHeader: "מקט"));
+
+            var suggestions = preview.RootElement.GetProperty("suggestions").GetProperty("planningColumns")
+                .EnumerateArray().ToDictionary(value => value.GetProperty("field").GetString()!);
+            Assert.Equal("A", suggestions["customer"].GetProperty("column").GetString());
+            Assert.Equal("B", suggestions["partNumber"].GetProperty("column").GetString());
+            Assert.Equal("PN-1", preview.RootElement.GetProperty("rows")[0]
+                .GetProperty("values").GetProperty("partNumber").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task Flat_orders_title_row_is_not_misclassified_as_a_planning_machine_section()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(
+                client,
+                LegacyWorkbookFixture.CreateFlatOpenOrders(title: "Open Orders Report"));
+
+            Assert.Null(preview.RootElement.GetProperty("suggestions").GetProperty("planningSheet").GetString());
+            Assert.Equal("Orders", preview.RootElement.GetProperty("suggestions").GetProperty("openOrdersSheet").GetString());
+            Assert.Empty(preview.RootElement.GetProperty("machineSections").EnumerateArray());
+            var row = Assert.Single(preview.RootElement.GetProperty("openOrderRows").EnumerateArray());
+            Assert.Equal("Orders!3", row.GetProperty("rowKey").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task English_planning_header_is_detected_but_not_emitted_as_a_data_row()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(
+                machineLabel: "Machine M01",
+                planningPartHeader: "Part Number",
+                planningQuantityHeader: "Quantity"));
+
+            Assert.Equal(LegacyWorkbookFixture.PlanningSheet,
+                preview.RootElement.GetProperty("suggestions").GetProperty("planningSheet").GetString());
+            var rows = preview.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+            Assert.Equal(3, rows.Length);
+            Assert.Equal($"{LegacyWorkbookFixture.PlanningSheet}!3", rows[0].GetProperty("rowKey").GetString());
+            Assert.DoesNotContain(rows, row =>
+                row.GetProperty("values").GetProperty("partNumber").GetString() == "Part Number");
+        });
+    }
+
+    [Fact]
+    public async Task Planning_quantity_without_part_number_is_a_blocking_row_issue()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(firstPlanningPartNumber: ""));
+            Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "part_number_required"
+                && issue.GetProperty("severity").GetString() == "blocking"
+                && issue.GetProperty("rowNumber").GetInt32() == 3);
+        });
+    }
+
+    [Fact]
+    public async Task Generic_orders_only_preview_can_create_case_and_order()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders(
+                partNumber: "PN-GENERIC",
+                orderNumber: "ORD-GENERIC"));
+            var body = OpenOrderCreateBody(preview, "PN-GENERIC", "ORD-GENERIC", 50, "2026-09-10");
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            var json = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, json);
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM cases WHERE part_number = 'PN-GENERIC';"));
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE order_reference = 'ORD-GENERIC' AND quantity = 50;"));
+
+            using var replayResponse = await client.PostAsJsonAsync(
+                "/api/v1/imports/legacy-working-plan/commit",
+                body);
+            Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+            using var replay = JsonDocument.Parse(await replayResponse.Content.ReadAsStringAsync());
+            Assert.True(replay.RootElement.GetProperty("replayed").GetBoolean());
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM cases WHERE part_number = 'PN-GENERIC';"));
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE order_reference = 'ORD-GENERIC';"));
+        });
+    }
+
+    [Fact]
+    public async Task Orders_only_commit_ignores_explicit_skip_from_excluded_planning_sheet()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "orders-only-skip"));
+            var body = new
+            {
+                schemaVersion = 1,
+                importToken = preview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = preview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = (string?)null,
+                openOrdersSheet = LegacyWorkbookFixture.OpenOrdersSheet,
+                columnMappings = Array.Empty<object>(),
+                machineMappings = Array.Empty<object>(),
+                openOrderSelections = new object[]
+                {
+                    new
+                    {
+                        rowKey = $"{LegacyWorkbookFixture.OpenOrdersSheet}!2",
+                        action = "create_case",
+                        newCase = new
+                        {
+                            partNumber = "PN-ORDERS-ONLY",
+                            name = "Orders only",
+                            workingFolderPath = Path.Combine(Path.GetTempPath(), "PN-ORDERS-ONLY")
+                        },
+                        order = new { orderNumber = "ORD-ORDERS-ONLY", quantity = 5, workFinishDate = "2026-09-10" }
+                    }
+                },
+                planningSelections = new object[]
+                {
+                    new { rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3", action = "skip" }
+                }
+            };
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            var json = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, json);
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE order_reference = 'ORD-ORDERS-ONLY';"));
+        });
+    }
+
+    [Fact]
+    public async Task Planning_only_commit_ignores_explicit_skip_from_excluded_open_orders_sheet()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "planning-only-skip"));
+            var body = new
+            {
+                schemaVersion = 1,
+                importToken = preview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = preview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = LegacyWorkbookFixture.PlanningSheet,
+                openOrdersSheet = (string?)null,
+                columnMappings = Array.Empty<object>(),
+                machineMappings = new[]
+                {
+                    new { sectionKey = $"{LegacyWorkbookFixture.PlanningSheet}!1", machineId = "machine-01" }
+                },
+                openOrderSelections = new object[]
+                {
+                    new { rowKey = $"{LegacyWorkbookFixture.OpenOrdersSheet}!2", action = "skip" }
+                },
+                planningSelections = new object[]
+                {
+                    Planning($"{LegacyWorkbookFixture.PlanningSheet}!4", "batch-operation-2", "machine-01", null)
+                }
+            };
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            var json = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, json);
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM machine_assignments WHERE batch_operation_id = 'batch-operation-2';"));
+        });
+    }
+
+    [Fact]
+    public async Task Duplicate_machine_mapping_returns_structured_validation_without_mutation()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "duplicate-machine-map"));
+            var sectionKey = $"{LegacyWorkbookFixture.PlanningSheet}!1";
+            var body = new
+            {
+                schemaVersion = 1,
+                importToken = preview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = preview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = LegacyWorkbookFixture.PlanningSheet,
+                openOrdersSheet = LegacyWorkbookFixture.OpenOrdersSheet,
+                columnMappings = Array.Empty<object>(),
+                machineMappings = new[]
+                {
+                    new { sectionKey, machineId = "machine-01" },
+                    new { sectionKey, machineId = "machine-manual" }
+                },
+                openOrderSelections = Array.Empty<object>(),
+                planningSelections = new object[]
+                {
+                    Planning($"{LegacyWorkbookFixture.PlanningSheet}!4", "batch-operation-2", "machine-01", null)
+                }
+            };
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "duplicate_selection"
+                && issue.GetProperty("field").GetString() == "machineMappings");
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM machine_assignments WHERE batch_operation_id = 'batch-operation-2';"));
+        });
+    }
+
+    [Fact]
+    public async Task Invalid_mapped_order_date_is_blocking_and_creates_nothing()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders(
+                partNumber: "PN-BAD-DATE",
+                orderNumber: "ORD-BAD-DATE",
+                finishDate: "not-a-date"));
+            Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "invalid_date"
+                && issue.GetProperty("severity").GetString() == "blocking");
+
+            var body = OpenOrderCreateBody(preview, "PN-BAD-DATE", "ORD-BAD-DATE", 50, "2026-09-10");
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM cases WHERE part_number = 'PN-BAD-DATE';"));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM legacy_working_plan_imports;"));
+        });
+    }
+
+    [Fact]
+    public async Task Negative_mapped_order_quantity_is_blocking_and_creates_nothing()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders(
+                partNumber: "PN-NEGATIVE",
+                orderNumber: "ORD-NEGATIVE",
+                quantity: "-5"));
+            Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "invalid_quantity"
+                && issue.GetProperty("severity").GetString() == "blocking");
+
+            var body = OpenOrderCreateBody(preview, "PN-NEGATIVE", "ORD-NEGATIVE", 5, "2026-09-10");
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM cases WHERE part_number = 'PN-NEGATIVE';"));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM legacy_working_plan_imports;"));
+        });
+    }
+
+    [Fact]
+    public async Task Explicit_sheet_and_column_mapping_are_applied_during_read_only_repreview()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            var workbook = LegacyWorkbookFixture.CreateFlatOpenOrders(
+                partHeader: "Legacy Item",
+                orderHeader: "Legacy PO",
+                quantityHeader: "Legacy Count",
+                finishHeader: "Legacy Deadline");
+            using var initial = await PreviewAsync(client, workbook);
+            Assert.Empty(initial.RootElement.GetProperty("openOrderRows").EnumerateArray());
+            var sourceColumns = initial.RootElement.GetProperty("workbook").GetProperty("sheets")[0]
+                .GetProperty("columns").EnumerateArray()
+                .ToDictionary(column => column.GetProperty("column").GetString()!);
+            Assert.Equal("Legacy Item", sourceColumns["A"].GetProperty("header").GetString());
+            Assert.Equal("PN-1001", sourceColumns["A"].GetProperty("sample").GetString());
+            Assert.Equal("Legacy Deadline", sourceColumns["D"].GetProperty("header").GetString());
+            Assert.Equal("2026-09-10", sourceColumns["D"].GetProperty("sample").GetString());
+            var mappings = new object[]
+            {
+                new { scope = "open_orders", field = "partNumber", column = "A" },
+                new { scope = "open_orders", field = "orderNumber", column = "B" },
+                new { scope = "open_orders", field = "outstandingQuantity", column = "C" },
+                new { scope = "open_orders", field = "deliveryDate", column = "D" }
+            };
+            using var remapped = await PreviewAsync(
+                client,
+                workbook,
+                openOrdersSheet: "Orders",
+                columnMappings: mappings);
+
+            Assert.NotEqual(
+                initial.RootElement.GetProperty("importToken").GetString(),
+                remapped.RootElement.GetProperty("importToken").GetString());
+            var row = Assert.Single(remapped.RootElement.GetProperty("openOrderRows").EnumerateArray());
+            Assert.Equal("PN-1001", row.GetProperty("values").GetProperty("partNumber").GetString());
+            Assert.Equal("ORD-001", row.GetProperty("values").GetProperty("orderNumber").GetString());
+            Assert.Equal(50, row.GetProperty("values").GetProperty("outstandingQuantity").GetInt32());
+            Assert.Equal("2026-09-10", row.GetProperty("values").GetProperty("deliveryDate").GetString());
+            Assert.All(remapped.RootElement.GetProperty("suggestions").GetProperty("openOrderColumns").EnumerateArray(),
+                suggestion => Assert.Equal(1.0m, suggestion.GetProperty("confidence").GetDecimal()));
+        });
+    }
+
+    [Fact]
+    public async Task Commit_preserves_a_reviewed_optional_column_omission()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            var workbook = LegacyWorkbookFixture.CreateFlatOpenOrders(
+                partNumber: "PN-CLEARED-DATE",
+                orderNumber: "ORD-CLEARED-DATE",
+                finishDate: "not-a-date");
+            var mappings = new object[]
+            {
+                new { scope = "open_orders", field = "partNumber", column = "A" },
+                new { scope = "open_orders", field = "orderNumber", column = "B" },
+                new { scope = "open_orders", field = "outstandingQuantity", column = "C" }
+            };
+            using var remapped = await PreviewAsync(
+                client,
+                workbook,
+                openOrdersSheet: "Orders",
+                columnMappings: mappings);
+            Assert.DoesNotContain(remapped.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "invalid_date");
+
+            var body = OpenOrderCreateBody(
+                remapped,
+                "PN-CLEARED-DATE",
+                "ORD-CLEARED-DATE",
+                50,
+                "2026-09-10",
+                mappings);
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            var json = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, json);
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE order_reference = 'ORD-CLEARED-DATE';"));
+        });
+    }
+
+    [Fact]
+    public async Task Missing_order_number_with_mapped_order_facts_is_blocking()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders(orderNumber: ""));
+            Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "order_number_required"
+                && issue.GetProperty("severity").GetString() == "blocking");
+        });
+    }
+
+    [Fact]
     public async Task Exact_replay_survives_server_restart_without_staged_token()
     {
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.LegacyImport.RestartTests", Guid.NewGuid().ToString("N"));
@@ -321,6 +725,7 @@ public sealed class LegacyImportApiTests
                 batchNumber = "B-IMPORTED",
                 machineId = "machine-01",
                 compatibilityOverride = new { confirmed = true, reason = "Approved import" },
+                expectedCaseRoute = ExpectedRoute("case-operation-1", "case-operation-1b"),
                 allocations
             };
 
@@ -379,6 +784,7 @@ public sealed class LegacyImportApiTests
                     action = "create_batch_to_pool",
                     caseId = "case-1",
                     batchNumber = "B-POOL",
+                    expectedCaseRoute = ExpectedRoute("case-operation-1", "case-operation-1b"),
                     allocations = new[] { new { type = "stock", quantity = 2 } }
                 }]);
 
@@ -426,6 +832,106 @@ public sealed class LegacyImportApiTests
     }
 
     [Fact]
+    public async Task Batch_create_rejects_missing_or_stale_reviewed_case_route()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "route-review"));
+            object Selection(object? expectedCaseRoute) => new
+            {
+                rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3",
+                action = "create_batch_to_pool",
+                caseId = "case-1",
+                batchNumber = "B-ROUTE-REVIEW",
+                expectedCaseRoute,
+                allocations = new[] { new { type = "stock", quantity = 2 } }
+            };
+
+            var missing = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [Selection(null)]);
+            using (var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", missing))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+                using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                    issue.GetProperty("code").GetString() == "case_route_review_required");
+            }
+
+            await ExecuteAsync(application.Services,
+                "UPDATE case_operations SET version = version + 1 WHERE id = 'case-operation-1';");
+            var stale = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [Selection(ExpectedRoute("case-operation-1"))]);
+            using (var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", stale))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+                using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                    issue.GetProperty("code").GetString() == "case_route_changed");
+            }
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM production_batches WHERE batch_number = 'B-ROUTE-REVIEW';"));
+        });
+    }
+
+    [Fact]
+    public async Task Unknown_machine_section_can_be_approved_as_unassigned_pool_without_reordering()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(
+                marker: "unknown-machine-pool",
+                machineLabel: "Legacy workstation without a registered Machine"));
+            Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "machine_mapping_required"
+                && issue.GetProperty("severity").GetString() == "warning");
+            var body = new
+            {
+                schemaVersion = 1,
+                importToken = preview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = preview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = LegacyWorkbookFixture.PlanningSheet,
+                openOrdersSheet = LegacyWorkbookFixture.OpenOrdersSheet,
+                columnMappings = Array.Empty<object>(),
+                machineMappings = Array.Empty<object>(),
+                openOrderSelections = Array.Empty<object>(),
+                planningSelections = new object[]
+                {
+                    new
+                    {
+                        rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3",
+                        action = "create_batch_to_pool",
+                        caseId = "case-1",
+                        batchNumber = "B-UNKNOWN-MACHINE",
+                        expectedCaseRoute = ExpectedRoute("case-operation-1"),
+                        allocations = new[] { new { type = "stock", quantity = 2 } }
+                    }
+                }
+            };
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            var json = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, json);
+            Assert.Equal(0, await ScalarAsync(application.Services, """
+                SELECT COUNT(*) FROM machine_assignments
+                WHERE batch_operation_id IN (
+                    SELECT id FROM batch_operations
+                    WHERE production_batch_id = (
+                        SELECT id FROM production_batches WHERE batch_number = 'B-UNKNOWN-MACHINE'));
+                """));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT backlog_position FROM machine_assignments WHERE id = 'existing-assignment';"));
+        });
+    }
+
+    [Fact]
     public async Task Pool_action_rejects_stale_machine_values_without_mutating()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -442,6 +948,7 @@ public sealed class LegacyImportApiTests
                     action = "create_batch_to_pool",
                     caseId = "case-1",
                     batchNumber = "B-SHOULD-NOT-EXIST",
+                    expectedCaseRoute = ExpectedRoute("case-operation-1"),
                     allocations = new[] { new { type = "stock", quantity = 2 } },
                     machineId = "machine-01"
                 }]);
@@ -474,6 +981,7 @@ public sealed class LegacyImportApiTests
                         action = "create_batch_to_pool",
                         caseId = "case-1",
                         batchNumber = "B-ATOMIC-FIRST",
+                        expectedCaseRoute = ExpectedRoute("case-operation-1"),
                         allocations = new[] { new { type = "stock", quantity = 2 } }
                     },
                     new
@@ -482,6 +990,7 @@ public sealed class LegacyImportApiTests
                         action = "create_batch_to_pool",
                         caseId = "missing-case",
                         batchNumber = "B-ATOMIC-INVALID",
+                        expectedCaseRoute = ExpectedRoute("case-operation-1"),
                         allocations = new[] { new { type = "stock", quantity = 3 } }
                     }
                 ]);
@@ -498,6 +1007,10 @@ public sealed class LegacyImportApiTests
                     .Replace("$hash", $"'{preview.RootElement.GetProperty("workbookSha256").GetString()}'", StringComparison.Ordinal)));
         });
     }
+
+    private static object[] ExpectedRoute(params string[] operationIds) => operationIds
+        .Select(operationId => (object)new { caseOperationId = operationId, version = 1 })
+        .ToArray();
 
     private static object CommitBody(string token, string hash, object[] planningSelections) => new
     {
@@ -521,10 +1034,60 @@ public sealed class LegacyImportApiTests
         compatibilityOverride
     };
 
-    private static async Task<JsonDocument> PreviewAsync(HttpClient client, byte[] workbook)
+    private static object OpenOrderCreateBody(
+        JsonDocument preview,
+        string partNumber,
+        string orderNumber,
+        int quantity,
+        string workFinishDate,
+        object[]? columnMappings = null) => new
+        {
+            schemaVersion = 1,
+            importToken = preview.RootElement.GetProperty("importToken").GetString(),
+            workbookSha256 = preview.RootElement.GetProperty("workbookSha256").GetString(),
+            planningSheet = (string?)null,
+            openOrdersSheet = "Orders",
+            columnMappings = columnMappings ?? Array.Empty<object>(),
+            machineMappings = Array.Empty<object>(),
+            openOrderSelections = new object[]
+            {
+                new
+                {
+                    rowKey = "Orders!2",
+                    action = "create_case",
+                    newCase = new
+                    {
+                        partNumber,
+                        name = $"Imported {partNumber}",
+                        workingFolderPath = Path.Combine(Path.GetTempPath(), partNumber)
+                    },
+                    order = new { orderNumber, quantity, workFinishDate }
+                }
+            },
+            planningSelections = Array.Empty<object>()
+        };
+
+    private static async Task<JsonDocument> PreviewAsync(
+        HttpClient client,
+        byte[] workbook,
+        string? planningSheet = null,
+        string? openOrdersSheet = null,
+        object? columnMappings = null)
     {
         using var multipart = new MultipartFormDataContent();
         multipart.Add(new ByteArrayContent(workbook), "workbook", "working-plan.xlsx");
+        if (!string.IsNullOrWhiteSpace(planningSheet))
+        {
+            multipart.Add(new StringContent(planningSheet), "planningSheet");
+        }
+        if (!string.IsNullOrWhiteSpace(openOrdersSheet))
+        {
+            multipart.Add(new StringContent(openOrdersSheet), "openOrdersSheet");
+        }
+        if (columnMappings is not null)
+        {
+            multipart.Add(new StringContent(JsonSerializer.Serialize(columnMappings)), "columnMappings");
+        }
         using var response = await client.PostAsync("/api/v1/imports/legacy-working-plan/preview", multipart);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync());

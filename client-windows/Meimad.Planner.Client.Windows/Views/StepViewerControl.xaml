@@ -1,0 +1,21 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.StepViewerControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinHeight="360" Background="#F7F9FB"
+             Focusable="True">
+    <Grid x:Name="ViewerRoot" Background="#F7F9FB" ClipToBounds="True"
+          MouseLeftButtonDown="Viewer_MouseLeftButtonDown"
+          MouseLeftButtonUp="Viewer_MouseLeftButtonUp"
+          MouseMove="Viewer_MouseMove"
+          MouseWheel="Viewer_MouseWheel"
+          SizeChanged="Viewer_SizeChanged">
+        <local:StepSolidDrawingHost xmlns:local="clr-namespace:Meimad.Planner.Client.Windows.Views"
+                                    x:Name="SolidSurface" IsHitTestVisible="False" />
+        <Canvas x:Name="ModelCanvas" IsHitTestVisible="False" />
+        <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10"
+                Padding="8,4" CornerRadius="3" Background="#DDE7F0" Opacity="0.92">
+            <TextBlock x:Name="StatusText" Text="Open a STEP file to preview it."
+                       Foreground="#18324A" TextWrapping="Wrap" />
+        </Border>
+    </Grid>
+</UserControl>

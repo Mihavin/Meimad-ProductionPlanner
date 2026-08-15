@@ -12,7 +12,7 @@ public partial class SetupView : UserControl
         InitializeComponent();
     }
 
-    private void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)
+    private async void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
@@ -24,8 +24,11 @@ public partial class SetupView : UserControl
 
         if (dialog.ShowDialog() == true && DataContext is SetupViewModel viewModel)
         {
-            // File selection is intentionally the only import concern owned by the view.
+            // Preview is read-only and is the natural continuation of choosing a file.
+            // Automatic decisions stay separate because they prepare explicit stock,
+            // Pool, skip, and Machine choices for the planner's review.
             viewModel.LegacyImport.SetWorkbookSelection(dialog.FileName);
+            await viewModel.LegacyImport.PreviewAsync();
         }
     }
 

@@ -12,4 +12,12 @@
     <Version>0.1.2</Version>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Resource Include="Assets\ui-button-icons-template.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OCCSharp" Version="7.8.0-preview1" />
+  </ItemGroup>
+
 </Project>

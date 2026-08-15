@@ -10,12 +10,43 @@ using Meimad.Planner.Client.Windows.Api;
 namespace Meimad.Planner.Client.Windows.Presentation;
 
 /// <summary>
-/// Stages a legacy workbook for an explicit, server-validated import. This
-/// type deliberately does not interpret workbook values or derive routes,
-/// quantities, dates, or Machine assignments.
+/// Stages a legacy workbook for an explicit, server-validated import. It can
+/// build a non-authoritative review draft from Server-parsed values and exact
+/// candidates, while the final commit remains explicit and authoritative.
 /// </summary>
 internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 {
+    private static readonly (string Field, bool Required)[] PlanningColumnTargets =
+    [
+        ("customer", false),
+        ("partNumber", true),
+        ("caseReference", false),
+        ("notes", false),
+        ("quantity", true),
+        ("materialStatus", false),
+        ("startDate", false),
+        ("endDate", false),
+        ("plannerDeliveryDate", false),
+        ("customerDeliveryDate", false)
+    ];
+
+    private static readonly (string Field, bool Required)[] OpenOrderColumnTargets =
+    [
+        ("partNumber", true),
+        ("orderNumber", false),
+        ("orderLine", false),
+        ("customer", false),
+        ("deliveryDate", false),
+        ("revision", false),
+        ("outstandingQuantity", false),
+        ("notes", false),
+        ("drawingNumber", false),
+        ("caseReference", false),
+        ("orderedQuantity", false),
+        ("itemName", false),
+        ("picturePath", false)
+    ];
+
     private IPlannerApiClient? apiClient;
     private readonly Func<string, Stream> openWorkbook;
     private readonly Func<string, bool> workbookExists;
@@ -38,7 +69,18 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     private bool importOrders;
     private bool importPoolBatches;
     private bool importMachineAssignments;
+    private bool hasExplicitOutcomeSelection;
+    private bool isApplyingPreview;
+    private bool hasPendingPreviewCorrections;
+    private bool hasSheetSelectionCorrections;
+    private bool hasColumnMappingCorrections;
+    private bool isPreparingAutomatically;
+    private bool automaticPrepared;
+    private bool confirmAutomaticSkips;
+    private bool isSynchronizingCaseStageSelection;
     private int headerRowNumber;
+    private string resultSummary = string.Empty;
+    private string currentImportStage = "cases";
     private LegacyWorkingPlanPreview? preview;
 
     internal LegacyExcelImportViewModel(
@@ -65,6 +107,12 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         ApplySelectedPatternToAllCommand = new AsyncCommand(ApplyPatternToAllAsync, () => CanApplyPattern);
         AcceptClearMachineSuggestionsCommand = new AsyncCommand(AcceptClearMachineSuggestionsAsync,
             () => CanAcceptClearMachineSuggestions);
+        PrepareAutomaticallyCommand = new AsyncCommand(PrepareAutomaticallyAsync,
+            () => CanPrepareAutomatically);
+        ShowCasesStageCommand = new AsyncCommand(() => ShowImportStageAsync("cases"));
+        ShowOrdersStageCommand = new AsyncCommand(() => ShowImportStageAsync("orders"));
+        ShowBatchesStageCommand = new AsyncCommand(() => ShowImportStageAsync("batches"));
+        ShowAssignmentsStageCommand = new AsyncCommand(() => ShowImportStageAsync("assignments"));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -99,10 +147,42 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     public IEnumerable<LegacyImportRowViewModel> AssignmentRows => Rows.Where(row => row.Kind == "planning");
 
+    /// <summary>
+    /// The Case stage deliberately shows one representative source row per Part Number.
+    /// Orders and planning rows continue to retain their own source identity for the
+    /// later stages and final atomic request.
+    /// </summary>
+    public IEnumerable<LegacyImportRowViewModel> CaseRows => OrderRows
+        .GroupBy(row => string.IsNullOrWhiteSpace(row.SourcePartNumber)
+            ? row.RowKey
+            : row.SourcePartNumber.Trim(), StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.OrderBy(row => row.RowNumber).First());
+
+    public IEnumerable<LegacyImportRowViewModel> CurrentStageRows => CurrentImportStage switch
+    {
+        "cases" => CaseRows,
+        "orders" => OrderRows,
+        "batches" => BatchRows,
+        "assignments" => AssignmentRows,
+        _ => []
+    };
+
+    public IEnumerable<LegacyImportRowViewModel> IncludedRows => Rows.Where(IsIncludedInSelectedOutcome);
+
     public IEnumerable<LegacyImportRowViewModel> ReviewRows =>
         Rows.Where(IsIncludedInSelectedOutcome).Where(row => row.HasExplicitDecision);
 
     public ObservableCollection<LegacyImportIssue> Issues { get; } = [];
+
+    public IReadOnlyList<LegacyImportSheet> DetectedSheets => preview?.Workbook.Sheets ?? [];
+
+    public IReadOnlyList<string> SheetChoices => DetectedSheets
+        .Select(sheet => sheet.Name)
+        .ToArray();
+
+    public IReadOnlyList<string> OptionalSheetChoices => new[] { string.Empty }
+        .Concat(SheetChoices)
+        .ToArray();
 
     public AsyncCommand PreviewCommand { get; }
 
@@ -124,12 +204,54 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     public AsyncCommand AcceptClearMachineSuggestionsCommand { get; }
 
+    public AsyncCommand PrepareAutomaticallyCommand { get; }
+
+    public AsyncCommand ShowCasesStageCommand { get; }
+
+    public AsyncCommand ShowOrdersStageCommand { get; }
+
+    public AsyncCommand ShowBatchesStageCommand { get; }
+
+    public AsyncCommand ShowAssignmentsStageCommand { get; }
+
     public IReadOnlyList<LegacyImportChoice> PatternScopeChoices { get; } =
     [
         new("same_machine_section", "Same Machine section"),
         new("same_part_and_operation", "Same Part and operation shape"),
         new("all_eligible_rows", "All eligible rows")
     ];
+
+    public string CurrentImportStage
+    {
+        get => currentImportStage;
+        private set
+        {
+            if (SetField(ref currentImportStage, value))
+            {
+                OnPropertyChanged(nameof(CurrentImportStageTitle));
+                OnPropertyChanged(nameof(CurrentImportStageDescription));
+                OnPropertyChanged(nameof(CurrentStageRows));
+            }
+        }
+    }
+
+    public string CurrentImportStageTitle => CurrentImportStage switch
+    {
+        "cases" => "Step 1 — Cases in the Case Pool",
+        "orders" => "Step 2 — Find and import related Orders",
+        "batches" => "Step 3 — Create Batches in the Pool",
+        "assignments" => "Step 4 — Assign Batches to Machines",
+        _ => "Import stage"
+    };
+
+    public string CurrentImportStageDescription => CurrentImportStage switch
+    {
+        "cases" => "Match each Part Number to an existing Case or create its Case record. No Batch or Machine choice is made here.",
+        "orders" => "Review Orders under their selected Case. Existing Orders stay unchanged; create only the missing Orders you approve.",
+        "batches" => "Create full-route Batches in the unassigned Pool. A Case needs an existing complete route before it can produce a Batch.",
+        "assignments" => "For the Pool Batches you want to dispatch now, choose one compatible route Operation and an existing Machine. Leave the rest in Pool.",
+        _ => string.Empty
+    };
 
     public int WizardStep
     {
@@ -162,11 +284,11 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     public bool IsAssignmentStep => IsResolutionStep;
     public bool IsReviewStep => WizardStep == 4;
     public bool CanCommitNow => IsReviewStep && CanCommit;
-    public bool CanGoNext => preview is not null && !IsBusy && WizardStep < 4 && (WizardStep switch
+    public bool CanGoNext => preview is not null && !IsBusy && !HasPendingPreviewCorrections && WizardStep < 4 && (WizardStep switch
     {
         0 => true,
         1 => HasSelectedOutcome,
-        2 => HasResolvedMappings,
+        2 => HasResolvedMappings && !HasPendingPreviewCorrections,
         3 => HasResolvedIncludedRows,
         _ => false
     });
@@ -218,6 +340,72 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     public bool CanAcceptClearMachineSuggestions => IsEditor && !IsBusy
         && MachineMappings.Any(mapping => !mapping.IsResolved && mapping.HasClearMachineSuggestion);
 
+    public bool CanPrepareAutomatically => preview is not null
+        && !IsBusy
+        && !HasPendingPreviewCorrections;
+
+    public bool AutomaticPrepared
+    {
+        get => automaticPrepared;
+        private set => SetField(ref automaticPrepared, value);
+    }
+
+    public bool ConfirmAutomaticSkips
+    {
+        get => confirmAutomaticSkips;
+        set
+        {
+            if (SetField(ref confirmAutomaticSkips, value))
+            {
+                RaiseState();
+            }
+        }
+    }
+
+    public bool RequiresAutomaticSkipConfirmation => AutomaticPrepared && AutomaticSkippedRows > 0;
+
+    public int AutomaticReadyRows => !AutomaticPrepared
+        ? 0
+        : Rows.Count(row => IsIncludedInSelectedOutcome(row) && row.IsResolved && row.IsMutation);
+
+    public int AutomaticSkippedRows => !AutomaticPrepared
+        ? 0
+        : Rows.Count(row => IsIncludedInSelectedOutcome(row) && row.IsSkipped);
+
+    public IReadOnlyList<LegacyImportRowViewModel> AutomaticAttentionRows => !AutomaticPrepared
+        ? []
+        : Rows
+            .Where(IsIncludedInSelectedOutcome)
+            .Where(row => !row.IsResolved
+                || row.IsSkipped && !string.IsNullOrWhiteSpace(row.AutomaticReason))
+            .ToArray();
+
+    public string AutomaticImportSummary
+    {
+        get
+        {
+            if (!AutomaticPrepared)
+            {
+                return preview is null
+                    ? "Preview a workbook before preparing an automatic draft."
+                    : "The preview is ready. Prepare an automatic draft to fill every safe decision.";
+            }
+
+            var selected = Rows.Where(IsIncludedInSelectedOutcome).ToArray();
+            var orders = selected.Count(row => row.Decision == "create_order");
+            var pool = selected.Count(row => row.Decision == "create_batch_to_pool");
+            var assignments = selected.Count(row => row.Decision == "create_batch_and_assign");
+            var stock = pool + assignments;
+            return $"Automatic draft: {orders} Order(s), {pool} Pool Batch(es), "
+                + $"{assignments} Batch-and-Machine assignment(s), and {stock} full-quantity stock allocation(s). "
+                + $"{AutomaticSkippedRows} row(s) were safely skipped"
+                + (AutomaticSkippedRows > 0
+                    ? " and require explicit confirmation before import; "
+                    : "; ")
+                + $"{AutomaticAttentionRows.Count} row(s) still need attention. Nothing has been written.";
+        }
+    }
+
     public bool CanApplyPattern => IsEditor && !IsBusy
         && SelectedWizardRow is { IsSkipped: false, IsResolved: true, IsMutation: true }
         // New Case details are row-specific, while a persisted Batch Operation is a
@@ -261,17 +449,77 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     {
         get
         {
-            var total = Rows.Count;
-            var ready = Rows.Count(row => row.IsResolved && row.IsMutation);
-            var skipped = Rows.Count(row => row.IsSkipped);
-            var unresolved = Rows.Count(row => !row.IsResolved);
-            return $"{total} source rows: {ready} ready to import, {skipped} skipped, {unresolved} still need a decision.";
+            var rows = Rows.Where(IsIncludedInSelectedOutcome).ToArray();
+            var ready = rows.Count(row => row.IsResolved && row.IsMutation);
+            var skipped = rows.Count(row => row.IsSkipped);
+            var unresolved = rows.Count(row => !row.IsResolved);
+            return $"{rows.Length} selected-outcome rows: {ready} ready to import, {skipped} skipped, {unresolved} still need a decision.";
         }
     }
 
+    public string PreviewSummary
+    {
+        get
+        {
+            if (preview is null)
+            {
+                return "No workbook preview is loaded.";
+            }
+
+            var blockingRows = CountIssueRows("blocking");
+            var warningRows = CountIssueRows("warning");
+            var validRows = Math.Max(0, Rows.Count - blockingRows);
+            var selectedRows = Rows.Where(IsIncludedInSelectedOutcome).ToArray();
+            var skippedRows = selectedRows.Count(row => row.IsSkipped);
+            var caseCreates = selectedRows.Count(row => row.Decision == "create_case");
+            var orderCreates = selectedRows.Count(row => row.Decision == "create_order"
+                || row.Decision == "create_case" && row.IncludeOrderWithNewCase);
+            var batchCreates = selectedRows.Count(row => row.Decision is "create_batch_to_pool" or "create_batch_and_assign");
+            var batchOperations = selectedRows.Where(row => row.Decision is "create_batch_to_pool" or "create_batch_and_assign")
+                .Sum(row => row.SelectedCaseRouteOperationCount);
+            var assignments = selectedRows.Count(row => row.Decision is "create_batch_and_assign" or "assign_existing_operation");
+            var caseMatches = Rows.Count(row => row.CaseCandidates.Count > 0);
+            var orderMatches = Rows.Count(row => row.OrderCandidates.Count > 0);
+            var unknownMachines = MachineMappings.Count(mapping => !mapping.HasSourceMachineMatch);
+            var duplicateIndicators = Issues.Count(issue => issue.Code.Contains("duplicate", StringComparison.OrdinalIgnoreCase));
+            var globalBlockers = Issues.Count(issue => !issue.RowNumber.HasValue && IsBlockingSeverity(issue.Severity));
+
+            return $"Detected {Rows.Count} rows: {validRows} without row blockers, {warningRows} warning row(s), "
+                + $"{blockingRows} error row(s), {globalBlockers} global blocker(s), {skippedRows} selected row(s) skipped. "
+                + $"Selected decisions: {caseCreates} Case(s), {orderCreates} Order(s), {batchCreates} Batch(es), "
+                + $"{batchOperations} route Batch Operation(s), {assignments} Machine assignment(s). "
+                + $"Existing-match indicators: {caseMatches} Case row(s), {orderMatches} Order row(s); "
+                + $"{unknownMachines} unmatched Machine section(s), {duplicateIndicators} duplicate indicator(s).";
+        }
+    }
+
+    public bool HasPendingPreviewCorrections => hasPendingPreviewCorrections;
+
+    public string PreviewCorrectionStatus => !HasPendingPreviewCorrections
+        ? "The displayed rows match the selected sheets and column mappings."
+        : "Sheet or column choices changed. Validate / refresh the preview before continuing or committing.";
+
+    public string PreviewActionText => preview is null
+        ? "Preview workbook"
+        : HasPendingPreviewCorrections ? "Validate corrections" : "Refresh preview";
+
+    public string ResultSummary
+    {
+        get => resultSummary;
+        private set
+        {
+            if (SetField(ref resultSummary, value))
+            {
+                OnPropertyChanged(nameof(HasResultSummary));
+            }
+        }
+    }
+
+    public bool HasResultSummary => !string.IsNullOrWhiteSpace(ResultSummary);
+
     public string OutcomeSummary => !HasSelectedOutcome
         ? "Choose at least one import outcome before continuing."
-        : $"Selected: {(ImportOrders ? "Orders" : string.Empty)}{(ImportOrders && (ImportPoolBatches || ImportMachineAssignments) ? ", " : string.Empty)}{(ImportPoolBatches ? "unassigned pool Batches" : string.Empty)}{(ImportPoolBatches && ImportMachineAssignments ? ", " : string.Empty)}{(ImportMachineAssignments ? "Machine assignments" : string.Empty)}. Rows outside these outcomes will be explicitly skipped in the one atomic commit.";
+        : $"Selected: {(ImportOrders ? "Orders" : string.Empty)}{(ImportOrders && (ImportPoolBatches || ImportMachineAssignments) ? ", " : string.Empty)}{(ImportPoolBatches ? "unassigned pool Batches" : string.Empty)}{(ImportPoolBatches && ImportMachineAssignments ? ", " : string.Empty)}{(ImportMachineAssignments ? "Machine assignments" : string.Empty)}. Sheets outside these outcomes are omitted from the one atomic commit.";
 
     public string SelectedFilePath
     {
@@ -293,7 +541,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         {
             if (SetField(ref sourceSheetName, value))
             {
-                RaiseState();
+                if (preview is not null && !isApplyingPreview) hasSheetSelectionCorrections = true;
+                MarkPreviewCorrectionPending();
             }
         }
     }
@@ -305,7 +554,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         {
             if (SetField(ref openOrdersSheetName, value))
             {
-                RaiseState();
+                if (preview is not null && !isApplyingPreview) hasSheetSelectionCorrections = true;
+                MarkPreviewCorrectionPending();
             }
         }
     }
@@ -354,6 +604,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         && !IsBusy
         && preview is not null
         && preview.ExpiresAt > DateTimeOffset.UtcNow
+        && !HasPendingPreviewCorrections
+        && (!RequiresAutomaticSkipConfirmation || ConfirmAutomaticSkips)
         && !HasGlobalServerBlockers()
         && Mappings.Where(IsIncludedInSelectedOutcome).All(mapping => mapping.IsResolved)
         && HasUniqueColumnTargetFields()
@@ -397,14 +649,34 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             return;
         }
 
+        if (preview is not null)
+        {
+            // A refresh validates the exact bytes, sheets, and mappings again. Once it
+            // starts, the prior token must never remain commit-eligible if reading or
+            // Server validation fails.
+            hasPendingPreviewCorrections = true;
+            ResultSummary = string.Empty;
+            Summary = "Refreshing the Server preview. Commit remains blocked until this validation succeeds.";
+            RaiseState();
+        }
+
         IsBusy = true;
         ErrorMessage = string.Empty;
         try
         {
             await using var workbook = openWorkbook(SelectedFilePath);
-            var result = await apiClient!.PreviewLegacyWorkingPlanAsync(
-                workbook,
-                Path.GetFileName(SelectedFilePath));
+            var result = preview is null
+                ? await apiClient!.PreviewLegacyWorkingPlanAsync(
+                    workbook,
+                    Path.GetFileName(SelectedFilePath))
+                : await apiClient!.PreviewLegacyWorkingPlanAsync(
+                    workbook,
+                    Path.GetFileName(SelectedFilePath),
+                    NullIfBlank(SourceSheetName),
+                    OpenOrdersSheetName.Trim(),
+                    hasSheetSelectionCorrections && !hasColumnMappingCorrections
+                        ? null
+                        : BuildPreviewColumnMappings());
             ApplyPreview(result);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -431,13 +703,10 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         {
             var receipt = await apiClient!.CommitLegacyWorkingPlanAsync(
                 BuildCommit(), clientId, editGeneration);
+            ResultSummary = BuildResultSummary(receipt);
             Summary = receipt.Replayed
-                ? $"Import {receipt.CommitId} was already committed; the Server replayed its receipt."
-                : $"Import {receipt.CommitId} committed: {receipt.Created.CaseIds.Count} Cases, "
-                  + $"{receipt.Created.OrderIds.Count} Orders, {receipt.Created.BatchIds.Count} Batches, "
-                  + $"{receipt.Created.BatchOperationIds?.Count ?? 0} Batch Operations, "
-                  + $"{receipt.Created.AssignmentIds.Count} assignments, and "
-                  + $"{receipt.PoolBatchOperationIds?.Count ?? 0} Operation(s) left in the unassigned pool.";
+                ? "The Server replayed the already accepted import receipt; no duplicate write was performed."
+                : "The Server accepted the validated import atomically. See the result summary below.";
             ImportCommitted?.Invoke(this, receipt);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -467,7 +736,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             return Task.CompletedTask;
         }
 
-        foreach (var row in Rows.Where(row => !row.HasExplicitDecision))
+        foreach (var row in Rows.Where(IsIncludedInSelectedOutcome).Where(row => !row.IsResolved))
         {
             row.IsSkipped = true;
         }
@@ -559,6 +828,100 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
+    internal Task PrepareAutomaticallyAsync()
+    {
+        if (!CanPrepareAutomatically)
+        {
+            return Task.CompletedTask;
+        }
+
+        isPreparingAutomatically = true;
+        try
+        {
+            // Outcomes describe what the preview actually contains. They are local draft
+            // choices only; the explicit Commit command remains the only write boundary.
+            if (!hasExplicitOutcomeSelection)
+            {
+                importOrders = !string.IsNullOrWhiteSpace(OpenOrdersSheetName)
+                    && Rows.Any(row => row.Kind == "open_orders");
+                var hasPlanningRows = !string.IsNullOrWhiteSpace(SourceSheetName)
+                    && Rows.Any(row => row.Kind == "planning");
+                importPoolBatches = hasPlanningRows;
+                importMachineAssignments = hasPlanningRows;
+            }
+            OnPropertyChanged(nameof(ImportOrders));
+            OnPropertyChanged(nameof(ImportPoolBatches));
+            OnPropertyChanged(nameof(ImportMachineAssignments));
+            foreach (var row in Rows)
+            {
+                row.NotifyOutcomeSelectionChanged();
+            }
+
+            var mappedMachines = 0;
+            foreach (var mapping in MachineMappings.Where(mapping => !mapping.IsResolved))
+            {
+                if (mapping.AcceptSafeAutomaticMachineSuggestion())
+                {
+                    mappedMachines++;
+                }
+            }
+
+            foreach (var row in Rows.Where(IsIncludedInSelectedOutcome))
+            {
+                if (row.HasExplicitDecision)
+                {
+                    continue;
+                }
+
+                if (row.Kind == "open_orders")
+                {
+                    row.PrepareOpenOrderAutomatically();
+                }
+                else if (row.Kind == "planning")
+                {
+                    row.PreparePlanningAutomatically(BuildAutomaticBatchNumber(row));
+                }
+            }
+
+            automaticPrepared = true;
+            confirmAutomaticSkips = false;
+            OnPropertyChanged(nameof(AutomaticPrepared));
+            OnPropertyChanged(nameof(ConfirmAutomaticSkips));
+            MachineSuggestionSummary = mappedMachines == 0
+                ? "No unambiguous exact Machine mapping was applied automatically. Safe Batch rows fall back to Pool."
+                : $"Applied {mappedMachines} unambiguous exact Machine mapping(s). Other safe Batch rows fall back to Pool.";
+
+            var attention = AutomaticAttentionRows;
+            var hasUnresolvedRows = Rows.Where(IsIncludedInSelectedOutcome).Any(row => !row.IsResolved);
+            wizardStep = AutomaticReadyRows > 0 && !hasUnresolvedRows ? 4 : 3;
+            selectedWizardRow = attention.FirstOrDefault()
+                ?? Rows.FirstOrDefault(row => IsIncludedInSelectedOutcome(row) && row.IsMutation)
+                ?? Rows.FirstOrDefault(row => IsIncludedInSelectedOutcome(row));
+            Summary = AutomaticImportSummary;
+        }
+        finally
+        {
+            isPreparingAutomatically = false;
+        }
+
+        foreach (var row in Rows.Where(row => row.Kind == "planning"))
+        {
+            row.NotifyMachineMappingChanged();
+        }
+
+        OnPropertyChanged(nameof(WizardStep));
+        OnPropertyChanged(nameof(SelectedWizardRow));
+        RaiseState();
+        return Task.CompletedTask;
+    }
+
+    private string BuildAutomaticBatchNumber(LegacyImportRowViewModel row)
+    {
+        var hash = preview?.WorkbookSha256?.Trim().ToUpperInvariant() ?? string.Empty;
+        var prefix = hash.Length >= 8 ? hash[..8] : hash.PadRight(8, '0');
+        return $"IMP-{prefix}-{row.RowNumber.ToString(CultureInfo.InvariantCulture)}";
+    }
+
     private bool IsEligiblePatternTarget(LegacyImportRowViewModel source, LegacyImportRowViewModel target)
     {
         if (ReferenceEquals(source, target) || target.IsSkipped || target.HasExplicitDecision || target.Kind != source.Kind
@@ -579,57 +942,63 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     private void ApplyPreview(LegacyWorkingPlanPreview result)
     {
-        preview = result;
-        expiryTimer.Start();
-        SourceSheetName = result.Suggestions.PlanningSheet ?? string.Empty;
-        OpenOrdersSheetName = result.Suggestions.OpenOrdersSheet ?? string.Empty;
-        HeaderRowNumber = result.MachineSections.Count == 0
-            ? 0
-            : result.MachineSections.Min(section => section.HeaderRow);
+        isApplyingPreview = true;
+        try
+        {
+            preview = result;
+            InvalidateAutomaticDraft();
+            expiryTimer.Start();
+            SourceSheetName = result.Suggestions.PlanningSheet ?? string.Empty;
+            OpenOrdersSheetName = result.Suggestions.OpenOrdersSheet ?? string.Empty;
+            HeaderRowNumber = result.MachineSections.Count == 0
+                ? 0
+                : result.MachineSections.Min(section => section.HeaderRow);
 
-        Mappings.Clear();
-        MachineMappings.Clear();
-        var planningColumnChoices = ColumnChoicesFor(result, result.Suggestions.PlanningSheet);
-        var openOrderColumnChoices = ColumnChoicesFor(result, result.Suggestions.OpenOrdersSheet);
-        foreach (var suggestion in result.Suggestions.PlanningColumns ?? [])
-        {
-            Mappings.Add(LegacyImportMappingViewModel.Column(
-                "planning", suggestion, this, SampleFor(result.Rows, suggestion.Field), planningColumnChoices));
+            Mappings.Clear();
+            MachineMappings.Clear();
+            var planningColumnChoices = ColumnOptionsFor(result, result.Suggestions.PlanningSheet);
+            var openOrderColumnChoices = ColumnOptionsFor(result, result.Suggestions.OpenOrdersSheet);
+            AddColumnMappings("planning", PlanningColumnTargets,
+                result.Suggestions.PlanningColumns ?? [], result.Rows, planningColumnChoices);
+            AddColumnMappings("open_orders", OpenOrderColumnTargets,
+                result.Suggestions.OpenOrderColumns ?? [], result.OpenOrderRows, openOrderColumnChoices);
+            foreach (var section in result.MachineSections ?? [])
+            {
+                MachineMappings.Add(LegacyImportMappingViewModel.Machine(section, this));
+            }
+
+            Issues.Clear();
+            foreach (var issue in result.Issues ?? [])
+            {
+                Issues.Add(issue);
+            }
+
+            Rows.Clear();
+            foreach (var row in result.Rows ?? [])
+            {
+                Rows.Add(LegacyImportRowViewModel.Planning(row, IssuesFor(row.SheetName, row.RowNumber), this));
+            }
+            foreach (var row in result.OpenOrderRows ?? [])
+            {
+                Rows.Add(LegacyImportRowViewModel.OpenOrder(row, IssuesFor(row.SheetName, row.RowNumber), this));
+            }
+
+            hasPendingPreviewCorrections = false;
+            hasSheetSelectionCorrections = false;
+            hasColumnMappingCorrections = false;
+            ResultSummary = string.Empty;
+            Summary = $"Server preview ready. {PreviewSummary}";
+            WizardStep = 0;
+            CurrentImportStage = "cases";
+            SelectedWizardRow = Rows.FirstOrDefault();
+            PatternApplicationSummary = string.Empty;
+            MachineSuggestionSummary = string.Empty;
         }
-        foreach (var suggestion in result.Suggestions.OpenOrderColumns ?? [])
+        finally
         {
-            Mappings.Add(LegacyImportMappingViewModel.Column(
-                "open_orders", suggestion, this, SampleFor(result.OpenOrderRows, suggestion.Field), openOrderColumnChoices));
-        }
-        foreach (var section in result.MachineSections ?? [])
-        {
-            MachineMappings.Add(LegacyImportMappingViewModel.Machine(section, this));
+            isApplyingPreview = false;
         }
 
-        Issues.Clear();
-        foreach (var issue in result.Issues ?? [])
-        {
-            Issues.Add(issue);
-        }
-
-        Rows.Clear();
-        foreach (var row in result.Rows ?? [])
-        {
-            Rows.Add(LegacyImportRowViewModel.Planning(row, IssuesFor(row.SheetName, row.RowNumber), this));
-        }
-        foreach (var row in result.OpenOrderRows ?? [])
-        {
-            Rows.Add(LegacyImportRowViewModel.OpenOrder(row, IssuesFor(row.SheetName, row.RowNumber), this));
-        }
-
-        var blockers = Issues.Count(issue => IsBlockingSeverity(issue.Severity));
-        var warnings = Issues.Count(issue => string.Equals(issue.Severity, "warning", StringComparison.OrdinalIgnoreCase));
-        Summary = $"Server preview: {Rows.Count} rows, {Mappings.Count} column mappings, {MachineMappings.Count} Machine mappings, {warnings} warnings, {blockers} blockers. "
-            + "Use the step-by-step wizard to choose every mapping and row decision before committing.";
-        WizardStep = 0;
-        SelectedWizardRow = Rows.FirstOrDefault();
-        PatternApplicationSummary = string.Empty;
-        MachineSuggestionSummary = string.Empty;
         RaiseState();
     }
 
@@ -637,13 +1006,12 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         preview!.SchemaVersion,
         preview.ImportToken,
         preview.WorkbookSha256,
-        // The Server commit envelope always identifies the preview's approved planning
-        // sheet, even when this run selects only open-order mutations. Planning rows are
-        // still transmitted as explicit Skip actions, so this does not enable planning
-        // imports or broaden the selected wizard outcomes.
-        NullIfBlank(SourceSheetName),
+        ImportPoolBatches || ImportMachineAssignments ? NullIfBlank(SourceSheetName) : null,
         ImportOrders ? NullIfBlank(OpenOrdersSheetName) : null,
-        Mappings.Where(mapping => mapping.Kind == "column" && IsIncludedInSelectedOutcome(mapping))
+        Mappings.Where(mapping => mapping.Kind == "column"
+                && IsIncludedInSelectedOutcome(mapping)
+                && mapping.IsResolved
+                && !string.IsNullOrWhiteSpace(mapping.SourceColumn))
             .Select(mapping => new LegacyImportColumnMapping(mapping.Scope!, mapping.TargetField, mapping.SourceColumn))
             .ToArray(),
         MachineMappings.Where(mapping => mapping.IsResolved && Rows.Any(row =>
@@ -652,12 +1020,36 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
                 && string.Equals(row.SectionKey, mapping.SectionKey, StringComparison.Ordinal)))
             .Select(mapping => new LegacyImportMachineMapping(mapping.SectionKey!, NullIfBlank(mapping.SelectedMachineId)))
             .ToArray(),
-        Rows.Where(row => row.Kind == "open_orders").Select(row => IsIncludedInSelectedOutcome(row)
-            ? row.ToOpenOrderSelection() : row.ToSkippedOpenOrderSelection()).ToArray(),
-        Rows.Where(row => row.Kind == "planning").Select(row => IsIncludedInSelectedOutcome(row)
-            ? row.ToPlanningSelection(
-                MachineMappings.FirstOrDefault(mapping => mapping.SectionKey == row.SectionKey)?.SelectedMachineId)
-            : row.ToSkippedPlanningSelection()).ToArray());
+        Rows.Where(row => row.Kind == "open_orders" && IsIncludedInSelectedOutcome(row))
+            .Select(row => row.ToOpenOrderSelection()).ToArray(),
+        Rows.Where(row => row.Kind == "planning" && IsIncludedInSelectedOutcome(row))
+            .Select(row => row.ToPlanningSelection(
+                MachineMappings.FirstOrDefault(mapping => mapping.SectionKey == row.SectionKey)?.SelectedMachineId))
+            .ToArray());
+
+    private IReadOnlyList<LegacyImportColumnMapping> BuildPreviewColumnMappings() => Mappings
+        .Where(mapping => mapping.Kind == "column" && !string.IsNullOrWhiteSpace(mapping.SourceColumn))
+        .Select(mapping => new LegacyImportColumnMapping(
+            mapping.Scope!,
+            mapping.TargetField,
+            mapping.SourceColumn))
+        .ToArray();
+
+    private string BuildResultSummary(LegacyWorkingPlanCommitReceipt receipt)
+    {
+        var created = receipt.Created;
+        var unchanged = receipt.Unchanged;
+        var selectedSkips = Rows.Count(row => IsIncludedInSelectedOutcome(row) && row.IsSkipped);
+        var replay = receipt.Replayed ? " (idempotent replay)" : string.Empty;
+        return $"Import {receipt.CommitId}{replay}: created {created.CaseIds.Count} Case(s), "
+            + $"{created.OrderIds.Count} Order(s), {created.BatchIds.Count} Batch(es), "
+            + $"{created.BatchOperationIds?.Count ?? 0} Batch Operation(s), and {created.AssignmentIds.Count} assignment(s); "
+            + $"matched/unchanged {unchanged.CaseIds.Count} Case(s), {unchanged.OrderIds.Count} Order(s), "
+            + $"{unchanged.BatchIds.Count} Batch(es), {unchanged.BatchOperationIds?.Count ?? 0} Batch Operation(s), "
+            + $"and {unchanged.AssignmentIds.Count} assignment(s). {selectedSkips} selected source row(s) skipped; "
+            + $"{receipt.PoolBatchOperationIds?.Count ?? 0} Operation(s) left in Pool; "
+            + $"{receipt.MachineBacklogs.Count} Machine backlog(s) affected.";
+    }
 
     internal bool IsIncludedInSelectedOutcome(LegacyImportRowViewModel row) => row.Kind switch
     {
@@ -673,8 +1065,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         _ => false
     };
 
-    private bool HasSelectedOutcome => (ImportOrders && OrderRows.Any())
-        || ((ImportPoolBatches || ImportMachineAssignments) && PoolRows.Any());
+    private bool HasSelectedOutcome => (ImportOrders && !string.IsNullOrWhiteSpace(OpenOrdersSheetName))
+        || ((ImportPoolBatches || ImportMachineAssignments) && !string.IsNullOrWhiteSpace(SourceSheetName));
 
     private bool HasResolvedMappings => Mappings.Where(IsIncludedInSelectedOutcome).All(mapping => mapping.IsResolved)
         && MachineMappings.Where(mapping => Rows.Any(row => row.RequiresMachineMapping
@@ -707,9 +1099,53 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         Issues.Where(issue => string.Equals(issue.SheetName, sheetName, StringComparison.OrdinalIgnoreCase)
             && issue.RowNumber == rowNumber);
 
+    private int CountIssueRows(string severity) => Issues
+        .Where(issue => issue.RowNumber.HasValue
+            && string.Equals(issue.Severity, severity, StringComparison.OrdinalIgnoreCase))
+        .Select(issue => $"{issue.SheetName}:{issue.RowNumber}")
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
     private bool HasGlobalServerBlockers() => Issues.Any(issue => !issue.RowNumber.HasValue
         && IsBlockingSeverity(issue.Severity)
-        && (!IsCompatibilityOverrideIssue(issue) || string.IsNullOrWhiteSpace(issue.SectionKey)));
+        && (!IsCompatibilityOverrideIssue(issue) || string.IsNullOrWhiteSpace(issue.SectionKey))
+        && IsIssueIncludedInSelectedOutcome(issue));
+
+    private bool IsIssueIncludedInSelectedOutcome(LegacyImportIssue issue)
+    {
+        if (string.Equals(issue.Scope, "planning", StringComparison.OrdinalIgnoreCase))
+        {
+            return ImportPoolBatches || ImportMachineAssignments;
+        }
+
+        if (string.Equals(issue.Scope, "open_orders", StringComparison.OrdinalIgnoreCase))
+        {
+            return ImportOrders;
+        }
+
+        if (!string.IsNullOrWhiteSpace(issue.SheetName))
+        {
+            var planningSheet = string.Equals(
+                issue.SheetName, SourceSheetName, StringComparison.OrdinalIgnoreCase);
+            var orderSheet = string.Equals(
+                issue.SheetName, OpenOrdersSheetName, StringComparison.OrdinalIgnoreCase);
+            if (planningSheet || orderSheet)
+            {
+                return planningSheet && (ImportPoolBatches || ImportMachineAssignments)
+                    || orderSheet && ImportOrders;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(issue.SectionKey)
+            || issue.Code.Contains("machine_section", StringComparison.OrdinalIgnoreCase))
+        {
+            return ImportPoolBatches || ImportMachineAssignments;
+        }
+
+        // Workbook-integrity, token, and otherwise unscoped blockers apply to every
+        // outcome and must remain visible.
+        return true;
+    }
 
     private bool HasUniqueColumnTargetFields() => Mappings
         .GroupBy(mapping => $"{mapping.Scope}:{mapping.TargetField}", StringComparer.OrdinalIgnoreCase)
@@ -721,6 +1157,35 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     private bool CanSkipRow(LegacyImportRowViewModel? row) => !IsBusy && IsEditor && row is not null;
 
+    private void MarkPreviewCorrectionPending()
+    {
+        if (preview is null || isApplyingPreview)
+        {
+            RaiseState();
+            return;
+        }
+
+        InvalidateAutomaticDraft();
+        if (!hasPendingPreviewCorrections)
+        {
+            hasPendingPreviewCorrections = true;
+            ResultSummary = string.Empty;
+            Summary = "Sheet or column choices changed. Validate / refresh the preview before resolving rows or committing.";
+        }
+
+        RaiseState();
+    }
+
+    private void InvalidateAutomaticDraft()
+    {
+        automaticPrepared = false;
+        confirmAutomaticSkips = false;
+        OnPropertyChanged(nameof(AutomaticPrepared));
+        OnPropertyChanged(nameof(ConfirmAutomaticSkips));
+        OnPropertyChanged(nameof(RequiresAutomaticSkipConfirmation));
+        OnPropertyChanged(nameof(AutomaticImportSummary));
+    }
+
     private void ClearPreview()
     {
         preview = null;
@@ -730,18 +1195,52 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         Rows.Clear();
         Issues.Clear();
         HeaderRowNumber = 0;
+        sourceSheetName = string.Empty;
+        openOrdersSheetName = string.Empty;
+        hasPendingPreviewCorrections = false;
+        hasSheetSelectionCorrections = false;
+        hasColumnMappingCorrections = false;
+        ResultSummary = string.Empty;
         WizardStep = 0;
         SelectedWizardRow = null;
         PatternApplicationSummary = string.Empty;
         MachineSuggestionSummary = string.Empty;
+        automaticPrepared = false;
+        confirmAutomaticSkips = false;
+        hasExplicitOutcomeSelection = false;
+        importOrders = false;
+        importPoolBatches = false;
+        importMachineAssignments = false;
         if (!IsBusy)
         {
             Summary = "Choose an .xlsx workbook to create a Server preview.";
         }
+
+        OnPropertyChanged(nameof(SourceSheetName));
+        OnPropertyChanged(nameof(OpenOrdersSheetName));
+        OnPropertyChanged(nameof(DetectedSheets));
+        OnPropertyChanged(nameof(SheetChoices));
+        OnPropertyChanged(nameof(OptionalSheetChoices));
+        OnPropertyChanged(nameof(AutomaticPrepared));
+        OnPropertyChanged(nameof(ConfirmAutomaticSkips));
+        OnPropertyChanged(nameof(ImportOrders));
+        OnPropertyChanged(nameof(ImportPoolBatches));
+        OnPropertyChanged(nameof(ImportMachineAssignments));
+        OnPropertyChanged(nameof(RequiresAutomaticSkipConfirmation));
+        OnPropertyChanged(nameof(AutomaticImportSummary));
+        OnPropertyChanged(nameof(AutomaticReadyRows));
+        OnPropertyChanged(nameof(AutomaticSkippedRows));
+        OnPropertyChanged(nameof(AutomaticAttentionRows));
     }
 
     internal void RowOrMappingChanged()
     {
+        if (isPreparingAutomatically)
+        {
+            return;
+        }
+
+        ResetAutomaticSkipConfirmation();
         foreach (var row in Rows.Where(row => row.Kind == "planning"))
         {
             row.NotifyMachineMappingChanged();
@@ -750,9 +1249,33 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         RaiseState();
     }
 
+    internal void ColumnMappingChanged()
+    {
+        ResetAutomaticSkipConfirmation();
+        if (preview is not null && !isApplyingPreview) hasColumnMappingCorrections = true;
+        MarkPreviewCorrectionPending();
+    }
+
     internal LegacyImportMachineCandidate? SelectedMachineForSection(string? sectionKey) =>
         MachineMappings.FirstOrDefault(mapping => string.Equals(
             mapping.SectionKey, sectionKey, StringComparison.Ordinal))?.SelectedMachineCandidate;
+
+    internal bool HasSafeAutomaticMachineSelection(string? sectionKey)
+    {
+        var mapping = MachineMappings.FirstOrDefault(candidate => string.Equals(
+            candidate.SectionKey, sectionKey, StringComparison.Ordinal));
+        if (mapping is null || !mapping.HasSafeAutomaticMachineSuggestion
+            || mapping.SelectedMachineCandidate is null)
+        {
+            return false;
+        }
+
+        var best = mapping.MachineChoices.OrderByDescending(candidate => candidate.Score).First();
+        return string.Equals(
+            mapping.SelectedMachineCandidate.MachineId,
+            best.MachineId,
+            StringComparison.Ordinal);
+    }
 
     internal bool ServerRequiresCompatibilityOverride(string sheetName, int rowNumber, string? sectionKey) =>
         Issues.Any(issue => IsCompatibilityOverrideIssue(issue)
@@ -766,10 +1289,18 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanCommit));
         OnPropertyChanged(nameof(ExpiresAt));
         OnPropertyChanged(nameof(TokenExpiryText));
+        OnPropertyChanged(nameof(DetectedSheets));
+        OnPropertyChanged(nameof(SheetChoices));
+        OnPropertyChanged(nameof(OptionalSheetChoices));
+        OnPropertyChanged(nameof(PreviewSummary));
+        OnPropertyChanged(nameof(PreviewCorrectionStatus));
+        OnPropertyChanged(nameof(PreviewActionText));
+        OnPropertyChanged(nameof(HasPendingPreviewCorrections));
         PreviewCommand.RaiseCanExecuteChanged();
         CommitCommand.RaiseCanExecuteChanged();
         SkipRowCommand.RaiseCanExecuteChanged();
         SkipAllUnresolvedCommand.RaiseCanExecuteChanged();
+        PrepareAutomaticallyCommand.RaiseCanExecuteChanged();
         RaiseWizardState();
     }
 
@@ -790,15 +1321,28 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanApplyPattern));
         OnPropertyChanged(nameof(PatternPreviewText));
         OnPropertyChanged(nameof(ValidationSummary));
+        OnPropertyChanged(nameof(PreviewSummary));
         OnPropertyChanged(nameof(SelectedRow));
         OnPropertyChanged(nameof(PoolRows));
         OnPropertyChanged(nameof(OrderRows));
         OnPropertyChanged(nameof(BatchRows));
         OnPropertyChanged(nameof(AssignmentRows));
+        OnPropertyChanged(nameof(CaseRows));
+        OnPropertyChanged(nameof(CurrentStageRows));
+        OnPropertyChanged(nameof(CurrentImportStageTitle));
+        OnPropertyChanged(nameof(CurrentImportStageDescription));
+        OnPropertyChanged(nameof(IncludedRows));
         OnPropertyChanged(nameof(ReviewRows));
         OnPropertyChanged(nameof(IncludedMappings));
         OnPropertyChanged(nameof(IncludedMachineMappings));
         OnPropertyChanged(nameof(ShowsMachineMappings));
+        OnPropertyChanged(nameof(AutomaticPrepared));
+        OnPropertyChanged(nameof(AutomaticImportSummary));
+        OnPropertyChanged(nameof(AutomaticReadyRows));
+        OnPropertyChanged(nameof(AutomaticSkippedRows));
+        OnPropertyChanged(nameof(AutomaticAttentionRows));
+        OnPropertyChanged(nameof(RequiresAutomaticSkipConfirmation));
+        OnPropertyChanged(nameof(ConfirmAutomaticSkips));
         NextStepCommand.RaiseCanExecuteChanged();
         PreviousStepCommand.RaiseCanExecuteChanged();
         ApplyPatternCommand.RaiseCanExecuteChanged();
@@ -806,6 +1350,77 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         ApplySelectedPatternToAllCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanAcceptClearMachineSuggestions));
         AcceptClearMachineSuggestionsCommand.RaiseCanExecuteChanged();
+        ShowCasesStageCommand.RaiseCanExecuteChanged();
+        ShowOrdersStageCommand.RaiseCanExecuteChanged();
+        ShowBatchesStageCommand.RaiseCanExecuteChanged();
+        ShowAssignmentsStageCommand.RaiseCanExecuteChanged();
+    }
+
+    private Task ShowImportStageAsync(string stage)
+    {
+        if (preview is null || IsBusy)
+        {
+            return Task.CompletedTask;
+        }
+
+        CurrentImportStage = stage;
+        switch (stage)
+        {
+            case "cases":
+            case "orders":
+                ImportOrders = true;
+                break;
+            case "batches":
+                ImportPoolBatches = true;
+                break;
+            case "assignments":
+                ImportMachineAssignments = true;
+                break;
+        }
+        WizardStep = 3;
+        SelectedWizardRow = CurrentStageRows.FirstOrDefault();
+        RaiseWizardState();
+        return Task.CompletedTask;
+    }
+
+    internal void SynchronizeCaseStageSelection(LegacyImportRowViewModel source)
+    {
+        if (isSynchronizingCaseStageSelection
+            || CurrentImportStage != "cases"
+            || source.Kind != "open_orders")
+        {
+            return;
+        }
+
+        var partNumber = source.SourcePartNumber?.Trim();
+        if (string.IsNullOrWhiteSpace(partNumber))
+        {
+            return;
+        }
+
+        isSynchronizingCaseStageSelection = true;
+        try
+        {
+            foreach (var related in OrderRows.Where(row => !ReferenceEquals(row, source)
+                && string.Equals(row.SourcePartNumber?.Trim(), partNumber, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (source.SelectedCaseCandidate is not null
+                    && related.CaseCandidates.Contains(source.SelectedCaseCandidate))
+                {
+                    related.SelectedCaseCandidate = source.SelectedCaseCandidate;
+                }
+
+                related.CaseSourceRowKey = string.Equals(source.Decision, "create_case", StringComparison.Ordinal)
+                    ? source.RowKey
+                    : string.Empty;
+            }
+        }
+        finally
+        {
+            isSynchronizingCaseStageSelection = false;
+        }
+
+        RaiseWizardState();
     }
 
     private string PatternScopeDescription => PatternScope switch
@@ -823,12 +1438,23 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             return;
         }
 
+        hasExplicitOutcomeSelection = true;
         foreach (var row in Rows)
         {
             row.NotifyOutcomeSelectionChanged();
         }
 
+        ResetAutomaticSkipConfirmation();
         RaiseState();
+    }
+
+    private void ResetAutomaticSkipConfirmation()
+    {
+        if (!isPreparingAutomatically && confirmAutomaticSkips)
+        {
+            confirmAutomaticSkips = false;
+            OnPropertyChanged(nameof(ConfirmAutomaticSkips));
+        }
     }
 
     private static string SampleFor<T>(IReadOnlyList<T>? rows, string field) where T : class
@@ -845,13 +1471,57 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         return property?.GetValue(values)?.ToString() ?? string.Empty;
     }
 
-    private static IReadOnlyList<string> ColumnChoicesFor(LegacyWorkingPlanPreview preview, string? sheetName)
+    private void AddColumnMappings<T>(
+        string scope,
+        IReadOnlyList<(string Field, bool Required)> knownTargets,
+        IReadOnlyList<LegacyImportColumnSuggestion> suggestions,
+        IReadOnlyList<T>? rows,
+        IReadOnlyList<LegacyImportSourceColumnChoice> columnChoices) where T : class
     {
-        var count = preview.Workbook.Sheets
-            .FirstOrDefault(sheet => string.Equals(sheet.Name, sheetName, StringComparison.OrdinalIgnoreCase))
-            ?.ColumnCount ?? 0;
+        var suggestionByField = suggestions
+            .Where(suggestion => !string.IsNullOrWhiteSpace(suggestion.Field))
+            .GroupBy(suggestion => suggestion.Field, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var target in knownTargets)
+        {
+            var suggestion = suggestionByField.GetValueOrDefault(target.Field)
+                ?? new LegacyImportColumnSuggestion(
+                    target.Field,
+                    Column: null,
+                    Header: "Not detected - choose a source column",
+                    Confidence: 0m,
+                    Required: target.Required);
+            Mappings.Add(LegacyImportMappingViewModel.Column(
+                scope, suggestion, this, SampleFor(rows, target.Field), columnChoices));
+        }
+
+        // Keep the client forward-compatible if a newer Server adds a target field.
+        foreach (var suggestion in suggestions.Where(suggestion =>
+                     knownTargets.All(target => !string.Equals(
+                         target.Field, suggestion.Field, StringComparison.OrdinalIgnoreCase))))
+        {
+            Mappings.Add(LegacyImportMappingViewModel.Column(
+                scope, suggestion, this, SampleFor(rows, suggestion.Field), columnChoices));
+        }
+    }
+
+    private static IReadOnlyList<LegacyImportSourceColumnChoice> ColumnOptionsFor(
+        LegacyWorkingPlanPreview preview,
+        string? sheetName)
+    {
+        var sheet = preview.Workbook.Sheets
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, sheetName, StringComparison.OrdinalIgnoreCase));
+        var count = sheet?.ColumnCount ?? 0;
+        var descriptors = (sheet?.Columns ?? [])
+            .Where(column => !string.IsNullOrWhiteSpace(column.Column))
+            .GroupBy(column => column.Column.Trim().ToUpperInvariant(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         return Enumerable.Range(1, Math.Min(count, 16_384))
             .Select(ToExcelColumnName)
+            .Select(column => descriptors.TryGetValue(column, out var descriptor)
+                ? new LegacyImportSourceColumnChoice(column, descriptor.Header, descriptor.Sample)
+                : new LegacyImportSourceColumnChoice(column, null, null))
             .ToArray();
     }
 
@@ -907,11 +1577,19 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
 internal sealed record LegacyImportChoice(string Value, string DisplayName);
 
+internal sealed record LegacyImportSourceColumnChoice(string Column, string? Header, string? Sample)
+{
+    public string DisplayName => string.Join(" - ", new[] { Column, Header, Sample }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
+}
+
 internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
 {
     private readonly LegacyExcelImportViewModel owner;
     private string targetField;
     private string sourceColumn = string.Empty;
+    private readonly string suggestedSourceHeader;
+    private readonly string suggestedSampleValue;
     private string selectedMachineId = string.Empty;
     private LegacyImportMachineCandidate? selectedMachineCandidate;
 
@@ -920,8 +1598,8 @@ internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
     {
         this.owner = owner;
         Kind = kind;
-        SourceHeader = sourceHeader;
-        SampleValue = sampleValue;
+        suggestedSourceHeader = sourceHeader;
+        suggestedSampleValue = sampleValue;
         this.targetField = targetField;
         IsRequired = required;
         CandidateScore = candidateScore;
@@ -938,20 +1616,28 @@ internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
         set
         {
             var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
-            if (SetField(ref sourceColumn, normalized)) owner.RowOrMappingChanged();
+            if (SetField(ref sourceColumn, normalized))
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SourceHeader)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SampleValue)));
+                owner.ColumnMappingChanged();
+            }
         }
     }
-    public string SourceHeader { get; }
-    public string SampleValue { get; }
+    public string SourceHeader => SelectedColumnOption?.Header ?? suggestedSourceHeader;
+    public string SampleValue => SelectedColumnOption?.Sample ?? suggestedSampleValue;
     public bool IsRequired { get; }
     public decimal? CandidateScore { get; }
     public string CandidateReason { get; }
     public string SelectionReason => Kind == "machine" && SelectedMachineCandidate is not null
         ? SelectedMachineCandidate.Reason
         : CandidateReason;
-    public IReadOnlyList<string> ColumnChoices { get; private init; } = [];
+    public IReadOnlyList<LegacyImportSourceColumnChoice> ColumnOptions { get; private init; } = [];
+    public IReadOnlyList<string> ColumnChoices => ColumnOptions.Select(option => option.Column).ToArray();
     public IReadOnlyList<LegacyImportMachineCandidate> MachineChoices { get; private init; } = [];
     public string TargetField => targetField;
+    private LegacyImportSourceColumnChoice? SelectedColumnOption => ColumnOptions.FirstOrDefault(option =>
+        string.Equals(option.Column, SourceColumn, StringComparison.OrdinalIgnoreCase));
     public string SelectedMachineId
     {
         get => selectedMachineId;
@@ -972,11 +1658,18 @@ internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
             }
         }
     }
-    public string Decision => IsResolved ? "Selected" : "Choose";
+    public string Decision => IsResolved
+        ? string.IsNullOrWhiteSpace(SourceColumn) && Kind == "column" ? "Optional" : "Selected"
+        : "Choose";
     public bool IsResolved => Kind == "column"
         ? !string.IsNullOrWhiteSpace(TargetField)
-            && ColumnChoices.Contains(SourceColumn, StringComparer.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(SourceColumn)
+                ? !IsRequired
+                : ColumnChoices.Contains(SourceColumn, StringComparer.OrdinalIgnoreCase))
         : !string.IsNullOrWhiteSpace(SelectedMachineId);
+
+    public bool HasSourceMachineMatch => Kind != "machine"
+        || MachineChoices.Any(candidate => candidate.Score > 0m);
 
     internal bool HasClearMachineSuggestion
     {
@@ -993,6 +1686,21 @@ internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
         }
     }
 
+    internal bool HasSafeAutomaticMachineSuggestion
+    {
+        get
+        {
+            if (Kind != "machine" || MachineChoices.Count == 0)
+            {
+                return false;
+            }
+
+            var ordered = MachineChoices.OrderByDescending(candidate => candidate.Score).ToArray();
+            return ordered[0].Score >= 0.95m
+                && (ordered.Length == 1 || ordered[0].Score - ordered[1].Score >= 0.15m);
+        }
+    }
+
     internal bool AcceptClearMachineSuggestion()
     {
         if (IsResolved || !HasClearMachineSuggestion)
@@ -1004,13 +1712,27 @@ internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
         return true;
     }
 
+    internal bool AcceptSafeAutomaticMachineSuggestion()
+    {
+        if (IsResolved || !HasSafeAutomaticMachineSuggestion)
+        {
+            return false;
+        }
+
+        SelectedMachineCandidate = MachineChoices.OrderByDescending(candidate => candidate.Score).First();
+        return true;
+    }
+
     internal static LegacyImportMappingViewModel Column(string scope, LegacyImportColumnSuggestion suggestion,
-        LegacyExcelImportViewModel owner, string sample, IReadOnlyList<string> columnChoices) => new(owner, "column", suggestion.Header ?? suggestion.Column ?? "(unlabeled)",
-            sample, suggestion.Field, required: true, suggestion.Confidence, "Server suggestion")
+        LegacyExcelImportViewModel owner, string sample, IReadOnlyList<LegacyImportSourceColumnChoice> columnChoices) => new(owner, "column", suggestion.Header ?? suggestion.Column ?? "(unlabeled)",
+            sample, suggestion.Field, suggestion.Required ?? IsRequiredColumn(scope, suggestion.Field), suggestion.Confidence,
+            string.IsNullOrWhiteSpace(suggestion.Column)
+                ? "No automatic match; choose a source column"
+                : "Server suggestion")
         {
             Scope = scope,
             sourceColumn = suggestion.Column?.Trim().ToUpperInvariant() ?? string.Empty,
-            ColumnChoices = columnChoices
+            ColumnOptions = columnChoices
         };
 
     internal static LegacyImportMappingViewModel Machine(LegacyImportMachineSection section,
@@ -1020,6 +1742,16 @@ internal sealed class LegacyImportMappingViewModel : INotifyPropertyChanged
             SectionKey = section.SectionKey,
             MachineChoices = section.Candidates ?? [],
         };
+
+    private static bool IsRequiredColumn(string scope, string field) => scope switch
+    {
+        // These identify a production planning row and its conservative Batch quantity.
+        "planning" => field is "partNumber" or "quantity",
+        // An open-order row may be corrected manually later, but Part Number is the
+        // stable Case matching key used by the staged preview.
+        "open_orders" => field == "partNumber",
+        _ => false
+    };
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
@@ -1060,6 +1792,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     private string orderQuantity = string.Empty;
     private string orderWorkFinishDate = string.Empty;
     private string orderNotes = string.Empty;
+    private string automaticReason = string.Empty;
     private bool includeOrderWithNewCase;
     private bool orderFieldsEdited;
     private LegacyImportCaseCandidate? selectedCaseCandidate;
@@ -1110,6 +1843,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         ? []
         : AllRouteOperationCandidates.Where(candidate => string.Equals(
             candidate.CaseId, selectedCaseCandidate.CaseId, StringComparison.Ordinal)).ToArray();
+    public int SelectedCaseRouteOperationCount => RouteOperationCandidates.Count;
     public IReadOnlyList<LegacyImportCaseOperationCandidate> AvailableRouteOperationCandidates => RouteOperationCandidates;
     public IReadOnlyList<LegacyImportBatchOperationCandidate> ExistingOperationCandidates { get; private init; } = [];
     public IReadOnlyList<LegacyImportBatchOperationCandidate> AvailableExistingOperationCandidates =>
@@ -1118,12 +1852,29 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     public AsyncCommand AddAllocationCommand { get; }
     public AsyncCommand<LegacyImportAllocationViewModel> RemoveAllocationCommand { get; }
     public IReadOnlyList<string> SkipChoices { get; } = ["Skip this source row"];
-    public string Message => issues.Count == 0 ? "No Server issue reported." : string.Join(" ", issues.Select(issue => issue.Message));
+    public string AutomaticReason
+    {
+        get => automaticReason;
+        private set
+        {
+            if (SetField(ref automaticReason, value))
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Message)));
+            }
+        }
+    }
+    public string Message => string.Join(" ", new[]
+        {
+            string.IsNullOrWhiteSpace(AutomaticReason) ? null : AutomaticReason,
+            issues.Count == 0 ? null : string.Join(" ", issues.Select(issue => issue.Message))
+        }.Where(value => !string.IsNullOrWhiteSpace(value))) is { Length: > 0 } message
+            ? message
+            : "No Server issue reported.";
     public string Status => IsSkipped ? "Skip"
         : HasUnresolvedBlockingIssue || RequiresCompatibilityOverride && !HasValidCompatibilityOverride() ? "Blocked"
         : issues.Any(issue => string.Equals(issue.Severity, "warning", StringComparison.OrdinalIgnoreCase))
             || RequiresCompatibilityOverride ? "Warning"
-        : IsResolved ? "Ready" : "Blocked";
+        : IsResolved ? "Ready" : "Needs review";
     public bool HasExplicitDecision => !string.IsNullOrWhiteSpace(Decision);
     public string DecisionDisplayName => Decision switch
     {
@@ -1241,6 +1992,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             }
 
             RaiseCaseSelectionProperties();
+            owner.SynchronizeCaseStageSelection(this);
         }
     }
     public LegacyImportCaseOperationCandidate? SelectedRouteOperationCandidate
@@ -1333,11 +2085,154 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         return model;
     }
 
+    internal void PrepareOpenOrderAutomatically()
+    {
+        if (HasAutomaticBlockingIssue())
+        {
+            SkipAutomatically("Skipped automatically because the Server reported a blocking source-row issue.");
+            return;
+        }
+
+        if (HasDuplicateSourceWarning())
+        {
+            SkipAutomatically("Skipped automatically because this is a duplicate source row.");
+            return;
+        }
+
+        if (OrderCandidates.Count > 0)
+        {
+            SkipAutomatically(
+                $"Skipped automatically because existing Order {OrderCandidates[0].OrderNumber} already matches this Case and Order Number.");
+            return;
+        }
+
+        if (CaseCandidates.Count != 1)
+        {
+            SkipAutomatically(CaseCandidates.Count == 0
+                ? "Skipped automatically because no existing Case matches the Part Number; the importer never invents a Case folder."
+                : "Skipped automatically because more than one existing Case matches the Part Number.");
+            return;
+        }
+
+        if (!HasCompleteOrderInput)
+        {
+            SkipAutomatically("Skipped automatically because Order Number, positive quantity, and Work Finish Date are not all valid.");
+            return;
+        }
+
+        SelectedCaseCandidate = CaseCandidates[0];
+        Decision = "create_order";
+        AutomaticReason = "Prepared automatically under the one exact existing Case match.";
+    }
+
+    internal void PreparePlanningAutomatically(string automaticBatchNumber)
+    {
+        if (HasAutomaticBlockingIssue())
+        {
+            SkipAutomatically("Skipped automatically because the Server reported a blocking source-row issue.");
+            return;
+        }
+
+        if (HasDuplicateSourceWarning())
+        {
+            SkipAutomatically("Skipped automatically because this is a duplicate source row.");
+            return;
+        }
+
+        if (SourceQuantity is not > 0)
+        {
+            SkipAutomatically("Skipped automatically because the planning quantity is not a positive whole number.");
+            return;
+        }
+
+        if (CaseCandidates.Count != 1)
+        {
+            SkipAutomatically(CaseCandidates.Count == 0
+                ? "Skipped automatically because no existing routed Case matches the Part Number."
+                : "Skipped automatically because more than one existing Case matches the Part Number.");
+            return;
+        }
+
+        SelectedCaseCandidate = CaseCandidates[0];
+        if (!HasCompleteReviewedCaseRoute())
+        {
+            SkipAutomatically("Skipped automatically because the exact Case has no complete versioned Operation route to snapshot.");
+            return;
+        }
+
+        if (BatchCandidates.Any(candidate => string.Equals(
+                candidate.BatchNumber, automaticBatchNumber, StringComparison.OrdinalIgnoreCase)))
+        {
+            SkipAutomatically($"Skipped automatically because Batch Number {automaticBatchNumber} already exists for this Case.");
+            return;
+        }
+
+        BatchNumber = automaticBatchNumber;
+        var allocation = new LegacyImportAllocationViewModel(OrderCandidates, () =>
+        {
+            owner.RowOrMappingChanged();
+            RaiseStateProperties();
+        })
+        {
+            Type = "stock",
+            Quantity = SourceQuantity.Value.ToString(CultureInfo.InvariantCulture)
+        };
+        Allocations.Add(allocation);
+
+        var machine = SelectedMachineCandidate;
+        var compatibleRoute = owner.HasSafeAutomaticMachineSelection(SectionKey)
+            && !owner.ServerRequiresCompatibilityOverride(SheetName, RowNumber, SectionKey)
+            && machine is not null
+            ? RouteOperationCandidates.Where(operation => IsCompatible(machine, operation.RequiredMachineType)).ToArray()
+            : [];
+        if (compatibleRoute.Length == 1)
+        {
+            SelectedRouteOperationCandidate = compatibleRoute[0];
+            Decision = "create_batch_and_assign";
+            AutomaticReason = "Prepared automatically with the exact Machine-section match and its one compatible route Operation.";
+            return;
+        }
+
+        Decision = "create_batch_to_pool";
+        AutomaticReason = machine is null
+            ? "Prepared automatically in Pool because no unambiguous exact Machine mapping was available."
+            : compatibleRoute.Length == 0
+                ? "Prepared automatically in Pool because no route Operation was safely compatible with the exact Machine."
+                : "Prepared automatically in Pool because more than one route Operation was compatible with the exact Machine.";
+    }
+
+    private void SkipAutomatically(string reason)
+    {
+        SkipReason = reason;
+        Decision = "skip";
+        AutomaticReason = reason;
+    }
+
+    private bool HasAutomaticBlockingIssue() => issues.Any(issue =>
+        string.Equals(issue.Severity, "blocking", StringComparison.OrdinalIgnoreCase)
+        && !LegacyExcelImportViewModel.IsCompatibilityOverrideIssue(issue));
+
+    private bool HasDuplicateSourceWarning() => issues.Any(issue =>
+        string.Equals(issue.Code, "duplicate_source_row", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsCompatible(
+        LegacyImportMachineCandidate machine,
+        string? requiredMachineType)
+    {
+        var required = requiredMachineType?.Trim();
+        return string.IsNullOrWhiteSpace(required)
+            || string.Equals(machine.ProcessType, required, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(machine.AxisType, required, StringComparison.OrdinalIgnoreCase)
+            || (machine.Capabilities ?? []).Contains(required, StringComparer.OrdinalIgnoreCase)
+            || (machine.MachineTypeCapabilities ?? []).Contains(required, StringComparer.OrdinalIgnoreCase);
+    }
+
     internal LegacyImportOpenOrderSelection ToOpenOrderSelection() => Decision switch
     {
         "skip" => new LegacyImportOpenOrderSelection(RowKey, "skip", null, null, null),
         "create_case" => new LegacyImportOpenOrderSelection(RowKey, "create_case", null, BuildNewCase(), BuildOrder()),
-        "create_order" => new LegacyImportOpenOrderSelection(RowKey, "create_order", NullIfBlank(ExistingCaseId), null, BuildOrder()),
+        "create_order" => new LegacyImportOpenOrderSelection(
+            RowKey, "create_order", NullIfBlank(ExistingCaseId), null, BuildOrder(), NullIfBlank(CaseSourceRowKey)),
         _ => new LegacyImportOpenOrderSelection(RowKey, Decision, NullIfBlank(ExistingCaseId), BuildNewCase(), BuildOrder())
     };
 
@@ -1360,6 +2255,14 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             assignsMachine ? NullIfBlank(MachineId) ?? NullIfBlank(mappedMachineId) : null,
             assignsMachine && CompatibilityOverrideConfirmed
                 ? new LegacyImportCompatibilityOverride(true, NullIfBlank(CompatibilityOverrideReason))
+                : null,
+            createsBatch
+                ? RouteOperationCandidates
+                    .OrderBy(operation => operation.OperationNumber)
+                    .ThenBy(operation => operation.CaseOperationId, StringComparer.Ordinal)
+                    .Select(operation => new LegacyImportExpectedCaseRoute(
+                        operation.CaseOperationId, operation.Version))
+                    .ToArray()
                 : null);
     }
 
@@ -1462,15 +2365,26 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
                 && !string.IsNullOrWhiteSpace(NewCaseName)
                 && !string.IsNullOrWhiteSpace(NewCaseWorkingFolderPath)
                 && (!HasRequestedOptionalOrder || HasCompleteOrderInput),
-            "create_order" => SelectedCaseCandidate is not null
+            "create_order" => (SelectedCaseCandidate is not null || !string.IsNullOrWhiteSpace(CaseSourceRowKey))
                 && HasCompleteOrderInput,
             _ => false
         };
 
     private bool HasCompleteBatchCreation() => SelectedCaseCandidate is not null
+        && HasCompleteReviewedCaseRoute()
         && string.IsNullOrWhiteSpace(CaseSourceRowKey)
         && !string.IsNullOrWhiteSpace(BatchNumber)
         && HasCompleteAllocations();
+
+    private bool HasCompleteReviewedCaseRoute()
+    {
+        var route = RouteOperationCandidates;
+        return route.Count > 0
+            && route.All(operation => !string.IsNullOrWhiteSpace(operation.CaseOperationId)
+                && operation.Version > 0)
+            && route.Select(operation => operation.CaseOperationId)
+                .Distinct(StringComparer.Ordinal).Count() == route.Count;
+    }
 
     internal bool ApplyExplicitPatternFrom(LegacyImportRowViewModel source)
     {
@@ -1707,6 +2621,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             isSkipped = string.Equals(value, "skip", StringComparison.OrdinalIgnoreCase);
             createBatch = string.Equals(value, "create_batch_and_assign", StringComparison.OrdinalIgnoreCase);
             RaiseStateProperties();
+            owner.SynchronizeCaseStageSelection(this);
         }
     }
 
@@ -1776,6 +2691,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RouteOperationCandidates)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvailableRouteOperationCandidates)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedCaseRouteOperationCount)));
         RaiseStateProperties();
     }
 

@@ -121,10 +121,11 @@ public sealed class PlannerApiClientTests
 
         Assert.Equal("Planning", viewModel.SourceSheetName);
         Assert.Equal(1, viewModel.HeaderRowNumber);
-        Assert.Single(viewModel.Mappings);
+        Assert.Equal(10, viewModel.Mappings.Count(mapping => mapping.Scope == "planning"));
+        Assert.Equal(13, viewModel.Mappings.Count(mapping => mapping.Scope == "open_orders"));
         Assert.Single(viewModel.MachineMappings);
         Assert.Equal(2, viewModel.Rows.Count);
-        Assert.All(viewModel.Rows, row => Assert.Equal("Blocked", row.Status));
+        Assert.All(viewModel.Rows, row => Assert.Equal("Needs review", row.Status));
         Assert.False(viewModel.CanCommit);
 
         foreach (var mapping in viewModel.MachineMappings)
@@ -166,7 +167,7 @@ public sealed class PlannerApiClientTests
         const string previewJson = """
             {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":4,"columnCount":3}]},
-             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},{"field":"quantity","column":"B","header":"Quantity","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[
                {"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Mill A","firstDataRow":2,"lastDataRow":2,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill 1","score":1,"reason":"Exact"}]},
                {"sectionKey":"machine-b","sheetName":"Planning","headerRow":1,"sourceLabel":"Mill B","firstDataRow":3,"lastDataRow":3,"candidates":[{"machineId":"machine-2","number":"M2","name":"Mill 2","score":1,"reason":"Exact"}]}],
@@ -298,6 +299,32 @@ public sealed class PlannerApiClientTests
         Assert.False(row.IsResolved);
         allocation.Type = "scrapAllowance";
         Assert.True(row.IsResolved);
+
+        var selection = row.ToPlanningSelection("machine-1");
+        var expectedRoute = Assert.Single(selection.ExpectedCaseRoute!);
+        Assert.Equal("route-1", expectedRoute.CaseOperationId);
+        Assert.Equal(1, expectedRoute.Version);
+    }
+
+    [Fact]
+    public async Task Legacy_batch_creation_stays_blocked_when_the_preview_has_no_reviewable_case_route()
+    {
+        var owner = new LegacyExcelImportViewModel();
+        var caseCandidate = new LegacyImportCaseCandidate("case-1", "PN-1", "Part", null, null, "Exact");
+        var row = LegacyImportRowViewModel.Planning(new LegacyImportPlanningRow(
+            "plan-1", "Planning", 5, "machine-a", 1,
+            new LegacyImportPlanningValues(null, "PN-1", null, null, 1, null, null, null, null, null),
+            [], new LegacyImportPlanningCandidates([caseCandidate], [], [], [], [])), [], owner);
+
+        row.Decision = "create_batch_to_pool";
+        row.SelectedCaseCandidate = caseCandidate;
+        row.BatchNumber = "B-1";
+        await row.AddAllocationAsync();
+        row.Allocations.Single().Type = "stock";
+        row.Allocations.Single().Quantity = "1";
+
+        Assert.False(row.IsResolved);
+        Assert.Empty(row.ToPlanningSelection(null).ExpectedCaseRoute!);
     }
 
     [Fact]
@@ -385,9 +412,11 @@ public sealed class PlannerApiClientTests
             "machine-2", "M2", "Mill 2", "milling", "3-axis", [], [], 0.70m, "Possible match");
         var owner = new LegacyExcelImportViewModel();
         owner.Mappings.Add(LegacyImportMappingViewModel.Column("planning",
-            new LegacyImportColumnSuggestion("partNumber", "A", "Part", 1), owner, "PN-1", ["A"]));
+            new LegacyImportColumnSuggestion("partNumber", "A", "Part", 1), owner, "PN-1",
+            [new LegacyImportSourceColumnChoice("A", "Part", "PN-1")]));
         owner.Mappings.Add(LegacyImportMappingViewModel.Column("open_orders",
-            new LegacyImportColumnSuggestion("orderNumber", "B", "Order", 1), owner, "SO-1", ["B"]));
+            new LegacyImportColumnSuggestion("orderNumber", "B", "Order", 1), owner, "SO-1",
+            [new LegacyImportSourceColumnChoice("B", "Order", "SO-1")]));
         owner.MachineMappings.Add(LegacyImportMappingViewModel.Machine(new LegacyImportMachineSection(
             "machine-a", "Planning", 1, "Mill A", 2, 3, [clearMachine, runnerUp]), owner));
 
@@ -408,6 +437,34 @@ public sealed class PlannerApiClientTests
         Assert.True(machineMapping.AcceptClearMachineSuggestion());
         Assert.Equal("machine-1", machineMapping.SelectedMachineId);
         Assert.Equal("Exact section match", machineMapping.SelectionReason);
+    }
+
+    [Fact]
+    public void Legacy_import_automatic_machine_mapping_requires_exact_score_and_clear_lead()
+    {
+        var owner = new LegacyExcelImportViewModel();
+        var exact = new LegacyImportMachineCandidate(
+            "machine-1", "M1", "Mill 1", "milling", "3-axis", [], [], 0.95m, "Exact");
+        var safelyLower = new LegacyImportMachineCandidate(
+            "machine-2", "M2", "Mill 2", "milling", "3-axis", [], [], 0.80m, "Possible");
+        var safe = LegacyImportMappingViewModel.Machine(new LegacyImportMachineSection(
+            "safe", "Planning", 1, "M1", 2, 2, [exact, safelyLower]), owner);
+
+        Assert.True(safe.HasSafeAutomaticMachineSuggestion);
+        Assert.True(safe.AcceptSafeAutomaticMachineSuggestion());
+        Assert.Equal("machine-1", safe.SelectedMachineId);
+
+        var nameOnly = LegacyImportMappingViewModel.Machine(new LegacyImportMachineSection(
+            "name", "Planning", 1, "Mill", 2, 2,
+            [exact with { Score = 0.80m }, safelyLower with { Score = 0.40m }]), owner);
+        Assert.False(nameOnly.HasSafeAutomaticMachineSuggestion);
+        Assert.False(nameOnly.AcceptSafeAutomaticMachineSuggestion());
+
+        var closeRunnerUp = LegacyImportMappingViewModel.Machine(new LegacyImportMachineSection(
+            "ambiguous", "Planning", 1, "M1", 2, 2,
+            [exact with { Score = 1.00m }, safelyLower with { Score = 0.90m }]), owner);
+        Assert.False(closeRunnerUp.HasSafeAutomaticMachineSuggestion);
+        Assert.False(closeRunnerUp.AcceptSafeAutomaticMachineSuggestion());
     }
 
     [Fact]
@@ -520,8 +577,8 @@ public sealed class PlannerApiClientTests
     {
         const string previewJson = """
             {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
-             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3}]},
-             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1}],"openOrderColumns":[]},
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":3}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1},{"field":"quantity","column":"B","header":"Quantity","confidence":1}],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1}]},
              "machineSections":[],"rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2","orderNumber":"SO-2","customer":"Acme","outstandingQuantity":1},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[]}
             """;
         const string receiptJson = """
@@ -529,7 +586,14 @@ public sealed class PlannerApiClientTests
              "created":{"caseIds":[],"orderIds":[],"batchIds":[],"assignmentIds":[]},
              "unchanged":{"caseIds":[],"orderIds":[],"batchIds":[],"assignmentIds":[]},"machineBacklogs":[]}
             """;
-        var handler = new RecordingHandler(Json(HttpStatusCode.OK, previewJson), Json(HttpStatusCode.OK, receiptJson));
+        var correctedPreviewJson = previewJson.Replace(
+            "\"column\":\"A\"",
+            "\"column\":\"C\"",
+            StringComparison.Ordinal);
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, previewJson),
+            Json(HttpStatusCode.OK, correctedPreviewJson),
+            Json(HttpStatusCode.OK, receiptJson));
         using var api = CreateClient(handler);
         var viewModel = new LegacyExcelImportViewModel(_ => new MemoryStream([0x50, 0x4B]), _ => true);
         viewModel.AttachSession(api, "windows-1", new EditModeStatus(
@@ -539,12 +603,20 @@ public sealed class PlannerApiClientTests
         viewModel.ImportOrders = true;
         viewModel.ImportPoolBatches = true;
 
-        var mapping = Assert.Single(viewModel.Mappings);
+        var mapping = viewModel.Mappings.Single(candidate =>
+            candidate.Scope == "planning" && candidate.TargetField == "partNumber");
         Assert.Equal("partNumber", mapping.TargetField);
         Assert.Equal(["A", "B", "C"], mapping.ColumnChoices);
         mapping.SourceColumn = "D";
         Assert.False(mapping.IsResolved);
         mapping.SourceColumn = "C";
+        Assert.True(viewModel.HasPendingPreviewCorrections);
+        Assert.False(viewModel.CanCommit);
+        await viewModel.PreviewAsync();
+        mapping = viewModel.Mappings.Single(candidate =>
+            candidate.Scope == "planning" && candidate.TargetField == "partNumber");
+        Assert.Equal("C", mapping.SourceColumn);
+        Assert.False(viewModel.HasPendingPreviewCorrections);
         viewModel.Rows.Single(row => row.Kind == "planning").IsSkipped = true;
         var openOrder = viewModel.Rows.Single(row => row.Kind == "open_orders");
         openOrder.Decision = "create_case";
@@ -554,19 +626,241 @@ public sealed class PlannerApiClientTests
         Assert.True(viewModel.CanCommit);
         await viewModel.CommitAsync();
 
+        Assert.Contains("name=planningSheet", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("name=columnMappings", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.Contains("\"field\":\"partNumber\",\"column\":\"C\"", handler.Requests[1].Body, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"field\":\"C\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"partNumber\",\"column\":\"C\"", handler.Requests[2].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"field\":\"C\"", handler.Requests[2].Body, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Legacy_import_orders_only_commit_keeps_the_approved_planning_sheet_envelope()
+    public async Task Legacy_import_sheet_or_column_correction_requires_a_fresh_server_preview()
+    {
+        const string initialPreview = """
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Alternative","rowCount":3,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":4}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},{"field":"notes","column":"B","header":"Notes","confidence":0.8,"required":false}],"openOrderColumns":[]},
+             "machineSections":[],"rows":[{"rowKey":"Planning!2","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-OLD","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
+            """;
+        const string correctedPreview = """
+            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2026-08-20T10:05:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Alternative","rowCount":3,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":4}]},
+             "suggestions":{"planningSheet":"Alternative","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"C","header":"Part","confidence":1,"required":true}],"openOrderColumns":[]},
+             "machineSections":[],"rows":[{"rowKey":"Alternative!3","sheetName":"Alternative","rowNumber":3,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-NEW","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, initialPreview),
+            Json(HttpStatusCode.OK, correctedPreview));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(_ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("legacy.xlsx");
+
+        await viewModel.PreviewAsync();
+
+        Assert.Equal(["Planning", "Alternative", "Orders"], viewModel.SheetChoices);
+        Assert.Equal(3, viewModel.DetectedSheets.Count);
+        var mappings = viewModel.Mappings
+            .Where(mapping => mapping.Scope == "planning")
+            .ToDictionary(mapping => mapping.TargetField);
+        Assert.True(mappings["partNumber"].IsRequired);
+        Assert.False(mappings["notes"].IsRequired);
+        mappings["notes"].SourceColumn = string.Empty;
+        viewModel.SourceSheetName = "Alternative";
+        mappings["partNumber"].SourceColumn = "C";
+
+        Assert.True(viewModel.HasPendingPreviewCorrections);
+        Assert.False(viewModel.CanCommit);
+        Assert.Contains("refresh", viewModel.PreviewCorrectionStatus, StringComparison.OrdinalIgnoreCase);
+
+        await viewModel.PreviewAsync();
+
+        Assert.False(viewModel.HasPendingPreviewCorrections);
+        Assert.Equal("Alternative", viewModel.SourceSheetName);
+        Assert.True(string.IsNullOrWhiteSpace(viewModel.Mappings.Single(mapping =>
+            mapping.Scope == "planning" && mapping.TargetField == "notes").SourceColumn));
+        Assert.Equal("PN-NEW", Assert.Single(viewModel.Rows).SourcePartNumber);
+        Assert.Contains("Alternative", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"partNumber\",\"column\":\"C\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"field\":\"notes\"", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Legacy_import_sheet_change_without_manual_mapping_asks_server_to_auto_map_the_new_sheet()
+    {
+        const string initialPreview = """
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":2},{"name":"Alternative","rowCount":2,"columnCount":2}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}],"openOrderColumns":[]},
+             "machineSections":[],"rows":[],"openOrderRows":[],"issues":[]}
+            """;
+        const string remappedPreview = """
+            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2026-08-20T10:05:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":2},{"name":"Alternative","rowCount":2,"columnCount":2}]},
+             "suggestions":{"planningSheet":"Alternative","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"B","header":"Item Number","confidence":0.98,"required":true}],"openOrderColumns":[]},
+             "machineSections":[],"rows":[],"openOrderRows":[],"issues":[]}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, initialPreview),
+            Json(HttpStatusCode.OK, remappedPreview));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(_ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("legacy.xlsx");
+        await viewModel.PreviewAsync();
+
+        viewModel.SourceSheetName = "Alternative";
+        await viewModel.PreviewAsync();
+
+        Assert.Equal("B", viewModel.Mappings.Single(mapping =>
+            mapping.Scope == "planning" && mapping.TargetField == "partNumber").SourceColumn);
+        Assert.Contains("Alternative", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("name=columnMappings", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Legacy_import_zero_suggestions_still_exposes_all_targets_and_described_source_columns()
+    {
+        const string initialPreview = """
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":3,"columnCount":3,"columns":[{"column":"A","header":"Legacy Item","sample":"PN-1001"},{"column":"B","header":"Legacy Units","sample":"12"},{"column":"C","header":"Mystery note","sample":"urgent"}]}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
+             "machineSections":[],"rows":[],"openOrderRows":[],"issues":[{"severity":"blocking","code":"required_column_mapping_missing","message":"Part mapping required","sheetName":null,"rowNumber":null,"field":"partNumber","sectionKey":null,"scope":"planning"}]}
+            """;
+        const string correctedPreview = """
+            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2026-08-20T10:05:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":3,"columnCount":3,"columns":[{"column":"A","header":"Legacy Item","sample":"PN-1001"},{"column":"B","header":"Legacy Units","sample":"12"},{"column":"C","header":"Mystery note","sample":"urgent"}]}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Legacy Item","confidence":1,"required":true},{"field":"quantity","column":"B","header":"Legacy Units","confidence":1,"required":true}],"openOrderColumns":[]},
+             "machineSections":[],"rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-1001","quantity":12},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
+            """;
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, initialPreview), Json(HttpStatusCode.OK, correctedPreview));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(_ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("legacy.xlsx");
+
+        await viewModel.PreviewAsync();
+        viewModel.ImportPoolBatches = true;
+
+        var mappings = viewModel.IncludedMappings.ToDictionary(mapping => mapping.TargetField);
+        Assert.Equal(10, mappings.Count);
+        var part = mappings["partNumber"];
+        var quantity = mappings["quantity"];
+        Assert.True(part.IsRequired);
+        Assert.True(quantity.IsRequired);
+        Assert.False(part.IsResolved);
+        Assert.Contains(part.ColumnOptions, option => option.DisplayName.Contains(
+            "A - Legacy Item - PN-1001", StringComparison.Ordinal));
+
+        part.SourceColumn = "A";
+        quantity.SourceColumn = "B";
+        Assert.Equal("Legacy Item", part.SourceHeader);
+        Assert.Equal("PN-1001", part.SampleValue);
+        Assert.True(viewModel.HasPendingPreviewCorrections);
+
+        await viewModel.PreviewAsync();
+
+        Assert.False(viewModel.HasPendingPreviewCorrections);
+        Assert.Single(viewModel.Rows);
+        Assert.Contains("\"field\":\"partNumber\",\"column\":\"A\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"quantity\",\"column\":\"B\"", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Legacy_import_failed_refresh_invalidates_the_old_commit_gate_until_a_successful_preview()
+    {
+        const string preview = """
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Orders","rowCount":2,"columnCount":2,"columns":[{"column":"A","header":"Part","sample":"PN-2"}]}]},
+             "suggestions":{"planningSheet":null,"openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}]},
+             "machineSections":[],"rows":[],"openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2"},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[]}
+            """;
+        var refreshed = preview.Replace("import-1", "import-2", StringComparison.Ordinal);
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, preview),
+            Json(HttpStatusCode.UnprocessableEntity,
+                """{"error":{"code":"invalid_workbook","message":"Refresh failed","correlationId":"corr-1","details":[]}}"""),
+            Json(HttpStatusCode.OK, refreshed));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(_ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("legacy.xlsx");
+        await viewModel.PreviewAsync();
+        viewModel.ImportOrders = true;
+        var row = Assert.Single(viewModel.Rows);
+        row.Decision = "create_case";
+        row.NewCasePartNumber = "PN-2";
+        row.NewCaseName = "Part 2";
+        row.NewCaseWorkingFolderPath = "C:\\Cases\\PN-2";
+        Assert.True(viewModel.CanCommit);
+
+        await viewModel.PreviewAsync();
+
+        Assert.True(viewModel.HasPendingPreviewCorrections);
+        Assert.False(viewModel.CanCommit);
+        Assert.False(viewModel.CanGoNext);
+
+        await viewModel.PreviewAsync();
+
+        Assert.False(viewModel.HasPendingPreviewCorrections);
+        Assert.True(viewModel.CanGoNext);
+    }
+
+    [Fact]
+    public async Task Legacy_import_preview_summary_reports_validation_matches_decisions_and_unknown_machines()
+    {
+        const string previewJson = """
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":4}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}]},
+             "machineSections":[{"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Unknown cell","firstDataRow":2,"lastDataRow":2,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill","processType":"mill","axisType":"3-axis","capabilities":[],"machineTypeCapabilities":[],"score":0,"reason":"manual_choice"}]}],
+             "rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"machine-a","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-1","caseId":"case-1","operationNumber":10,"name":"Mill","requiredMachineType":null,"setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":1},{"caseOperationId":"route-2","caseId":"case-1","operationNumber":20,"name":"Inspect","requiredMachineType":null,"setupTimeSeconds":0,"cycleTimePerPartSeconds":1,"version":1}],"batchOperations":[]}}],
+             "openOrderRows":[{"rowKey":"order-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-1","orderNumber":"SO-1","deliveryDate":"2026-09-01","outstandingQuantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[{"orderId":"existing-order","orderNumber":"SO-OLD","quantity":5,"workFinishDate":"2026-09-01","reason":"Part match"}]} }],
+             "issues":[{"severity":"warning","code":"duplicate_order_candidate","message":"Existing Order candidate","sheetName":"Orders","rowNumber":2,"field":"orderNumber","sectionKey":null}]}
+            """;
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, previewJson));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(_ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("legacy.xlsx");
+
+        await viewModel.PreviewAsync();
+        viewModel.ImportPoolBatches = true;
+        viewModel.ImportOrders = true;
+        var planning = viewModel.Rows.Single(row => row.Kind == "planning");
+        planning.Decision = "create_batch_to_pool";
+        planning.SelectedCaseCandidate = planning.CaseCandidates.Single();
+        planning.BatchNumber = "B-1";
+        await planning.AddAllocationAsync();
+        planning.Allocations.Single().Type = "stock";
+        planning.Allocations.Single().Quantity = "5";
+        var order = viewModel.Rows.Single(row => row.Kind == "open_orders");
+        order.Decision = "create_order";
+        order.SelectedCaseCandidate = order.CaseCandidates.Single();
+
+        Assert.Contains("Detected 2 rows", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("1 warning row", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("1 Order(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("1 Batch(es)", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("2 route Batch Operation(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("1 unmatched Machine section(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("1 duplicate indicator(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Legacy_import_orders_only_commit_omits_the_excluded_planning_sheet_and_its_blockers()
     {
         const string previewJson = """
             {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":3}]},
-             "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}]},
              "machineSections":[],"rows":[],
-             "openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2"},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[]}
+             "openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2"},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[{"severity":"blocking","code":"machine_sections_not_found","message":"No Machine sections","sheetName":"Planning","rowNumber":null,"field":null,"sectionKey":null,"scope":"planning"}]}
             """;
         const string receiptJson = """
             {"schemaVersion":1,"workbookSha256":"abc123","commitId":"commit-1","replayed":false,
@@ -601,9 +895,15 @@ public sealed class PlannerApiClientTests
         Assert.Equal("Create Case", Assert.Single(viewModel.ReviewRows).DecisionDisplayName);
         await viewModel.CommitAsync();
 
-        Assert.Contains("\"planningSheet\":\"Planning\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"planningSheet\":null", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.Contains("\"openOrdersSheet\":\"Orders\"", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.DoesNotContain("\"scope\":\"planning\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"planningSelections\":[]", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"action\":\"skip\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.True(viewModel.HasResultSummary);
+        Assert.Contains("created 1 Case(s)", viewModel.ResultSummary, StringComparison.Ordinal);
+        Assert.Contains("matched/unchanged", viewModel.ResultSummary, StringComparison.Ordinal);
+        Assert.Contains("source row(s) skipped", viewModel.ResultSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -612,14 +912,14 @@ public sealed class PlannerApiClientTests
         const string previewJson = """
             {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":3,"columnCount":3}]},
-             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},{"field":"quantity","column":"B","header":"Quantity","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[
                {"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Mill A","firstDataRow":2,"lastDataRow":3,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill 1","score":0.95,"reason":"Exact"}]},
                {"sectionKey":"machine-b","sheetName":"Planning","headerRow":1,"sourceLabel":"Mill B","firstDataRow":4,"lastDataRow":4,"candidates":[{"machineId":"machine-2","number":"M2","name":"Mill 2","score":0.95,"reason":"Exact"}]}],
              "rows":[
-               {"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"machine-a","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}},
-               {"rowKey":"plan-2","sheetName":"Planning","rowNumber":3,"sectionKey":"machine-a","sourceOrder":2,"values":{"partNumber":"PN-1","quantity":3},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}},
-               {"rowKey":"plan-3","sheetName":"Planning","rowNumber":4,"sectionKey":"machine-b","sourceOrder":3,"values":{"partNumber":"PN-1","quantity":7},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],
+               {"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"machine-a","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-1","caseId":"case-1","operationNumber":10,"name":"Mill","requiredMachineType":null,"setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":3}],"batchOperations":[]}},
+               {"rowKey":"plan-2","sheetName":"Planning","rowNumber":3,"sectionKey":"machine-a","sourceOrder":2,"values":{"partNumber":"PN-1","quantity":3},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-1","caseId":"case-1","operationNumber":10,"name":"Mill","requiredMachineType":null,"setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":3}],"batchOperations":[]}},
+               {"rowKey":"plan-3","sheetName":"Planning","rowNumber":4,"sectionKey":"machine-b","sourceOrder":3,"values":{"partNumber":"PN-1","quantity":7},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part","revision":null,"customer":null,"reason":"Exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-1","caseId":"case-1","operationNumber":10,"name":"Mill","requiredMachineType":null,"setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":3}],"batchOperations":[]}}],
              "openOrderRows":[],"issues":[]}
             """;
         const string receiptJson = """
@@ -686,10 +986,103 @@ public sealed class PlannerApiClientTests
         await viewModel.CommitAsync();
         Assert.Contains("\"machineMappings\":[]", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.DoesNotContain("\"machineId\":\"machine-1\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"expectedCaseRoute\":[{\"caseOperationId\":\"route-1\",\"version\":3}]", handler.Requests[1].Body, StringComparison.Ordinal);
 
         viewModel.ImportPoolBatches = false;
         Assert.False(source.IsResolved);
         Assert.False(viewModel.CanCommit);
+    }
+
+    [Fact]
+    public async Task Legacy_import_automatic_draft_uses_only_exact_safe_candidates_and_requires_skip_confirmation()
+    {
+        const string previewJson = """
+            {"schemaVersion":1,"importToken":"import-auto","workbookSha256":"abc12345feed9876","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":5,"columnCount":3},{"name":"Orders","rowCount":4,"columnCount":4}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders",
+               "planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":0.65,"required":true},{"field":"quantity","column":"B","header":"Quantity","confidence":0.65,"required":true}],
+               "openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":0.65,"required":true},{"field":"orderNumber","column":"B","header":"Order","confidence":0.65},{"field":"deliveryDate","column":"C","header":"Finish","confidence":0.65},{"field":"outstandingQuantity","column":"D","header":"Quantity","confidence":0.65}]},
+             "machineSections":[{"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Machine 1","firstDataRow":2,"lastDataRow":5,
+               "candidates":[
+                 {"machineId":"machine-1","number":"1","name":"Mill 1","processType":"milling","axisType":"3-axis","capabilities":[],"machineTypeCapabilities":[],"score":1.0,"reason":"machine_number_exact"},
+                 {"machineId":"machine-2","number":"2","name":"Mill 2","processType":"milling","axisType":"3-axis","capabilities":[],"machineTypeCapabilities":[],"score":0.70,"reason":"manual_choice"}] }],
+             "rows":[
+               {"rowKey":"plan-assign","sheetName":"Planning","rowNumber":2,"sectionKey":"machine-a","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part 1","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-1","caseId":"case-1","operationNumber":10,"name":"Mill","requiredMachineType":"milling","setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":3}],"batchOperations":[]}},
+               {"rowKey":"plan-pool","sheetName":"Planning","rowNumber":3,"sectionKey":"machine-a","sourceOrder":2,"values":{"partNumber":"PN-2","quantity":7},"provenance":[],"candidates":{"cases":[{"caseId":"case-2","partNumber":"PN-2","name":"Part 2","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-2","caseId":"case-2","operationNumber":10,"name":"Mill","requiredMachineType":"milling","setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":2}],"batchOperations":[]}},
+               {"rowKey":"plan-blocked","sheetName":"Planning","rowNumber":4,"sectionKey":"machine-a","sourceOrder":3,"values":{"partNumber":"PN-3","quantity":null},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}},
+               {"rowKey":"plan-duplicate","sheetName":"Planning","rowNumber":5,"sectionKey":"machine-a","sourceOrder":4,"values":{"partNumber":"PN-4","quantity":3},"provenance":[],"candidates":{"cases":[{"caseId":"case-4","partNumber":"PN-4","name":"Part 4","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[],"batches":[],"caseOperations":[{"caseOperationId":"route-4","caseId":"case-4","operationNumber":10,"name":"Mill","requiredMachineType":"milling","setupTimeSeconds":1,"cycleTimePerPartSeconds":2,"version":1}],"batchOperations":[]}}],
+             "openOrderRows":[
+               {"rowKey":"order-create","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-1","orderNumber":"SO-NEW","deliveryDate":"2026-08-19","outstandingQuantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part 1","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[]}},
+               {"rowKey":"order-existing","sheetName":"Orders","rowNumber":3,"sourceOrder":2,"values":{"partNumber":"PN-1","orderNumber":"SO-OLD","deliveryDate":"2026-08-19","outstandingQuantity":5},"provenance":[],"candidates":{"cases":[{"caseId":"case-1","partNumber":"PN-1","name":"Part 1","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[{"orderId":"order-1","orderNumber":"SO-OLD","quantity":5,"workFinishDate":"2026-08-19","reason":"order_number_and_case_exact"}]}},
+               {"rowKey":"order-ambiguous","sheetName":"Orders","rowNumber":4,"sourceOrder":3,"values":{"partNumber":"PN-X","orderNumber":"SO-X","deliveryDate":"2026-08-19","outstandingQuantity":2},"provenance":[],"candidates":{"cases":[{"caseId":"case-x1","partNumber":"PN-X","name":"Part X1","revision":null,"customer":null,"reason":"part_number_exact"},{"caseId":"case-x2","partNumber":"PN-X","name":"Part X2","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[]}}],
+             "issues":[
+               {"severity":"warning","code":"machine_type_override_required","message":"Server compatibility review required.","sheetName":"Planning","rowNumber":3,"field":"machineId","sectionKey":"machine-a"},
+               {"severity":"blocking","code":"quantity_required","message":"Quantity is required.","sheetName":"Planning","rowNumber":4,"field":"quantity","sectionKey":"machine-a"},
+               {"severity":"warning","code":"duplicate_source_row","message":"Duplicate source row.","sheetName":"Planning","rowNumber":5,"sectionKey":"machine-a"}]}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, previewJson),
+            Json(HttpStatusCode.OK, previewJson.Replace("import-auto", "import-auto-refresh", StringComparison.Ordinal)));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(
+            _ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("legacy.xlsx");
+
+        await viewModel.PreviewAsync();
+        await viewModel.PrepareAutomaticallyAsync();
+
+        Assert.True(viewModel.AutomaticPrepared);
+        Assert.True(viewModel.ImportOrders);
+        Assert.True(viewModel.ImportPoolBatches);
+        Assert.True(viewModel.ImportMachineAssignments);
+        Assert.Equal("machine-1", Assert.Single(viewModel.MachineMappings).SelectedMachineId);
+
+        var assigned = viewModel.Rows.Single(row => row.RowKey == "plan-assign");
+        Assert.Equal("create_batch_and_assign", assigned.Decision);
+        Assert.Equal("route-1", assigned.SelectedRouteOperationCandidate!.CaseOperationId);
+        Assert.Equal("IMP-ABC12345-2", assigned.BatchNumber);
+        Assert.Equal("stock", Assert.Single(assigned.Allocations).Type);
+        Assert.Equal("5", Assert.Single(assigned.Allocations).Quantity);
+        Assert.Null(assigned.SelectedExistingOperationCandidate);
+        Assert.False(assigned.CompatibilityOverrideConfirmed);
+
+        var pooled = viewModel.Rows.Single(row => row.RowKey == "plan-pool");
+        Assert.Equal("create_batch_to_pool", pooled.Decision);
+        Assert.Null(pooled.SelectedRouteOperationCandidate);
+        Assert.False(pooled.CompatibilityOverrideConfirmed);
+
+        Assert.Equal("create_order", viewModel.Rows.Single(row => row.RowKey == "order-create").Decision);
+        Assert.Contains("existing Order", viewModel.Rows.Single(row => row.RowKey == "order-existing").AutomaticReason, StringComparison.Ordinal);
+        Assert.Contains("more than one existing Case", viewModel.Rows.Single(row => row.RowKey == "order-ambiguous").AutomaticReason, StringComparison.Ordinal);
+        Assert.Contains("blocking", viewModel.Rows.Single(row => row.RowKey == "plan-blocked").AutomaticReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("duplicate", viewModel.Rows.Single(row => row.RowKey == "plan-duplicate").AutomaticReason, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(3, viewModel.AutomaticReadyRows);
+        Assert.Equal(4, viewModel.AutomaticSkippedRows);
+        Assert.Equal(4, viewModel.AutomaticAttentionRows.Count);
+        Assert.All(viewModel.AutomaticAttentionRows, row => Assert.False(string.IsNullOrWhiteSpace(row.AutomaticReason)));
+        Assert.Contains("2 full-quantity stock allocation(s)", viewModel.AutomaticImportSummary, StringComparison.Ordinal);
+        Assert.True(viewModel.RequiresAutomaticSkipConfirmation);
+        Assert.False(viewModel.CanCommit);
+        Assert.Equal(4, viewModel.WizardStep);
+
+        viewModel.ConfirmAutomaticSkips = true;
+        Assert.True(viewModel.CanCommit);
+        assigned.BatchNumber = "MANUAL-BATCH";
+        Assert.False(viewModel.ConfirmAutomaticSkips);
+        Assert.False(viewModel.CanCommit);
+
+        viewModel.ImportPoolBatches = false;
+        await viewModel.PrepareAutomaticallyAsync();
+        Assert.False(viewModel.ImportPoolBatches);
+        Assert.Equal("MANUAL-BATCH", assigned.BatchNumber);
+
+        await viewModel.PreviewAsync();
+        Assert.False(viewModel.AutomaticPrepared);
+        Assert.False(viewModel.ConfirmAutomaticSkips);
+        Assert.Empty(viewModel.AutomaticAttentionRows);
     }
 
     [Fact]

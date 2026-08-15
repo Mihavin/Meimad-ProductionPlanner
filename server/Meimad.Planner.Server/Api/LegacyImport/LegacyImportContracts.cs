@@ -18,7 +18,16 @@ internal sealed record LegacyWorkbookResponse(
     string FileName,
     IReadOnlyList<LegacyWorkbookSheetResponse> Sheets);
 
-internal sealed record LegacyWorkbookSheetResponse(string Name, int RowCount, int ColumnCount);
+internal sealed record LegacyWorkbookSheetResponse(
+    string Name,
+    int RowCount,
+    int ColumnCount,
+    IReadOnlyList<LegacySourceColumnResponse> Columns);
+
+internal sealed record LegacySourceColumnResponse(
+    string Column,
+    string? Header,
+    string? Sample);
 
 internal sealed record LegacyImportSuggestionsResponse(
     string? PlanningSheet,
@@ -30,7 +39,8 @@ internal sealed record LegacyColumnSuggestionResponse(
     string Field,
     string Column,
     string? Header,
-    decimal Confidence);
+    decimal Confidence,
+    bool Required);
 
 internal sealed record LegacyMachineSectionResponse(
     string SectionKey,
@@ -171,7 +181,8 @@ internal sealed record LegacyImportIssueResponse(
     string? SheetName,
     int? RowNumber,
     string? Field,
-    string? SectionKey)
+    string? SectionKey,
+    string? Scope)
 {
     internal static LegacyImportIssueResponse FromDomain(LegacyImportIssue issue) => new(
         issue.Severity.ToToken(),
@@ -180,7 +191,8 @@ internal sealed record LegacyImportIssueResponse(
         issue.SheetName,
         issue.RowNumber,
         issue.Field,
-        issue.SectionKey);
+        issue.SectionKey,
+        issue.Scope);
 }
 
 internal sealed record LegacyImportCommitRequest(
@@ -203,7 +215,8 @@ internal sealed record LegacyOpenOrderSelectionRequest(
     string? Action,
     string? ExistingCaseId,
     LegacyNewCaseRequest? NewCase,
-    LegacyNewOrderRequest? Order);
+    LegacyNewOrderRequest? Order,
+    string? CaseSourceRowKey = null);
 
 internal sealed record LegacyNewCaseRequest(
     string? PartNumber,
@@ -230,7 +243,12 @@ internal sealed record LegacyPlanningSelectionRequest(
     string? BatchNumber,
     IReadOnlyList<LegacyAllocationRequest>? Allocations,
     string? MachineId,
-    LegacyCompatibilityOverrideRequest? CompatibilityOverride);
+    LegacyCompatibilityOverrideRequest? CompatibilityOverride,
+    IReadOnlyList<LegacyExpectedCaseOperationRequest>? ExpectedCaseRoute);
+
+internal sealed record LegacyExpectedCaseOperationRequest(
+    string? CaseOperationId,
+    int? Version);
 
 internal sealed record LegacyCompatibilityOverrideRequest(bool Confirmed, string? Reason);
 

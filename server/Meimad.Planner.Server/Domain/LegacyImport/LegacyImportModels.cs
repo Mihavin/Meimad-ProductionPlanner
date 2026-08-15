@@ -13,7 +13,8 @@ internal sealed record LegacyImportIssue(
     string? SheetName = null,
     int? RowNumber = null,
     string? Field = null,
-    string? SectionKey = null);
+    string? SectionKey = null,
+    string? Scope = null);
 
 internal static class LegacyImportIssueSeverities
 {

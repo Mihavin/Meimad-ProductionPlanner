@@ -3,6 +3,7 @@ using Meimad.Planner.Server.Application.LegacyImport;
 using Meimad.Planner.Server.Domain.LegacyImport;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace Meimad.Planner.Server.Api.LegacyImport;
 
@@ -74,9 +75,19 @@ internal static class LegacyImportEndpoints
             }
 
             await using var stream = file.OpenReadStream();
+            var mappingsJson = form["columnMappings"].ToString().Trim();
+            var columnMappings = mappingsJson.Length == 0
+                ? null
+                : JsonSerializer.Deserialize<IReadOnlyList<LegacyColumnMappingRequest>>(
+                    mappingsJson,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                    ?? throw new JsonException("columnMappings cannot be JSON null.");
             return Results.Ok(await service.PreviewAsync(
                 stream,
                 file.FileName,
+                FormValue(form, "planningSheet"),
+                FormValue(form, "openOrdersSheet"),
+                columnMappings,
                 cancellationToken));
         }
         catch (BadHttpRequestException exception)
@@ -96,10 +107,24 @@ internal static class LegacyImportEndpoints
                 : StatusCodes.Status422UnprocessableEntity;
             return PlanningHttpSupport.Error(status, exception.Code, exception.Message, httpContext);
         }
+        catch (JsonException exception)
+        {
+            return PlanningHttpSupport.Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "invalid_column_mappings",
+                $"columnMappings must be a JSON array of scope/field/column objects: {exception.Message}",
+                httpContext);
+        }
         finally
         {
             PreviewConcurrency.Release();
         }
+    }
+
+    private static string? FormValue(IFormCollection form, string name)
+    {
+        var value = form[name].ToString().Trim();
+        return value.Length == 0 ? null : value;
     }
 
     private static async Task<IResult> CommitAsync(

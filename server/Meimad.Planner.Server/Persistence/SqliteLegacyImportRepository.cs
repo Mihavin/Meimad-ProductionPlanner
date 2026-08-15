@@ -111,60 +111,80 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         var orderIdsBySourceRow = new Dictionary<string, string>(StringComparer.Ordinal);
 
         var openRows = approvedPreview.OpenOrderRows.ToDictionary(row => row.RowKey, StringComparer.Ordinal);
-        foreach (var selection in request.OpenOrderSelections!
-                     .Where(selection => selection.Action != "skip")
-                     .OrderBy(selection => openRows[selection.RowKey!].SourceOrder))
+        var selectedOpenOrders = request.OpenOrderSelections!
+            .Where(selection => selection.Action != "skip")
+            .OrderBy(selection => openRows[selection.RowKey!].SourceOrder)
+            .ToArray();
+        foreach (var selection in selectedOpenOrders.Where(selection => selection.Action == "create_case"))
         {
             var source = openRows[selection.RowKey!];
-            if (selection.Action == "create_case")
+            var caseId = await CreateCaseAsync(
+                connection,
+                transaction,
+                selection.NewCase!,
+                now,
+                source,
+                issues,
+                cancellationToken);
+            if (caseId is not null)
             {
-                var caseId = await CreateCaseAsync(
-                    connection,
-                    transaction,
-                    selection.NewCase!,
-                    now,
-                    source,
-                    issues,
-                    cancellationToken);
-                if (caseId is not null)
+                caseIdsBySourceRow[source.RowKey] = caseId;
+                createdCaseIds.Add(caseId);
+                if (selection.Order is not null)
                 {
-                    caseIdsBySourceRow[source.RowKey] = caseId;
-                    createdCaseIds.Add(caseId);
-                    if (selection.Order is not null)
+                    var orderId = await CreateOrderAsync(
+                        connection,
+                        transaction,
+                        caseId,
+                        selection.Order,
+                        now,
+                        source,
+                        issues,
+                        cancellationToken);
+                    if (orderId is not null)
                     {
-                        var orderId = await CreateOrderAsync(
-                            connection,
-                            transaction,
-                            caseId,
-                            selection.Order,
-                            now,
-                            source,
-                            issues,
-                            cancellationToken);
-                        if (orderId is not null)
-                        {
-                            orderIdsBySourceRow[source.RowKey] = orderId;
-                            createdOrderIds.Add(orderId);
-                        }
+                        orderIdsBySourceRow[source.RowKey] = orderId;
+                        createdOrderIds.Add(orderId);
                     }
                 }
             }
-            else if (selection.Action == "create_order")
+        }
+
+        foreach (var selection in selectedOpenOrders.Where(selection => selection.Action == "create_order"))
+        {
+            var source = openRows[selection.RowKey!];
+            var caseId = selection.ExistingCaseId;
+            if (string.IsNullOrWhiteSpace(caseId)
+                && !string.IsNullOrWhiteSpace(selection.CaseSourceRowKey))
             {
-                var orderId = await CreateOrderAsync(
-                    connection,
-                    transaction,
-                    selection.ExistingCaseId!,
-                    selection.Order!,
-                    now,
-                    source,
-                    issues,
-                    cancellationToken);
-                if (orderId is not null)
-                {
-                    orderIdsBySourceRow[source.RowKey] = orderId;
-                    createdOrderIds.Add(orderId);
-                }
+                caseIdsBySourceRow.TryGetValue(selection.CaseSourceRowKey, out caseId);
+            }
+
+            if (string.IsNullOrWhiteSpace(caseId))
+            {
+                issues.Add(new LegacyImportIssue(
+                    LegacyImportIssueSeverity.Blocking,
+                    "case_source_not_created",
+                    "The selected source Case was not created, so this Order cannot be imported.",
+                    source.SheetName,
+                    source.RowNumber,
+                    "caseSourceRowKey"));
+                continue;
+            }
+
+            var orderId = await CreateOrderAsync(
+                connection,
+                transaction,
+                caseId,
+                selection.Order!,
+                now,
+                source,
+                issues,
+                cancellationToken);
+            if (orderId is not null)
+            {
+                orderIdsBySourceRow[source.RowKey] = orderId;
+                createdOrderIds.Add(orderId);
             }
         }
 
@@ -647,7 +667,8 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                    setup_seconds, cycle_seconds, dependency_type,
                    predecessor_case_operation_id, simultaneous_group_key,
                    qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                   automatic_loading, load_unload_every_n_parts, day_shift_only
+                   automatic_loading, load_unload_every_n_parts, day_shift_only,
+                   version
             FROM case_operations
             WHERE case_id = $caseId
             ORDER BY route_position, operation_number, id;
@@ -663,12 +684,31 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                     GetNullableString(routeReader, 4), GetNullableInt32(routeReader, 5), GetNullableInt32(routeReader, 6),
                     routeReader.GetString(7), GetNullableString(routeReader, 8), GetNullableString(routeReader, 9),
                     routeReader.GetInt32(10), routeReader.GetInt32(11), routeReader.GetBoolean(12), routeReader.GetBoolean(13),
-                    GetNullableInt32(routeReader, 14), routeReader.GetBoolean(15)));
+                    GetNullableInt32(routeReader, 14), routeReader.GetBoolean(15), routeReader.GetInt32(16)));
             }
         }
         if (operations.Count == 0)
         {
             issues.Add(SourceIssue("case_route_required", "A new Batch can be imported only after the selected existing Case has an explicit operation route.", source, "caseId"));
+            return null;
+        }
+        var expectedRoute = selection.ExpectedCaseRoute?
+            .Where(operation => !string.IsNullOrWhiteSpace(operation.CaseOperationId)
+                && operation.Version is > 0)
+            .ToDictionary(
+                operation => operation.CaseOperationId!,
+                operation => operation.Version!.Value,
+                StringComparer.Ordinal);
+        if (expectedRoute is null
+            || expectedRoute.Count != operations.Count
+            || operations.Any(operation => !expectedRoute.TryGetValue(operation.Id, out var version)
+                || version != operation.Version))
+        {
+            issues.Add(SourceIssue(
+                "case_route_changed",
+                "The Case route no longer matches the complete route IDs and versions reviewed in Preview; preview it again.",
+                source,
+                "expectedCaseRoute"));
             return null;
         }
         if (!string.IsNullOrWhiteSpace(selection.CaseOperationId)
@@ -1134,5 +1174,6 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         bool LoadUnloadRequiresWorker,
         bool AutomaticLoading,
         int? LoadUnloadEveryNParts,
-        bool DayShiftOnly);
+        bool DayShiftOnly,
+        int Version);
 }

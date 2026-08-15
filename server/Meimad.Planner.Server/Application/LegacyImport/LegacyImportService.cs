@@ -43,6 +43,37 @@ internal sealed partial class LegacyImportService
             ["itemName"] = 15,
             ["picturePath"] = 21
         };
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> PlanningHeaderAliases =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["customer"] = ["customer", "customer name", "client", "שם לקוח", "לקוח"],
+            ["partNumber"] = ["part number", "part no", "part #", "item number", "item no", "item #", "pn", "מקט", "מספר פריט"],
+            ["caseReference"] = ["case", "case reference", "case ref", "job", "job number", "work order"],
+            ["notes"] = ["notes", "note", "comments", "comment", "remarks"],
+            ["quantity"] = ["quantity", "qty", "planned quantity", "batch quantity", "כמות"],
+            ["materialStatus"] = ["material status", "material", "stock status"],
+            ["startDate"] = ["start date", "planned start", "planning start"],
+            ["endDate"] = ["end date", "planned end", "planning end"],
+            ["plannerDeliveryDate"] = ["planner delivery date", "planner due date", "internal due date"],
+            ["customerDeliveryDate"] = ["customer delivery date", "customer due date"]
+        };
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> OpenOrderHeaderAliases =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["partNumber"] = ["part number", "part no", "part #", "item number", "item no", "item #", "pn", "מספר פריט", "מקט"],
+            ["orderNumber"] = ["order number", "order no", "order #", "customer order", "customer order number", "po number", "po #", "purchase order", "מספר הזמנה"],
+            ["orderLine"] = ["order line", "line number", "line no", "line #", "מספר שורה"],
+            ["customer"] = ["customer", "customer name", "client", "שם לקוח", "לקוח"],
+            ["deliveryDate"] = ["work finish date", "delivery date", "due date", "finish date", "required date", "תאריך אספקה"],
+            ["revision"] = ["revision", "rev"],
+            ["outstandingQuantity"] = ["quantity", "qty", "open quantity", "outstanding quantity", "remaining quantity", "balance", "יתרה לאספקה"],
+            ["notes"] = ["notes", "note", "comments", "comment", "remarks"],
+            ["drawingNumber"] = ["drawing number", "drawing no", "drawing #"],
+            ["caseReference"] = ["case", "case reference", "case ref", "job", "job number", "work order"],
+            ["orderedQuantity"] = ["ordered quantity", "order quantity", "original quantity"],
+            ["itemName"] = ["item name", "part name", "description", "part description"],
+            ["picturePath"] = ["picture", "picture path", "image", "image path", "preview", "preview path"]
+        };
 
     private readonly OpenXmlLegacyWorkbookReader reader;
     private readonly ILegacyImportRepository repository;
@@ -68,6 +99,21 @@ internal sealed partial class LegacyImportService
         Stream workbook,
         string fileName,
         CancellationToken cancellationToken)
+        => await PreviewAsync(
+            workbook,
+            fileName,
+            approvedPlanningSheet: null,
+            approvedOpenOrdersSheet: null,
+            mappings: null,
+            cancellationToken);
+
+    internal async Task<LegacyImportPreviewResponse> PreviewAsync(
+        Stream workbook,
+        string fileName,
+        string? approvedPlanningSheet,
+        string? approvedOpenOrdersSheet,
+        IReadOnlyList<LegacyColumnMappingRequest>? mappings,
+        CancellationToken cancellationToken)
     {
         if (!string.Equals(Path.GetExtension(fileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
         {
@@ -82,8 +128,16 @@ internal sealed partial class LegacyImportService
         var expiresAt = now.Add(options.PreviewLifetime);
         var token = Guid.NewGuid().ToString("N");
         var response = BuildPreview(
-            workbookData, candidates, token, expiresAt, mappings: null,
-            useApprovedSheets: false, approvedPlanningSheet: null, approvedOpenOrdersSheet: null);
+            workbookData,
+            candidates,
+            token,
+            expiresAt,
+            mappings,
+            mappingsAreAuthoritative: mappings is not null,
+            useApprovedSheets: !string.IsNullOrWhiteSpace(approvedPlanningSheet)
+                || !string.IsNullOrWhiteSpace(approvedOpenOrdersSheet),
+            CleanValue(approvedPlanningSheet),
+            CleanValue(approvedOpenOrdersSheet));
         lock (stagingGate)
         {
             RemoveExpired(now);
@@ -145,6 +199,7 @@ internal sealed partial class LegacyImportService
             request.ImportToken!,
             preview.ExpiresAt,
             request.ColumnMappings,
+            mappingsAreAuthoritative: HasCompleteRequiredMappings(request),
             useApprovedSheets: true,
             request.PlanningSheet,
             request.OpenOrdersSheet);
@@ -162,12 +217,34 @@ internal sealed partial class LegacyImportService
             cancellationToken);
     }
 
+    private static bool HasCompleteRequiredMappings(LegacyImportCommitRequest request)
+    {
+        if (request.ColumnMappings is null or { Count: 0 })
+        {
+            return false;
+        }
+
+        var mappedFields = request.ColumnMappings
+            .Where(mapping => !string.IsNullOrWhiteSpace(mapping.Scope)
+                && !string.IsNullOrWhiteSpace(mapping.Field)
+                && !string.IsNullOrWhiteSpace(mapping.Column))
+            .Select(mapping => $"{mapping.Scope}:{mapping.Field}")
+            .ToHashSet(StringComparer.Ordinal);
+
+        return (string.IsNullOrWhiteSpace(request.PlanningSheet)
+                || mappedFields.Contains("planning:partNumber")
+                    && mappedFields.Contains("planning:quantity"))
+            && (string.IsNullOrWhiteSpace(request.OpenOrdersSheet)
+                || mappedFields.Contains("open_orders:partNumber"));
+    }
+
     private static LegacyImportPreviewResponse BuildPreview(
         LegacyWorkbookData workbook,
         LegacyImportCandidatePool candidatePool,
         string token,
         DateTimeOffset expiresAt,
         IReadOnlyList<LegacyColumnMappingRequest>? mappings,
+        bool mappingsAreAuthoritative,
         bool useApprovedSheets,
         string? approvedPlanningSheet,
         string? approvedOpenOrdersSheet)
@@ -179,19 +256,45 @@ internal sealed partial class LegacyImportService
         var openOrdersSheet = useApprovedSheets
             ? workbook.Sheets.FirstOrDefault(sheet => string.Equals(sheet.Name, approvedOpenOrdersSheet, StringComparison.Ordinal))
             : FindSheet(workbook, "גיליון1", IsOpenOrdersSheet);
-        if (planningSheet is null)
+        if (useApprovedSheets
+            && !string.IsNullOrWhiteSpace(approvedPlanningSheet)
+            && planningSheet is null)
         {
             issues.Add(new LegacyImportIssue(
                 LegacyImportIssueSeverity.Blocking,
                 "planning_sheet_not_found",
-                "No planning worksheet with machine sections was detected."));
+                $"Approved planning worksheet '{approvedPlanningSheet}' was not found.",
+                Scope: "planning"));
+        }
+        if (useApprovedSheets
+            && !string.IsNullOrWhiteSpace(approvedOpenOrdersSheet)
+            && openOrdersSheet is null)
+        {
+            issues.Add(new LegacyImportIssue(
+                LegacyImportIssueSeverity.Blocking,
+                "open_orders_sheet_not_found",
+                $"Approved open-orders worksheet '{approvedOpenOrdersSheet}' was not found.",
+                Scope: "open_orders"));
+        }
+        if (planningSheet is null)
+        {
+            issues.Add(new LegacyImportIssue(
+                openOrdersSheet is null
+                    ? LegacyImportIssueSeverity.Blocking
+                    : LegacyImportIssueSeverity.Warning,
+                "planning_sheet_not_found",
+                openOrdersSheet is null
+                    ? "No supported planning or open-orders worksheet was detected."
+                    : "No planning worksheet with machine sections was selected; this preview can import Orders only.",
+                Scope: "planning"));
         }
         if (openOrdersSheet is null)
         {
             issues.Add(new LegacyImportIssue(
                 LegacyImportIssueSeverity.Warning,
                 "open_orders_sheet_not_found",
-                "No open-order lookup worksheet was detected; order enrichment is unavailable."));
+                "No open-order lookup worksheet was detected; order enrichment is unavailable.",
+                Scope: "open_orders"));
         }
 
         foreach (var mapping in mappings?.Where(mapping => mapping.Scope is not ("planning" or "open_orders")) ?? [])
@@ -200,18 +303,41 @@ internal sealed partial class LegacyImportService
                 LegacyImportIssueSeverity.Blocking,
                 "invalid_column_mapping_scope",
                 $"Column mapping scope '{mapping.Scope}' is invalid.",
-                Field: mapping.Field));
+                Field: mapping.Field,
+                Scope: mapping.Scope));
         }
 
-        var planningColumns = ResolveColumns("planning", DefaultPlanningColumns, mappings, issues);
-        var openOrderColumns = ResolveColumns("open_orders", DefaultOpenOrderColumns, mappings, issues);
-        var sections = planningSheet is null
+        var planningDetected = DetectHeaderLayout(planningSheet, PlanningHeaderAliases);
+        var openOrderDetected = DetectHeaderLayout(openOrdersSheet, OpenOrderHeaderAliases);
+        var planningColumns = ResolveColumns(
+            "planning",
+            planningSheet,
+            DefaultPlanningColumns,
+            planningDetected,
+            IsLegacyPlanningLayout(planningSheet, planningDetected),
+            mappingsAreAuthoritative,
+            mappings,
+            issues);
+        var openOrderColumns = ResolveColumns(
+            "open_orders",
+            openOrdersSheet,
+            DefaultOpenOrderColumns,
+            openOrderDetected,
+            IsLegacyOpenOrderLayout(openOrdersSheet, openOrderDetected),
+            mappingsAreAuthoritative,
+            mappings,
+            issues);
+        var planningColumnsValid = planningSheet is null
+            || RequireColumns("planning", planningColumns, ["partNumber", "quantity"], issues);
+        var openOrderColumnsValid = openOrdersSheet is null
+            || RequireColumns("open_orders", openOrderColumns, ["partNumber"], issues);
+        var sections = planningSheet is null || !planningColumnsValid
             ? []
-            : FindMachineSections(planningSheet, planningColumns, candidatePool.Machines, issues);
-        var planningRows = planningSheet is null
+            : FindMachineSections(planningSheet, planningColumns.Columns, candidatePool.Machines, issues);
+        var planningRows = planningSheet is null || !planningColumnsValid
             ? []
-            : BuildPlanningRows(planningSheet, sections, planningColumns, candidatePool, issues);
-        var openOrderRows = openOrdersSheet is null
+            : BuildPlanningRows(planningSheet, sections, planningColumns.Columns, candidatePool, issues);
+        var openOrderRows = openOrdersSheet is null || !openOrderColumnsValid
             ? []
             : BuildOpenOrderRows(openOrdersSheet, openOrderColumns, candidatePool, issues);
 
@@ -225,12 +351,13 @@ internal sealed partial class LegacyImportService
                 workbook.Sheets.Select(sheet => new LegacyWorkbookSheetResponse(
                     sheet.Name,
                     sheet.MaximumRow,
-                    sheet.MaximumColumn)).ToArray()),
+                    sheet.MaximumColumn,
+                    BuildSourceColumns(sheet))).ToArray()),
             new LegacyImportSuggestionsResponse(
                 planningSheet?.Name,
                 openOrdersSheet?.Name,
-                BuildSuggestions(planningSheet, planningColumns),
-                BuildSuggestions(openOrdersSheet, openOrderColumns)),
+                BuildSuggestions("planning", planningSheet, planningColumns),
+                BuildSuggestions("open_orders", openOrdersSheet, openOrderColumns)),
             sections,
             planningRows,
             openOrderRows,
@@ -245,27 +372,70 @@ internal sealed partial class LegacyImportService
             string.Equals(sheet.Name, preferredName, StringComparison.Ordinal))
         ?? workbook.Sheets.FirstOrDefault(predicate);
 
-    private static bool IsPlanningSheet(LegacySheetData sheet) => sheet.Rows.Any(entry =>
-        sheet.Rows.TryGetValue(entry.Key + 1, out var nextRow)
-        && IsPlanningColumnHeader(nextRow.GetValueOrDefault(DefaultPlanningColumns["partNumber"])?.Value)
-        && Normalize(nextRow.GetValueOrDefault(DefaultPlanningColumns["quantity"])?.Value) == "כמות");
+    private static bool IsPlanningSheet(LegacySheetData sheet)
+    {
+        var detected = DetectHeaderLayout(sheet, PlanningHeaderAliases);
+        if (!detected.Columns.ContainsKey("partNumber")
+            || !detected.Columns.ContainsKey("quantity"))
+        {
+            return false;
+        }
+
+        if (string.Equals(sheet.Name, "תכנית ייצור", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (detected.HeaderRow <= 1
+            || !sheet.Rows.TryGetValue(detected.HeaderRow - 1, out var priorRow))
+        {
+            return false;
+        }
+
+        var labels = priorRow.Values
+            .Select(cell => CleanValue(cell.Value))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        return labels.Length == 1 && LooksLikeMachineSectionLabel(labels[0]!);
+    }
+
+    private static bool LooksLikeMachineSectionLabel(string label)
+    {
+        var normalized = NormalizeHeader(label);
+        return normalized.Contains("machine", StringComparison.Ordinal)
+            || normalized.Contains(NormalizeHeader("מכונה"), StringComparison.Ordinal)
+            || Regex.IsMatch(normalized, @"^m\d+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    }
 
     private static bool IsOpenOrdersSheet(LegacySheetData sheet)
     {
-        var firstRows = sheet.Rows.Where(entry => entry.Key <= 10)
-            .SelectMany(entry => entry.Value.Values)
-            .Select(cell => Normalize(cell.Value))
-            .ToHashSet(StringComparer.Ordinal);
-        return firstRows.Contains("מספר פריט") && firstRows.Contains("מספר הזמנה");
+        var detected = DetectHeaderLayout(sheet, OpenOrderHeaderAliases);
+        return detected.Columns.ContainsKey("partNumber")
+            && detected.Columns.ContainsKey("orderNumber");
     }
 
-    private static IReadOnlyDictionary<string, int> ResolveColumns(
+    private static ResolvedColumnLayout ResolveColumns(
         string scope,
+        LegacySheetData? sheet,
         IReadOnlyDictionary<string, int> defaults,
+        DetectedColumnLayout detected,
+        bool useLegacyDefaults,
+        bool mappingsAreAuthoritative,
         IReadOnlyList<LegacyColumnMappingRequest>? mappings,
         List<LegacyImportIssue> issues)
     {
-        var result = new Dictionary<string, int>(defaults, StringComparer.Ordinal);
+        var result = !mappingsAreAuthoritative && useLegacyDefaults
+            ? new Dictionary<string, int>(defaults, StringComparer.Ordinal)
+            : new Dictionary<string, int>(StringComparer.Ordinal);
+        var confidence = result.Keys.ToDictionary(field => field, _ => 0.65m, StringComparer.Ordinal);
+        if (!mappingsAreAuthoritative && !useLegacyDefaults)
+        {
+            foreach (var detectedColumn in detected.Columns)
+            {
+                result[detectedColumn.Key] = detectedColumn.Value;
+                confidence[detectedColumn.Key] = 0.98m;
+            }
+        }
         foreach (var mapping in mappings?.Where(mapping => mapping.Scope == scope) ?? [])
         {
             if (string.IsNullOrWhiteSpace(mapping.Field)
@@ -276,36 +446,201 @@ internal sealed partial class LegacyImportService
                     LegacyImportIssueSeverity.Blocking,
                     "invalid_column_mapping",
                     $"Column mapping '{scope}:{mapping.Field}' is invalid.",
-                    Field: mapping.Field));
+                    Field: mapping.Field,
+                    Scope: scope));
                 continue;
             }
 
             result[mapping.Field] = column;
+            confidence[mapping.Field] = 1.0m;
         }
 
-        return result;
+        var headerRow = detected.HeaderRow > 0
+            ? detected.HeaderRow
+            : InferHeaderRow(sheet, result);
+        return new ResolvedColumnLayout(result, headerRow, confidence);
     }
 
     private static IReadOnlyList<LegacyColumnSuggestionResponse> BuildSuggestions(
+        string scope,
         LegacySheetData? sheet,
-        IReadOnlyDictionary<string, int> columns)
+        ResolvedColumnLayout layout)
     {
         if (sheet is null)
         {
             return [];
         }
 
-        var headerRow = sheet.Name == "גיליון1" ? 1 : FindFirstPlanningHeaderRow(sheet);
-        return columns.Select(mapping => new LegacyColumnSuggestionResponse(
+        return layout.Columns.Select(mapping => new LegacyColumnSuggestionResponse(
             mapping.Key,
             OpenXmlLegacyWorkbookReader.ToColumnName(mapping.Value),
-            sheet.Cell(headerRow, mapping.Value)?.Value,
-            1.0m)).ToArray();
+            layout.HeaderRow > 0 ? sheet.Cell(layout.HeaderRow, mapping.Value)?.Value : null,
+            layout.Confidence.GetValueOrDefault(mapping.Key, 0.50m),
+            IsRequiredColumn(scope, mapping.Key))).ToArray();
     }
 
-    private static int FindFirstPlanningHeaderRow(LegacySheetData sheet) =>
-        sheet.Rows.FirstOrDefault(entry => entry.Value.Values.Any(cell =>
-            Normalize(cell.Value) == "כמות")).Key;
+    private static bool IsRequiredColumn(string scope, string field) => scope switch
+    {
+        "planning" => field is "partNumber" or "quantity",
+        "open_orders" => field == "partNumber",
+        _ => false
+    };
+
+    private static DetectedColumnLayout DetectHeaderLayout(
+        LegacySheetData? sheet,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> aliases)
+    {
+        if (sheet is null)
+        {
+            return new DetectedColumnLayout(0, new Dictionary<string, int>(StringComparer.Ordinal));
+        }
+
+        var bestRow = 0;
+        var best = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var row in sheet.Rows.Where(entry => entry.Key <= 100))
+        {
+            var candidate = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var cell in row.Value)
+            {
+                var header = NormalizeHeader(cell.Value.Value);
+                if (header.Length == 0)
+                {
+                    continue;
+                }
+
+                foreach (var field in aliases)
+                {
+                    if (!candidate.ContainsKey(field.Key)
+                        && field.Value.Any(alias => NormalizeHeader(alias) == header))
+                    {
+                        candidate[field.Key] = cell.Key;
+                        break;
+                    }
+                }
+            }
+
+            if (candidate.Count > best.Count)
+            {
+                bestRow = row.Key;
+                best = candidate;
+            }
+        }
+
+        return new DetectedColumnLayout(bestRow, best);
+    }
+
+    private static IReadOnlyList<LegacySourceColumnResponse> BuildSourceColumns(LegacySheetData sheet)
+    {
+        const int maximumDescriptors = 256;
+        const int maximumTextLength = 200;
+        var detectedHeader = new[]
+            {
+                DetectHeaderLayout(sheet, PlanningHeaderAliases),
+                DetectHeaderLayout(sheet, OpenOrderHeaderAliases)
+            }
+            .OrderByDescending(layout => layout.Columns.Count)
+            .ThenBy(layout => layout.HeaderRow)
+            .First();
+        var headerRow = detectedHeader.Columns.Count > 0
+            ? detectedHeader.HeaderRow
+            : sheet.Rows.Where(entry => entry.Key <= 100)
+                .Select(entry => new
+                {
+                    entry.Key,
+                    Score = entry.Value.Values.Count(cell => !string.IsNullOrWhiteSpace(CleanValue(cell.Value)))
+                })
+                .OrderByDescending(entry => entry.Score)
+                .ThenBy(entry => entry.Key)
+                .FirstOrDefault()?.Key ?? 0;
+        var result = new List<LegacySourceColumnResponse>();
+        for (var column = 1; column <= Math.Min(sheet.MaximumColumn, maximumDescriptors); column++)
+        {
+            var header = headerRow == 0 ? null : Truncate(CleanValue(sheet.Cell(headerRow, column)?.Value), maximumTextLength);
+            var sample = sheet.Rows
+                .Where(entry => entry.Key > headerRow)
+                .Select(entry => Truncate(CleanValue(entry.Value.GetValueOrDefault(column)?.Value), maximumTextLength))
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            if (header is null && sample is null)
+            {
+                continue;
+            }
+            result.Add(new LegacySourceColumnResponse(
+                OpenXmlLegacyWorkbookReader.ToColumnName(column),
+                header,
+                sample));
+        }
+        return result;
+    }
+
+    private static string? Truncate(string? value, int maximumLength) =>
+        value is not null && value.Length > maximumLength ? value[..maximumLength] : value;
+
+    private static bool IsLegacyPlanningLayout(
+        LegacySheetData? sheet,
+        DetectedColumnLayout detected) =>
+        sheet is not null
+        && (string.Equals(sheet.Name, "תכנית ייצור", StringComparison.Ordinal)
+            || (detected.Columns.TryGetValue("partNumber", out var partColumn)
+                && IsPlanningColumnHeader(sheet.Cell(detected.HeaderRow, partColumn)?.Value)
+                && detected.Columns.TryGetValue("quantity", out var quantityColumn)
+                && IsPlanningQuantityHeader(sheet.Cell(detected.HeaderRow, quantityColumn)?.Value)));
+
+    private static bool IsLegacyOpenOrderLayout(
+        LegacySheetData? sheet,
+        DetectedColumnLayout detected) =>
+        sheet is not null
+        && (string.Equals(sheet.Name, "גיליון1", StringComparison.Ordinal)
+            || (detected.Columns.TryGetValue("partNumber", out var partColumn)
+                && NormalizeHeader(sheet.Cell(detected.HeaderRow, partColumn)?.Value)
+                    == NormalizeHeader("מספר פריט")));
+
+    private static int InferHeaderRow(
+        LegacySheetData? sheet,
+        IReadOnlyDictionary<string, int> columns)
+    {
+        if (sheet is null || columns.Count == 0)
+        {
+            return 0;
+        }
+
+        return sheet.Rows.Where(entry => entry.Key <= 100)
+            .Select(entry => new
+            {
+                entry.Key,
+                Score = columns.Values.Distinct().Count(column =>
+                    !string.IsNullOrWhiteSpace(CleanValue(entry.Value.GetValueOrDefault(column)?.Value)))
+            })
+            .OrderByDescending(entry => entry.Score)
+            .ThenBy(entry => entry.Key)
+            .FirstOrDefault()?.Key ?? 0;
+    }
+
+    private static bool RequireColumns(
+        string scope,
+        ResolvedColumnLayout layout,
+        IReadOnlyList<string> fields,
+        List<LegacyImportIssue> issues)
+    {
+        var missing = fields.Where(field => !layout.Columns.ContainsKey(field)).ToArray();
+        foreach (var field in missing)
+        {
+            issues.Add(new LegacyImportIssue(
+                LegacyImportIssueSeverity.Blocking,
+                "required_column_mapping_missing",
+                $"The {scope} field '{field}' requires a source-column mapping.",
+                Field: field,
+                Scope: scope));
+        }
+        return missing.Length == 0;
+    }
+
+    private static LegacyCellData? MappedCell(
+        LegacySheetData sheet,
+        int rowNumber,
+        IReadOnlyDictionary<string, int> columns,
+        string field) => columns.TryGetValue(field, out var column)
+        ? sheet.Cell(rowNumber, column)
+        : null;
 
     private static IReadOnlyList<LegacyMachineSectionResponse> FindMachineSections(
         LegacySheetData sheet,
@@ -316,7 +651,7 @@ internal sealed partial class LegacyImportService
         var explicitHeaderRows = sheet.Rows
             .Where(entry => sheet.Rows.TryGetValue(entry.Key + 1, out var nextRow)
                 && IsPlanningColumnHeader(nextRow.GetValueOrDefault(columns["partNumber"])?.Value)
-                && Normalize(nextRow.GetValueOrDefault(columns["quantity"])?.Value) == "כמות")
+                && IsPlanningQuantityHeader(nextRow.GetValueOrDefault(columns["quantity"])?.Value))
             .Select(entry => entry.Key)
             .ToHashSet();
         var sectionStyles = explicitHeaderRows
@@ -374,13 +709,24 @@ internal sealed partial class LegacyImportService
                 LegacyImportIssueSeverity.Blocking,
                 "machine_sections_not_found",
                 "The planning worksheet does not contain recognizable Machine section rows.",
-                sheet.Name));
+                sheet.Name,
+                Scope: "planning"));
         }
 
         return sections;
     }
 
-    private static bool IsPlanningColumnHeader(string? value) => Normalize(value) is "מקט" or "מספר פריט";
+    private static bool IsPlanningColumnHeader(string? value) =>
+        HeaderMatches(value, PlanningHeaderAliases["partNumber"]);
+
+    private static bool IsPlanningQuantityHeader(string? value) =>
+        HeaderMatches(value, PlanningHeaderAliases["quantity"]);
+
+    private static bool HeaderMatches(string? value, IReadOnlyList<string> aliases)
+    {
+        var normalized = NormalizeHeader(value);
+        return normalized.Length > 0 && aliases.Any(alias => NormalizeHeader(alias) == normalized);
+    }
 
     private static bool IsPlanningDataRow(
         IReadOnlyDictionary<int, LegacyCellData> row,
@@ -453,7 +799,7 @@ internal sealed partial class LegacyImportService
                     continue;
                 }
 
-                if (Normalize(partCell?.Value) is "מקט" or "מספר פריט")
+                if (IsPlanningColumnHeader(partCell?.Value))
                 {
                     continue;
                 }
@@ -465,7 +811,7 @@ internal sealed partial class LegacyImportService
                 if (string.IsNullOrWhiteSpace(partNumber))
                 {
                     issues.Add(RowIssue(
-                        LegacyImportIssueSeverity.Warning,
+                        LegacyImportIssueSeverity.Blocking,
                         "part_number_required",
                         "A planning row with a quantity has no Part Number.",
                         sheet.Name,
@@ -486,16 +832,16 @@ internal sealed partial class LegacyImportService
                 }
 
                 var values = new LegacyPlanningValuesResponse(
-                    CleanValue(sheet.Cell(rowNumber, columns["customer"])?.Value),
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "customer")?.Value),
                     partNumber,
-                    CleanValue(sheet.Cell(rowNumber, columns["caseReference"])?.Value),
-                    CleanValue(sheet.Cell(rowNumber, columns["notes"])?.Value),
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "caseReference")?.Value),
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "notes")?.Value),
                     quantity,
-                    CleanValue(sheet.Cell(rowNumber, columns["materialStatus"])?.Value),
-                    ParseDate(sheet.Cell(rowNumber, columns["startDate"]), sheet.Name, rowNumber, "startDate", issues),
-                    ParseDate(sheet.Cell(rowNumber, columns["endDate"]), sheet.Name, rowNumber, "endDate", issues),
-                    ParseDate(sheet.Cell(rowNumber, columns["plannerDeliveryDate"]), sheet.Name, rowNumber, "plannerDeliveryDate", issues),
-                    ParseDate(sheet.Cell(rowNumber, columns["customerDeliveryDate"]), sheet.Name, rowNumber, "customerDeliveryDate", issues));
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "materialStatus")?.Value),
+                    ParseDate(MappedCell(sheet, rowNumber, columns, "startDate"), sheet.Name, rowNumber, "startDate", issues),
+                    ParseDate(MappedCell(sheet, rowNumber, columns, "endDate"), sheet.Name, rowNumber, "endDate", issues),
+                    ParseDate(MappedCell(sheet, rowNumber, columns, "plannerDeliveryDate"), sheet.Name, rowNumber, "plannerDeliveryDate", issues),
+                    ParseDate(MappedCell(sheet, rowNumber, columns, "customerDeliveryDate"), sheet.Name, rowNumber, "customerDeliveryDate", issues));
                 var candidates = MatchPlanningCandidates(values, pool, issues, sheet.Name, rowNumber);
                 var provenance = BuildProvenance(sheet, rowNumber, columns);
                 AddCellIssues(provenance, sheet.Name, rowNumber, section.SectionKey, issues);
@@ -534,19 +880,20 @@ internal sealed partial class LegacyImportService
 
     private static IReadOnlyList<LegacyOpenOrderRowResponse> BuildOpenOrderRows(
         LegacySheetData sheet,
-        IReadOnlyDictionary<string, int> columns,
+        ResolvedColumnLayout layout,
         LegacyImportCandidatePool pool,
         List<LegacyImportIssue> issues)
     {
-        var headerRow = sheet.Rows.FirstOrDefault(entry =>
-            Normalize(entry.Value.GetValueOrDefault(columns["partNumber"])?.Value) == "מספר פריט").Key;
+        var columns = layout.Columns;
+        var headerRow = layout.HeaderRow;
         if (headerRow == 0)
         {
             issues.Add(new LegacyImportIssue(
                 LegacyImportIssueSeverity.Blocking,
                 "open_orders_header_not_found",
                 "The open-order worksheet header row was not found.",
-                sheet.Name));
+                sheet.Name,
+                Scope: "open_orders"));
             return [];
         }
 
@@ -554,8 +901,8 @@ internal sealed partial class LegacyImportService
         var sourceOrder = 0;
         for (var rowNumber = headerRow + 1; rowNumber <= sheet.MaximumRow; rowNumber++)
         {
-            var partNumber = CleanValue(sheet.Cell(rowNumber, columns["partNumber"])?.Value);
-            var orderNumber = CleanValue(sheet.Cell(rowNumber, columns["orderNumber"])?.Value);
+            var partNumber = CleanValue(MappedCell(sheet, rowNumber, columns, "partNumber")?.Value);
+            var orderNumber = CleanValue(MappedCell(sheet, rowNumber, columns, "orderNumber")?.Value);
             if (string.IsNullOrWhiteSpace(partNumber) && string.IsNullOrWhiteSpace(orderNumber))
             {
                 continue;
@@ -565,17 +912,72 @@ internal sealed partial class LegacyImportService
             var values = new LegacyOpenOrderValuesResponse(
                 partNumber,
                 orderNumber,
-                CleanValue(sheet.Cell(rowNumber, columns["orderLine"])?.Value),
-                CleanValue(sheet.Cell(rowNumber, columns["customer"])?.Value),
-                ParseDate(sheet.Cell(rowNumber, columns["deliveryDate"]), sheet.Name, rowNumber, "deliveryDate", issues),
-                CleanValue(sheet.Cell(rowNumber, columns["revision"])?.Value),
-                ParsePositiveInteger(sheet.Cell(rowNumber, columns["outstandingQuantity"]), sheet.Name, rowNumber, "outstandingQuantity", issues, required: false),
-                CleanValue(sheet.Cell(rowNumber, columns["notes"])?.Value),
-                CleanValue(sheet.Cell(rowNumber, columns["drawingNumber"])?.Value),
-                CleanValue(sheet.Cell(rowNumber, columns["caseReference"])?.Value),
-                ParsePositiveInteger(sheet.Cell(rowNumber, columns["orderedQuantity"]), sheet.Name, rowNumber, "orderedQuantity", issues, required: false),
-                CleanValue(sheet.Cell(rowNumber, columns["itemName"])?.Value),
-                CleanValue(sheet.Cell(rowNumber, columns["picturePath"])?.Value));
+                CleanValue(MappedCell(sheet, rowNumber, columns, "orderLine")?.Value),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "customer")?.Value),
+                ParseDate(
+                    MappedCell(sheet, rowNumber, columns, "deliveryDate"),
+                    sheet.Name,
+                    rowNumber,
+                    "deliveryDate",
+                    issues,
+                    LegacyImportIssueSeverity.Blocking),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "revision")?.Value),
+                ParsePositiveInteger(
+                    MappedCell(sheet, rowNumber, columns, "outstandingQuantity"),
+                    sheet.Name,
+                    rowNumber,
+                    "outstandingQuantity",
+                    issues),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "notes")?.Value),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "drawingNumber")?.Value),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "caseReference")?.Value),
+                ParsePositiveInteger(
+                    MappedCell(sheet, rowNumber, columns, "orderedQuantity"),
+                    sheet.Name,
+                    rowNumber,
+                    "orderedQuantity",
+                    issues),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "itemName")?.Value),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "picturePath")?.Value));
+            if (string.IsNullOrWhiteSpace(partNumber))
+            {
+                issues.Add(RowIssue(
+                    LegacyImportIssueSeverity.Blocking,
+                    "part_number_required",
+                    "An open-order row must include a Part Number.",
+                    sheet.Name,
+                    rowNumber,
+                    "partNumber"));
+            }
+            var hasOrderFacts = !string.IsNullOrWhiteSpace(
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "deliveryDate")?.Value))
+                || !string.IsNullOrWhiteSpace(
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "outstandingQuantity")?.Value))
+                || !string.IsNullOrWhiteSpace(
+                    CleanValue(MappedCell(sheet, rowNumber, columns, "orderedQuantity")?.Value));
+            if (string.IsNullOrWhiteSpace(orderNumber) && hasOrderFacts)
+            {
+                issues.Add(RowIssue(
+                    LegacyImportIssueSeverity.Blocking,
+                    "order_number_required",
+                    "An Order row must include an Order Number.",
+                    sheet.Name,
+                    rowNumber,
+                    "orderNumber"));
+            }
+            if (!string.IsNullOrWhiteSpace(orderNumber)
+                && (columns.ContainsKey("outstandingQuantity") || columns.ContainsKey("orderedQuantity"))
+                && values.OutstandingQuantity is null
+                && values.OrderedQuantity is null)
+            {
+                issues.Add(RowIssue(
+                    LegacyImportIssueSeverity.Blocking,
+                    "quantity_required",
+                    "An Order row must include a positive whole-number quantity.",
+                    sheet.Name,
+                    rowNumber,
+                    "quantity"));
+            }
             var matchingCases = MatchCases(values.PartNumber, values.Revision, values.Customer, pool.Cases);
             var caseIds = matchingCases.Select(candidate => candidate.CaseId).ToHashSet(StringComparer.Ordinal);
             var matchingOrders = pool.Orders.Where(order =>
@@ -656,7 +1058,6 @@ internal sealed partial class LegacyImportService
             .Where(operation => caseIds.Contains(operation.CaseId))
             .OrderBy(operation => operation.OperationNumber)
             .ThenBy(operation => operation.CaseOperationId, StringComparer.Ordinal)
-            .Take(20)
             .Select(operation => new LegacyCaseOperationCandidateResponse(
                 operation.CaseOperationId,
                 operation.CaseId,
@@ -807,7 +1208,8 @@ internal sealed partial class LegacyImportService
         string sheetName,
         int rowNumber,
         string field,
-        List<LegacyImportIssue> issues)
+        List<LegacyImportIssue> issues,
+        LegacyImportIssueSeverity severity = LegacyImportIssueSeverity.Warning)
     {
         var value = CleanValue(cell?.Value);
         if (string.IsNullOrWhiteSpace(value))
@@ -835,7 +1237,7 @@ internal sealed partial class LegacyImportService
         }
 
         issues.Add(RowIssue(
-            LegacyImportIssueSeverity.Warning,
+            severity,
             "invalid_date",
             $"Source value '{value}' is not a valid Excel or ISO calendar date.",
             sheetName,
@@ -861,9 +1263,13 @@ internal sealed partial class LegacyImportService
         {
             issues.Add(FieldIssue("workbook_hash_invalid", "workbookSha256 must be a 64-character SHA-256 hex value.", "workbookSha256"));
         }
-        if (string.IsNullOrWhiteSpace(request.PlanningSheet))
+        if (string.IsNullOrWhiteSpace(request.PlanningSheet)
+            && string.IsNullOrWhiteSpace(request.OpenOrdersSheet))
         {
-            issues.Add(FieldIssue("planning_sheet_required", "planningSheet is required.", "planningSheet"));
+            issues.Add(FieldIssue(
+                "import_sheet_required",
+                "Provide at least one approved planningSheet or openOrdersSheet.",
+                "sheets"));
         }
         if (request.ColumnMappings is null)
         {
@@ -898,6 +1304,10 @@ internal sealed partial class LegacyImportService
         {
             if (selection.RowKey is null || !openRows.TryGetValue(selection.RowKey, out var sourceRow))
             {
+                if (selection.Action == "skip" && !string.IsNullOrWhiteSpace(selection.RowKey))
+                {
+                    continue;
+                }
                 issues.Add(FieldIssue("source_row_not_found", $"Open-order row '{selection.RowKey}' is not in the approved preview.", "rowKey"));
                 continue;
             }
@@ -914,9 +1324,27 @@ internal sealed partial class LegacyImportService
                     }
                     break;
                 case "create_order":
-                    if (string.IsNullOrWhiteSpace(selection.ExistingCaseId))
+                    var hasExistingCase = !string.IsNullOrWhiteSpace(selection.ExistingCaseId);
+                    var hasSourceCase = !string.IsNullOrWhiteSpace(selection.CaseSourceRowKey);
+                    if (hasExistingCase == hasSourceCase)
                     {
-                        issues.Add(SourceIssue("existing_case_required", "create_order requires existingCaseId.", sourceRow, "existingCaseId"));
+                        issues.Add(SourceIssue(
+                            "exclusive_case_reference_required",
+                            "create_order requires exactly one of existingCaseId or caseSourceRowKey.",
+                            sourceRow,
+                            "existingCaseId"));
+                    }
+                    else if (hasSourceCase
+                             && (!openRows.ContainsKey(selection.CaseSourceRowKey!)
+                                 || !request.OpenOrderSelections!.Any(candidate =>
+                                     string.Equals(candidate.RowKey, selection.CaseSourceRowKey, StringComparison.Ordinal)
+                                     && string.Equals(candidate.Action, "create_case", StringComparison.Ordinal))))
+                    {
+                        issues.Add(SourceIssue(
+                            "case_source_case_required",
+                            "caseSourceRowKey must identify an included create_case source row.",
+                            sourceRow,
+                            "caseSourceRowKey"));
                     }
                     ValidateNewOrder(selection.Order, sourceRow, issues);
                     break;
@@ -937,11 +1365,16 @@ internal sealed partial class LegacyImportService
         }
         var machineMap = request.MachineMappings!
             .Where(mapping => mapping.SectionKey is not null && mapping.MachineId is not null)
-            .ToDictionary(mapping => mapping.SectionKey!, mapping => mapping.MachineId!, StringComparer.Ordinal);
+            .GroupBy(mapping => mapping.SectionKey!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().MachineId!, StringComparer.Ordinal);
         foreach (var selection in request.PlanningSelections!)
         {
             if (selection.RowKey is null || !planningRows.TryGetValue(selection.RowKey, out var sourceRow))
             {
+                if (selection.Action == "skip" && !string.IsNullOrWhiteSpace(selection.RowKey))
+                {
+                    continue;
+                }
                 issues.Add(FieldIssue("source_row_not_found", $"Planning row '{selection.RowKey}' is not in the approved preview.", "rowKey"));
                 continue;
             }
@@ -991,8 +1424,12 @@ internal sealed partial class LegacyImportService
         var selectedRows = request.OpenOrderSelections!.Where(selection => selection.Action != "skip").Select(selection => selection.RowKey)
             .Concat(request.PlanningSelections!.Where(selection => selection.Action != "skip").Select(selection => selection.RowKey))
             .ToHashSet(StringComparer.Ordinal);
+        var includedScopes = new HashSet<string>(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(request.PlanningSheet)) includedScopes.Add("planning");
+        if (!string.IsNullOrWhiteSpace(request.OpenOrdersSheet)) includedScopes.Add("open_orders");
         issues.AddRange(preview.Issues
             .Where(issue => issue.Severity == "blocking"
+                && (issue.Scope is not ("planning" or "open_orders") || includedScopes.Contains(issue.Scope))
                 && (!issue.RowNumber.HasValue
                     || selectedRows.Contains($"{issue.SheetName}!{issue.RowNumber}")))
             .Select(issue => new LegacyImportIssue(
@@ -1002,7 +1439,8 @@ internal sealed partial class LegacyImportService
                 issue.SheetName,
                 issue.RowNumber,
                 issue.Field,
-                issue.SectionKey)));
+                issue.SectionKey,
+                issue.Scope)));
         return issues;
     }
 
@@ -1028,6 +1466,28 @@ internal sealed partial class LegacyImportService
         if (selection.Allocations is null || selection.Allocations.Count == 0)
         {
             issues.Add(SourceIssue("allocations_required", "A new Batch requires explicit allocations.", sourceRow, "allocations"));
+        }
+        if (selection.ExpectedCaseRoute is null || selection.ExpectedCaseRoute.Count == 0)
+        {
+            issues.Add(SourceIssue(
+                "case_route_review_required",
+                "A new Batch requires the complete reviewed Case route IDs and versions.",
+                sourceRow,
+                "expectedCaseRoute"));
+        }
+        else if (selection.ExpectedCaseRoute.Any(operation =>
+                     string.IsNullOrWhiteSpace(operation.CaseOperationId)
+                     || operation.Version is null or <= 0)
+                 || selection.ExpectedCaseRoute
+                     .Where(operation => !string.IsNullOrWhiteSpace(operation.CaseOperationId))
+                     .GroupBy(operation => operation.CaseOperationId, StringComparer.Ordinal)
+                     .Any(group => group.Count() > 1))
+        {
+            issues.Add(SourceIssue(
+                "case_route_review_invalid",
+                "expectedCaseRoute must contain each reviewed Case Operation ID exactly once with a positive version.",
+                sourceRow,
+                "expectedCaseRoute"));
         }
     }
 
@@ -1161,6 +1621,9 @@ internal sealed partial class LegacyImportService
 
     private static string Normalize(string? value) => CleanValue(value) ?? string.Empty;
 
+    private static string NormalizeHeader(string? value) => string.Concat(
+        Normalize(value).ToLowerInvariant().Where(char.IsLetterOrDigit));
+
     private static string NormalizeIdentifier(string? value) => string.Concat(
         Normalize(value).Where(character => !char.IsWhiteSpace(character))).ToUpperInvariant();
 
@@ -1215,4 +1678,13 @@ internal sealed partial class LegacyImportService
         LegacyImportCandidatePool Candidates,
         DateTimeOffset CreatedAt,
         DateTimeOffset ExpiresAt);
+
+    private sealed record DetectedColumnLayout(
+        int HeaderRow,
+        IReadOnlyDictionary<string, int> Columns);
+
+    private sealed record ResolvedColumnLayout(
+        IReadOnlyDictionary<string, int> Columns,
+        int HeaderRow,
+        IReadOnlyDictionary<string, decimal> Confidence);
 }

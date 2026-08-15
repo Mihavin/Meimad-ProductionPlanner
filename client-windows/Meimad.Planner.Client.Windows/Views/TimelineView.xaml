@@ -22,7 +22,10 @@
                         <TextBlock Text="To (UTC, exclusive)" FontWeight="SemiBold" />
                         <DatePicker SelectedDate="{Binding ToDate}" Width="135" Margin="0,3,0,0" />
                     </StackPanel>
-                    <Button Content="Calculate / Refresh" Command="{Binding RefreshCommand}" Margin="0" />
+                    <Button Command="{Binding RefreshCommand}" Style="{StaticResource TemplateIconButton}"
+                            ToolTip="Calculate and refresh the Server Timeline" AutomationProperties.Name="Calculate and refresh Timeline" Margin="0">
+                        <Image Source="{StaticResource TimelineButtonIcon}" Width="24" Height="24" />
+                    </Button>
                 </StackPanel>
                 <StackPanel Margin="0,0,16,0">
                     <TextBlock Text="TIMELINE" FontSize="17" FontWeight="Bold" />
