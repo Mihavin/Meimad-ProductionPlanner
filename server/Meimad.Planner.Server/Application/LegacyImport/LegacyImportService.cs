@@ -433,7 +433,7 @@ internal sealed partial class LegacyImportService
                 var partCell = sheet.Cell(rowNumber, columns["partNumber"]);
                 var quantityCell = sheet.Cell(rowNumber, columns["quantity"]);
                 if (string.IsNullOrWhiteSpace(partCell?.Value)
-                    || string.IsNullOrWhiteSpace(quantityCell?.Value))
+                    && string.IsNullOrWhiteSpace(quantityCell?.Value))
                 {
                     continue;
                 }
@@ -456,6 +456,17 @@ internal sealed partial class LegacyImportService
                         sheet.Name,
                         rowNumber,
                         "partNumber",
+                        section.SectionKey));
+                }
+                if (string.IsNullOrWhiteSpace(quantityCell?.Value))
+                {
+                    issues.Add(RowIssue(
+                        LegacyImportIssueSeverity.Blocking,
+                        "quantity_required",
+                        "A planning row with a Part Number has no quantity.",
+                        sheet.Name,
+                        rowNumber,
+                        "quantity",
                         section.SectionKey));
                 }
 
