@@ -23,7 +23,7 @@ It currently provides:
 - editor-only Working Calendar creation with timezone, workweek, and shift presets;
 - Machine creation with named Working Calendar, process type, and axis type dropdowns instead of typed hard-coded IDs/tokens;
 - version-checked Machine editing and guarded Machine deletion;
-- a Setup **Excel Import** workflow that uploads one legacy `.xlsx` for read-only preview, exposes source values/provenance and candidate mappings, requires explicit sheet/column/Machine/Case/Order/Operation/allocation decisions or Skip, and sends the approved commit only while this client holds Edit Mode;
+- a five-step Setup **Excel Import Wizard** that previews one legacy `.xlsx`, explicitly selects Order/Pool-Batch/Machine-assignment outcomes, maps source columns and Machine sections, resolves one conditional row editor, applies reviewable Similar/All patterns, and commits only while this client holds Edit Mode. Pool creates the existing Case's full route as unassigned Batch Operations; optional Batch-number templates use only `{part}`, `{reference}`, and `{row}`; high-confidence Machine suggestions still require an operator click; patterns never overwrite existing choices and the Server revalidates every expanded row;
 - confirmation-protected Case, Case Operation, Order, and Production Batch deletion with Server blocker explanations;
 - manual drag-and-drop assignment, stable reorder, cross-Machine move, and drag-back unassignment;
 - Start, Suspend, resume, and Finish controls on assigned operation cards, with every transition validated by the Server;

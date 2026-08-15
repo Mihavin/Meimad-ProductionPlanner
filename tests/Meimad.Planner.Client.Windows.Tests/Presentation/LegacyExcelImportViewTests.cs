@@ -7,11 +7,41 @@ public sealed class LegacyExcelImportViewTests
     {
         var xaml = File.ReadAllText(FindSetupView());
 
-        Assert.Contains("Header=\"Excel Import\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Header=\"Excel Import Wizard\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("WizardStepTitle", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedIndex=\"{Binding LegacyImport.WizardStep, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ImportPoolBatches", xaml, StringComparison.Ordinal);
+        Assert.Contains("ImportOrders", xaml, StringComparison.Ordinal);
+        Assert.Contains("ImportMachineAssignments", xaml, StringComparison.Ordinal);
+        Assert.Contains("ApplySelectedPatternToSimilarCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("ApplySelectedPatternToAllCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("AcceptClearMachineSuggestionsCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("Create Batches in Pool", xaml, StringComparison.Ordinal);
+        Assert.Contains("ImportOrderGrid", xaml, StringComparison.Ordinal);
+        Assert.Contains("ImportAllocationsSection", xaml, StringComparison.Ordinal);
+        Assert.Contains("ImportCaseSection", xaml, StringComparison.Ordinal);
+        Assert.Contains("IncludedMappings", xaml, StringComparison.Ordinal);
+        Assert.Contains("IncludedMachineMappings", xaml, StringComparison.Ordinal);
+        Assert.Contains("ShowsMachineMappings", xaml, StringComparison.Ordinal);
+        Assert.Contains("CanCommitNow", xaml, StringComparison.Ordinal);
+        Assert.Contains("ReviewRows", xaml, StringComparison.Ordinal);
+        Assert.Contains("DecisionDisplayName", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectionReason", xaml, StringComparison.Ordinal);
+        Assert.Contains("WizardStepTabItem", xaml, StringComparison.Ordinal);
+        #if false
+        Assert.Contains("Content=\"Browse…\"", xaml, StringComparison.Ordinal);
+        #endif
+        Assert.Contains("Content=\"Browse", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("legacy layout", xaml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Style=\"{StaticResource ImportOrderSection}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedWizardRow", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedValuePath=\"Value\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("DisplayMemberPath=\"DisplayName\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding ColumnChoices}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectedItem=\"{Binding SourceColumn, UpdateSourceTrigger=PropertyChanged}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Binding=\"{Binding IsRequired, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("SelectedItem=\"{Binding TargetField", xaml, StringComparison.Ordinal);
-        Assert.Contains("ItemsSource=\"{Binding LegacyImport.MachineMappings}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding LegacyImport.IncludedMachineMappings}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("SelectedItem=\"{Binding SelectedMachineCandidate", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding SourceSummary", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding SelectedExistingOperationCandidate", xaml, StringComparison.Ordinal);

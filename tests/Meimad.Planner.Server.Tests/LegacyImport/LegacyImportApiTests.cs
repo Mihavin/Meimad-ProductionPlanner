@@ -300,6 +300,13 @@ public sealed class LegacyImportApiTests
                 INSERT INTO orders (
                     id, case_id, order_reference, quantity, work_finish_date, status)
                 VALUES ('order-1', 'case-1', 'O-1', 1, '2026-08-03', 'active');
+                INSERT INTO case_operations (
+                    id, case_id, operation_number, route_position, name,
+                    required_machine_type, dependency_type,
+                    predecessor_case_operation_id)
+                VALUES (
+                    'case-operation-1b', 'case-1', 20, 1, 'Op 1B',
+                    'mill', 'sequential', 'case-operation-1');
                 """);
             AddEditHeaders(client);
             var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "batch-create"));
@@ -331,6 +338,10 @@ public sealed class LegacyImportApiTests
             ])]);
             using var success = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", valid);
             Assert.Equal(HttpStatusCode.OK, success.StatusCode);
+            using var successDocument = JsonDocument.Parse(await success.Content.ReadAsStringAsync());
+            Assert.Equal(2, successDocument.RootElement.GetProperty("created").GetProperty("batchOperationIds").GetArrayLength());
+            Assert.Single(successDocument.RootElement.GetProperty("poolBatchOperationIds").EnumerateArray());
+            Assert.Single(successDocument.RootElement.GetProperty("created").GetProperty("assignmentIds").EnumerateArray());
             Assert.Equal(1, await ScalarAsync(application.Services,
                 "SELECT COUNT(*) FROM production_batches WHERE batch_number = 'B-IMPORTED';"));
             Assert.Equal(2, await ScalarAsync(application.Services, """
@@ -339,6 +350,152 @@ public sealed class LegacyImportApiTests
                     SELECT id FROM production_batches WHERE batch_number = 'B-IMPORTED');
                 """));
             Assert.Equal(1, await ScalarAsync(application.Services, "SELECT status = 'active' FROM orders WHERE id = 'order-1';"));
+        });
+    }
+
+    [Fact]
+    public async Task Create_batch_to_pool_snapshots_the_full_route_without_assigning_or_reordering()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            await ExecuteAsync(application.Services, """
+                INSERT INTO case_operations (
+                    id, case_id, operation_number, route_position, name,
+                    required_machine_type, dependency_type,
+                    predecessor_case_operation_id)
+                VALUES (
+                    'case-operation-1b', 'case-1', 20, 1, 'Op 1B',
+                    'mill', 'sequential', 'case-operation-1');
+                """);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "batch-to-pool"));
+            var body = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [new
+                {
+                    rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3",
+                    action = "create_batch_to_pool",
+                    caseId = "case-1",
+                    batchNumber = "B-POOL",
+                    allocations = new[] { new { type = "stock", quantity = 2 } }
+                }]);
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            var json = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, json);
+            using var document = JsonDocument.Parse(json);
+            Assert.Single(document.RootElement.GetProperty("created").GetProperty("batchIds").EnumerateArray());
+            Assert.Equal(2, document.RootElement.GetProperty("created").GetProperty("batchOperationIds").GetArrayLength());
+            Assert.Empty(document.RootElement.GetProperty("created").GetProperty("assignmentIds").EnumerateArray());
+            Assert.Equal(2, document.RootElement.GetProperty("poolBatchOperationIds").GetArrayLength());
+            Assert.Empty(document.RootElement.GetProperty("machineBacklogs").EnumerateArray());
+
+            Assert.Equal(2, await ScalarAsync(application.Services, """
+                SELECT COUNT(*) FROM batch_operations
+                WHERE production_batch_id = (
+                    SELECT id FROM production_batches WHERE batch_number = 'B-POOL');
+                """));
+            Assert.Equal(0, await ScalarAsync(application.Services, """
+                SELECT COUNT(*) FROM machine_assignments
+                WHERE batch_operation_id IN (
+                    SELECT id FROM batch_operations
+                    WHERE production_batch_id = (
+                        SELECT id FROM production_batches WHERE batch_number = 'B-POOL'));
+                """));
+
+            using var boardResponse = await client.GetAsync("/api/v1/planning-board");
+            Assert.Equal(HttpStatusCode.OK, boardResponse.StatusCode);
+            using var board = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());
+            Assert.Equal(2, board.RootElement.GetProperty("pool").EnumerateArray()
+                .Count(operation => operation.GetProperty("batchNumber").GetString() == "B-POOL"));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT backlog_position FROM machine_assignments WHERE id = 'existing-assignment';"));
+
+            using var replayResponse = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+            using var replay = JsonDocument.Parse(await replayResponse.Content.ReadAsStringAsync());
+            Assert.True(replay.RootElement.GetProperty("replayed").GetBoolean());
+            Assert.Empty(replay.RootElement.GetProperty("created").GetProperty("batchOperationIds").EnumerateArray());
+            Assert.Equal(2, replay.RootElement.GetProperty("unchanged").GetProperty("batchOperationIds").GetArrayLength());
+            Assert.Equal(2, replay.RootElement.GetProperty("poolBatchOperationIds").GetArrayLength());
+            Assert.Equal(1, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM production_batches WHERE batch_number = 'B-POOL';"));
+        });
+    }
+
+    [Fact]
+    public async Task Pool_action_rejects_stale_machine_values_without_mutating()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "pool-stale-machine"));
+            var body = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [new
+                {
+                    rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3",
+                    action = "create_batch_to_pool",
+                    caseId = "case-1",
+                    batchNumber = "B-SHOULD-NOT-EXIST",
+                    allocations = new[] { new { type = "stock", quantity = 2 } },
+                    machineId = "machine-01"
+                }]);
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "pool_assignment_forbidden");
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM production_batches WHERE batch_number = 'B-SHOULD-NOT-EXIST';"));
+        });
+    }
+
+    [Fact]
+    public async Task Expanded_pool_rows_are_revalidated_and_rolled_back_atomically()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "pool-atomic"));
+            var body = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [
+                    new
+                    {
+                        rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3",
+                        action = "create_batch_to_pool",
+                        caseId = "case-1",
+                        batchNumber = "B-ATOMIC-FIRST",
+                        allocations = new[] { new { type = "stock", quantity = 2 } }
+                    },
+                    new
+                    {
+                        rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!4",
+                        action = "create_batch_to_pool",
+                        caseId = "missing-case",
+                        batchNumber = "B-ATOMIC-INVALID",
+                        allocations = new[] { new { type = "stock", quantity = 3 } }
+                    }
+                ]);
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() is "case_route_required" or "case_not_found");
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM production_batches WHERE batch_number LIKE 'B-ATOMIC-%';"));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM legacy_working_plan_imports WHERE workbook_sha256 = $hash;"
+                    .Replace("$hash", $"'{preview.RootElement.GetProperty("workbookSha256").GetString()}'", StringComparison.Ordinal)));
         });
     }
 

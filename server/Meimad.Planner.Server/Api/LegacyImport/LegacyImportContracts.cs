@@ -247,13 +247,15 @@ internal sealed record LegacyImportCommitResponse(
     bool Replayed,
     LegacyImportEntityIdsResponse Created,
     LegacyImportEntityIdsResponse Unchanged,
-    IReadOnlyList<LegacyImportedMachineBacklogResponse> MachineBacklogs);
+    IReadOnlyList<LegacyImportedMachineBacklogResponse> MachineBacklogs,
+    IReadOnlyList<string>? PoolBatchOperationIds = null);
 
 internal sealed record LegacyImportEntityIdsResponse(
     IReadOnlyList<string> CaseIds,
     IReadOnlyList<string> OrderIds,
     IReadOnlyList<string> BatchIds,
-    IReadOnlyList<string> AssignmentIds);
+    IReadOnlyList<string> AssignmentIds,
+    IReadOnlyList<string>? BatchOperationIds = null);
 
 internal sealed record LegacyImportedMachineBacklogResponse(
     string MachineId,

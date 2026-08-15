@@ -27,6 +27,39 @@
                 <DataTrigger Binding="{Binding Status}" Value="Skip"><Setter Property="Foreground" Value="#667085" /></DataTrigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="ImportExistingOperationSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsExistingOperation}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportBatchSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsBatchInputs}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportRouteSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsRouteOperation}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportOrderSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsOrderInputs}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportOrderGrid" TargetType="UniformGrid">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsOrderInputs}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportNewCaseSection" TargetType="Expander">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsNewCaseInputs}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportAllocationsSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsAllocations}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportCompatibilitySection" TargetType="StackPanel">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsCompatibilityReview}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportCaseSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsCaseCandidate}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="ImportMachineMappingsSection" TargetType="Border" BasedOn="{StaticResource SetupSection}">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsMachineMappings}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="WizardStepTabItem" TargetType="TabItem">
+            <Setter Property="HeaderTemplate"><Setter.Value><DataTemplate><Border Height="0" IsHitTestVisible="False" /></DataTemplate></Setter.Value></Setter>
+        </Style>
     </UserControl.Resources>
 
     <Grid Background="{StaticResource CanvasBrush}">
@@ -469,7 +502,7 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Excel Import">
+            <TabItem Header="Excel Import Wizard">
                 <Grid Margin="8" FlowDirection="LeftToRight">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -480,175 +513,73 @@
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Style="{StaticResource SetupSection}">
-                        <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Legacy Excel workbook (ייבוא מדורג)" Style="{StaticResource SetupFieldLabel}" />
-                                <TextBox Text="{Binding LegacyImport.SelectedFilePath, UpdateSourceTrigger=PropertyChanged}" MinWidth="280"
-                                         ToolTip="Choose a copy of the workbook. The original file is never modified." />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Margin="8,0,0,0" Width="180">
-                                <TextBlock Text="Planning sheet" Style="{StaticResource SetupFieldLabel}" />
-                                <TextBox Text="{Binding LegacyImport.SourceSheetName, UpdateSourceTrigger=PropertyChanged}" />
-                                <TextBlock Text="Open-orders sheet (optional)" Style="{StaticResource SetupFieldLabel}" Margin="0,4,0,0" />
-                                <TextBox Text="{Binding LegacyImport.OpenOrdersSheetName, UpdateSourceTrigger=PropertyChanged}" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom">
-                                <Button Content="Browse…" Click="BrowseLegacyWorkbook_Click" Margin="8,0,0,0" />
-                                <Button Content="Preview" Command="{Binding LegacyImport.PreviewCommand}" Margin="8,0,0,0" />
-                            </StackPanel>
-                        </Grid>
+                        <StackPanel>
+                            <TextBlock Text="Import a working plan step by step" FontSize="18" FontWeight="Bold" />
+                            <TextBlock Text="Preview first, choose the targets, confirm columns and Machines, resolve one row at a time, then review and commit. The workbook is read-only and no data is written before the final step." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock Text="{Binding LegacyImport.WizardStepTitle}" FontWeight="SemiBold" Margin="0,8,0,0" />
+                        </StackPanel>
                     </Border>
 
-                    <Grid Grid.Row="2">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="3*" /></Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Style="{StaticResource SetupSection}">
-                            <Grid>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                                <StackPanel Margin="0,0,0,8">
-                                    <TextBlock Text="Detected columns and target entities" FontSize="16" FontWeight="Bold" />
-                                    <TextBlock Text="Map each source header explicitly; required fields must be resolved before commit." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                    <TabControl Grid.Row="2" SelectedIndex="{Binding LegacyImport.WizardStep, Mode=OneWay}" TabStripPlacement="Top" ItemContainerStyle="{StaticResource WizardStepTabItem}">
+                        <TabItem Header="1  Preview">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" Margin="0,8,0,0" MaxWidth="950" HorizontalAlignment="Left">
+                                <StackPanel>
+                                    <TextBlock Text="Choose the workbook" FontSize="16" FontWeight="Bold" />
+                                    <TextBlock Text="Preview identifies the planning sheet, open orders, columns, Machine sections, and matching candidates. It does not create Cases, Orders, Batches, or assignments." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Style="{StaticResource SetupField}"><TextBlock Text="Workbook path" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.SelectedFilePath, UpdateSourceTrigger=PropertyChanged}" ToolTip="Choose a copy of the workbook. The original file is never modified." /></StackPanel>
+                                        <StackPanel Grid.Column="1" Style="{StaticResource SetupField}" Margin="8,0,0,8"><TextBlock Text="Planning sheet" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.SourceSheetName, UpdateSourceTrigger=PropertyChanged}" /><TextBlock Text="Open-orders sheet (optional)" Style="{StaticResource SetupFieldLabel}" Margin="0,5,0,0" /><TextBox Text="{Binding LegacyImport.OpenOrdersSheetName, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom"><Button Content="Browse…" Click="BrowseLegacyWorkbook_Click" Margin="8,0,0,0" /><Button Content="Preview workbook" Command="{Binding LegacyImport.PreviewCommand}" Margin="8,0,0,0" /></StackPanel>
+                                    </Grid>
+                                    <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                    <TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                    <ProgressBar IsIndeterminate="True" Height="4" Margin="0,5,0,0"><ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding LegacyImport.IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar>
                                 </StackPanel>
-                                <Grid Grid.Row="1">
-                                    <Grid.RowDefinitions><RowDefinition Height="2*" /><RowDefinition Height="Auto" /><RowDefinition Height="1.5*" /></Grid.RowDefinitions>
-                                    <DataGrid ItemsSource="{Binding LegacyImport.Mappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column" EnableRowVirtualization="True">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Source header" Binding="{Binding SourceHeader}" Width="1.2*" IsReadOnly="True" />
-                                            <DataGridTextColumn Header="Sample" Binding="{Binding SampleValue}" Width="1.2*" IsReadOnly="True" />
-                                            <DataGridTextColumn Header="Target field" Binding="{Binding TargetField}" Width="1.3*" IsReadOnly="True" />
-                                            <DataGridTemplateColumn Header="Source column" Width="105"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding ColumnChoices}" SelectedItem="{Binding SourceColumn, UpdateSourceTrigger=PropertyChanged}" IsEditable="True" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-                                            <DataGridCheckBoxColumn Header="Required" Binding="{Binding IsRequired}" Width="65" IsReadOnly="True" />
-                                            <DataGridTextColumn Header="Decision" Binding="{Binding Decision}" Width="95" IsReadOnly="True" />
-                                            <DataGridTextColumn Header="Score" Binding="{Binding CandidateScore}" Width="70" IsReadOnly="True" />
-                                            <DataGridTextColumn Header="Reason" Binding="{Binding CandidateReason}" Width="1.2*" IsReadOnly="True" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                    <TextBlock Grid.Row="1" Text="Machine section mappings" FontWeight="Bold" Margin="0,8,0,4" />
-                                    <DataGrid Grid.Row="2" ItemsSource="{Binding LegacyImport.MachineMappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Source section" Binding="{Binding SourceHeader}" Width="1.4*" IsReadOnly="True" />
-                                            <DataGridTemplateColumn Header="Existing Machine" Width="2*"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding MachineChoices}" SelectedItem="{Binding SelectedMachineCandidate, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="Reason" Binding="{Binding CandidateReason}" Width="1.3*" IsReadOnly="True" />
-                                            <DataGridTextColumn Header="Decision" Binding="{Binding Decision}" Width="90" IsReadOnly="True" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
+                            </Border></ScrollViewer>
+                        </TabItem>
+
+                        <TabItem Header="2  Import targets">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" Margin="0,8,0,0"><StackPanel IsEnabled="{Binding IsEditor}">
+                                <TextBlock Text="Choose what to import" FontSize="16" FontWeight="Bold" />
+                                <TextBlock Text="Keep these targets explicit. You can import operations to the Pool, import Orders under Cases, and create Batches with Machine assignments. Unchecked targets are not mutated on commit." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
+                                <UniformGrid Columns="3">
+                                    <Border Style="{StaticResource SetupSection}" Margin="0,0,8,0"><StackPanel><CheckBox Content="Create Batches in Pool" IsChecked="{Binding LegacyImport.ImportPoolBatches}" FontWeight="SemiBold" /><TextBlock Text="Clone the existing Case route into unassigned Batch Operations; no raw Excel operation or route is invented." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
+                                    <Border Style="{StaticResource SetupSection}" Margin="0,0,8,0"><StackPanel><CheckBox Content="Import Orders" IsChecked="{Binding LegacyImport.ImportOrders}" FontWeight="SemiBold" /><TextBlock Text="Create or match Orders and preserve quantity and Work Finish Date." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
+                                    <Border Style="{StaticResource SetupSection}"><StackPanel><CheckBox Content="Create Batches and assign Machines" IsChecked="{Binding LegacyImport.ImportMachineAssignments}" FontWeight="SemiBold" /><TextBlock Text="Select the route operation, allocate quantity, and choose an existing Machine per row." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" /></StackPanel></Border>
+                                </UniformGrid>
+                                <TextBlock Text="{Binding LegacyImport.OutcomeSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                <TextBlock Text="{Binding LegacyImport.ValidationSummary}" Foreground="#996C00" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            </StackPanel></Border></ScrollViewer>
+                        </TabItem>
+
+                        <TabItem Header="3  Columns &amp; Machines">
+                            <Grid Margin="0,8"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                <StackPanel Margin="0,0,0,8"><TextBlock Text="Confirm source columns and Machine sections" FontSize="16" FontWeight="Bold" /><TextBlock Text="Review suggestions and change only unclear mappings. Required fields must be resolved before commit." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <Grid Grid.Row="1" IsEnabled="{Binding IsEditor}"><Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Style="{StaticResource SetupSection}"><DataGrid ItemsSource="{Binding LegacyImport.IncludedMappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column" EnableRowVirtualization="True"><DataGrid.Columns><DataGridTextColumn Header="Source" Binding="{Binding SourceHeader}" Width="1.2*" IsReadOnly="True" /><DataGridTextColumn Header="Sample" Binding="{Binding SampleValue}" Width="1.2*" IsReadOnly="True" /><DataGridTextColumn Header="Target" Binding="{Binding TargetField}" Width="1.3*" IsReadOnly="True" /><DataGridTemplateColumn Header="Column" Width="110"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding ColumnChoices}" SelectedItem="{Binding SourceColumn, UpdateSourceTrigger=PropertyChanged}" IsEditable="True" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridCheckBoxColumn Header="Required" Binding="{Binding IsRequired, Mode=OneWay}" Width="65" IsReadOnly="True" /><DataGridTextColumn Header="Decision" Binding="{Binding Decision}" Width="95" IsReadOnly="True" /></DataGrid.Columns></DataGrid></Border>
+                                    <Border Grid.Column="2" Style="{StaticResource ImportMachineMappingsSection}"><StackPanel><TextBlock Text="Machine sections" FontWeight="Bold" Margin="0,0,0,8" /><TextBlock Text="{Binding LegacyImport.MachineSuggestionSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6" /><Button Content="Accept clear Machine suggestions" Command="{Binding LegacyImport.AcceptClearMachineSuggestionsCommand}" HorizontalAlignment="Left" Margin="0,0,0,8" /><DataGrid ItemsSource="{Binding LegacyImport.IncludedMachineMappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"><DataGrid.Columns><DataGridTextColumn Header="Workbook section" Binding="{Binding SourceHeader}" Width="1.3*" IsReadOnly="True" /><DataGridTemplateColumn Header="Machine" Width="1.5*"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding MachineChoices}" SelectedItem="{Binding SelectedMachineCandidate, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="Reason" Binding="{Binding SelectionReason}" Width="1.2*" IsReadOnly="True" /></DataGrid.Columns></DataGrid></StackPanel></Border>
                                 </Grid>
                             </Grid>
-                        </Border>
+                        </TabItem>
 
-                        <Border Grid.Column="2" Style="{StaticResource SetupSection}">
-                            <Grid>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <StackPanel Margin="0,0,0,8">
-                                    <TextBlock Text="Preview and row issues" FontSize="16" FontWeight="Bold" />
-                                    <TextBlock Text="Hebrew text is shown as supplied by the workbook. Review warnings and blocked rows before committing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <DataGrid x:Name="ImportRowsGrid" Grid.Row="1" ItemsSource="{Binding LegacyImport.Rows}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False"
-                                          HeadersVisibility="Column" EnableRowVirtualization="True">
-                                    <DataGrid.RowDetailsTemplate>
-                                        <DataTemplate>
-                                            <Border Background="#F7F9FB" Padding="8" BorderBrush="#D8DDE3" BorderThickness="0,1,0,1">
-                                                <StackPanel>
-                                                    <UniformGrid Columns="3">
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Action" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ActionChoices}" SelectedItem="{Binding Decision, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Existing operation" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding AvailableExistingOperationCandidates}" SelectedItem="{Binding SelectedExistingOperationCandidate}" DisplayMemberPath="DisplayName"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case candidate" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding CaseCandidates}" SelectedItem="{Binding SelectedCaseCandidate}" DisplayMemberPath="DisplayName"/></StackPanel>
-                                                    </UniformGrid>
-                                                    <UniformGrid Columns="3">
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Route operation" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding AvailableRouteOperationCandidates}" SelectedItem="{Binding SelectedRouteOperationCandidate}" DisplayMemberPath="DisplayName"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Batch number" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding BatchNumber, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Source row" Style="{StaticResource SetupFieldLabel}"/><TextBlock Text="{Binding SourceSummary}" TextWrapping="Wrap"/></StackPanel>
-                                                    </UniformGrid>
-                                                    <TextBlock Text="{Binding CompatibilityReviewText}" TextWrapping="Wrap" Margin="0,2,0,4">
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding RequiresCompatibilityOverride}" Value="True">
-                                                                        <Setter Property="Foreground" Value="#996C00"/>
-                                                                        <Setter Property="FontWeight" Value="SemiBold"/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
-                                                    </TextBlock>
-                                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,8" IsEnabled="{Binding RequiresCompatibilityOverride}"><CheckBox Content="Confirm cross-type assignment" IsChecked="{Binding CompatibilityOverrideConfirmed}"/><TextBox Text="{Binding CompatibilityOverrideReason, UpdateSourceTrigger=PropertyChanged}" MinWidth="260" Margin="12,0,0,0" ToolTip="Mandatory reason for a confirmed cross-Machine-type assignment."/></StackPanel>
-                                                    <DockPanel><TextBlock Text="Allocations" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Content="Add allocation" Command="{Binding AddAllocationCommand}" /></DockPanel>
-                                                    <ItemsControl ItemsSource="{Binding Allocations}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="0,2"><ComboBox ItemsSource="{Binding TypeChoices}" SelectedItem="{Binding Type}" Width="120" ToolTip="Allocation type"/><ComboBox ItemsSource="{Binding OrderCandidates}" SelectedItem="{Binding SelectedOrderCandidate}" DisplayMemberPath="DisplayName" Width="220" Margin="5,0,0,0" ToolTip="Existing Order"/><TextBox Text="{Binding OrderSourceRowKey}" Width="130" Margin="5,0,0,0" ToolTip="Optional source-row Order reference"/><TextBox Text="{Binding Quantity}" Width="80" Margin="5,0,0,0" ToolTip="Quantity"/><Button Content="Remove" Command="{Binding DataContext.RemoveAllocationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" Margin="5,0,0,0"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-                                                    <TextBlock Text="New Case (for open-order rows)" FontWeight="SemiBold" Margin="0,10,0,2"/>
-                                                    <UniformGrid Columns="3">
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part number" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCasePartNumber, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCaseName, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Revision" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCaseRevision, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                    </UniformGrid>
-                                                    <UniformGrid Columns="3">
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCaseCustomer, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer reference" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCaseCustomerReference, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working folder" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCaseWorkingFolderPath, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                    </UniformGrid>
-                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding NewCaseNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap"/></StackPanel>
-                                                    <TextBlock Text="Optional new Order" FontWeight="SemiBold" Margin="0,8,0,2"/>
-                                                    <UniformGrid Columns="3">
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Order number" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding OrderNumber, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Quantity" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding OrderQuantity, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Work Finish Date (yyyy-MM-dd)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding OrderWorkFinishDate, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                    </UniformGrid>
-                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Order notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding OrderNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap"/></StackPanel>
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </DataGrid.RowDetailsTemplate>
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Row" Binding="{Binding RowNumber}" Width="55" />
-                                        <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="90" IsReadOnly="True" />
-                                        <DataGridTemplateColumn Header="Status" Width="80" IsReadOnly="True">
-                                            <DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Status}" Style="{StaticResource ImportStatusText}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTextColumn Header="Source data" Binding="{Binding SourceSummary}" Width="2*" IsReadOnly="True" />
-                                        <DataGridTextColumn Header="Details" Binding="{Binding Message}" Width="2*" />
-                                        <DataGridTextColumn Header="Decision" Binding="{Binding Decision, UpdateSourceTrigger=PropertyChanged}" Width="1.2*" />
-                                        <DataGridTextColumn Header="Existing operation" Binding="{Binding ExistingOperation}" Width="1.2*" />
-                                        <DataGridTextColumn Header="Route operation" Binding="{Binding RouteOperation}" Width="1.2*" />
-                                        <DataGridCheckBoxColumn Header="Create batch" Binding="{Binding CreateBatch, Mode=TwoWay}" Width="78" />
-                                        <DataGridCheckBoxColumn Header="Skip" Binding="{Binding IsSkipped, Mode=TwoWay}" Width="55" />
-                                        <DataGridTemplateColumn Header="Resolution" Width="110">
-                                            <DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding SkipChoices}" SelectedItem="{Binding SkipReason, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                                        </DataGridTemplateColumn>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <StackPanel Grid.Row="2" Margin="0,8,0,0">
-                                    <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" />
-                                    <TextBlock Text="Issues" FontWeight="SemiBold" Margin="0,5,0,2" />
-                                    <ItemsControl ItemsSource="{Binding LegacyImport.Issues}" MaxHeight="70"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="#996C00" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-                                </StackPanel>
+                        <TabItem Header="4  Resolve &amp; pattern">
+                            <Grid Margin="0,8"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                <StackPanel><TextBlock Text="Resolve one row, then reuse the safe pattern" FontSize="16" FontWeight="Bold" /><TextBlock Text="Select a row below. Choose Pool, Order, Batch, route operation, allocation, and Machine assignment in the detail editor. Apply the selected row's resolved pattern only to similar rows or to all matching rows." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <Border Grid.Row="1" Style="{StaticResource SetupSection}" Margin="0,8"><WrapPanel VerticalAlignment="Center"><TextBlock Text="Pattern scope" VerticalAlignment="Center" Margin="0,0,6,0" /><ComboBox ItemsSource="{Binding LegacyImport.PatternScopeChoices}" SelectedValue="{Binding LegacyImport.PatternScope, Mode=TwoWay}" SelectedValuePath="Value" DisplayMemberPath="DisplayName" MinWidth="165" Margin="0,0,8,0" ToolTip="Choose which similar rows receive the selected row's explicit choices." /><StackPanel Margin="0,0,8,0"><TextBlock Text="Batch number template (optional)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.BatchNumberTemplate, UpdateSourceTrigger=PropertyChanged}" MinWidth="180" ToolTip="Use {part}, {reference}, and {row}. Blank leaves the batch number unresolved." /></StackPanel><TextBlock Text="{Binding LegacyImport.PatternPreviewText}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,12,0" /><Button Content="Apply pattern" Command="{Binding LegacyImport.ApplyPatternCommand}" Margin="0,0,8,0" /><Button Content="Apply to similar rows" Command="{Binding LegacyImport.ApplySelectedPatternToSimilarCommand}" Margin="0,0,8,0" /><Button Content="Apply to all matching rows" Command="{Binding LegacyImport.ApplySelectedPatternToAllCommand}" /></WrapPanel></Border>
+                                <Grid Grid.Row="2" IsEnabled="{Binding IsEditor}"><Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="3*" /></Grid.ColumnDefinitions>
+                                    <DataGrid x:Name="WizardImportRowsGrid" Grid.Column="0" ItemsSource="{Binding LegacyImport.Rows}" SelectedItem="{Binding LegacyImport.SelectedWizardRow, Mode=TwoWay}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column" EnableRowVirtualization="True"><DataGrid.Columns><DataGridTextColumn Header="Row" Binding="{Binding RowNumber}" Width="55" /><DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="90" IsReadOnly="True" /><DataGridTemplateColumn Header="Status" Width="80" IsReadOnly="True"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Status}" Style="{StaticResource ImportStatusText}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="Source" Binding="{Binding SourceSummary}" Width="2*" IsReadOnly="True" /><DataGridTextColumn Header="Decision" Binding="{Binding Decision, UpdateSourceTrigger=PropertyChanged}" Width="1.2*" /></DataGrid.Columns></DataGrid>
+                                    <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}"><StackPanel DataContext="{Binding LegacyImport.SelectedWizardRow}"><TextBlock Text="Selected row" FontSize="16" FontWeight="Bold" /><TextBlock Text="{Binding SourceSummary}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,10" /><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Action" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding ActionChoices}" SelectedValue="{Binding Decision, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Value" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportExistingOperationSection}"><TextBlock Text="Existing operation" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding AvailableExistingOperationCandidates}" SelectedItem="{Binding SelectedExistingOperationCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportCaseSection}"><TextBlock Text="Case candidate" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding CaseCandidates}" SelectedItem="{Binding SelectedCaseCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><StackPanel Style="{StaticResource ImportRouteSection}"><TextBlock Text="Route operation" Style="{StaticResource SetupFieldLabel}" /><ComboBox ItemsSource="{Binding AvailableRouteOperationCandidates}" SelectedItem="{Binding SelectedRouteOperationCandidate}" DisplayMemberPath="DisplayName" /></StackPanel><UniformGrid Columns="2"><StackPanel Style="{StaticResource ImportBatchSection}"><TextBlock Text="Batch number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BatchNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource ImportOrderSection}"><TextBlock Text="Order number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2" Style="{StaticResource ImportOrderGrid}"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Quantity" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderQuantity, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Work Finish Date" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderWorkFinishDate, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><Expander Header="New Case details (used for open Orders)" Margin="0,4,0,8" Style="{StaticResource ImportNewCaseSection}"><StackPanel><CheckBox Content="Also create this prefilled Order" IsChecked="{Binding IncludeOrderWithNewCase}" ToolTip="Create the prefilled Order together with this new Case." Margin="0,0,0,8" /><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part number" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCasePartNumber, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case name" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseName, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Revision" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseRevision, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working folder" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseWorkingFolderPath, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><UniformGrid Columns="2"><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseCustomer, UpdateSourceTrigger=PropertyChanged}" /></StackPanel><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Customer reference" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseCustomerReference, UpdateSourceTrigger=PropertyChanged}" /></StackPanel></UniformGrid><StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case notes" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding NewCaseNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" /></StackPanel></StackPanel></Expander><StackPanel Style="{StaticResource ImportOrderSection}"><TextBlock Text="Order notes" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding OrderNotes, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" /></StackPanel><StackPanel Style="{StaticResource ImportCompatibilitySection}"><TextBlock Text="{Binding CompatibilityReviewText}" TextWrapping="Wrap" Foreground="#996C00" Margin="0,2,0,5" /><StackPanel Orientation="Horizontal" IsEnabled="{Binding RequiresCompatibilityOverride}" Margin="0,0,0,8"><CheckBox Content="Confirm cross-type assignment" IsChecked="{Binding CompatibilityOverrideConfirmed}" /><TextBox Text="{Binding CompatibilityOverrideReason, UpdateSourceTrigger=PropertyChanged}" MinWidth="170" Margin="8,0,0,0" ToolTip="Mandatory reason" /></StackPanel></StackPanel><StackPanel Style="{StaticResource ImportAllocationsSection}"><DockPanel><TextBlock Text="Allocations" FontWeight="SemiBold" /><Button DockPanel.Dock="Right" Content="Add allocation" Command="{Binding AddAllocationCommand}" /></DockPanel><ItemsControl ItemsSource="{Binding Allocations}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="0,2"><ComboBox ItemsSource="{Binding TypeChoices}" SelectedItem="{Binding Type}" Width="100" /><ComboBox ItemsSource="{Binding OrderCandidates}" SelectedItem="{Binding SelectedOrderCandidate}" DisplayMemberPath="DisplayName" Width="160" Margin="4,0,0,0" /><TextBox Text="{Binding OrderSourceRowKey}" Width="110" Margin="4,0,0,0" ToolTip="Optional source-row Order reference" /><TextBox Text="{Binding Quantity}" Width="65" Margin="4,0,0,0" /><Button Content="Remove" Command="{Binding DataContext.RemoveAllocationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" Margin="4,0,0,0" /></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></StackPanel></Border></ScrollViewer>
+                                </Grid>
                             </Grid>
-                        </Border>
-                    </Grid>
+                        </TabItem>
 
-                    <Border Grid.Row="4" Style="{StaticResource SetupSection}">
-                        <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                    <ProgressBar IsIndeterminate="True" IsHitTestVisible="False" Height="4" Margin="0,5,0,0">
-                                        <ProgressBar.Style>
-                                            <Style TargetType="ProgressBar">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                <Style.Triggers><DataTrigger Binding="{Binding LegacyImport.IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
-                                            </Style>
-                                        </ProgressBar.Style>
-                                    </ProgressBar>
-                                    <TextBlock Text="{Binding LegacyImport.HeaderRowNumber, StringFormat=Header row: {0}}" Foreground="{StaticResource MutedTextBrush}" />
-                                </StackPanel>
-                                <TextBlock Text="{Binding LegacyImport.SourceSheetName, StringFormat=Planning sheet: {0}}" Foreground="{StaticResource MutedTextBrush}" />
-                                <TextBlock Text="{Binding LegacyImport.OpenOrdersSheetName, StringFormat=Open-orders sheet: {0}}" Foreground="{StaticResource MutedTextBrush}" />
-                                <TextBlock Text="{Binding LegacyImport.TokenExpiryText}" Foreground="#996C00" />
-                            </StackPanel>
-                            <Button Grid.Column="1" Content="Skip selected row" Command="{Binding LegacyImport.SkipRowCommand}" CommandParameter="{Binding SelectedItem, ElementName=ImportRowsGrid}" Margin="8,0,0,0" />
-                            <StackPanel Grid.Column="2"><Button Content="Skip all unresolved" Command="{Binding LegacyImport.SkipAllUnresolvedCommand}" Margin="8,0,0,2"/><Button Content="Commit import" Command="{Binding LegacyImport.CommitCommand}" IsEnabled="{Binding LegacyImport.CanCommit}" Margin="8,0,0,0" /></StackPanel>
-                        </Grid>
-                    </Border>
+                        <TabItem Header="5  Review &amp; commit">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" Margin="0,8,0,0"><StackPanel><TextBlock Text="Review before writing" FontSize="16" FontWeight="Bold" /><TextBlock Text="The Server validates the complete selection atomically. Resolve blockers and confirm Machine assignments before committing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" /><TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.TokenExpiryText}" Foreground="#996C00" Margin="0,3,0,10" /><DataGrid ItemsSource="{Binding LegacyImport.ReviewRows}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" MaxHeight="220" Margin="0,0,0,10"><DataGrid.Columns><DataGridTextColumn Header="Row" Binding="{Binding RowNumber}" Width="55" /><DataGridTextColumn Header="Source" Binding="{Binding SourceSummary}" Width="2*" /><DataGridTextColumn Header="Decision" Binding="{Binding DecisionDisplayName}" Width="1.5*" /><DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="90" /></DataGrid.Columns></DataGrid><TextBlock Text="Issues" FontWeight="SemiBold" /><ItemsControl ItemsSource="{Binding LegacyImport.Issues}" MaxHeight="220"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="#996C00" Margin="0,2" /></DataTemplate></ItemsControl.ItemTemplate></ItemsControl><TextBlock Text="Import is atomic: the Server either accepts the validated selection or changes nothing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" /></StackPanel></Border></ScrollViewer>
+                        </TabItem>
+                    </TabControl>
+
+                    <Border Grid.Row="4" Style="{StaticResource SetupSection}"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" /></StackPanel><Button Grid.Column="1" Content="Back" Command="{Binding LegacyImport.PreviousStepCommand}" IsEnabled="{Binding LegacyImport.CanGoPrevious}" Margin="8,0,0,0" /><Button Grid.Column="2" Content="Next" Command="{Binding LegacyImport.NextStepCommand}" IsEnabled="{Binding LegacyImport.CanGoNext}" Margin="8,0,0,0" /><StackPanel Grid.Column="3" Orientation="Horizontal"><Button Content="Skip unresolved" Command="{Binding LegacyImport.SkipAllUnresolvedCommand}" Margin="8,0,0,0" /><Button Content="Commit import" Command="{Binding LegacyImport.CommitCommand}" IsEnabled="{Binding LegacyImport.CanCommitNow}" Margin="8,0,0,0" /></StackPanel></Grid></Border>
                 </Grid>
             </TabItem>
 

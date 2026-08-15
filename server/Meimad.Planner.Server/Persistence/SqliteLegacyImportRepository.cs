@@ -104,7 +104,9 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         var createdCaseIds = new List<string>();
         var createdOrderIds = new List<string>();
         var createdBatchIds = new List<string>();
+        var createdBatchOperationIds = new List<string>();
         var createdAssignmentIds = new List<string>();
+        var poolBatchOperationIds = new List<string>();
         var caseIdsBySourceRow = new Dictionary<string, string>(StringComparer.Ordinal);
         var orderIdsBySourceRow = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -176,7 +178,9 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             {
                 Selection = selection,
                 Source = planningRows[selection.RowKey!],
-                MachineId = string.IsNullOrWhiteSpace(selection.MachineId)
+                MachineId = selection.Action == "create_batch_to_pool"
+                    ? null
+                    : string.IsNullOrWhiteSpace(selection.MachineId)
                     ? explicitMachineMap[planningRows[selection.RowKey!].SectionKey]
                     : selection.MachineId!
             })
@@ -187,7 +191,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         foreach (var item in selectedPlanning)
         {
             var batchOperationId = item.Selection.BatchOperationId;
-            if (item.Selection.Action == "create_batch_and_assign")
+            if (item.Selection.Action is "create_batch_and_assign" or "create_batch_to_pool")
             {
                 var caseId = ResolveExclusiveReference(
                     item.Selection.CaseId,
@@ -216,15 +220,22 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                     continue;
                 }
 
-                createdBatchIds.Add(created.Value.BatchId);
-                batchOperationId = created.Value.SelectedBatchOperationId;
+                createdBatchIds.Add(created.BatchId);
+                createdBatchOperationIds.AddRange(created.BatchOperationIds);
+                poolBatchOperationIds.AddRange(created.BatchOperationIds);
+                batchOperationId = created.SelectedBatchOperationId;
+            }
+
+            if (item.Selection.Action == "create_batch_to_pool")
+            {
+                continue;
             }
 
             var assignmentId = await AppendAssignmentAsync(
                 connection,
                 transaction,
                 batchOperationId!,
-                item.MachineId,
+                item.MachineId!,
                 item.Selection.CompatibilityOverride,
                 editAuthority,
                 confirmedByUserId,
@@ -235,10 +246,11 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             if (assignmentId is not null)
             {
                 createdAssignmentIds.Add(assignmentId);
-                if (!importedBacklogs.TryGetValue(item.MachineId, out var backlog))
+                poolBatchOperationIds.Remove(batchOperationId!);
+                if (!importedBacklogs.TryGetValue(item.MachineId!, out var backlog))
                 {
                     backlog = [];
-                    importedBacklogs[item.MachineId] = backlog;
+                    importedBacklogs[item.MachineId!] = backlog;
                 }
                 backlog.Add(assignmentId);
             }
@@ -255,11 +267,13 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                 createdCaseIds,
                 createdOrderIds,
                 createdBatchIds,
-                createdAssignmentIds),
-            new LegacyImportEntityIdsResponse([], [], [], []),
+                createdAssignmentIds,
+                createdBatchOperationIds),
+            new LegacyImportEntityIdsResponse([], [], [], [], []),
             importedBacklogs.OrderBy(entry => entry.Key, StringComparer.Ordinal)
                 .Select(entry => new LegacyImportedMachineBacklogResponse(entry.Key, entry.Value))
-                .ToArray());
+                .ToArray(),
+            poolBatchOperationIds);
         await InsertReceiptAsync(
             connection,
             transaction,
@@ -287,6 +301,8 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                     caseCount = createdCaseIds.Count,
                     orderCount = createdOrderIds.Count,
                     batchCount = createdBatchIds.Count,
+                    batchOperationCount = createdBatchOperationIds.Count,
+                    poolBatchOperationCount = poolBatchOperationIds.Count,
                     assignmentCount = createdAssignmentIds.Count
                 },
                 EventKey: $"legacy-working-plan-import:{commitId}"),
@@ -553,7 +569,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         return orderId;
     }
 
-    private static async Task<(string BatchId, string SelectedBatchOperationId)?> CreateBatchAsync(
+    private static async Task<CreatedBatch?> CreateBatchAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string caseId,
@@ -655,7 +671,8 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             issues.Add(SourceIssue("case_route_required", "A new Batch can be imported only after the selected existing Case has an explicit operation route.", source, "caseId"));
             return null;
         }
-        if (!operations.Any(operation => operation.Id == selection.CaseOperationId))
+        if (!string.IsNullOrWhiteSpace(selection.CaseOperationId)
+            && !operations.Any(operation => operation.Id == selection.CaseOperationId))
         {
             issues.Add(SourceIssue("case_operation_invalid", "caseOperationId does not belong to the selected Case route.", source, "caseOperationId"));
             return null;
@@ -706,9 +723,11 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         string? selectedBatchOperationId = null;
+        var batchOperationIds = new List<string>(operations.Count);
         foreach (var operation in operations)
         {
             var batchOperationId = Guid.NewGuid().ToString("N");
+            batchOperationIds.Add(batchOperationId);
             if (operation.Id == selection.CaseOperationId)
             {
                 selectedBatchOperationId = batchOperationId;
@@ -756,7 +775,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             batchId,
             now,
             cancellationToken);
-        return (batchId, selectedBatchOperationId!);
+        return new CreatedBatch(batchId, batchOperationIds, selectedBatchOperationId);
     }
 
     private static async Task<string?> AppendAssignmentAsync(
@@ -1031,7 +1050,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         {
             Replayed = true,
             Unchanged = prior.Created,
-            Created = new LegacyImportEntityIdsResponse([], [], [], [])
+            Created = new LegacyImportEntityIdsResponse([], [], [], [], [])
         };
     }
 
@@ -1089,6 +1108,10 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
 
     private sealed record StoredReceipt(string RequestSha256, string ResponseJson);
     private sealed record ResolvedAllocation(string Type, string? OrderId, int Quantity);
+    private sealed record CreatedBatch(
+        string BatchId,
+        IReadOnlyList<string> BatchOperationIds,
+        string? SelectedBatchOperationId);
     private sealed record MachineRecord(
         string ProcessType,
         string? AxisType,

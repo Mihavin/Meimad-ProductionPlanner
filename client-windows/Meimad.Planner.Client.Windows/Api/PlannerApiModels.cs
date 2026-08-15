@@ -391,13 +391,15 @@ internal sealed record LegacyWorkingPlanCommitReceipt(
     bool Replayed,
     LegacyImportAffectedIds Created,
     LegacyImportAffectedIds Unchanged,
-    IReadOnlyList<LegacyImportMachineBacklog> MachineBacklogs);
+    IReadOnlyList<LegacyImportMachineBacklog> MachineBacklogs,
+    IReadOnlyList<string>? PoolBatchOperationIds = null);
 
 internal sealed record LegacyImportAffectedIds(
     IReadOnlyList<string> CaseIds,
     IReadOnlyList<string> OrderIds,
     IReadOnlyList<string> BatchIds,
-    IReadOnlyList<string> AssignmentIds);
+    IReadOnlyList<string> AssignmentIds,
+    IReadOnlyList<string>? BatchOperationIds = null);
 
 internal sealed record LegacyImportMachineBacklog(
     string MachineId,

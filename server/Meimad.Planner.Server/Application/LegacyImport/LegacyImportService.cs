@@ -955,12 +955,6 @@ internal sealed partial class LegacyImportService
             {
                 issues.Add(SourceIssue("source_row_invalid", "A selected planning row requires a valid Part Number and quantity.", sourceRow, "rowKey"));
             }
-            if (string.IsNullOrWhiteSpace(selection.MachineId)
-                && !machineMap.TryGetValue(sourceRow.SectionKey, out _))
-            {
-                issues.Add(SourceIssue("machine_mapping_required", "A selected planning row requires an explicit Machine mapping.", sourceRow, "machineId"));
-            }
-
             switch (selection.Action)
             {
                 case "assign_existing_operation":
@@ -968,21 +962,24 @@ internal sealed partial class LegacyImportService
                     {
                         issues.Add(SourceIssue("batch_operation_required", "assign_existing_operation requires batchOperationId.", sourceRow, "batchOperationId"));
                     }
+                    ValidateAssignmentTarget(selection, sourceRow, machineMap, issues);
                     break;
                 case "create_batch_and_assign":
-                    if (string.IsNullOrWhiteSpace(selection.CaseId)
-                        == string.IsNullOrWhiteSpace(selection.CaseSourceRowKey))
+                    ValidateNewBatchSelection(selection, sourceRow, requireSelectedOperation: true, issues);
+                    ValidateAssignmentTarget(selection, sourceRow, machineMap, issues);
+                    break;
+                case "create_batch_to_pool":
+                    ValidateNewBatchSelection(selection, sourceRow, requireSelectedOperation: false, issues);
+                    if (!string.IsNullOrWhiteSpace(selection.BatchOperationId)
+                        || !string.IsNullOrWhiteSpace(selection.CaseOperationId)
+                        || !string.IsNullOrWhiteSpace(selection.MachineId)
+                        || selection.CompatibilityOverride is not null)
                     {
-                        issues.Add(SourceIssue("exclusive_reference_required", "Provide exactly one of caseId or caseSourceRowKey.", sourceRow, "caseId"));
-                    }
-                    if (string.IsNullOrWhiteSpace(selection.CaseOperationId)
-                        || string.IsNullOrWhiteSpace(selection.BatchNumber))
-                    {
-                        issues.Add(SourceIssue("batch_mapping_incomplete", "create_batch_and_assign requires caseId, caseOperationId, and batchNumber.", sourceRow, "batchNumber"));
-                    }
-                    if (selection.Allocations is null || selection.Allocations.Count == 0)
-                    {
-                        issues.Add(SourceIssue("allocations_required", "A new Batch requires explicit allocations.", sourceRow, "allocations"));
+                        issues.Add(SourceIssue(
+                            "pool_assignment_forbidden",
+                            "create_batch_to_pool snapshots the complete Case route and leaves it unassigned; remove selected-operation, Machine, and compatibility-override values.",
+                            sourceRow,
+                            "machineId"));
                     }
                     break;
                 default:
@@ -1007,6 +1004,48 @@ internal sealed partial class LegacyImportService
                 issue.Field,
                 issue.SectionKey)));
         return issues;
+    }
+
+    private static void ValidateNewBatchSelection(
+        LegacyPlanningSelectionRequest selection,
+        LegacyPlanningRowResponse sourceRow,
+        bool requireSelectedOperation,
+        List<LegacyImportIssue> issues)
+    {
+        if (string.IsNullOrWhiteSpace(selection.CaseId)
+            == string.IsNullOrWhiteSpace(selection.CaseSourceRowKey))
+        {
+            issues.Add(SourceIssue("exclusive_reference_required", "Provide exactly one of caseId or caseSourceRowKey.", sourceRow, "caseId"));
+        }
+        if (string.IsNullOrWhiteSpace(selection.BatchNumber)
+            || (requireSelectedOperation && string.IsNullOrWhiteSpace(selection.CaseOperationId)))
+        {
+            var message = requireSelectedOperation
+                ? "create_batch_and_assign requires a Case reference, caseOperationId, and batchNumber."
+                : "create_batch_to_pool requires a Case reference and batchNumber.";
+            issues.Add(SourceIssue("batch_mapping_incomplete", message, sourceRow, "batchNumber"));
+        }
+        if (selection.Allocations is null || selection.Allocations.Count == 0)
+        {
+            issues.Add(SourceIssue("allocations_required", "A new Batch requires explicit allocations.", sourceRow, "allocations"));
+        }
+    }
+
+    private static void ValidateAssignmentTarget(
+        LegacyPlanningSelectionRequest selection,
+        LegacyPlanningRowResponse sourceRow,
+        IReadOnlyDictionary<string, string> machineMap,
+        List<LegacyImportIssue> issues)
+    {
+        if (string.IsNullOrWhiteSpace(selection.MachineId)
+            && !machineMap.TryGetValue(sourceRow.SectionKey, out _))
+        {
+            issues.Add(SourceIssue(
+                "machine_mapping_required",
+                "This action requires an explicit Machine selection or an approved Machine-section mapping.",
+                sourceRow,
+                "machineId"));
+        }
     }
 
     private static void ValidateNewCase(
