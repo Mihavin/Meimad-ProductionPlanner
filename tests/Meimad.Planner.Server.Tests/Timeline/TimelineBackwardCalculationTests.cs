@@ -234,6 +234,78 @@ public sealed class TimelineBackwardCalculationTests
     }
 
     [Fact]
+    public void Backward_three_contenders_never_overlap_repeated_regular_worker_reload_reservations()
+    {
+        static TimelineOperationInput Contender(string id, string order) => new(
+            id,
+            TimeSpan.Zero,
+            TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            LoadUnloadRequiresWorker: true,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
+            PriorityOrderNumber: order,
+            EarliestStart: Start,
+            LatestFinish: End,
+            PlanningMode: TimelinePlanningMode.Backward,
+            PlannedQuantity: 2);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("m-1", Contender("op-1", "SO-1")),
+                Backlog("m-2", Contender("op-2", "SO-2")),
+                Backlog("m-3", Contender("op-3", "SO-3"))
+            ],
+            [Calendar("m-1"), Calendar("m-2"), Calendar("m-3")],
+            [],
+            [new TimelineResourceCalendar(
+                "regular-1", TimelineResourceRole.RegularWorker, [Window(8, 17)])]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(3, result.Operations.Count);
+        var reloads = result.Operations
+            .SelectMany(operation => operation.LoadUnloadIntervals ?? [])
+            .OrderBy(interval => interval.StartsAt)
+            .ToArray();
+        Assert.Equal(6, reloads.Length);
+        for (var index = 1; index < reloads.Length; index++)
+        {
+            Assert.True(reloads[index - 1].EndsAt <= reloads[index].StartsAt,
+                $"Regular worker overlap: {reloads[index - 1]} and {reloads[index]}.");
+        }
+    }
+
+    [Fact]
+    public void Backward_large_locked_group_duration_returns_conflict_without_overflow()
+    {
+        var hugeDuration = TimeSpan.FromTicks(long.MaxValue / 2 + 1);
+        TimelineOperationInput Huge(string id) => new(
+            id, TimeSpan.Zero, hugeDuration,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
+            PriorityOrderNumber: "SO-2",
+            EarliestStart: Start,
+            LatestFinish: End,
+            PlanningMode: TimelinePlanningMode.Backward);
+        var small = Operation("small", 1, End, order: "SO-1");
+
+        var result = Calculate(
+            [
+                Backlog("m-huge-1", Huge("huge-1")),
+                Backlog("m-huge-2", Huge("huge-2")),
+                Backlog("m-small", small)
+            ],
+            [Calendar("m-huge-1"), Calendar("m-huge-2"), Calendar("m-small")],
+            [new TimelineDependency(
+                "locked-huge", TimelineDependencyType.LockedSimultaneous,
+                "huge-1", "huge-2", "huge-group")]);
+
+        Assert.Contains(result.Operations, operation => operation.OperationId == small.OperationId);
+        var conflict = Assert.Single(result.Conflicts, value =>
+            value.Code == "backward_schedule_cannot_fit"
+            && value.OperationIds.Contains("huge-1", StringComparer.Ordinal));
+        Assert.Equal(["huge-1", "huge-2"], conflict.OperationIds);
+    }
+
+    [Fact]
     public void Backward_day_shift_only_production_uses_day_shift_calendar()
     {
         var operation = Operation("op-1", 2, End) with { DayShiftOnly = true };

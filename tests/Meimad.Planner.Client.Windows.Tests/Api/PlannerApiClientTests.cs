@@ -784,6 +784,9 @@ public sealed class PlannerApiClientTests
                 {"resourceId":"resource-1","employeeNumber":"E-1","name":"Dana Bar","firstName":"Dana","lastName":"Bar","role":"regular_worker","skills":["inspection"],"assignedCalendarId":"calendar-1","photoPath":"C:\\photos\\dana.jpg","notes":"QA backup","email":"dana@example.test","isActive":true,"version":1,"createdAt":"2026-08-12T10:00:00Z","updatedAt":"2026-08-12T10:00:00Z"}
                 """),
             JsonWithEntityTag(HttpStatusCode.OK, """
+                {"resourceId":"resource-1","employeeNumber":"E-1","name":"Dana Katz","firstName":"Dana","lastName":"Katz","role":"regular_worker","skills":["inspection"],"assignedCalendarId":"calendar-1","photoPath":"C:\\photos\\dana.jpg","notes":"QA backup","email":"dana.katz@example.test","isActive":false,"version":2,"createdAt":"2026-08-12T10:00:00Z","updatedAt":"2026-08-12T10:01:00Z"}
+                """, "\"resource:resource-1:v2\""),
+            JsonWithEntityTag(HttpStatusCode.OK, """
                 {"israeliHolidayId":"holiday-1","date":"2026-09-15","name":"Rosh Hashanah","version":2,"createdAt":"2026-08-12T10:00:00Z","updatedAt":"2026-08-12T10:00:00Z"}
                 """, "\"israeli-holiday:holiday-1:v2\""),
             JsonWithEntityTag(HttpStatusCode.OK, """
@@ -796,6 +799,10 @@ public sealed class PlannerApiClientTests
 
         var resource = await api.CreateResourceAsync(
             new ResourceCreate("E-1", "Dana", "Bar", "regular_worker", ["inspection"], "calendar-1", "C:\\photos\\dana.jpg", "QA backup", "dana@example.test", true), "windows-1", 31);
+        var updatedResource = await api.UpdateResourceAsync(
+            "resource-1", new ResourceUpdate("E-1", "Dana", "Katz", "regular_worker", ["inspection"],
+                "calendar-1", "C:\\photos\\dana.jpg", "QA backup", "dana.katz@example.test", false),
+            "\"resource:resource-1:v1\"", "windows-1", 31);
         var holiday = await api.UpdateIsraeliHolidayAsync(
             "holiday-1", new IsraeliHolidayUpdate("2026-09-15", "Rosh Hashanah"),
             "\"israeli-holiday:holiday-1:v1\"", "windows-1", 31);
@@ -805,6 +812,8 @@ public sealed class PlannerApiClientTests
         var sync = await api.SynchronizeIsraeliHolidaysAsync(new(2026,2027),"windows-1",31);
 
         Assert.Equal("resource-1", resource.ResourceId);
+        Assert.Equal("Dana Katz", updatedResource.Value.Name);
+        Assert.Equal("\"resource:resource-1:v2\"", updatedResource.EntityTag);
         Assert.Equal("\"israeli-holiday:holiday-1:v2\"", holiday.EntityTag);
         Assert.Equal("\"report-email-settings:1:v3\"", settings.EntityTag);
         Assert.True(sync.Succeeded);
@@ -812,15 +821,19 @@ public sealed class PlannerApiClientTests
         Assert.Equal("/api/v1/resources", handler.Requests[0].Path);
         Assert.Equal("31", handler.Requests[0].Generation);
         Assert.Equal(HttpMethod.Patch, handler.Requests[1].Method);
-        Assert.Equal("/api/v1/israeli-holidays/holiday-1", handler.Requests[1].Path);
-        Assert.Equal("\"israeli-holiday:holiday-1:v1\"", handler.Requests[1].IfMatch);
-        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
-        Assert.Equal("/api/v1/report-email-settings", handler.Requests[2].Path);
-        Assert.Equal("\"report-email-settings:1:v2\"", handler.Requests[2].IfMatch);
-        Assert.Contains("\"recipients\":[\"manager@example.test\"]", handler.Requests[2].Body, StringComparison.Ordinal);
-        Assert.Equal(HttpMethod.Post,handler.Requests[3].Method);
-        Assert.Equal("/api/v1/israeli-holidays/sync",handler.Requests[3].Path);
-        Assert.Contains("\"fromYear\":2026",handler.Requests[3].Body,StringComparison.Ordinal);
+        Assert.Equal("/api/v1/resources/resource-1", handler.Requests[1].Path);
+        Assert.Equal("\"resource:resource-1:v1\"", handler.Requests[1].IfMatch);
+        Assert.Contains("\"lastName\":\"Katz\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Patch, handler.Requests[2].Method);
+        Assert.Equal("/api/v1/israeli-holidays/holiday-1", handler.Requests[2].Path);
+        Assert.Equal("\"israeli-holiday:holiday-1:v1\"", handler.Requests[2].IfMatch);
+        Assert.Equal(HttpMethod.Put, handler.Requests[3].Method);
+        Assert.Equal("/api/v1/report-email-settings", handler.Requests[3].Path);
+        Assert.Equal("\"report-email-settings:1:v2\"", handler.Requests[3].IfMatch);
+        Assert.Contains("\"recipients\":[\"manager@example.test\"]", handler.Requests[3].Body, StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Post,handler.Requests[4].Method);
+        Assert.Equal("/api/v1/israeli-holidays/sync",handler.Requests[4].Path);
+        Assert.Contains("\"fromYear\":2026",handler.Requests[4].Body,StringComparison.Ordinal);
     }
 
     [Fact]

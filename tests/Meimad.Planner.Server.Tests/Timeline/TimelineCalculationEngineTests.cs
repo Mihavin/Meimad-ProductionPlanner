@@ -773,6 +773,31 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Excessive_periodic_load_count_is_rejected_before_runs_are_materialized()
+    {
+        var operation = new TimelineOperationInput(
+            "op-excessive-loads", TimeSpan.Zero, TimeSpan.Zero,
+            LoadUnloadDuration: TimeSpan.FromSeconds(1),
+            PlannedQuantity: int.MaxValue);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Operations);
+        var conflict = Assert.Single(result.Conflicts,
+            value => value.Code == "load_unload_occurrence_limit_exceeded");
+        Assert.Equal(TimelineConflictSeverity.Blocking, conflict.Severity);
+        Assert.Equal([operation.OperationId], conflict.OperationIds);
+        Assert.Equal(["machine-1"], conflict.MachineIds);
+        Assert.Contains(int.MaxValue.ToString(), conflict.Message, StringComparison.Ordinal);
+        Assert.Contains("10000", conflict.Message, StringComparison.Ordinal);
+        Assert.Contains("larger every-N-parts cadence", conflict.Message, StringComparison.Ordinal);
+        Assert.Contains("split the Batch", conflict.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Automatic_frequency_larger_than_quantity_has_one_initial_load()
     {
         var operation = new TimelineOperationInput(
@@ -793,6 +818,28 @@ public sealed class TimelineCalculationEngineTests
             (TimelineIntervalType.LoadUnload, Utc(8), Utc(8, 5)));
         AssertIntervals(scheduled.ProductionIntervals,
             (TimelineIntervalType.Production, Utc(8, 5), Utc(8, 25)));
+    }
+
+    [Fact]
+    public void Automatic_maximum_quantity_and_frequency_calculate_one_load_without_overflow()
+    {
+        var operation = new TimelineOperationInput(
+            "op-maximum-automatic-frequency", TimeSpan.Zero, TimeSpan.Zero,
+            LoadUnloadDuration: TimeSpan.FromSeconds(1),
+            PlannedQuantity: int.MaxValue,
+            AutomaticLoading: true,
+            LoadUnloadEveryNParts: int.MaxValue);
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        AssertIntervals(scheduled.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(8), Utc(8).AddSeconds(1)));
+        Assert.Empty(scheduled.ProductionIntervals);
     }
 
     [Fact]
@@ -831,6 +878,47 @@ public sealed class TimelineCalculationEngineTests
             interval.StartsAt == Utc(8, 15) && interval.EndsAt == Utc(8, 20));
         Assert.Contains(scheduled.WaitingIntervals, interval =>
             interval.StartsAt == Utc(8, 35) && interval.EndsAt == Utc(8, 40));
+    }
+
+    [Fact]
+    public void Forward_three_contenders_never_overlap_repeated_regular_worker_reload_reservations()
+    {
+        static TimelineOperationInput Contender(string id, string order) => new(
+            id,
+            TimeSpan.Zero,
+            TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            LoadUnloadRequiresWorker: true,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
+            PriorityOrderNumber: order,
+            PlannedQuantity: 2,
+            PlanningMode: TimelinePlanningMode.Forward);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-1", [Contender("op-1", "SO-1")]),
+                Backlog("machine-2", [Contender("op-2", "SO-2")]),
+                Backlog("machine-3", [Contender("op-3", "SO-3")])
+            ],
+            [
+                Calendar("machine-1", Window(8, 17)),
+                Calendar("machine-2", Window(8, 17)),
+                Calendar("machine-3", Window(8, 17))
+            ],
+            SetupCalendar(Window(8, 17)), [], [],
+            [Resource("regular-1", TimelineResourceRole.RegularWorker, Window(8, 17))]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(3, result.Operations.Count);
+        var reloads = result.Operations
+            .SelectMany(operation => operation.LoadUnloadIntervals ?? [])
+            .OrderBy(interval => interval.StartsAt)
+            .ToArray();
+        Assert.Equal(6, reloads.Length);
+        for (var index = 1; index < reloads.Length; index++)
+        {
+            Assert.True(reloads[index - 1].EndsAt <= reloads[index].StartsAt,
+                $"Regular worker overlap: {reloads[index - 1]} and {reloads[index]}.");
+        }
     }
 
     [Fact]

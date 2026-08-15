@@ -2,6 +2,9 @@ namespace Meimad.Planner.Server.Domain.Timeline;
 
 internal sealed class TimelineCalculationEngine
 {
+    // Bounds response size and calculation work for periodic per-operation reload phases.
+    private const int MaximumLoadUnloadOccurrencesPerOperation = 10_000;
+
     internal TimelineCalculationResult Calculate(TimelineCalculationInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -59,6 +62,19 @@ internal sealed class TimelineCalculationEngine
                     "invalid_duration",
                     TimelineConflictSeverity.Blocking,
                     $"Operation '{entry.Operation.OperationId}' has an invalid duration, quantity, or load/unload frequency.",
+                    [entry.Operation.OperationId],
+                    [entry.MachineId]);
+                continue;
+            }
+
+            var loadUnloadOccurrences = LoadUnloadOccurrenceCount(entry.Operation);
+            if (loadUnloadOccurrences > MaximumLoadUnloadOccurrencesPerOperation)
+            {
+                invalidOperations.Add(entry.Operation.OperationId);
+                conflicts.Add(
+                    "load_unload_occurrence_limit_exceeded",
+                    TimelineConflictSeverity.Blocking,
+                    $"Operation '{entry.Operation.OperationId}' requires {loadUnloadOccurrences} load/unload occurrences, exceeding the supported maximum of {MaximumLoadUnloadOccurrencesPerOperation}. Use automatic loading with a larger every-N-parts cadence or split the Batch.",
                     [entry.Operation.OperationId],
                     [entry.MachineId]);
                 continue;
@@ -1197,8 +1213,8 @@ internal sealed class TimelineCalculationEngine
         else if (leftOperation.PriorityWorkFinishDate.HasValue && !rightOperation.PriorityWorkFinishDate.HasValue) due = -1;
         if (due != 0) return due;
 
-        var leftDuration = nodes[left].Members.Sum(id => TotalDuration(operations[id].Operation).Ticks);
-        var rightDuration = nodes[right].Members.Sum(id => TotalDuration(operations[id].Operation).Ticks);
+        var leftDuration = nodes[left].Members.Max(id => TotalDuration(operations[id].Operation).Ticks);
+        var rightDuration = nodes[right].Members.Max(id => TotalDuration(operations[id].Operation).Ticks);
         var duration = leftDuration.CompareTo(rightDuration);
         if (duration != 0) return duration;
         var order = TimelinePriorityComparer.CompareOrderNumbers(
@@ -1226,7 +1242,7 @@ internal sealed class TimelineCalculationEngine
         }
 
         return operation.LoadUnloadEveryNParts is { } everyN
-            ? checked((operation.PlannedQuantity + everyN - 1) / everyN)
+            ? (int)((operation.PlannedQuantity + (long)everyN - 1) / everyN)
             : 0;
     }
 
@@ -1606,7 +1622,12 @@ internal sealed class TimelineCalculationEngine
             entry.Operation.OperationId, entry.MachineId, entry.BacklogPosition,
             startsAt, finish, setupIntervals, productionIntervals, [], waiting,
             qaIntervals, loadIntervals);
-        return new ScheduledMember(result, reservations);
+        return new ScheduledMember(
+            result,
+            reservations
+                .OrderBy(reservation => reservation.Intervals[0].StartsAt)
+                .ThenBy(reservation => reservation.ResourceId, StringComparer.Ordinal)
+                .ToArray());
     }
 
     private static ResourcePhase? AllocateResourcePhaseBackward(
@@ -2542,11 +2563,12 @@ internal sealed class TimelineCalculationEngine
         IReadOnlyList<InstantWindow> source,
         IReadOnlyList<InstantWindow> blocked)
     {
+        var normalizedBlocked = Merge(blocked);
         var result = new List<InstantWindow>();
         foreach (var window in source)
         {
             var cursor = window.StartsAt;
-            foreach (var block in blocked.Where(block =>
+            foreach (var block in normalizedBlocked.Where(block =>
                          block.EndsAt > window.StartsAt && block.StartsAt < window.EndsAt))
             {
                 if (block.StartsAt > cursor)

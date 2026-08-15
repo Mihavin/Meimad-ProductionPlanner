@@ -139,6 +139,49 @@ public sealed class AdministrativeSetupApiTests
     }
 
     [Fact]
+    public async Task Resource_edit_requires_current_edit_mode_etag_and_a_role_compatible_calendar()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await GrantEditAsync(application.Services);
+            AddEditHeaders(client);
+            var calendarId = await CreateCalendarAsync(client, "regular_worker");
+            using var created = await client.PostAsJsonAsync("/api/v1/resources", new
+            {
+                employeeNumber = "E-EDIT", firstName = "Yael", lastName = "Cohen",
+                role = "regular_worker", skills = Array.Empty<string>(), assignedCalendarId = calendarId,
+                isActive = true
+            });
+            created.EnsureSuccessStatusCode();
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var resourceId = createdJson.RootElement.GetProperty("resourceId").GetString()!;
+            var entityTag = created.Headers.ETag!.Tag;
+
+            client.DefaultRequestHeaders.Remove("X-Meimad-Client-Id");
+            client.DefaultRequestHeaders.Remove("X-Meimad-Edit-Generation");
+            using var viewerPatch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/resources/{resourceId}")
+            { Content = JsonContent.Create(new { notes = "Viewer write" }) };
+            viewerPatch.Headers.IfMatch.Add(new EntityTagHeaderValue(entityTag));
+            using var viewerResponse = await client.SendAsync(viewerPatch);
+            Assert.Equal((HttpStatusCode)428, viewerResponse.StatusCode);
+
+            AddEditHeaders(client);
+            using var stalePatch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/resources/{resourceId}")
+            { Content = JsonContent.Create(new { notes = "Stale write" }) };
+            stalePatch.Headers.IfMatch.Add(new EntityTagHeaderValue("\"resource:" + resourceId + ":v99\""));
+            using var staleResponse = await client.SendAsync(stalePatch);
+            Assert.Equal(HttpStatusCode.PreconditionFailed, staleResponse.StatusCode);
+
+            using var incompatibleRolePatch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/resources/{resourceId}")
+            { Content = JsonContent.Create(new { role = "qa_worker" }) };
+            incompatibleRolePatch.Headers.IfMatch.Add(new EntityTagHeaderValue(entityTag));
+            using var incompatibleRoleResponse = await client.SendAsync(incompatibleRolePatch);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, incompatibleRoleResponse.StatusCode);
+            Assert.Contains("invalid_assigned_calendar_usage", await incompatibleRoleResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task Resource_requires_a_matching_assigned_calendar_and_machine_id_skills()
     {
         await RunAsync(async (application, client) =>

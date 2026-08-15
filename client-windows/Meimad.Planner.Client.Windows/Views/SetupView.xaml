@@ -358,7 +358,7 @@
                     <Border Grid.Column="0" Style="{StaticResource SetupSection}">
                         <Grid>
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                            <DockPanel Margin="0,0,0,8"><Button DockPanel.Dock="Right" Content="New" Command="{Binding NewResourceCommand}" Margin="8,0,0,0"/><TextBlock Text="EMPLOYEES / RESOURCES" FontWeight="Bold" VerticalAlignment="Center"/></DockPanel>
+                            <DockPanel Margin="0,0,0,8"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Edit selected employee" Command="{Binding EditSelectedResourceCommand}"/><Button Content="New" Command="{Binding NewResourceCommand}" Margin="0"/></StackPanel><TextBlock Text="EMPLOYEES / RESOURCES" FontWeight="Bold" VerticalAlignment="Center"/></DockPanel>
                             <DataGrid Grid.Row="1" ItemsSource="{Binding Resources}" SelectedItem="{Binding SelectedResource}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Employee #" Binding="{Binding EmployeeNumber}" Width="95"/><DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="115"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/>
@@ -398,7 +398,7 @@
                             </StackPanel>
                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceNotes}" AcceptsReturn="True" MinHeight="58" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/></StackPanel>
                             <CheckBox Content="Active" IsChecked="{Binding ResourceIsActive}" Margin="0,0,0,12"/>
-                            <StackPanel Orientation="Horizontal"><Button Content="Save employee / resource" Command="{Binding SaveResourceCommand}"/><Button Content="Delete" Click="DeleteResource_Click" Margin="0"/></StackPanel>
+                            <StackPanel Orientation="Horizontal"><Button Content="{Binding ResourceSaveActionText}" Command="{Binding SaveResourceCommand}"/><Button Content="Delete" Click="DeleteResource_Click" Margin="0"/></StackPanel>
                             <TextBlock Text="Inactive employees are excluded from future resource availability. Employee capacity scheduling is not implemented." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                             <Separator Margin="0,16,0,12"/>
                             <DockPanel Margin="0,0,0,8">

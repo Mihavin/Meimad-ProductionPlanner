@@ -161,6 +161,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DeleteMachineTypeCommand = new AsyncCommand(DeleteSelectedMachineTypeAsync, CanDeleteMachineType);
 
         NewResourceCommand = new AsyncCommand(BeginNewResourceAsync, CanManage);
+        EditSelectedResourceCommand = new AsyncCommand(EditSelectedResourceAsync, CanEditSelectedResource);
         SaveResourceCommand = new AsyncCommand(SaveResourceAsync, CanSaveResource);
         DeleteResourceCommand = new AsyncCommand(DeleteSelectedResourceAsync, CanDeleteResource);
         RefreshResourceExceptionsCommand = new AsyncCommand(RefreshResourceExceptionsAsync, CanReadResourceExceptions);
@@ -232,6 +233,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand SaveMachineTypeCommand { get; }
     public AsyncCommand DeleteMachineTypeCommand { get; }
     public AsyncCommand NewResourceCommand { get; }
+    public AsyncCommand EditSelectedResourceCommand { get; }
     public AsyncCommand SaveResourceCommand { get; }
     public AsyncCommand DeleteResourceCommand { get; }
     public AsyncCommand RefreshResourceExceptionsCommand { get; }
@@ -458,6 +460,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string ResourceEmail { get => resourceEmail; set => SetField(ref resourceEmail, value); }
     public bool ResourceIsActive { get => resourceIsActive; set => SetField(ref resourceIsActive, value); }
     public string ResourceFormHeading => editingResourceId is null ? "New employee / resource" : "Edit employee / resource";
+    public string ResourceSaveActionText => editingResourceId is null ? "Save employee / resource" : "Save employee / resource changes";
     public EmployeeCalendarException? SelectedResourceException
     {
         get => selectedResourceException;
@@ -1067,7 +1070,18 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceEmail = string.Empty;
         ResourceIsActive = true;
         OnPropertyChanged(nameof(ResourceFormHeading));
+        OnPropertyChanged(nameof(ResourceSaveActionText));
         StatusMessage = "Enter the employee or resource master data.";
+        RaiseCommandStates();
+        return Task.CompletedTask;
+    }
+
+    internal Task EditSelectedResourceAsync()
+    {
+        if (SelectedResource is null) return Task.CompletedTask;
+
+        PopulateResourceForm(SelectedResource);
+        StatusMessage = $"Editing employee / resource {SelectedResource.Name}.";
         RaiseCommandStates();
         return Task.CompletedTask;
     }
@@ -1476,6 +1490,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceEmail = value.Email ?? string.Empty;
         ResourceIsActive = value.IsActive;
         OnPropertyChanged(nameof(ResourceFormHeading));
+        OnPropertyChanged(nameof(ResourceSaveActionText));
     }
 
     private void PopulateResourceExceptionForm(EmployeeCalendarException value)
@@ -1672,6 +1687,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         && SelectedDowntime is { DowntimeType: "breakdown", Status: "active" };
     private bool CanSaveMachineType() => CanManage();
     private bool CanDeleteMachineType() => CanManage() && SelectedMachineType is not null;
+    private bool CanEditSelectedResource() => CanManage() && SelectedResource is not null;
     private bool CanSaveResource() => CanManage();
     private bool CanDeleteResource() => CanManage() && SelectedResource is not null;
     private bool CanReadResourceExceptions() => CanRead() && SelectedResource is not null;
@@ -1702,6 +1718,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveMachineTypeCommand.RaiseCanExecuteChanged();
         DeleteMachineTypeCommand.RaiseCanExecuteChanged();
         NewResourceCommand.RaiseCanExecuteChanged();
+        EditSelectedResourceCommand.RaiseCanExecuteChanged();
         SaveResourceCommand.RaiseCanExecuteChanged();
         DeleteResourceCommand.RaiseCanExecuteChanged();
         RefreshResourceExceptionsCommand.RaiseCanExecuteChanged();

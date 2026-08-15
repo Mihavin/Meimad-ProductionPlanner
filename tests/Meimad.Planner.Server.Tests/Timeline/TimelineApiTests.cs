@@ -725,6 +725,71 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Timeline_interleaves_automatic_part_reload_from_persisted_every_n_parts_parameters()
+    {
+        var serverNow = DateTimeOffset.Parse("2026-08-11T08:00:00Z");
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE orders SET quantity = 5 WHERE id = 'order-1';
+                    UPDATE production_batches SET planned_quantity = 5 WHERE id = 'batch-1';
+                    UPDATE batch_allocations SET quantity = 5 WHERE id = 'allocation-1';
+                    UPDATE batch_operations
+                    SET setup_seconds = 0,
+                        cycle_seconds = 600,
+                        qa_seconds = 0,
+                        load_unload_seconds = 300,
+                        load_unload_requires_worker = 0,
+                        automatic_loading = 1,
+                        load_unload_every_n_parts = 2
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var operationBlocks = document.RootElement.GetProperty("machines")
+                .EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("operationId").GetString() == "op-1")
+                .ToArray();
+            var operation = Assert.Single(operationBlocks);
+            Assert.Equal("operation", operation.GetProperty("type").GetString());
+
+            var phases = operation.GetProperty("phases").EnumerateArray().ToArray();
+            Assert.Equal(
+                ["loadunload", "production", "loadunload", "production", "loadunload", "production"],
+                phases.Select(phase => phase.GetProperty("type").GetString()!).ToArray());
+            Assert.Equal(
+                [
+                    "2026-08-11T08:00:00+00:00/2026-08-11T08:05:00+00:00",
+                    "2026-08-11T08:05:00+00:00/2026-08-11T08:25:00+00:00",
+                    "2026-08-11T08:25:00+00:00/2026-08-11T08:30:00+00:00",
+                    "2026-08-11T08:30:00+00:00/2026-08-11T08:50:00+00:00",
+                    "2026-08-11T08:50:00+00:00/2026-08-11T08:55:00+00:00",
+                    "2026-08-11T08:55:00+00:00/2026-08-11T09:05:00+00:00"
+                ],
+                phases.Select(phase =>
+                    $"{phase.GetProperty("startsAt").GetDateTimeOffset():yyyy-MM-ddTHH:mm:sszzz}/"
+                    + $"{phase.GetProperty("endsAt").GetDateTimeOffset():yyyy-MM-ddTHH:mm:sszzz}")
+                    .ToArray());
+            Assert.Equal(
+                ["Part reload 1/3", "Part reload 2/3", "Part reload 3/3"],
+                phases.Where(phase => phase.GetProperty("type").GetString() == "loadunload")
+                    .Select(phase => phase.GetProperty("detail").GetString()!.Split(';')[0])
+                    .ToArray());
+        }, serverNow);
+    }
+
+    [Fact]
     public async Task Manual_and_forward_same_machine_chain_stays_at_or_after_server_now()
     {
         var serverNow = DateTimeOffset.Parse("2026-08-11T10:30:00Z");

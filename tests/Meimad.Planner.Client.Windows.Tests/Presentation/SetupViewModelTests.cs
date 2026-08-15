@@ -159,7 +159,7 @@ public sealed class SetupViewModelTests
     }
 
     [Fact]
-    public async Task Editor_can_store_employee_details_and_inactive_status()
+    public async Task Editor_can_create_prefill_edit_and_reload_employee_details()
     {
         var api = new FakeApiClient();
         var viewModel = CreateViewModel();
@@ -194,6 +194,31 @@ public sealed class SetupViewModelTests
         Assert.False(resource.IsActive);
         Assert.Equal("Noa", resource.FirstName);
         Assert.Equal("Night shift backup", resource.Notes);
+
+        viewModel.SelectedResource = resource;
+        Assert.Equal("Edit employee / resource", viewModel.ResourceFormHeading);
+        Assert.Equal("Noa", viewModel.ResourceFirstName);
+        Assert.Equal("qa_worker", viewModel.ResourceRole);
+        Assert.Equal("calendar-day", viewModel.SelectedResourceCalendar?.WorkingCalendarId);
+        Assert.True(Assert.Single(viewModel.ResourceMachineSkills).IsSelected);
+
+        viewModel.ResourceFirstName = "Changed only in the form";
+        Assert.True(viewModel.EditSelectedResourceCommand.CanExecute(null));
+        await viewModel.EditSelectedResourceAsync();
+        Assert.Equal("Noa", viewModel.ResourceFirstName);
+
+        viewModel.ResourceLastName = "Katz";
+        viewModel.ResourceEmail = "noa.katz@example.test";
+        viewModel.ResourceIsActive = true;
+        await viewModel.SaveResourceAsync();
+
+        Assert.NotNull(api.LastResourceUpdate);
+        Assert.Equal("Katz", api.LastResourceUpdate!.LastName);
+        Assert.Equal("noa.katz@example.test", api.LastResourceUpdate.Email);
+        Assert.Equal($"\"resource:{resource.ResourceId}:v1\"", api.LastResourceEntityTag);
+        Assert.Equal("Noa Katz", viewModel.SelectedResource!.Name);
+        Assert.True(viewModel.SelectedResource.IsActive);
+        Assert.Equal(2, viewModel.SelectedResource.Version);
     }
 
     [Fact]
@@ -291,6 +316,10 @@ public sealed class SetupViewModelTests
         Assert.False(viewModel.NewMachineTypeCommand.CanExecute(null));
         Assert.False(viewModel.SaveMachineTypeCommand.CanExecute(null));
         Assert.False(viewModel.DeleteMachineTypeCommand.CanExecute(null));
+        Assert.False(viewModel.NewResourceCommand.CanExecute(null));
+        Assert.False(viewModel.EditSelectedResourceCommand.CanExecute(null));
+        Assert.False(viewModel.SaveResourceCommand.CanExecute(null));
+        Assert.False(viewModel.DeleteResourceCommand.CanExecute(null));
     }
 
     private static SetupViewModel CreateViewModel(
@@ -339,6 +368,8 @@ public sealed class SetupViewModelTests
         internal MachineTypeUpdate? LastMachineTypeUpdate { get; private set; }
         internal string? LastMachineTypeEntityTag { get; private set; }
         internal ResourceCreate? LastResourceCreate { get; private set; }
+        internal ResourceUpdate? LastResourceUpdate { get; private set; }
+        internal string? LastResourceEntityTag { get; private set; }
         internal EmployeeCalendarExceptionCreate? LastResourceExceptionCreate { get; private set; }
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
@@ -569,6 +600,8 @@ public sealed class SetupViewModelTests
 
         public Task<ResourceResource> UpdateResourceAsync(string resourceId, ResourceUpdate update, string entityTag, string clientId, long editGeneration, CancellationToken cancellationToken = default)
         {
+            LastResourceUpdate = update;
+            LastResourceEntityTag = entityTag;
             var index = resources.FindIndex(value => value.ResourceId == resourceId);
             var value = resources[index] with { EmployeeNumber = update.EmployeeNumber, Name = $"{update.FirstName} {update.LastName}", FirstName = update.FirstName, LastName = update.LastName, Role = update.Role, Skills = update.Skills, AssignedCalendarId = update.AssignedCalendarId, PhotoPath = update.PhotoPath, Notes = update.Notes, Email = update.Email, IsActive = update.IsActive, Version = resources[index].Version + 1 };
             resources[index] = value;

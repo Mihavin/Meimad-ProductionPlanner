@@ -105,10 +105,101 @@ public sealed class TimelineMixedPlanningModeTests
         Assert.Empty(result.Operations);
     }
 
+    [Fact]
+    public void Mixed_three_contenders_never_overlap_repeated_regular_worker_reload_reservations()
+    {
+        static TimelineOperationInput Contender(
+            string id,
+            TimelinePlanningMode mode,
+            string order,
+            DateTimeOffset? latest = null) => new(
+            id,
+            TimeSpan.Zero,
+            TimeSpan.FromMinutes(10),
+            LoadUnloadDuration: TimeSpan.FromMinutes(5),
+            LoadUnloadRequiresWorker: true,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
+            PriorityOrderNumber: order,
+            EarliestStart: Start,
+            LatestFinish: latest,
+            PlanningMode: mode,
+            PlannedQuantity: 2);
+        var result = Calculate(
+            [
+                new TimelineMachineBacklog("machine-backward",
+                    [Contender("backward", TimelinePlanningMode.Backward, "SO-1", Utc(17))]),
+                new TimelineMachineBacklog("machine-forward-1",
+                    [Contender("forward-1", TimelinePlanningMode.Forward, "SO-2")]),
+                new TimelineMachineBacklog("machine-forward-2",
+                    [Contender("forward-2", TimelinePlanningMode.Forward, "SO-3")])
+            ],
+            [
+                Calendar("machine-backward"),
+                Calendar("machine-forward-1"),
+                Calendar("machine-forward-2")
+            ],
+            resources: [new TimelineResourceCalendar(
+                "regular-1", TimelineResourceRole.RegularWorker,
+                [new TimelineWindow(Start, End)])]);
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(3, result.Operations.Count);
+        var reloads = result.Operations
+            .SelectMany(operation => operation.LoadUnloadIntervals ?? [])
+            .OrderBy(interval => interval.StartsAt)
+            .ToArray();
+        Assert.Equal(6, reloads.Length);
+        for (var index = 1; index < reloads.Length; index++)
+        {
+            Assert.True(reloads[index - 1].EndsAt <= reloads[index].StartsAt,
+                $"Regular worker overlap: {reloads[index - 1]} and {reloads[index]}.");
+        }
+    }
+
+    [Fact]
+    public void Mixed_large_backward_locked_group_returns_conflict_without_overflow()
+    {
+        var hugeDuration = TimeSpan.FromTicks(long.MaxValue / 2 + 1);
+        TimelineOperationInput Huge(string id) => new(
+            id, TimeSpan.Zero, hugeDuration,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 11),
+            PriorityOrderNumber: "SO-2",
+            EarliestStart: Start,
+            LatestFinish: Utc(17),
+            PlanningMode: TimelinePlanningMode.Backward);
+
+        var result = Calculate(
+            [
+                new TimelineMachineBacklog("machine-huge-1", [Huge("huge-1")]),
+                new TimelineMachineBacklog("machine-huge-2", [Huge("huge-2")]),
+                new TimelineMachineBacklog("machine-small", [
+                    Operation("small-backward", 1, TimelinePlanningMode.Backward, Utc(17))]),
+                new TimelineMachineBacklog("machine-forward", [
+                    Operation("forward", 1, TimelinePlanningMode.Forward)])
+            ],
+            [
+                Calendar("machine-huge-1"),
+                Calendar("machine-huge-2"),
+                Calendar("machine-small"),
+                Calendar("machine-forward")
+            ],
+            [new TimelineDependency(
+                "locked-huge", TimelineDependencyType.LockedSimultaneous,
+                "huge-1", "huge-2", "huge-group")]);
+
+        Assert.Contains(result.Operations, operation => operation.OperationId == "small-backward");
+        Assert.Contains(result.Operations, operation => operation.OperationId == "forward");
+        var conflict = Assert.Single(result.Conflicts, value =>
+            value.Code == "backward_schedule_cannot_fit"
+            && value.OperationIds.Contains("huge-1", StringComparer.Ordinal));
+        Assert.Equal(["huge-1", "huge-2"], conflict.OperationIds);
+    }
+
     private static TimelineCalculationResult Calculate(
         IReadOnlyList<TimelineMachineBacklog> backlogs,
         IReadOnlyList<TimelineMachineCalendar> calendars,
-        IReadOnlyList<TimelineDependency>? dependencies = null) =>
+        IReadOnlyList<TimelineDependency>? dependencies = null,
+        IReadOnlyList<TimelineResourceCalendar>? resources = null) =>
         new TimelineCalculationEngine().Calculate(new TimelineCalculationInput(
             Start,
             End,
@@ -116,7 +207,8 @@ public sealed class TimelineMixedPlanningModeTests
             calendars,
             new TimelineSetupCalendar([new TimelineWindow(Start, End)]),
             [],
-            dependencies ?? []));
+            dependencies ?? [],
+            resources));
 
     private static TimelineOperationInput Operation(
         string id,
