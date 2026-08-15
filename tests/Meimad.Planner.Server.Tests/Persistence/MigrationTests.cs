@@ -823,7 +823,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 25;";
+            command.CommandText = "PRAGMA user_version = 26;";
             await command.ExecuteNonQueryAsync();
         }
 

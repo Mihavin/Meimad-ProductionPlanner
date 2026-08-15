@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.IO;
 using System.Text.Json;
 
 namespace Meimad.Planner.Client.Windows.Api;
@@ -414,6 +415,19 @@ internal interface IPlannerApiClient : IDisposable
         string batchOperationId, OperationPauseRequest pause, string clientId,
         long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
+
+    Task<LegacyWorkingPlanPreview> PreviewLegacyWorkingPlanAsync(
+        Stream workbook,
+        string fileName,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<LegacyWorkingPlanCommitReceipt> CommitLegacyWorkingPlanAsync(
+        LegacyWorkingPlanCommit commit,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
 }
 
 internal interface IPlannerApiClientFactory
@@ -428,6 +442,11 @@ internal sealed class PlannerApiClientFactory : IPlannerApiClientFactory
         {
             BaseAddress = serverBaseUri,
             Timeout = TimeSpan.FromSeconds(10)
+        },
+        new HttpClient
+        {
+            BaseAddress = serverBaseUri,
+            Timeout = TimeSpan.FromSeconds(90)
         });
 }
 
@@ -438,10 +457,14 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     private const string EditGenerationHeader = "X-Meimad-Edit-Generation";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient httpClient;
+    private readonly HttpClient importHttpClient;
+    private readonly bool ownsSeparateImportClient;
 
-    internal PlannerApiClient(HttpClient httpClient)
+    internal PlannerApiClient(HttpClient httpClient, HttpClient? importHttpClient = null)
     {
         this.httpClient = httpClient;
+        this.importHttpClient = importHttpClient ?? httpClient;
+        ownsSeparateImportClient = importHttpClient is not null;
     }
 
     public async Task<ServerHealth> GetHealthAsync(
@@ -709,6 +732,39 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         }
 
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
+    public async Task<LegacyWorkingPlanPreview> PreviewLegacyWorkingPlanAsync(
+        Stream workbook,
+        string fileName,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new MultipartFormDataContent();
+        using var fileContent = new StreamContent(workbook);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        content.Add(fileContent, "workbook", fileName);
+        using var response = await importHttpClient.PostAsync(
+            "api/v1/imports/legacy-working-plan/preview", content, cancellationToken);
+        return await ReadSuccessAsync<LegacyWorkingPlanPreview>(response, cancellationToken);
+    }
+
+    public async Task<LegacyWorkingPlanCommitReceipt> CommitLegacyWorkingPlanAsync(
+        LegacyWorkingPlanCommit commit,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            "api/v1/imports/legacy-working-plan/commit",
+            clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(commit);
+        using var response = await importHttpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<LegacyWorkingPlanCommitReceipt>(response, cancellationToken);
     }
 
     public async Task<PlannerMachine> CreateMachineAsync(
@@ -1400,6 +1456,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     public void Dispose()
     {
+        if (ownsSeparateImportClient)
+        {
+            importHttpClient.Dispose();
+        }
         httpClient.Dispose();
     }
 

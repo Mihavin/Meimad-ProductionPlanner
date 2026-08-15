@@ -8,6 +8,7 @@ using Meimad.Planner.Server.Api.Deletion;
 using Meimad.Planner.Server.Api.Downtimes;
 using Meimad.Planner.Server.Api.EInk;
 using Meimad.Planner.Server.Api.JobPackages;
+using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Machines;
 using Meimad.Planner.Server.Api.MachineTypes;
@@ -26,6 +27,7 @@ using Meimad.Planner.Server.Application.Deletion;
 using Meimad.Planner.Server.Application.Downtimes;
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.JobPackages;
+using Meimad.Planner.Server.Application.LegacyImport;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Machines;
 using Meimad.Planner.Server.Application.MachineTypes;
@@ -74,6 +76,7 @@ public static class ServerApplication
             builder.Configuration,
             builder.Environment.ContentRootPath);
         var timelineOptions = TimelineOptions.FromConfiguration(builder.Configuration);
+        var legacyImportOptions = LegacyImportOptions.FromConfiguration(builder.Configuration);
 
         builder.Services.AddSingleton(serverOptions);
         builder.Services.AddSingleton(databaseOptions);
@@ -82,6 +85,7 @@ public static class ServerApplication
         builder.Services.AddSingleton(tvDashboardOptions);
         builder.Services.AddSingleton(eInkOptions);
         builder.Services.AddSingleton(timelineOptions);
+        builder.Services.AddSingleton(legacyImportOptions);
         builder.Services.AddSingleton<SqliteDatabase>();
         builder.Services.AddSingleton<DatabaseMigrator>();
         builder.Services.AddSingleton<SqliteBackupService>();
@@ -129,6 +133,9 @@ public static class ServerApplication
         builder.Services.AddSingleton<EInkDeviceRegistrationService>();
         builder.Services.AddSingleton<IJobPackageRepository, SqliteJobPackageRepository>();
         builder.Services.AddSingleton<JobPackageService>();
+        builder.Services.AddSingleton<OpenXmlLegacyWorkbookReader>();
+        builder.Services.AddSingleton<ILegacyImportRepository, SqliteLegacyImportRepository>();
+        builder.Services.AddSingleton<LegacyImportService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
         builder.Services.AddSingleton<IMaterialReportEmailSender, SmtpMaterialReportEmailSender>();
         builder.Services.AddSingleton<WeeklyMaterialReportService>();
@@ -199,6 +206,7 @@ public static class ServerApplication
         application.MapEInkEndpoints();
         application.MapEInkDeviceRegistrationEndpoints();
         application.MapJobPackageEndpoints();
+        application.MapLegacyImportEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();
         application.MapStructuredEventLogEndpoints();

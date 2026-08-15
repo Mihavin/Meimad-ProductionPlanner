@@ -181,6 +181,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public event EventHandler? ConfigurationChanged;
 
+    public LegacyExcelImportViewModel LegacyImport { get; } = new();
+
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public IReadOnlyList<WorkingCalendar> MachineWorkingCalendars => WorkingCalendars
@@ -543,6 +545,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         clientId = newClientId;
         isEditor = editStatus?.State == ClientEditState.Editor;
         editGeneration = editStatus?.Generation ?? 0;
+        LegacyImport.AttachSession(apiClient, clientId, editStatus);
         OnPropertyChanged(nameof(IsEditor));
         OnPropertyChanged(nameof(AuthorityText));
         RaiseCommandStates();

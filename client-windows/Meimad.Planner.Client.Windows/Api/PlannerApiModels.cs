@@ -173,9 +173,13 @@ internal sealed record LegacyImportMachineCandidate(
     string Number,
     string Name,
     decimal Score,
-    string Reason)
+    string Reason,
+    string ProcessType = "",
+    string? AxisType = null)
 {
-    public string DisplayName => $"{Number} — {Name}";
+    public string DisplayName => string.IsNullOrWhiteSpace(ProcessType)
+        ? $"{Number} - {Name}"
+        : $"{Number} - {Name} ({ProcessType}{(string.IsNullOrWhiteSpace(AxisType) ? string.Empty : $", {AxisType}")})";
 }
 
 internal sealed record LegacyImportPlanningRow(
@@ -184,7 +188,7 @@ internal sealed record LegacyImportPlanningRow(
     int RowNumber,
     string SectionKey,
     int SourceOrder,
-    System.Text.Json.JsonElement Values,
+    LegacyImportPlanningValues Values,
     IReadOnlyList<LegacyImportProvenance> Provenance,
     LegacyImportPlanningCandidates Candidates);
 
@@ -193,9 +197,36 @@ internal sealed record LegacyImportOpenOrderRow(
     string SheetName,
     int RowNumber,
     int SourceOrder,
-    System.Text.Json.JsonElement Values,
+    LegacyImportOpenOrderValues Values,
     IReadOnlyList<LegacyImportProvenance> Provenance,
     LegacyImportOpenOrderCandidates Candidates);
+
+internal sealed record LegacyImportPlanningValues(
+    string? Customer,
+    string? PartNumber,
+    string? CaseReference,
+    string? Notes,
+    int? Quantity,
+    string? MaterialStatus,
+    string? StartDate,
+    string? EndDate,
+    string? PlannerDeliveryDate,
+    string? CustomerDeliveryDate);
+
+internal sealed record LegacyImportOpenOrderValues(
+    string? PartNumber,
+    string? OrderNumber,
+    string? OrderLine,
+    string? Customer,
+    string? DeliveryDate,
+    string? Revision,
+    int? OutstandingQuantity,
+    string? Notes,
+    string? DrawingNumber,
+    string? CaseReference,
+    int? OrderedQuantity,
+    string? ItemName,
+    string? PicturePath);
 
 internal sealed record LegacyImportProvenance(
     string Field,
@@ -208,7 +239,9 @@ internal sealed record LegacyImportProvenance(
 internal sealed record LegacyImportPlanningCandidates(
     IReadOnlyList<LegacyImportCaseCandidate> Cases,
     IReadOnlyList<LegacyImportOrderCandidate> Orders,
-    IReadOnlyList<LegacyImportBatchCandidate> Batches);
+    IReadOnlyList<LegacyImportBatchCandidate> Batches,
+    IReadOnlyList<LegacyImportCaseOperationCandidate>? CaseOperations = null,
+    IReadOnlyList<LegacyImportBatchOperationCandidate>? BatchOperations = null);
 
 internal sealed record LegacyImportOpenOrderCandidates(
     IReadOnlyList<LegacyImportCaseCandidate> Cases,
@@ -229,7 +262,7 @@ internal sealed record LegacyImportOrderCandidate(
     string OrderId,
     string OrderNumber,
     long Quantity,
-    DateTimeOffset? WorkFinishDate,
+    string? WorkFinishDate,
     string Reason)
 {
     public string DisplayName => $"{OrderNumber} ({Quantity})";
@@ -242,6 +275,42 @@ internal sealed record LegacyImportBatchCandidate(
     string Reason)
 {
     public string DisplayName => $"{BatchNumber} ({PlannedQuantity})";
+}
+
+internal sealed record LegacyImportCaseOperationCandidate(
+    string CaseOperationId,
+    string CaseId,
+    int OperationNumber,
+    string Name,
+    string? RequiredMachineType,
+    int? SetupTimeSeconds,
+    int? CycleTimePerPartSeconds,
+    int Version)
+{
+    public string DisplayName => string.IsNullOrWhiteSpace(RequiredMachineType)
+        ? $"OP{OperationNumber} - {Name}"
+        : $"OP{OperationNumber} - {Name} (requires {RequiredMachineType})";
+}
+
+internal sealed record LegacyImportBatchOperationCandidate(
+    string BatchOperationId,
+    string BatchId,
+    string CaseOperationId,
+    int OperationNumber,
+    string Name,
+    string Status,
+    string? RequiredMachineType,
+    string? AssignmentId,
+    string? MachineId,
+    int? AssignmentVersion,
+    int Version)
+{
+    public bool IsAlreadyAssigned => !string.IsNullOrWhiteSpace(AssignmentId);
+    public string DisplayName => IsAlreadyAssigned
+        ? $"OP{OperationNumber} - {Name} ({Status}; already assigned{(string.IsNullOrWhiteSpace(RequiredMachineType) ? string.Empty : $"; requires {RequiredMachineType}")})"
+        : string.IsNullOrWhiteSpace(RequiredMachineType)
+            ? $"OP{OperationNumber} - {Name} ({Status})"
+            : $"OP{OperationNumber} - {Name} ({Status}; requires {RequiredMachineType})";
 }
 
 internal sealed record LegacyImportIssue(
@@ -285,8 +354,8 @@ internal sealed record LegacyImportNewCase(
 
 internal sealed record LegacyImportOrderInput(
     string? OrderNumber,
-    long? Quantity,
-    DateTimeOffset? WorkFinishDate,
+    int? Quantity,
+    string? WorkFinishDate,
     string? Notes);
 
 internal sealed record LegacyImportPlanningSelection(
@@ -294,12 +363,19 @@ internal sealed record LegacyImportPlanningSelection(
     string Action,
     string? BatchOperationId,
     string? CaseId,
+    string? CaseSourceRowKey,
     string? CaseOperationId,
     string? BatchNumber,
     IReadOnlyList<LegacyImportAllocation>? Allocations,
-    string? MachineId);
+    string? MachineId,
+    LegacyImportCompatibilityOverride? CompatibilityOverride = null);
 
-internal sealed record LegacyImportAllocation(string Type, string? OrderId, long? Quantity);
+internal sealed record LegacyImportAllocation(
+    string Type,
+    string? OrderId,
+    string? OrderSourceRowKey,
+    int? Quantity);
+internal sealed record LegacyImportCompatibilityOverride(bool Confirmed, string? Reason);
 
 internal sealed record LegacyWorkingPlanCommitReceipt(
     int SchemaVersion,

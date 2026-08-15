@@ -22,10 +22,10 @@ public partial class SetupView : UserControl
             Multiselect = false
         };
 
-        if (dialog.ShowDialog() == true && DataContext is not null)
+        if (dialog.ShowDialog() == true && DataContext is SetupViewModel viewModel)
         {
             // File selection is intentionally the only import concern owned by the view.
-            ((dynamic)DataContext).LegacyImport.SetWorkbookSelection(dialog.FileName);
+            viewModel.LegacyImport.SetWorkbookSelection(dialog.FileName);
         }
     }
 

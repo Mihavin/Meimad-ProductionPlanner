@@ -54,6 +54,13 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             RefreshTimelineAfterPlanChange();
             _ = MachinePlanningBoard.RefreshAsync();
         };
+        Setup.LegacyImport.ImportCommitted += (_, _) =>
+        {
+            CaseWorkspace.InvalidateSelectedDetails();
+            _ = CaseWorkspace.LoadCasesAsync();
+            _ = MachinePlanningBoard.RefreshAsync();
+            RefreshTimelineAfterPlanChange();
+        };
         RequestEditCommand = new AsyncCommand(
             RequestEditAsync,
             () => !IsBusy && editStatus?.State == ClientEditState.Viewer && HealthLevel == "healthy");
