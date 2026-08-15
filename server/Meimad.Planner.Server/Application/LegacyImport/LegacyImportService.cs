@@ -112,6 +112,18 @@ internal sealed partial class LegacyImportService
         request = request with { WorkbookSha256 = request.WorkbookSha256!.ToLowerInvariant() };
 
         var now = timeProvider.GetUtcNow();
+        var requestSha256 = HashApprovedPayload(request);
+        var durableReplay = await repository.TryReplayAsync(
+            request.WorkbookSha256,
+            requestSha256,
+            editAuthority,
+            now,
+            cancellationToken);
+        if (durableReplay is not null)
+        {
+            return durableReplay;
+        }
+
         if (!staged.TryGetValue(request.ImportToken!, out var preview) || preview.ExpiresAt <= now)
         {
             staged.TryRemove(request.ImportToken!, out _);
@@ -142,7 +154,6 @@ internal sealed partial class LegacyImportService
             throw new LegacyImportValidationException(issues);
         }
 
-        var requestSha256 = HashApprovedPayload(request);
         return await repository.CommitAsync(
             request,
             approvedPreview,
@@ -413,6 +424,8 @@ internal sealed partial class LegacyImportService
                 candidate.Machine.Name,
                 candidate.Machine.ProcessType,
                 candidate.Machine.AxisType,
+                candidate.Machine.Capabilities,
+                candidate.Machine.MachineTypeCapabilities,
                 candidate.Score,
                 candidate.Reason))
             .ToArray();
@@ -662,6 +675,9 @@ internal sealed partial class LegacyImportService
             .Select(operation => new LegacyBatchOperationCandidateResponse(
                 operation.BatchOperationId,
                 operation.BatchId,
+                operation.BatchNumber,
+                operation.CaseId,
+                operation.PartNumber,
                 operation.SourceCaseOperationId,
                 operation.OperationNumber,
                 operation.Name,
@@ -856,6 +872,14 @@ internal sealed partial class LegacyImportService
         if (request.MachineMappings is null || request.OpenOrderSelections is null || request.PlanningSelections is null)
         {
             issues.Add(FieldIssue("selections_required", "machineMappings, openOrderSelections, and planningSelections are required.", "selections"));
+        }
+        else if (!request.OpenOrderSelections.Any(selection => selection.Action is not null and not "skip")
+                 && !request.PlanningSelections.Any(selection => selection.Action is not null and not "skip"))
+        {
+            issues.Add(FieldIssue(
+                "no_import_actions_selected",
+                "Select at least one create or assignment action before committing the import.",
+                "selections"));
         }
         return issues;
     }

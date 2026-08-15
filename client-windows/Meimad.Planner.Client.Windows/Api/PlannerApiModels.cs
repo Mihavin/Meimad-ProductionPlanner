@@ -172,10 +172,12 @@ internal sealed record LegacyImportMachineCandidate(
     string MachineId,
     string Number,
     string Name,
+    string ProcessType,
+    string? AxisType,
+    IReadOnlyList<string>? Capabilities,
+    IReadOnlyList<string>? MachineTypeCapabilities,
     decimal Score,
-    string Reason,
-    string ProcessType = "",
-    string? AxisType = null)
+    string Reason)
 {
     public string DisplayName => string.IsNullOrWhiteSpace(ProcessType)
         ? $"{Number} - {Name}"
@@ -295,22 +297,27 @@ internal sealed record LegacyImportCaseOperationCandidate(
 internal sealed record LegacyImportBatchOperationCandidate(
     string BatchOperationId,
     string BatchId,
+    string? BatchNumber,
+    string? CaseId,
+    string? PartNumber,
     string CaseOperationId,
     int OperationNumber,
     string Name,
     string Status,
     string? RequiredMachineType,
+    int Version,
     string? AssignmentId,
     string? MachineId,
-    int? AssignmentVersion,
-    int Version)
+    int? AssignmentVersion)
 {
     public bool IsAlreadyAssigned => !string.IsNullOrWhiteSpace(AssignmentId);
+    public string BatchContext => $"Batch {BatchNumber ?? BatchId}";
+    public string PartContext => string.IsNullOrWhiteSpace(PartNumber) ? string.Empty : $" / {PartNumber}";
     public string DisplayName => IsAlreadyAssigned
-        ? $"OP{OperationNumber} - {Name} ({Status}; already assigned{(string.IsNullOrWhiteSpace(RequiredMachineType) ? string.Empty : $"; requires {RequiredMachineType}")})"
+        ? $"{BatchContext}{PartContext} / OP{OperationNumber} - {Name} ({Status}; already assigned{(string.IsNullOrWhiteSpace(RequiredMachineType) ? string.Empty : $"; requires {RequiredMachineType}")})"
         : string.IsNullOrWhiteSpace(RequiredMachineType)
-            ? $"OP{OperationNumber} - {Name} ({Status})"
-            : $"OP{OperationNumber} - {Name} ({Status}; requires {RequiredMachineType})";
+            ? $"{BatchContext}{PartContext} / OP{OperationNumber} - {Name} ({Status})"
+            : $"{BatchContext}{PartContext} / OP{OperationNumber} - {Name} ({Status}; requires {RequiredMachineType})";
 }
 
 internal sealed record LegacyImportIssue(

@@ -61,6 +61,35 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Legacy_import_preview_reads_batch_context_and_complete_machine_compatibility_facts()
+    {
+        const string previewJson = """
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3}]},
+             "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
+             "machineSections":[{"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Five-axis mill","firstDataRow":2,"lastDataRow":2,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill 1","processType":"milling","axisType":"5-axis","capabilities":["fiveAxis"],"machineTypeCapabilities":["probe"],"score":1,"reason":"Exact"}]}],
+             "rows":[{"rowKey":"planning-1","sheetName":"Planning","rowNumber":2,"sectionKey":"machine-a","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":5},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[{"batchId":"batch-1","batchNumber":"B-104","plannedQuantity":5,"reason":"Exact"}],"caseOperations":[],"batchOperations":[{"batchOperationId":"batch-operation-1","batchId":"batch-1","batchNumber":"B-104","caseId":"case-1","partNumber":"PN-1","caseOperationId":"route-1","operationNumber":10,"name":"Finish milling","status":"not_started","requiredMachineType":"fiveAxis","version":2,"assignmentId":null,"machineId":null,"assignmentVersion":null}]}}],
+             "openOrderRows":[],"issues":[]}
+            """;
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, previewJson));
+        using var api = CreateClient(handler);
+        await using var workbook = new MemoryStream([0x50, 0x4B]);
+
+        var preview = await api.PreviewLegacyWorkingPlanAsync(workbook, "legacy.xlsx");
+
+        var machine = Assert.Single(Assert.Single(preview.MachineSections).Candidates);
+        Assert.Equal("milling", machine.ProcessType);
+        Assert.Equal("5-axis", machine.AxisType);
+        Assert.Equal(["fiveAxis"], machine.Capabilities);
+        Assert.Equal(["probe"], machine.MachineTypeCapabilities);
+
+        var operation = Assert.Single(preview.Rows.Single().Candidates.BatchOperations!);
+        Assert.Equal("B-104", operation.BatchNumber);
+        Assert.Equal("case-1", operation.CaseId);
+        Assert.Equal("PN-1", operation.PartNumber);
+    }
+
+    [Fact]
     public async Task Legacy_import_view_model_requires_editor_and_explicit_resolutions_then_refreshes_on_commit()
     {
         const string previewJson = """
@@ -98,12 +127,9 @@ public sealed class PlannerApiClientTests
 
         viewModel.MachineMappings.Single().SelectedMachineId = "machine-1";
         foreach (var row in viewModel.Rows) row.IsSkipped = true;
-        Assert.True(viewModel.CanCommit);
-        await viewModel.CommitAsync();
-
-        Assert.Equal(1, refreshed);
-        Assert.Contains("committed", viewModel.Summary, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("\"machineId\":\"machine-1\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.False(viewModel.CanCommit);
+        Assert.False(viewModel.CommitCommand.CanExecute(null));
+        Assert.Equal(0, refreshed);
 
         viewModel.AttachSession(api, "windows-1", new EditModeStatus(
             ClientEditState.Viewer, 10, null, null, DateTimeOffset.UtcNow, 30));
@@ -269,13 +295,137 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public void Legacy_import_row_shows_batch_context_and_limits_route_operations_to_the_selected_case()
+    {
+        var owner = new LegacyExcelImportViewModel();
+        var firstCase = new LegacyImportCaseCandidate("case-1", "PN-1", "First part", null, null, "Exact");
+        var secondCase = new LegacyImportCaseCandidate("case-2", "PN-2", "Second part", null, null, "Exact");
+        var firstRouteOperation = new LegacyImportCaseOperationCandidate(
+            "route-1", "case-1", 10, "Mill", "fiveAxis", null, null, 1);
+        var secondRouteOperation = new LegacyImportCaseOperationCandidate(
+            "route-2", "case-2", 20, "Turn", "turning", null, null, 1);
+        var batchOperation = new LegacyImportBatchOperationCandidate(
+            BatchOperationId: "batch-operation-1",
+            BatchId: "batch-1",
+            BatchNumber: null,
+            CaseId: "case-1",
+            PartNumber: "PN-1",
+            CaseOperationId: "route-1",
+            OperationNumber: 10,
+            Name: "Mill",
+            Status: "not_started",
+            RequiredMachineType: "fiveAxis",
+            Version: 3,
+            AssignmentId: null,
+            MachineId: null,
+            AssignmentVersion: null);
+        var row = LegacyImportRowViewModel.Planning(new LegacyImportPlanningRow(
+            "plan-1", "Planning", 5, "machine-a", 1,
+            new LegacyImportPlanningValues("Acme", "PN-1", "Ref-1", null, 10, null, null, null, null, null),
+            [], new LegacyImportPlanningCandidates(
+                [firstCase, secondCase],
+                [],
+                [new LegacyImportBatchCandidate("batch-1", "B-104", 10, "Exact")],
+                [firstRouteOperation, secondRouteOperation],
+                [batchOperation])), [], owner);
+
+        Assert.Empty(row.RouteOperationCandidates);
+        Assert.Contains("Batch B-104 / PN-1", row.ExistingOperationCandidates.Single().DisplayName, StringComparison.Ordinal);
+
+        row.SelectedCaseCandidate = firstCase;
+        Assert.Equal([firstRouteOperation], row.RouteOperationCandidates);
+        row.SelectedRouteOperationCandidate = firstRouteOperation;
+        Assert.Equal("route-1", row.RouteOperation);
+
+        row.SelectedCaseCandidate = secondCase;
+        Assert.Null(row.SelectedRouteOperationCandidate);
+        Assert.Equal(string.Empty, row.RouteOperation);
+        Assert.Equal([secondRouteOperation], row.RouteOperationCandidates);
+
+        row.SelectedRouteOperationCandidate = firstRouteOperation;
+        Assert.Null(row.SelectedRouteOperationCandidate);
+    }
+
+    [Fact]
+    public void Legacy_import_row_mirrors_complete_machine_compatibility_facts_and_requires_an_explicit_override()
+    {
+        var owner = new LegacyExcelImportViewModel();
+        var compatibleMachine = new LegacyImportMachineCandidate(
+            MachineId: "machine-compatible",
+            Number: "M1",
+            Name: "Five-axis mill",
+            ProcessType: "milling",
+            AxisType: "3-axis",
+            Capabilities: [],
+            MachineTypeCapabilities: ["fiveAxis"],
+            Score: 1,
+            Reason: "Exact");
+        var incompatibleMachine = new LegacyImportMachineCandidate(
+            MachineId: "machine-incompatible",
+            Number: "M2",
+            Name: "Lathe",
+            ProcessType: "turning",
+            AxisType: "2-axis",
+            Capabilities: ["bar-feeder"],
+            MachineTypeCapabilities: [],
+            Score: 0.8m,
+            Reason: "Manual choice");
+        var mapping = LegacyImportMappingViewModel.Machine(new LegacyImportMachineSection(
+            "machine-a", "Planning", 1, "Source mill", 2, 2, [compatibleMachine, incompatibleMachine]), owner);
+        owner.MachineMappings.Add(mapping);
+        mapping.SelectedMachineCandidate = compatibleMachine;
+
+        var operation = new LegacyImportBatchOperationCandidate(
+            BatchOperationId: "batch-operation-1",
+            BatchId: "batch-1",
+            BatchNumber: "B-104",
+            CaseId: "case-1",
+            PartNumber: "PN-1",
+            CaseOperationId: "route-1",
+            OperationNumber: 10,
+            Name: "Finish milling",
+            Status: "not_started",
+            RequiredMachineType: "fiveAxis",
+            Version: 1,
+            AssignmentId: null,
+            MachineId: null,
+            AssignmentVersion: null);
+        var row = LegacyImportRowViewModel.Planning(new LegacyImportPlanningRow(
+            "plan-1", "Planning", 5, "machine-a", 1,
+            new LegacyImportPlanningValues("Acme", "PN-1", "Ref-1", null, 10, null, null, null, null, null),
+            [], new LegacyImportPlanningCandidates([], [], [], [], [operation])), [], owner);
+
+        row.SelectedExistingOperationCandidate = operation;
+        Assert.False(row.RequiresCompatibilityOverride);
+        Assert.True(row.IsResolved);
+        Assert.Contains("Machine-Type capability", row.CompatibilityReviewText, StringComparison.Ordinal);
+
+        mapping.SelectedMachineCandidate = incompatibleMachine;
+        Assert.True(row.RequiresCompatibilityOverride);
+        Assert.False(row.IsResolved);
+        Assert.Equal("Blocked", row.Status);
+        Assert.Contains("fiveAxis", row.CompatibilityReviewText, StringComparison.Ordinal);
+        Assert.Contains("M2", row.CompatibilityReviewText, StringComparison.Ordinal);
+
+        row.CompatibilityOverrideConfirmed = true;
+        Assert.False(row.IsResolved);
+        row.CompatibilityOverrideReason = "Planner approved the cross-type assignment.";
+
+        Assert.True(row.IsResolved);
+        Assert.Equal("Warning", row.Status);
+        var selection = row.ToPlanningSelection(incompatibleMachine.MachineId);
+        Assert.True(selection.CompatibilityOverride!.Confirmed);
+        Assert.Equal("Planner approved the cross-type assignment.", selection.CompatibilityOverride.Reason);
+    }
+
+    [Fact]
     public async Task Legacy_import_column_mapping_keeps_the_target_field_stable_and_commits_the_selected_source_column()
     {
         const string previewJson = """
             {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1}],"openOrderColumns":[]},
-             "machineSections":[],"rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
+             "machineSections":[],"rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2","orderNumber":"SO-2","customer":"Acme","outstandingQuantity":1},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[]}
             """;
         const string receiptJson = """
             {"schemaVersion":1,"workbookSha256":"abc123","commitId":"commit-1","replayed":false,
@@ -296,7 +446,12 @@ public sealed class PlannerApiClientTests
         mapping.SourceColumn = "D";
         Assert.False(mapping.IsResolved);
         mapping.SourceColumn = "C";
-        viewModel.Rows.Single().IsSkipped = true;
+        viewModel.Rows.Single(row => row.Kind == "planning").IsSkipped = true;
+        var openOrder = viewModel.Rows.Single(row => row.Kind == "open_orders");
+        openOrder.Decision = "create_case";
+        openOrder.NewCasePartNumber = "PN-2";
+        openOrder.NewCaseName = "Imported part";
+        openOrder.NewCaseWorkingFolderPath = "C:\\Cases\\PN-2";
         Assert.True(viewModel.CanCommit);
         await viewModel.CommitAsync();
 

@@ -1,6 +1,6 @@
 # Architecture
 
-- **Status:** Target architecture; Server foundation through schema v24, Timeline API/embedded and separate-window Windows Timeline, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, Windows Case/Operation/Order/Batch/Machine/Machine-Type/Calendar/Machine-Availability workspaces, and Case Operation graph validation implemented
+- **Status:** Target architecture; Server foundation through schema v25, staged legacy Excel import, Timeline API/embedded and separate-window Windows Timeline, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, Windows Case/Operation/Order/Batch/Machine/Machine-Type/Calendar/Machine-Availability workspaces, and Case Operation graph validation implemented
 - **Scope:** Factory-local MVP
 
 ## 1. Architectural drivers
@@ -15,9 +15,9 @@
 
 ## 2. Current repository state
 
-The repository contains an implemented .NET 10 Server host and server-owned SQLite schema version 24. Core planning-resource, Setup master-data, Single Edit Mode, verified SQLite backup, Timeline calculation/API, Windows WPF client, LAN-served TV Dashboard, weekly reporting, structured planning-event export, and E-Ink package-generation/API/simulator slices are available. Planning mode is assignment-owned state rather than a global Timeline view: each Machine Assignment stores `forward`, `backward`, or `manual`, while calculated dates remain transient. The Server preserves manual planning; cross-type assignment is an explicit warned exception with required reason and audit rather than scheduling or silent repair. Single Edit Mode invalidates stale generations, and every implemented planning mutation validates authority inside its SQLite write transaction. Backup creates and verifies a consistent online snapshot without replacing the active database.
+The repository contains an implemented .NET 10 Server host and server-owned SQLite schema version 25. Core planning-resource, Setup master-data, staged legacy Excel import, Single Edit Mode, verified SQLite backup, Timeline calculation/API, Windows WPF client, LAN-served TV Dashboard, weekly reporting, structured planning-event export, and E-Ink package-generation/API/simulator slices are available. Planning mode is assignment-owned state rather than a global Timeline view: each Machine Assignment stores `forward`, `backward`, or `manual`, while calculated dates remain transient. The Server preserves manual planning; cross-type assignment is an explicit warned exception with required reason and audit rather than scheduling or silent repair. Single Edit Mode invalidates stale generations, and every implemented planning mutation validates authority inside its SQLite write transaction. Backup creates and verifies a consistent online snapshot without replacing the active database.
 
-The API-only Windows client has a compact connection/Edit Mode header and a dedicated Setup page for connection settings, recurring Working Calendar CRUD with usage tags/breaks/dated exceptions, one-window overnight support, and dedicated Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holiday definitions, and report/email settings. Its operational surfaces cover Case/Operation/Order/Batch workflows, allocation-safe optimistic Order editing, a compact manual Machine Planning Board with explicit player-style Start/Pause/Finish/Reset controls and quantity/Order/time projections, and one read-only Timeline shared by the embedded tab and a separate closable window. Deletion is relationship-aware and never removes external files. TV and E-Ink device surfaces are read-only and have no Edit Mode integration. Full human authentication, route reordering, package approval UI/roles and retention, full conflict policy, combined/multiple overnight-window and Calendar archive policy, and physical device firmware remain incomplete.
+The API-only Windows client has a compact connection/Edit Mode header and a dedicated Setup page for connection settings, recurring Working Calendar CRUD with usage tags/breaks/dated exceptions, one-window overnight support, and dedicated Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holiday definitions, report/email settings, and staged legacy Excel preview/mapping/commit. Its operational surfaces cover Case/Operation/Order/Batch workflows, allocation-safe optimistic Order editing, a compact manual Machine Planning Board with explicit player-style Start/Pause/Finish/Reset controls and quantity/Order/time projections, and one read-only Timeline shared by the embedded tab and a separate closable window. Deletion is relationship-aware and never removes external files. TV and E-Ink device surfaces are read-only and have no Edit Mode integration. Full human authentication, route reordering, package approval UI/roles and retention, full conflict policy, combined/multiple overnight-window and Calendar archive policy, and physical device firmware remain incomplete.
 
 ## 3. System context
 
@@ -112,6 +112,8 @@ The API is the only client entry point. It provides versioned REST endpoints ove
 
 The API must not contain authoritative scheduling or domain rules. It delegates those rules to the Server layers below it. No public listener or Internet-facing gateway is part of the MVP.
 
+The legacy import boundary is deliberately staged. The preview endpoint applies bounded ZIP/XML parsing and candidate lookup without Edit Mode or database writes. It keeps at most four parsed previews in Server memory for a configured lifetime and returns stable source-row keys, provenance, candidates, and issues to the Setup UI. A first commit accepts only an exact staged workbook hash plus explicit operator decisions; an exact already-committed approval can be replayed from the durable receipt after staging is gone. Application/domain services revalidate all selected rows and normal business rules; the repository checks Edit authority again and commits canonical entities, appended assignments, cross-type audit, structured event, and schema-v25 idempotency receipt in one immediate transaction. The source `.xlsx` remains external and read-only; neither the Windows client nor SQLite opens it after upload.
+
 ### 4.4 Domain / business rules layer
 
 This layer owns authoritative state transitions and invariants for Cases, Orders, Production Batches, allocations, Case and Batch Operations, Machines, assignments, calendars, and downtime.
@@ -146,9 +148,9 @@ The persistence component translates approved application transactions to a Serv
 
 The database file must not be placed on a network share. Clients receive data only through API contracts and cannot use a SQLite library or database path.
 
-The implemented foundation records migration identity in `schema_migrations` and the active version in SQLite `user_version`; ordered migrations currently reach schema version 24. Schema v5 adds durable Edit Mode transfer requests and a partial unique index that permits only one pending request. Schema v6 adds immutable E-Ink package-revision/file metadata. Schema v7 adds immutable Machine/Case/Batch/Operation snapshots and package asset roles used by the generator; file bytes remain in a Server-owned package root and never enter SQLite. Schema v8 adds the optional Machine picture path; image bytes remain external and are streamed only by the Server. Schema v9 snapshots dependency type, predecessor source Case Operation ID, and simultaneous-group data into Batch Operations and normalizes derived Batch lifecycle values.
+The implemented foundation records migration identity in `schema_migrations` and the active version in SQLite `user_version`; ordered migrations currently reach schema version 25. Schema v5 adds durable Edit Mode transfer requests and a partial unique index that permits only one pending request. Schema v6 adds immutable E-Ink package-revision/file metadata. Schema v7 adds immutable Machine/Case/Batch/Operation snapshots and package asset roles used by the generator; file bytes remain in a Server-owned package root and never enter SQLite. Schema v8 adds the optional Machine picture path; image bytes remain external and are streamed only by the Server. Schema v9 snapshots dependency type, predecessor source Case Operation ID, and simultaneous-group data into Batch Operations and normalizes derived Batch lifecycle values.
 
-Schema v10 adds the reusable Machine Type catalog, Setup Calendar selection, and allocated-Order lifecycle. Schema v11-v14 add administrative resources, employee calendar exceptions, and cached holiday policy. Schema v15 adds immutable cross-type assignment-override audit snapshots. Schema v16-v18 add extended Operation timing, Machine downtime, and structured pause events. Schema v19 adds immutable E-Ink setup-worker/time/tool/checklist package metadata. Schema v20 adds weekly material-report scheduling and successful-delivery markers. Schema v21 adds employee planned/actual work measurements, employee-efficiency delivery markers, and a separate weekly efficiency schedule. Schema v22 adds an append-only structured event stream and filtered export API. Schema v23 adds authoritative operation actual start/end/Machine history. Schema v24 adds the checked, defaulted planning-mode column to `machine_assignments`. Planning-mode mutations and their structured before/after events commit atomically. Calculated Timeline conflicts and resource waits are system events deduplicated per detection day. Timeline dates and reservations remain read-only projection state. The Server refuses a database newer than its known migration set, and migration failure prevents readiness.
+Schema v10 adds the reusable Machine Type catalog, Setup Calendar selection, and allocated-Order lifecycle. Schema v11-v14 add administrative resources, employee calendar exceptions, and cached holiday policy. Schema v15 adds immutable cross-type assignment-override audit snapshots. Schema v16-v18 add extended Operation timing, Machine downtime, and structured pause events. Schema v19 adds immutable E-Ink setup-worker/time/tool/checklist package metadata. Schema v20 adds weekly material-report scheduling and successful-delivery markers. Schema v21 adds employee planned/actual work measurements, employee-efficiency delivery markers, and a separate weekly efficiency schedule. Schema v22 adds an append-only structured event stream and filtered export API. Schema v23 adds authoritative operation actual start/end/Machine history. Schema v24 adds the checked, defaulted planning-mode column to `machine_assignments`. Schema v25 adds a unique workbook/approved-request import receipt without workbook bytes. Planning-mode and import mutations and their structured events commit atomically. Calculated Timeline conflicts and resource waits are system events deduplicated per detection day. Timeline dates and reservations remain read-only projection state. The Server refuses a database newer than its known migration set, and migration failure prevents readiness.
 
 ### 4.9 Backup Service
 
@@ -165,7 +167,7 @@ The implemented `client-windows/` application uses WPF on .NET 10 and establishe
 - a validated HTTP/HTTPS Server root setting;
 - a simple local display name and stable client ID stored under Local AppData;
 - a compact main header with a connection indicator/tooltip and one lock/unlock Edit Mode action;
-- a dedicated Setup page for connection Save/Connect/Refresh, Working Calendar management and Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holidays, and report/email settings;
+- a dedicated Setup page for connection Save/Connect/Refresh, Working Calendar management and Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holidays, report/email settings, and staged legacy Excel preview/mapping/commit;
 - `/health` connectivity/version status;
 - Viewer, Editor, and RequestingEdit presentation;
 - Edit Mode request, voluntary release, transfer approval, and rejection interactions;
@@ -269,6 +271,24 @@ sequenceDiagram
 ```
 
 The server must never change assignments, ordering, or dependencies merely to remove a conflict. Recalculation produces derived consequences; the submitted manual plan remains intact unless validation rejects the command as structurally invalid.
+
+Legacy import uses the same write boundary with an earlier read-only preview:
+
+```mermaid
+sequenceDiagram
+    participant W as Windows Setup
+    participant A as Import API
+    participant P as Bounded OpenXML Preview
+    participant S as SQLite
+    W->>A: Upload .xlsx for preview
+    A->>P: Parse cached values and build candidates
+    P-->>W: Token + provenance + issues + suggestions
+    W->>A: Explicit mappings/selections + Edit generation
+    A->>S: Revalidate and commit all changes + receipt
+    S-->>W: Created IDs or one structured rollback error
+```
+
+The preview token is staging, not authority. Commit does not trust suggestions, and every non-skip selection is explicit. Existing backlog rows keep their positions; imported assignments append in workbook source order. A failed row rolls back the entire approved import.
 
 ## 7. Single Edit Mode
 

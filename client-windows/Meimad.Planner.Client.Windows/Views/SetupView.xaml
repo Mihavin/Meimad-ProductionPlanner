@@ -555,12 +555,24 @@
                                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Case candidate" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding CaseCandidates}" SelectedItem="{Binding SelectedCaseCandidate}" DisplayMemberPath="DisplayName"/></StackPanel>
                                                     </UniformGrid>
                                                     <UniformGrid Columns="3">
-                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Route operation" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding RouteOperationCandidates}" SelectedItem="{Binding SelectedRouteOperationCandidate}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Route operation" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding AvailableRouteOperationCandidates}" SelectedItem="{Binding SelectedRouteOperationCandidate}" DisplayMemberPath="DisplayName"/></StackPanel>
                                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Batch number" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding BatchNumber, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                         <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Source row" Style="{StaticResource SetupFieldLabel}"/><TextBlock Text="{Binding SourceSummary}" TextWrapping="Wrap"/></StackPanel>
                                                     </UniformGrid>
-                                                    <TextBlock Text="If the selected Machine type differs from the operation's required type, the Server requires this explicit override and records the reason." Foreground="#996C00" TextWrapping="Wrap" Margin="0,2,0,4"/>
-                                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,8"><CheckBox Content="Confirm cross-type assignment" IsChecked="{Binding CompatibilityOverrideConfirmed}"/><TextBox Text="{Binding CompatibilityOverrideReason, UpdateSourceTrigger=PropertyChanged}" MinWidth="260" Margin="12,0,0,0" ToolTip="Mandatory reason for a confirmed cross-Machine-type assignment."/></StackPanel>
+                                                    <TextBlock Text="{Binding CompatibilityReviewText}" TextWrapping="Wrap" Margin="0,2,0,4">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding RequiresCompatibilityOverride}" Value="True">
+                                                                        <Setter Property="Foreground" Value="#996C00"/>
+                                                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,8" IsEnabled="{Binding RequiresCompatibilityOverride}"><CheckBox Content="Confirm cross-type assignment" IsChecked="{Binding CompatibilityOverrideConfirmed}"/><TextBox Text="{Binding CompatibilityOverrideReason, UpdateSourceTrigger=PropertyChanged}" MinWidth="260" Margin="12,0,0,0" ToolTip="Mandatory reason for a confirmed cross-Machine-type assignment."/></StackPanel>
                                                     <DockPanel><TextBlock Text="Allocations" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Content="Add allocation" Command="{Binding AddAllocationCommand}" /></DockPanel>
                                                     <ItemsControl ItemsSource="{Binding Allocations}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Margin="0,2"><ComboBox ItemsSource="{Binding TypeChoices}" SelectedItem="{Binding Type}" Width="120" ToolTip="Allocation type"/><ComboBox ItemsSource="{Binding OrderCandidates}" SelectedItem="{Binding SelectedOrderCandidate}" DisplayMemberPath="DisplayName" Width="220" Margin="5,0,0,0" ToolTip="Existing Order"/><TextBox Text="{Binding OrderSourceRowKey}" Width="130" Margin="5,0,0,0" ToolTip="Optional source-row Order reference"/><TextBox Text="{Binding Quantity}" Width="80" Margin="5,0,0,0" ToolTip="Quantity"/><Button Content="Remove" Command="{Binding DataContext.RemoveAllocationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" Margin="5,0,0,0"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
                                                     <TextBlock Text="New Case (for open-order rows)" FontWeight="SemiBold" Margin="0,10,0,2"/>

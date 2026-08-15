@@ -158,7 +158,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         && HasUniqueColumnTargetFields()
         && MachineMappings.Where(mapping => Rows.Any(row => row.Kind == "planning"
             && row.SectionKey == mapping.SectionKey && !row.IsSkipped)).All(mapping => mapping.IsResolved)
-        && Rows.All(row => row.HasExplicitDecision && row.IsResolved);
+        && Rows.All(row => row.HasExplicitDecision && row.IsResolved)
+        && Rows.Any(row => row.IsMutation && row.IsResolved);
 
     public void SetWorkbookSelection(string path)
     {
@@ -344,7 +345,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             && issue.RowNumber == rowNumber);
 
     private bool HasGlobalServerBlockers() => Issues.Any(issue => !issue.RowNumber.HasValue
-        && IsBlockingSeverity(issue.Severity));
+        && IsBlockingSeverity(issue.Severity)
+        && (!IsCompatibilityOverrideIssue(issue) || string.IsNullOrWhiteSpace(issue.SectionKey)));
 
     private bool HasUniqueColumnTargetFields() => Mappings
         .GroupBy(mapping => $"{mapping.Scope}:{mapping.TargetField}", StringComparer.OrdinalIgnoreCase)
@@ -371,7 +373,26 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         }
     }
 
-    internal void RowOrMappingChanged() => RaiseState();
+    internal void RowOrMappingChanged()
+    {
+        foreach (var row in Rows.Where(row => row.Kind == "planning"))
+        {
+            row.NotifyMachineMappingChanged();
+        }
+
+        RaiseState();
+    }
+
+    internal LegacyImportMachineCandidate? SelectedMachineForSection(string? sectionKey) =>
+        MachineMappings.FirstOrDefault(mapping => string.Equals(
+            mapping.SectionKey, sectionKey, StringComparison.Ordinal))?.SelectedMachineCandidate;
+
+    internal bool ServerRequiresCompatibilityOverride(string sheetName, int rowNumber, string? sectionKey) =>
+        Issues.Any(issue => IsCompatibilityOverrideIssue(issue)
+            && ((string.Equals(issue.SheetName, sheetName, StringComparison.OrdinalIgnoreCase)
+                    && issue.RowNumber == rowNumber)
+                || (!issue.RowNumber.HasValue
+                    && string.Equals(issue.SectionKey, sectionKey, StringComparison.Ordinal))));
 
     private void RaiseState()
     {
@@ -423,6 +444,10 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     }
 
     private static bool IsBlockingSeverity(string severity) => string.Equals(severity, "blocking", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsCompatibilityOverrideIssue(LegacyImportIssue issue) =>
+        string.Equals(issue.Code, "machine_type_override_required", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(issue.Code, "machine_type_mismatch", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExpected(Exception exception) => exception is PlannerApiException
         or PlannerProtocolException or HttpRequestException or TaskCanceledException
@@ -620,7 +645,12 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     public IReadOnlyList<LegacyImportCaseCandidate> CaseCandidates { get; private init; } = [];
     public IReadOnlyList<LegacyImportOrderCandidate> OrderCandidates { get; private init; } = [];
     public IReadOnlyList<LegacyImportBatchCandidate> BatchCandidates { get; private init; } = [];
-    public IReadOnlyList<LegacyImportCaseOperationCandidate> RouteOperationCandidates { get; private init; } = [];
+    private IReadOnlyList<LegacyImportCaseOperationCandidate> AllRouteOperationCandidates { get; init; } = [];
+    public IReadOnlyList<LegacyImportCaseOperationCandidate> RouteOperationCandidates => selectedCaseCandidate is null
+        ? []
+        : AllRouteOperationCandidates.Where(candidate => string.Equals(
+            candidate.CaseId, selectedCaseCandidate.CaseId, StringComparison.Ordinal)).ToArray();
+    public IReadOnlyList<LegacyImportCaseOperationCandidate> AvailableRouteOperationCandidates => RouteOperationCandidates;
     public IReadOnlyList<LegacyImportBatchOperationCandidate> ExistingOperationCandidates { get; private init; } = [];
     public IReadOnlyList<LegacyImportBatchOperationCandidate> AvailableExistingOperationCandidates =>
         ExistingOperationCandidates.Where(candidate => !candidate.IsAlreadyAssigned).ToArray();
@@ -630,15 +660,63 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     public IReadOnlyList<string> SkipChoices { get; } = ["Skip this source row"];
     public string Message => issues.Count == 0 ? "No Server issue reported." : string.Join(" ", issues.Select(issue => issue.Message));
     public string Status => IsSkipped ? "Skip"
-        : issues.Any(issue => string.Equals(issue.Severity, "blocking", StringComparison.OrdinalIgnoreCase)) ? "Blocked"
-        : issues.Any(issue => string.Equals(issue.Severity, "warning", StringComparison.OrdinalIgnoreCase)) ? "Warning"
+        : HasUnresolvedBlockingIssue || RequiresCompatibilityOverride && !HasValidCompatibilityOverride() ? "Blocked"
+        : issues.Any(issue => string.Equals(issue.Severity, "warning", StringComparison.OrdinalIgnoreCase))
+            || RequiresCompatibilityOverride ? "Warning"
         : IsResolved ? "Ready" : "Blocked";
     public bool HasExplicitDecision => !string.IsNullOrWhiteSpace(Decision);
-    public bool IsResolved => IsSkipped || (!issues.Any(issue => string.Equals(issue.Severity, "blocking", StringComparison.OrdinalIgnoreCase))
-        && HasCompleteDecision());
+    public bool IsMutation => HasExplicitDecision && !IsSkipped;
+    public bool IsResolved => IsSkipped || (!HasUnresolvedBlockingIssue && HasCompleteDecision());
     public IReadOnlyList<string> ActionChoices => Kind == "planning"
         ? ["skip", "assign_existing_operation", "create_batch_and_assign"]
         : ["skip", "create_case", "create_order"];
+    public LegacyImportMachineCandidate? SelectedMachineCandidate => owner.SelectedMachineForSection(SectionKey);
+    public string? SelectedRequiredMachineType => Decision == "assign_existing_operation"
+        ? SelectedExistingOperationCandidate?.RequiredMachineType
+        : Decision == "create_batch_and_assign"
+            ? SelectedRouteOperationCandidate?.RequiredMachineType
+            : null;
+    public bool RequiresCompatibilityOverride => Kind == "planning"
+        && HasSelectedPlanningAction
+        && (owner.ServerRequiresCompatibilityOverride(SheetName, RowNumber, SectionKey)
+            || IsLocallyKnownIncompatible);
+    public string CompatibilityReviewText
+    {
+        get
+        {
+            var required = SelectedRequiredMachineType ?? "the selected Operation requirement";
+            var machine = SelectedMachineCandidate is null
+                ? "no selected Machine"
+                : $"{SelectedMachineCandidate.Number} ({SelectedMachineCandidate.ProcessType}"
+                    + (string.IsNullOrWhiteSpace(SelectedMachineCandidate.AxisType)
+                        ? ")"
+                        : $", {SelectedMachineCandidate.AxisType})");
+            if (!HasSelectedPlanningAction)
+            {
+                return "Choose a planning action to review its Machine requirement.";
+            }
+
+            if (SelectedMachineCandidate is null)
+            {
+                return $"Choose a Machine mapping to validate {required}.";
+            }
+
+            if (owner.ServerRequiresCompatibilityOverride(SheetName, RowNumber, SectionKey))
+            {
+                return $"Server reported an incompatibility for {required} on {machine}. Confirm the override and enter a reason.";
+            }
+
+            var matchSource = CompatibilityMatchSource;
+            if (matchSource is not null)
+            {
+                return $"{machine} matches {required} through its {matchSource}. The Server will validate it again on commit.";
+            }
+
+            return HasCompleteCompatibilityFacts
+                ? $"{machine} does not match {required} through its process, axis, or declared capabilities. Confirm the override and enter a reason."
+                : $"Server will validate {required} against {machine}, including Machine-Type capabilities.";
+        }
+    }
     public string Decision { get => decision; set => SetDecision(value); }
     public bool IsSkipped { get => isSkipped; set { if (SetField(ref isSkipped, value)) SetDecision(value ? "skip" : string.Empty); } }
     public bool CreateBatch { get => createBatch; set { if (SetField(ref createBatch, value)) SetDecision(value ? "create_batch_and_assign" : string.Empty); } }
@@ -657,11 +735,20 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         get => selectedCaseCandidate;
         set
         {
-            if (SetField(ref selectedCaseCandidate, value) && value is not null)
+            if (!SetField(ref selectedCaseCandidate, value)) return;
+
+            CaseId = value?.CaseId ?? string.Empty;
+            ExistingCaseId = value?.CaseId ?? string.Empty;
+            if (selectedRouteOperationCandidate is not null
+                && (value is null || !string.Equals(selectedRouteOperationCandidate.CaseId, value.CaseId, StringComparison.Ordinal)))
             {
-                CaseId = value.CaseId;
-                ExistingCaseId = value.CaseId;
+                selectedRouteOperationCandidate = null;
+                routeOperation = string.Empty;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedRouteOperationCandidate)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RouteOperation)));
             }
+
+            RaiseCaseSelectionProperties();
         }
     }
     public LegacyImportCaseOperationCandidate? SelectedRouteOperationCandidate
@@ -669,10 +756,10 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         get => selectedRouteOperationCandidate;
         set
         {
-            if (SetField(ref selectedRouteOperationCandidate, value) && value is not null)
+            if (value is not null && !RouteOperationCandidates.Contains(value)) return;
+            if (SetField(ref selectedRouteOperationCandidate, value))
             {
-                CaseId = value.CaseId;
-                RouteOperation = value.CaseOperationId;
+                RouteOperation = value?.CaseOperationId ?? string.Empty;
             }
         }
     }
@@ -705,13 +792,27 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             CaseCandidates = row.Candidates?.Cases ?? [],
             OrderCandidates = row.Candidates?.Orders ?? [],
             BatchCandidates = row.Candidates?.Batches ?? [],
-            RouteOperationCandidates = row.Candidates?.CaseOperations ?? [],
-            ExistingOperationCandidates = row.Candidates?.BatchOperations ?? [],
+            AllRouteOperationCandidates = row.Candidates?.CaseOperations ?? [],
+            ExistingOperationCandidates = EnrichBatchOperationCandidates(row.Candidates),
             SourcePartNumber = row.Values?.PartNumber,
             SourceQuantity = row.Values?.Quantity,
             SourceCustomer = row.Values?.Customer,
             SourceReferenceOrOrderNumber = row.Values?.CaseReference
         };
+
+    private static IReadOnlyList<LegacyImportBatchOperationCandidate> EnrichBatchOperationCandidates(
+        LegacyImportPlanningCandidates? candidates)
+    {
+        var batchNumbers = (candidates?.Batches ?? [])
+            .GroupBy(batch => batch.BatchId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().BatchNumber, StringComparer.Ordinal);
+        return (candidates?.BatchOperations ?? [])
+            .Select(operation => operation with
+            {
+                BatchNumber = batchNumbers.TryGetValue(operation.BatchId, out var number) ? number : operation.BatchNumber
+            })
+            .ToArray();
+    }
 
     internal static LegacyImportRowViewModel OpenOrder(LegacyImportOpenOrderRow row,
         IEnumerable<LegacyImportIssue> issues, LegacyExcelImportViewModel owner) => new(owner, "open_orders", row.RowKey, row.SheetName, row.RowNumber, null, issues.ToArray())
@@ -761,15 +862,74 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
+    private bool HasSelectedPlanningAction => Decision is "assign_existing_operation" or "create_batch_and_assign";
+
+    private bool HasUnresolvedBlockingIssue => issues.Any(issue =>
+        string.Equals(issue.Severity, "blocking", StringComparison.OrdinalIgnoreCase)
+        && !LegacyExcelImportViewModel.IsCompatibilityOverrideIssue(issue));
+
+    // The preview now contains every input used by the Server's compatibility check.
+    // Older previews omit the capability collections, so those remain Server-only rather
+    // than being misclassified as incompatible by a partial client comparison.
+    private bool HasCompleteCompatibilityFacts => SelectedMachineCandidate is
+    {
+        Capabilities: not null,
+        MachineTypeCapabilities: not null
+    };
+
+    private bool IsLocallyKnownIncompatible => HasCompleteCompatibilityFacts
+        && !string.IsNullOrWhiteSpace(SelectedRequiredMachineType)
+        && CompatibilityMatchSource is null;
+
+    private string? CompatibilityMatchSource
+    {
+        get
+        {
+            var required = SelectedRequiredMachineType?.Trim();
+            if (string.IsNullOrEmpty(required))
+            {
+                return "no Machine Type requirement";
+            }
+
+            var machine = SelectedMachineCandidate;
+            if (!HasCompleteCompatibilityFacts || machine is null)
+            {
+                return null;
+            }
+
+            if (string.Equals(machine.ProcessType, required, StringComparison.OrdinalIgnoreCase))
+            {
+                return "process type";
+            }
+
+            if (string.Equals(machine.AxisType, required, StringComparison.OrdinalIgnoreCase))
+            {
+                return "axis type";
+            }
+
+            if (machine.Capabilities!.Contains(required, StringComparer.OrdinalIgnoreCase))
+            {
+                return "Machine capability";
+            }
+
+            return machine.MachineTypeCapabilities!.Contains(required, StringComparer.OrdinalIgnoreCase)
+                ? "Machine-Type capability"
+                : null;
+        }
+    }
+
     private bool HasCompleteDecision() => Kind == "planning"
         ? Decision switch
         {
-            "assign_existing_operation" => SelectedExistingOperationCandidate is { IsAlreadyAssigned: false },
+            "assign_existing_operation" => SelectedExistingOperationCandidate is { IsAlreadyAssigned: false }
+                && HasValidCompatibilityOverride(),
             "create_batch_and_assign" => SelectedCaseCandidate is not null
                 && SelectedRouteOperationCandidate is not null
+                && string.Equals(SelectedCaseCandidate.CaseId, SelectedRouteOperationCandidate.CaseId, StringComparison.Ordinal)
+                && string.IsNullOrWhiteSpace(CaseSourceRowKey)
                 && !string.IsNullOrWhiteSpace(BatchNumber)
                 && HasCompleteAllocations()
-                && (!CompatibilityOverrideConfirmed || !string.IsNullOrWhiteSpace(CompatibilityOverrideReason)),
+                && HasValidCompatibilityOverride(),
             _ => false
         }
         : Decision switch
@@ -782,6 +942,15 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
                 && HasCompleteOrderInput,
             _ => false
         };
+
+    private bool HasValidCompatibilityOverride()
+    {
+        var hasReason = !string.IsNullOrWhiteSpace(CompatibilityOverrideReason)
+            && CompatibilityOverrideReason.Trim().Length <= 1000;
+        return RequiresCompatibilityOverride
+            ? CompatibilityOverrideConfirmed && hasReason
+            : !CompatibilityOverrideConfirmed || hasReason;
+    }
 
     private LegacyImportNewCase? BuildNewCase() => !HasAnyNewCaseInput
         ? null
@@ -855,11 +1024,30 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Status)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasExplicitDecision)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsMutation)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAnyOrderInput)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasCompleteOrderInput)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAnyNewCaseInput)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedRequiredMachineType)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RequiresCompatibilityOverride)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CompatibilityReviewText)));
         AddAllocationCommand.RaiseCanExecuteChanged();
         RemoveAllocationCommand.RaiseCanExecuteChanged();
+    }
+
+    internal void NotifyMachineMappingChanged()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedMachineCandidate)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CompatibilityReviewText)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RequiresCompatibilityOverride)));
+        RaiseStateProperties();
+    }
+
+    private void RaiseCaseSelectionProperties()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RouteOperationCandidates)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvailableRouteOperationCandidates)));
+        RaiseStateProperties();
     }
 
     private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

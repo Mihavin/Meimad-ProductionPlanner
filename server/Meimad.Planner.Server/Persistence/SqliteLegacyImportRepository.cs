@@ -34,6 +34,40 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             await ReadMachinesAsync(connection, cancellationToken));
     }
 
+    public async Task<LegacyImportCommitResponse?> TryReplayAsync(
+        string workbookSha256,
+        string requestSha256,
+        EditAuthority editAuthority,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(
+            connection,
+            transaction,
+            editAuthority,
+            now,
+            cancellationToken);
+        var existing = await ReadReceiptAsync(
+            connection,
+            transaction,
+            workbookSha256,
+            cancellationToken);
+        if (existing is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+        if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
+        {
+            throw new LegacyWorkbookAlreadyImportedException(workbookSha256);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return ToReplayResponse(existing.ResponseJson);
+    }
+
     public async Task<LegacyImportCommitResponse> CommitAsync(
         LegacyImportCommitRequest request,
         LegacyImportPreviewResponse approvedPreview,
@@ -63,14 +97,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             }
 
             await transaction.CommitAsync(cancellationToken);
-            var prior = JsonSerializer.Deserialize<LegacyImportCommitResponse>(existing.ResponseJson)
-                ?? throw new InvalidDataException("Stored legacy import receipt is invalid.");
-            return prior with
-            {
-                Replayed = true,
-                Unchanged = prior.Created,
-                Created = new LegacyImportEntityIdsResponse([], [], [], [])
-            };
+            return ToReplayResponse(existing.ResponseJson);
         }
 
         var issues = new List<LegacyImportIssue>();
@@ -347,11 +374,14 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT batch_operations.id, batch_operations.production_batch_id,
+                   production_batches.batch_number, production_batches.case_id, cases.part_number,
                    batch_operations.source_case_operation_id, batch_operations.operation_number,
                    batch_operations.name, batch_operations.status,
                    batch_operations.required_machine_type, batch_operations.version,
                    machine_assignments.id, machine_assignments.machine_id, machine_assignments.version
             FROM batch_operations
+            INNER JOIN production_batches ON production_batches.id = batch_operations.production_batch_id
+            INNER JOIN cases ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments ON machine_assignments.batch_operation_id = batch_operations.id
             ORDER BY batch_operations.production_batch_id, batch_operations.route_position, batch_operations.id
             LIMIT 50000;
@@ -361,9 +391,10 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         while (await reader.ReadAsync(cancellationToken))
         {
             result.Add(new LegacyImportBatchOperationCandidate(
-                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
-                reader.GetString(5), GetNullableString(reader, 6), reader.GetInt32(7),
-                GetNullableString(reader, 8), GetNullableString(reader, 9), GetNullableInt32(reader, 10)));
+                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4),
+                reader.GetString(5), reader.GetInt32(6), reader.GetString(7), reader.GetString(8),
+                GetNullableString(reader, 9), reader.GetInt32(10),
+                GetNullableString(reader, 11), GetNullableString(reader, 12), GetNullableInt32(reader, 13)));
         }
         return result;
     }
@@ -373,14 +404,25 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, number, name, axis_type, machine_type, is_active FROM machines ORDER BY number COLLATE NOCASE, id LIMIT 1000;";
+        command.CommandText = """
+            SELECT machines.id, machines.number, machines.name, machines.axis_type,
+                   machines.machine_type, machines.capabilities_json,
+                   COALESCE(machine_types.capabilities_json, '[]'), machines.is_active
+            FROM machines
+            LEFT JOIN machine_types ON machine_types.id = machines.machine_type_id
+            ORDER BY machines.number COLLATE NOCASE, machines.id
+            LIMIT 1000;
+            """;
         var result = new List<LegacyImportMachineCandidate>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             result.Add(new LegacyImportMachineCandidate(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), GetNullableString(reader, 3),
-                reader.GetString(4), reader.GetBoolean(5)));
+                reader.GetString(4),
+                JsonSerializer.Deserialize<string[]>(reader.GetString(5)) ?? [],
+                JsonSerializer.Deserialize<string[]>(reader.GetString(6)) ?? [],
+                reader.GetBoolean(7)));
         }
         return result;
     }
@@ -979,6 +1021,18 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         command.Parameters.AddWithValue("$userId", userId);
         command.Parameters.AddWithValue("$now", FormatInstant(now));
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static LegacyImportCommitResponse ToReplayResponse(string responseJson)
+    {
+        var prior = JsonSerializer.Deserialize<LegacyImportCommitResponse>(responseJson)
+            ?? throw new InvalidDataException("Stored legacy import receipt is invalid.");
+        return prior with
+        {
+            Replayed = true,
+            Unchanged = prior.Created,
+            Created = new LegacyImportEntityIdsResponse([], [], [], [])
+        };
     }
 
     private static async Task<bool> ExistsAsync(

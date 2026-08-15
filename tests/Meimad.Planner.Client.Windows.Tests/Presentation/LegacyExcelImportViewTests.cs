@@ -16,6 +16,9 @@ public sealed class LegacyExcelImportViewTests
         Assert.Contains("Binding SourceSummary", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding SelectedExistingOperationCandidate", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding SelectedRouteOperationCandidate", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding AvailableRouteOperationCandidates}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding CompatibilityReviewText}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"{Binding RequiresCompatibilityOverride}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding CompatibilityOverrideReason", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding Allocations", xaml, StringComparison.Ordinal);
         Assert.Contains("Binding OrderWorkFinishDate", xaml, StringComparison.Ordinal);

@@ -12,6 +12,87 @@ namespace Meimad.Planner.Server.Tests.LegacyImport;
 public sealed class LegacyImportApiTests
 {
     [Fact]
+    public async Task All_skip_commit_is_rejected_without_receipt_or_event()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "all-skip"));
+            var body = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [new { rowKey = "תכנית ייצור!3", action = "skip" }]);
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "no_import_actions_selected");
+            Assert.Equal(0, await ScalarAsync(application.Services, "SELECT COUNT(*) FROM legacy_working_plan_imports;"));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM structured_event_log WHERE event_type = 'legacy_working_plan_import_committed';"));
+        });
+    }
+
+    [Fact]
+    public async Task Exact_replay_survives_server_restart_without_staged_token()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.LegacyImport.RestartTests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(directory, "test.db");
+        object? committedBody = null;
+        var first = BuildServer(databasePath);
+        var firstDisposed = false;
+        try
+        {
+            await first.StartAsync();
+            using (var client = first.GetTestClient())
+            {
+                await SeedPlanningAsync(first.Services);
+                AddEditHeaders(client);
+                using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "restart-replay"));
+                committedBody = CommitBody(
+                    preview.RootElement.GetProperty("importToken").GetString()!,
+                    preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                    [Planning("תכנית ייצור!4", "batch-operation-2", "machine-01", null)]);
+                using var commit = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", committedBody);
+                Assert.Equal(HttpStatusCode.OK, commit.StatusCode);
+            }
+            await first.StopAsync();
+            await first.DisposeAsync();
+            firstDisposed = true;
+
+            var second = BuildServer(databasePath);
+            try
+            {
+                await second.StartAsync();
+                using var client = second.GetTestClient();
+                AddEditHeaders(client);
+                using var replay = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", committedBody);
+                Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+                using var document = JsonDocument.Parse(await replay.Content.ReadAsStringAsync());
+                Assert.True(document.RootElement.GetProperty("replayed").GetBoolean());
+                Assert.Equal(1, await ScalarAsync(second.Services,
+                    "SELECT COUNT(*) FROM structured_event_log WHERE event_type = 'legacy_working_plan_import_committed';"));
+                await second.StopAsync();
+            }
+            finally
+            {
+                await second.DisposeAsync();
+            }
+        }
+        finally
+        {
+            if (!firstDisposed)
+            {
+                await first.DisposeAsync();
+            }
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Preview_staging_is_bounded_and_oldest_token_is_evicted()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -29,7 +110,7 @@ public sealed class LegacyImportApiTests
                 var body = CommitBody(
                     first.GetProperty("importToken").GetString()!,
                     first.GetProperty("workbookSha256").GetString()!,
-                    []);
+                    [Planning("תכנית ייצור!3", "batch-operation-1", "machine-01", new { confirmed = true, reason = "eviction test" })]);
                 using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
                 Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
             }
@@ -59,6 +140,13 @@ public sealed class LegacyImportApiTests
             Assert.Contains(machineCandidates.EnumerateArray(), value =>
                 value.GetProperty("machineId").GetString() == "machine-manual"
                 && value.GetProperty("reason").GetString() == "manual_choice");
+            Assert.Contains("probing", machineCandidates[0].GetProperty("capabilities").EnumerateArray()
+                .Select(value => value.GetString()));
+            var batchOperationCandidate = preview.RootElement.GetProperty("rows")[0]
+                .GetProperty("candidates").GetProperty("batchOperations")[0];
+            Assert.Equal("B1", batchOperationCandidate.GetProperty("batchNumber").GetString());
+            Assert.Equal("case-1", batchOperationCandidate.GetProperty("caseId").GetString());
+            Assert.Equal("PN-1", batchOperationCandidate.GetProperty("partNumber").GetString());
             Assert.Contains(preview.RootElement.GetProperty("issues").EnumerateArray(), issue =>
                 issue.GetProperty("code").GetString() == "source_cell_error"
                 && issue.GetProperty("severity").GetString() == "warning");
@@ -103,6 +191,13 @@ public sealed class LegacyImportApiTests
                 "SELECT COUNT(*) FROM structured_event_log WHERE event_type = 'legacy_working_plan_import_committed';"));
             Assert.Equal(1, await ScalarAsync(application.Services,
                 "SELECT COUNT(*) FROM structured_event_log WHERE event_type = 'cross_machine_type_override' AND user_id = 'planner-user';"));
+
+            var evictionPreviews = new List<JsonDocument>();
+            for (var index = 0; index < 5; index++)
+            {
+                evictionPreviews.Add(await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: $"post-commit-{index}")));
+            }
+            foreach (var evictionPreview in evictionPreviews) evictionPreview.Dispose();
 
             using var replayResponse = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", success);
             Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
@@ -296,7 +391,7 @@ public sealed class LegacyImportApiTests
                 id, number, name, machine_type, axis_type, capabilities_json,
                 working_calendar_id, display_configuration_json, status, is_active, display_enabled)
             VALUES
-                ('machine-01', '01', 'Machine 01', 'mill', '3-axis', '[]', 'calendar', '{}', 'available', 1, 1),
+                ('machine-01', '01', 'Machine 01', 'mill', '3-axis', '["probing"]', 'calendar', '{}', 'available', 1, 1),
                 ('machine-manual', '99', 'Manual choice', 'mill', '3-axis', '[]', 'calendar', '{}', 'available', 1, 1);
             INSERT INTO cases (id, part_number, name, working_folder_path) VALUES
                 ('case-1', 'PN-1', 'Part 1', 'C:\cases\1'),
@@ -368,4 +463,8 @@ public sealed class LegacyImportApiTests
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
+
+    private static WebApplication BuildServer(string databasePath) => ServerApplication.Build(
+        ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={databasePath}"],
+        webHost => webHost.UseTestServer());
 }

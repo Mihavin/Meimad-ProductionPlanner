@@ -47,6 +47,8 @@ internal sealed record LegacyMachineCandidateResponse(
     string Name,
     string ProcessType,
     string? AxisType,
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyList<string> MachineTypeCapabilities,
     decimal Score,
     string Reason);
 
@@ -149,6 +151,9 @@ internal sealed record LegacyCaseOperationCandidateResponse(
 internal sealed record LegacyBatchOperationCandidateResponse(
     string BatchOperationId,
     string BatchId,
+    string BatchNumber,
+    string CaseId,
+    string PartNumber,
     string CaseOperationId,
     int OperationNumber,
     string Name,

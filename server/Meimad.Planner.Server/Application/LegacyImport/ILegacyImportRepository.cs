@@ -6,6 +6,13 @@ internal interface ILegacyImportRepository
 {
     Task<LegacyImportCandidatePool> ReadCandidatePoolAsync(CancellationToken cancellationToken);
 
+    Task<LegacyImportCommitResponse?> TryReplayAsync(
+        string workbookSha256,
+        string requestSha256,
+        EditAuthority editAuthority,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+
     Task<LegacyImportCommitResponse> CommitAsync(
         LegacyImportCommitRequest request,
         LegacyImportPreviewResponse approvedPreview,
@@ -55,6 +62,9 @@ internal sealed record LegacyImportCaseOperationCandidate(
 internal sealed record LegacyImportBatchOperationCandidate(
     string BatchOperationId,
     string BatchId,
+    string BatchNumber,
+    string CaseId,
+    string PartNumber,
     string SourceCaseOperationId,
     int OperationNumber,
     string Name,
@@ -71,4 +81,6 @@ internal sealed record LegacyImportMachineCandidate(
     string Name,
     string? AxisType,
     string ProcessType,
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyList<string> MachineTypeCapabilities,
     bool IsActive);
