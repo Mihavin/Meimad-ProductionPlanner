@@ -129,6 +129,197 @@ internal sealed record PlannedMaintenanceUpdate(
     string Reason, string PlannedBy);
 internal sealed record BreakdownRestore(DateTimeOffset RestoredAt, string? RepairNote);
 
+internal sealed record LegacyWorkingPlanPreview(
+    int SchemaVersion,
+    string ImportToken,
+    string WorkbookSha256,
+    DateTimeOffset ExpiresAt,
+    LegacyImportWorkbook Workbook,
+    LegacyImportSuggestions Suggestions,
+    IReadOnlyList<LegacyImportMachineSection> MachineSections,
+    IReadOnlyList<LegacyImportPlanningRow> Rows,
+    IReadOnlyList<LegacyImportOpenOrderRow> OpenOrderRows,
+    IReadOnlyList<LegacyImportIssue> Issues);
+
+internal sealed record LegacyImportWorkbook(
+    string FileName,
+    IReadOnlyList<LegacyImportSheet> Sheets);
+
+internal sealed record LegacyImportSheet(string Name, int RowCount, int ColumnCount);
+
+internal sealed record LegacyImportSuggestions(
+    string? PlanningSheet,
+    string? OpenOrdersSheet,
+    IReadOnlyList<LegacyImportColumnSuggestion> PlanningColumns,
+    IReadOnlyList<LegacyImportColumnSuggestion> OpenOrderColumns);
+
+internal sealed record LegacyImportColumnSuggestion(
+    string Field,
+    string? Column,
+    string? Header,
+    decimal Confidence);
+
+internal sealed record LegacyImportMachineSection(
+    string SectionKey,
+    string SheetName,
+    int HeaderRow,
+    string SourceLabel,
+    int FirstDataRow,
+    int LastDataRow,
+    IReadOnlyList<LegacyImportMachineCandidate> Candidates);
+
+internal sealed record LegacyImportMachineCandidate(
+    string MachineId,
+    string Number,
+    string Name,
+    decimal Score,
+    string Reason)
+{
+    public string DisplayName => $"{Number} — {Name}";
+}
+
+internal sealed record LegacyImportPlanningRow(
+    string RowKey,
+    string SheetName,
+    int RowNumber,
+    string SectionKey,
+    int SourceOrder,
+    System.Text.Json.JsonElement Values,
+    IReadOnlyList<LegacyImportProvenance> Provenance,
+    LegacyImportPlanningCandidates Candidates);
+
+internal sealed record LegacyImportOpenOrderRow(
+    string RowKey,
+    string SheetName,
+    int RowNumber,
+    int SourceOrder,
+    System.Text.Json.JsonElement Values,
+    IReadOnlyList<LegacyImportProvenance> Provenance,
+    LegacyImportOpenOrderCandidates Candidates);
+
+internal sealed record LegacyImportProvenance(
+    string Field,
+    string? Column,
+    string? Address,
+    string? Kind,
+    string? Formula,
+    string? Raw);
+
+internal sealed record LegacyImportPlanningCandidates(
+    IReadOnlyList<LegacyImportCaseCandidate> Cases,
+    IReadOnlyList<LegacyImportOrderCandidate> Orders,
+    IReadOnlyList<LegacyImportBatchCandidate> Batches);
+
+internal sealed record LegacyImportOpenOrderCandidates(
+    IReadOnlyList<LegacyImportCaseCandidate> Cases,
+    IReadOnlyList<LegacyImportOrderCandidate> Orders);
+
+internal sealed record LegacyImportCaseCandidate(
+    string CaseId,
+    string PartNumber,
+    string Name,
+    string? Revision,
+    string? Customer,
+    string Reason)
+{
+    public string DisplayName => $"{PartNumber} — {Name}";
+}
+
+internal sealed record LegacyImportOrderCandidate(
+    string OrderId,
+    string OrderNumber,
+    long Quantity,
+    DateTimeOffset? WorkFinishDate,
+    string Reason)
+{
+    public string DisplayName => $"{OrderNumber} ({Quantity})";
+}
+
+internal sealed record LegacyImportBatchCandidate(
+    string BatchId,
+    string BatchNumber,
+    long PlannedQuantity,
+    string Reason)
+{
+    public string DisplayName => $"{BatchNumber} ({PlannedQuantity})";
+}
+
+internal sealed record LegacyImportIssue(
+    string Severity,
+    string Code,
+    string Message,
+    string? SheetName,
+    int? RowNumber,
+    string? Field,
+    string? SectionKey);
+
+internal sealed record LegacyWorkingPlanCommit(
+    int SchemaVersion,
+    string ImportToken,
+    string WorkbookSha256,
+    string? PlanningSheet,
+    string? OpenOrdersSheet,
+    IReadOnlyList<LegacyImportColumnMapping> ColumnMappings,
+    IReadOnlyList<LegacyImportMachineMapping> MachineMappings,
+    IReadOnlyList<LegacyImportOpenOrderSelection> OpenOrderSelections,
+    IReadOnlyList<LegacyImportPlanningSelection> PlanningSelections);
+
+internal sealed record LegacyImportColumnMapping(string Scope, string Field, string? Column);
+internal sealed record LegacyImportMachineMapping(string SectionKey, string? MachineId);
+
+internal sealed record LegacyImportOpenOrderSelection(
+    string RowKey,
+    string Action,
+    string? ExistingCaseId,
+    LegacyImportNewCase? NewCase,
+    LegacyImportOrderInput? Order);
+
+internal sealed record LegacyImportNewCase(
+    string? PartNumber,
+    string? Name,
+    string? Revision,
+    string? Customer,
+    string? CustomerReference,
+    string? WorkingFolderPath,
+    string? Notes);
+
+internal sealed record LegacyImportOrderInput(
+    string? OrderNumber,
+    long? Quantity,
+    DateTimeOffset? WorkFinishDate,
+    string? Notes);
+
+internal sealed record LegacyImportPlanningSelection(
+    string RowKey,
+    string Action,
+    string? BatchOperationId,
+    string? CaseId,
+    string? CaseOperationId,
+    string? BatchNumber,
+    IReadOnlyList<LegacyImportAllocation>? Allocations,
+    string? MachineId);
+
+internal sealed record LegacyImportAllocation(string Type, string? OrderId, long? Quantity);
+
+internal sealed record LegacyWorkingPlanCommitReceipt(
+    int SchemaVersion,
+    string WorkbookSha256,
+    string CommitId,
+    bool Replayed,
+    LegacyImportAffectedIds Created,
+    LegacyImportAffectedIds Unchanged,
+    IReadOnlyList<LegacyImportMachineBacklog> MachineBacklogs);
+
+internal sealed record LegacyImportAffectedIds(
+    IReadOnlyList<string> CaseIds,
+    IReadOnlyList<string> OrderIds,
+    IReadOnlyList<string> BatchIds,
+    IReadOnlyList<string> AssignmentIds);
+
+internal sealed record LegacyImportMachineBacklog(
+    string MachineId,
+    IReadOnlyList<string> AssignmentIdsInImportedSourceOrder);
+
 internal sealed record MachineCreate(
     string Number,
     string Name,

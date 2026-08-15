@@ -17,6 +17,16 @@
             <Setter Property="CornerRadius" Value="4" />
             <Setter Property="Padding" Value="14" />
         </Style>
+        <Style x:Key="ImportStatusText" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#52606D" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="Ready"><Setter Property="Foreground" Value="#20744A" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Warning"><Setter Property="Foreground" Value="#996C00" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Blocked"><Setter Property="Foreground" Value="#B42318" /></DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Skip"><Setter Property="Foreground" Value="#667085" /></DataTrigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
     <Grid Background="{StaticResource CanvasBrush}">
@@ -455,6 +465,121 @@
                             <StackPanel Orientation="Horizontal"><Button Content="Save holiday" Command="{Binding SaveIsraeliHolidayCommand}"/><Button Content="Delete" Click="DeleteIsraeliHoliday_Click" Margin="0"/></StackPanel>
                             <TextBlock Text="Manual edits are preserved during later online refreshes. Calendars that opt in use this local cache, including while offline. Calendar-specific dated exceptions take precedence." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                         </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Excel Import">
+                <Grid Margin="8" FlowDirection="LeftToRight">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Legacy Excel workbook (ייבוא מדורג)" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding LegacyImport.SelectedFilePath, UpdateSourceTrigger=PropertyChanged}" MinWidth="280"
+                                         ToolTip="Choose a copy of the workbook. The original file is never modified." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0" Width="150">
+                                <TextBlock Text="Sheet" Style="{StaticResource SetupFieldLabel}" />
+                                <TextBox Text="{Binding LegacyImport.SourceSheetName, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Bottom">
+                                <Button Content="Browse…" Click="BrowseLegacyWorkbook_Click" Margin="8,0,0,0" />
+                                <Button Content="Preview" Command="{Binding LegacyImport.PreviewCommand}" Margin="8,0,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="3*" /></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                            <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock Text="Detected columns and target entities" FontSize="16" FontWeight="Bold" />
+                                    <TextBlock Text="Map each source header explicitly; required fields must be resolved before commit." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <DataGrid Grid.Row="1" ItemsSource="{Binding LegacyImport.Mappings}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False"
+                                          HeadersVisibility="Column" EnableRowVirtualization="True">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Source header" Binding="{Binding SourceHeader}" Width="1.2*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Sample" Binding="{Binding SampleValue}" Width="1.2*" IsReadOnly="True" />
+                                        <DataGridTemplateColumn Header="Target entity / field" Width="1.5*">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate><TextBlock Text="{Binding TargetField}" TextTrimming="CharacterEllipsis" /></DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                            <DataGridTemplateColumn.CellEditingTemplate>
+                                                <DataTemplate><ComboBox ItemsSource="{Binding TargetChoices}" SelectedItem="{Binding TargetField, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate>
+                                            </DataGridTemplateColumn.CellEditingTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridCheckBoxColumn Header="Required" Binding="{Binding IsRequired}" Width="65" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Decision" Binding="{Binding Decision}" Width="95" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Candidate score" Binding="{Binding CandidateScore}" Width="90" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Reason" Binding="{Binding CandidateReason}" Width="1.2*" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                            <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock Text="Preview and row issues" FontSize="16" FontWeight="Bold" />
+                                    <TextBlock Text="Hebrew text is shown as supplied by the workbook. Review warnings and blocked rows before committing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <DataGrid x:Name="ImportRowsGrid" Grid.Row="1" ItemsSource="{Binding LegacyImport.Rows}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False"
+                                          HeadersVisibility="Column" EnableRowVirtualization="True">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Row" Binding="{Binding RowNumber}" Width="55" />
+                                        <DataGridTemplateColumn Header="Status" Width="80" IsReadOnly="True">
+                                            <DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding Status}" Style="{StaticResource ImportStatusText}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="Details" Binding="{Binding Message}" Width="2*" />
+                                        <DataGridTextColumn Header="Decision" Binding="{Binding Decision, UpdateSourceTrigger=PropertyChanged}" Width="1.2*" />
+                                        <DataGridTextColumn Header="Existing operation" Binding="{Binding ExistingOperation}" Width="1.2*" />
+                                        <DataGridTextColumn Header="Route operation" Binding="{Binding RouteOperation}" Width="1.2*" />
+                                        <DataGridCheckBoxColumn Header="Create batch" Binding="{Binding CreateBatch, Mode=TwoWay}" Width="78" />
+                                        <DataGridCheckBoxColumn Header="Skip" Binding="{Binding IsSkipped, Mode=TwoWay}" Width="55" />
+                                        <DataGridTemplateColumn Header="Resolution" Width="110">
+                                            <DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding SkipChoices}" SelectedItem="{Binding SkipReason, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <TextBlock Grid.Row="2" Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" Margin="0,8,0,0" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Row="4" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    <ProgressBar IsIndeterminate="True" IsHitTestVisible="False" Height="4" Margin="0,5,0,0" Visibility="Collapsed">
+                                        <ProgressBar.Style>
+                                            <Style TargetType="ProgressBar">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers><DataTrigger Binding="{Binding LegacyImport.IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                                            </Style>
+                                        </ProgressBar.Style>
+                                    </ProgressBar>
+                                    <TextBlock Text="{Binding LegacyImport.HeaderRowNumber, StringFormat=Header row: {0}}" Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding LegacyImport.SourceSheetName, StringFormat=Sheet: {0}}" Foreground="{StaticResource MutedTextBrush}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Skip selected row" Command="{Binding LegacyImport.SkipRowCommand}" CommandParameter="{Binding SelectedItem, ElementName=ImportRowsGrid}" Margin="8,0,0,0" />
+                            <Button Grid.Column="2" Content="Commit import" Command="{Binding LegacyImport.CommitCommand}" IsEnabled="{Binding LegacyImport.CanCommit}" Margin="8,0,0,0" />
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>

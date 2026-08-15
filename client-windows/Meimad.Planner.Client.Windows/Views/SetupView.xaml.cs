@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using Microsoft.Win32;
 using Meimad.Planner.Client.Windows.Presentation;
 
 namespace Meimad.Planner.Client.Windows.Views;
@@ -9,6 +10,23 @@ public partial class SetupView : UserControl
     public SetupView()
     {
         InitializeComponent();
+    }
+
+    private void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose legacy Excel workbook",
+            Filter = "Excel workbooks|*.xlsx|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog() == true && DataContext is not null)
+        {
+            // File selection is intentionally the only import concern owned by the view.
+            ((dynamic)DataContext).LegacyImport.SetWorkbookSelection(dialog.FileName);
+        }
     }
 
     private async void DeleteCalendar_Click(object sender, RoutedEventArgs e)
