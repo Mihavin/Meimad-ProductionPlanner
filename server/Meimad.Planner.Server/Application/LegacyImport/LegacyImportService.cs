@@ -109,6 +109,7 @@ internal sealed partial class LegacyImportService
         {
             throw new LegacyImportValidationException(initialIssues);
         }
+        request = request with { WorkbookSha256 = request.WorkbookSha256!.ToLowerInvariant() };
 
         var now = timeProvider.GetUtcNow();
         if (!staged.TryGetValue(request.ImportToken!, out var preview) || preview.ExpiresAt <= now)
@@ -117,7 +118,7 @@ internal sealed partial class LegacyImportService
             throw new LegacyImportTokenExpiredException();
         }
 
-        if (!string.Equals(preview.Workbook.Sha256, request.WorkbookSha256, StringComparison.Ordinal))
+        if (!string.Equals(preview.Workbook.Sha256, request.WorkbookSha256, StringComparison.OrdinalIgnoreCase))
         {
             throw new LegacyImportValidationException([
                 Validation(
@@ -320,6 +321,7 @@ internal sealed partial class LegacyImportService
                     || (sheet.Cell(entry.Key, columns["quantity"]) is { StyleIndex: not null } labelCell
                         && sectionStyles.Contains(labelCell.StyleIndex.Value)
                         && !string.IsNullOrWhiteSpace(labelCell.Value)
+                        && entry.Value.Values.Count(cell => !string.IsNullOrWhiteSpace(CleanValue(cell.Value))) == 1
                         && sheet.Rows.TryGetValue(entry.Key + 1, out var nextRow)
                         && IsPlanningDataRow(nextRow, columns))
                     ? CleanValue(sheet.Cell(entry.Key, columns["quantity"])?.Value)

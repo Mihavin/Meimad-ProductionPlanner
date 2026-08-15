@@ -787,9 +787,19 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             return null;
         }
         var compatible = IsCompatible(machine, requiredMachineType);
+        var overrideReason = compatibilityOverride?.Reason?.Trim();
+        if (!compatible && overrideReason?.Length > 1000)
+        {
+            issues.Add(SourceIssue(
+                "override_reason_too_long",
+                "Compatibility override reason must contain at most 1000 characters.",
+                source,
+                "compatibilityOverride.reason"));
+            return null;
+        }
         if (!compatible && (compatibilityOverride is null
             || !compatibilityOverride.Confirmed
-            || string.IsNullOrWhiteSpace(compatibilityOverride.Reason)))
+            || string.IsNullOrEmpty(overrideReason)))
         {
             issues.Add(SourceIssue("machine_type_override_required", "The selected Machine is incompatible with the Operation; explicit confirmation and reason are required.", source, "compatibilityOverride"));
             return null;
@@ -837,7 +847,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             audit.Parameters.AddWithValue("$machineId", machineId);
             audit.Parameters.AddWithValue("$required", requiredMachineType!);
             audit.Parameters.AddWithValue("$selected", machine.ProcessType);
-            audit.Parameters.AddWithValue("$reason", compatibilityOverride!.Reason!.Trim());
+            audit.Parameters.AddWithValue("$reason", overrideReason!);
             audit.Parameters.AddWithValue("$clientId", authority.ClientId);
             audit.Parameters.AddWithValue("$userId", confirmedByUserId);
             audit.Parameters.AddWithValue("$now", FormatInstant(now));
@@ -855,7 +865,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                         ["machineId"] = machineId
                     },
                     "machine_type_incompatible",
-                    compatibilityOverride.Reason,
+                    overrideReason,
                     new { requiredMachineType },
                     new { selectedMachineType = machine.ProcessType }),
                 cancellationToken);

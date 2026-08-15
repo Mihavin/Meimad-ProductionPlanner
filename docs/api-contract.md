@@ -831,6 +831,32 @@ The dedicated Setup Calendar selection is a separate singleton projection:
 
 `PUT /api/v1/setup-calendar` accepts that request under Edit Mode and returns `{ "workingCalendarId": "opaque-calendar-id", "calendar": { ...working calendar representation... } }`. GET returns the same shape and uses nulls when no dedicated Calendar is selected. DELETE clears the selection and returns `204`. The selected Calendar's timezone and weekly/explicit availability are used by the Timeline setup mapper. Clearing it restores Machine-calendar setup fallback plus the `setup_calendar_defaulted` attention conflict; it does not schedule or move work.
 
+### 6.5 Legacy working-plan Excel import
+
+The implemented importer is a two-stage migration workflow, not a spreadsheet synchronization API.
+
+| Method | Path | Authority | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/imports/legacy-working-plan/preview` | Read-only | Parse one `.xlsx` upload and return source provenance, suggestions, candidates, and issues. |
+| `POST` | `/api/v1/imports/legacy-working-plan/commit` | Current Edit Mode | Atomically apply only the operator-approved mappings/selections and store an idempotency receipt. |
+
+Preview requires `multipart/form-data` with exactly one file field named `workbook`. The workbook limit is 64 MiB and the route multipart limit is 65 MiB. At most two previews parse concurrently. The Server uses a bounded OpenXML ZIP/XML reader, never evaluates formulas or follows external relationships, and consumes only cached formula values. It rejects an unsafe/invalid archive, the Excel 1904 date system, unsupported content, or configured expansion/cell limits with a structured error. A successful response has `schemaVersion: 1` and includes:
+
+- an opaque `importToken`, lowercase `workbookSha256`, and `expiresAt`;
+- workbook filename and sheet names/dimensions;
+- suggested planning/open-order sheets and editable target-field-to-source-column mappings with confidence;
+- detected Machine sections and active-Machine candidates, including number/name/process/axis evidence;
+- planning/open-order source rows, values, stable row keys, source order, existing Case/Order/Batch/route/Batch-Operation candidates, and cell provenance (`value`, `formula_cached`, `formula_missing_cache`, or `error`); and
+- structured `blocking` or `warning` issues with optional sheet, row, field, and section context.
+
+Preview does not acquire Edit Mode, mutate planning state, store workbook bytes, or modify the source file. Staging is in memory, retains at most four previews, and expires after `LegacyImport:PreviewLifetimeMinutes` (default 120; valid 5–1440). Eviction or Server restart also invalidates the token.
+
+Commit carries the normal `X-Meimad-Client-Id` and `X-Meimad-Edit-Generation` headers. Its JSON contains the exact preview `schemaVersion`, `importToken`, `workbookSha256`, selected `planningSheet`/optional `openOrdersSheet`, explicit column and Machine mappings, and one action for each approved source row. Open-order actions are `skip`, `create_case`, or `create_order`. Planning actions are `skip`, `assign_existing_operation`, or `create_batch_and_assign`. A new Case may optionally create its fully specified Order; a new Order may reference an existing Case or a Case created by another selected source row. Creating a Batch requires an existing routed Case, an explicit existing Case Operation, a Batch Number, one Machine, and balanced explicit allocations whose public tokens are `order`, `stock`, or `scrapAllowance`. Cross-type assignment requires `compatibilityOverride.confirmed: true` and a nonblank reason. Non-skip selections must identify every required entity; candidate suggestions are never treated as approval.
+
+Commit revalidates the token/hash, workbook sheets/mappings, selected-row blockers, entity/version/relationship facts, Edit Mode, allocation rules, Machine activity/compatibility, and operation assignability inside one immediate SQLite transaction. It creates only ordinary canonical entities, appends imported assignments after existing Machine backlog rows in source-row order, and starts those assignments in `manual`. It never invents a Case route or timing, moves an already assigned operation, persists calculated dates, or reorders existing backlog rows.
+
+Success returns `schemaVersion`, `workbookSha256`, `commitId`, `replayed`, created/unchanged Case, Order, Batch, and assignment IDs, plus imported assignment IDs by Machine in source order. An exact replay returns the stored receipt with `replayed: true`; a different approved payload for the same workbook returns `409 workbook_already_imported`. Expired/evicted/restarted staging returns `410 import_token_expired`. Other relevant errors are `400 workbook_required`, `413 workbook_too_large` or parser expansion limits, `415 unsupported_media_type`, `429 import_preview_busy`, `422 import_validation_failed` with issue details, and the normal `409` Edit Mode codes. Any validation or write failure rolls back entities, assignments, overrides, event records, and the receipt together.
+
 ## 7. Planning projections
 
 | Method | Path | Purpose |

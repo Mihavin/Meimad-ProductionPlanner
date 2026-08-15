@@ -9,6 +9,7 @@ namespace Meimad.Planner.Server.Api.LegacyImport;
 internal static class LegacyImportEndpoints
 {
     private const long RequestLimit = OpenXmlLegacyWorkbookReader.MaximumWorkbookBytes + (1024 * 1024);
+    private static readonly SemaphoreSlim PreviewConcurrency = new(2, 2);
 
     internal static void MapLegacyImportEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -37,6 +38,15 @@ internal static class LegacyImportEndpoints
                 StatusCodes.Status415UnsupportedMediaType,
                 "unsupported_media_type",
                 "Preview requires multipart/form-data with one file field named 'workbook'.",
+                httpContext);
+        }
+
+        if (!await PreviewConcurrency.WaitAsync(0, cancellationToken))
+        {
+            return PlanningHttpSupport.Error(
+                StatusCodes.Status429TooManyRequests,
+                "import_preview_busy",
+                "Two workbook previews are already being processed; retry shortly.",
                 httpContext);
         }
 
@@ -85,6 +95,10 @@ internal static class LegacyImportEndpoints
                 ? StatusCodes.Status413PayloadTooLarge
                 : StatusCodes.Status422UnprocessableEntity;
             return PlanningHttpSupport.Error(status, exception.Code, exception.Message, httpContext);
+        }
+        finally
+        {
+            PreviewConcurrency.Release();
         }
     }
 

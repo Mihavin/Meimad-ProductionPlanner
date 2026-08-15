@@ -43,7 +43,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(24L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(25L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -108,6 +108,17 @@ public sealed class MigrationTests
         Assert.Equal("operation_actual_times", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 24;";
         Assert.Equal("machine_assignment_planning_mode", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 25;";
+        Assert.Equal("legacy_working_plan_import_receipts", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*)
+            FROM pragma_table_info('legacy_working_plan_imports')
+            WHERE name IN (
+                'id', 'workbook_sha256', 'approved_request_sha256', 'response_json',
+                'committed_by_client_id', 'committed_by_user_id', 'committed_at');
+            """;
+        Assert.Equal(7L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         migrationCommand.CommandText = """
             SELECT COUNT(*)
@@ -148,7 +159,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(24L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(25L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -461,7 +472,8 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_end;
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24);
+                DROP TABLE legacy_working_plan_imports;
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -601,7 +613,8 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_end;
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24);
+                DROP TABLE legacy_working_plan_imports;
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -737,7 +750,8 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_end;
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24);
+                DROP TABLE legacy_working_plan_imports;
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
