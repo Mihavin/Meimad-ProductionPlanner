@@ -1,0 +1,51 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Meimad Production Planner Server"
+    Manufacturer="Meimad"
+    Version="0.1.2"
+    UpgradeCode="{49637DC8-BA22-4B14-90C7-AA74B249A38F}"
+    Scope="perMachine">
+
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of Meimad Production Planner Server is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Meimad Production Planner Server" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Meimad Production Planner Server" Level="1">
+      <ComponentGroupRef Id="ServerPayloadComponents" />
+      <ComponentRef Id="ServerServiceComponent" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ServerServiceComponent" Guid="{79D88AE9-B6B1-4A61-B059-128B7BD7A3E3}">
+        <File
+          Id="ServerExecutable"
+          Source="$(var.ServerExecutableDir)\Meimad.Planner.Server.exe"
+          KeyPath="yes" />
+        <ServiceInstall
+          Id="InstallPlannerServerService"
+          Name="Meimad Planner Server"
+          DisplayName="Meimad Planner Server"
+          Description="Meimad Production Planner API and scheduling Server"
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem"
+          Arguments="--Database:Path=&quot;[CommonAppDataFolder]MeimadPlanner\Server\data\planner.db&quot; --Backup:Folder=&quot;[CommonAppDataFolder]MeimadPlanner\Server\backups&quot; --EInk:PackageRoot=&quot;[CommonAppDataFolder]MeimadPlanner\Server\eink&quot;" />
+        <ServiceControl
+          Id="ControlPlannerServerService"
+          Name="Meimad Planner Server"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

@@ -1,0 +1,13 @@
+Meimad Planner Windows Client — Third-Party Notices
+
+OCCSharp 7.8.0-preview1
+Copyright its respective contributors.
+Licensed under LGPL-2.1-only.
+Package and source information: https://www.nuget.org/packages/OCCSharp/7.8.0-preview1
+
+Open CASCADE Technology 7.8
+Copyright Open CASCADE SAS and contributors.
+Licensed under GNU LGPL 2.1 with the Open CASCADE exception.
+License and source information: https://dev.opencascade.org/resources/licensing
+
+These libraries are used dynamically for local STEP B-rep import and tessellation. They are not modified by this application.

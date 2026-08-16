@@ -1,4 +1,6 @@
 using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using OCCSharp;
 
 namespace Meimad.Planner.Client.Windows.Views;
@@ -7,9 +9,33 @@ internal static class StepSolidMeshLoader
 {
     private const int MaximumTriangles = 500_000;
     private const int MaximumVertices = 1_500_000;
+    private static readonly object NativeRuntimeLock = new();
+    private static readonly List<IntPtr> NativeRuntimeHandles = [];
+    private static bool nativeRuntimeConfigured;
+    private static readonly string[] RequiredWrapperLibraries =
+    [
+        "OCCSTKernel.dll",
+        "OCCSTKMath.dll",
+        "OCCSTKG2d.dll",
+        "OCCSTKG3d.dll",
+        "OCCSTKGeomBase.dll",
+        "OCCSTKGeomAlgo.dll",
+        "OCCSTKBRep.dll",
+        "OCCSTKTopAlgo.dll",
+        "OCCSTKShHealing.dll",
+        "OCCSTKMesh.dll",
+        "OCCSTKPrim.dll",
+        "OCCSTKCDF.dll",
+        "OCCSTKLCAF.dll",
+        "OCCSTKCAF.dll",
+        "OCCSTKXSBase.dll",
+        "OCCSTKDE.dll",
+        "OCCSTKDESTEP.dll"
+    ];
 
     public static StepModelData Load(string path)
     {
+        EnsureNativeRuntime();
         using var progress = new Message_ProgressRange();
         using var reader = new STEPControl_Reader();
         if (reader.ReadFile(path) != IFSelect_ReturnStatus.IFSelect_RetDone)
@@ -29,12 +55,56 @@ internal static class StepSolidMeshLoader
             throw new InvalidDataException("The STEP model contains no transferable solid geometry.");
         }
 
+        return Tessellate(shape, progress);
+    }
+
+    private static void EnsureNativeRuntime()
+    {
+        if (!OperatingSystem.IsWindows() || nativeRuntimeConfigured)
+        {
+            return;
+        }
+
+        lock (NativeRuntimeLock)
+        {
+            if (nativeRuntimeConfigured)
+            {
+                return;
+            }
+            var nativeDirectory = File.Exists(Path.Combine(AppContext.BaseDirectory, RequiredWrapperLibraries[0]))
+                ? AppContext.BaseDirectory
+                : Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native");
+            if (!SetDllDirectory(nativeDirectory))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "The local OpenCascade runtime directory could not be activated.");
+            }
+            foreach (var library in RequiredWrapperLibraries)
+            {
+                var packagedPath = Path.Combine(nativeDirectory, library);
+                if (!File.Exists(packagedPath))
+                {
+                    throw new DllNotFoundException($"The packaged OpenCascade library '{library}' is missing.");
+                }
+                NativeRuntimeHandles.Add(NativeLibrary.Load(packagedPath));
+            }
+            nativeRuntimeConfigured = true;
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetDllDirectory(string pathName);
+
+    internal static StepModelData Tessellate(TopoDS_Shape shape)
+    {
+        using var progress = new Message_ProgressRange();
+        return Tessellate(shape, progress);
+    }
+
+    private static StepModelData Tessellate(TopoDS_Shape shape, Message_ProgressRange progress)
+    {
         using var mesher = new BRepMesh_IncrementalMesh(shape, 0.08, false, 0.18, true);
         mesher.Perform(progress);
-        if (mesher.GetStatusFlags() != 0 && !mesher.IsModified())
-        {
-            throw new InvalidDataException("OpenCascade could not tessellate this STEP model.");
-        }
 
         var points = new List<StepPoint3>();
         var triangles = new List<StepTriangle3>();

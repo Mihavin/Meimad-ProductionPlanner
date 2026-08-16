@@ -1,0 +1,17 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>Meimad-Planner-Client-Setup</OutputName>
+    <OutputPath Condition="'$(InstallerOutputPath)' != ''">$(InstallerOutputPath)\</OutputPath>
+    <GeneratedPayloadFile Condition="'$(GeneratedPayloadFile)' == ''">$(MSBuildThisFileDirectory)..\obj\generated\ClientPayload.wxs</GeneratedPayloadFile>
+    <ClientExecutableDir Condition="'$(ClientExecutableDir)' == ''">$(MSBuildThisFileDirectory)..\obj\publish\client</ClientExecutableDir>
+    <DefineConstants>ClientExecutableDir=$(ClientExecutableDir)</DefineConstants>
+    <!-- ICE61 is expected because AllowSameVersionUpgrades intentionally supports refreshed 0.1.2 builds. -->
+    <SuppressIces>ICE61;ICE90</SuppressIces>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(GeneratedPayloadFile)" />
+  </ItemGroup>
+</Project>

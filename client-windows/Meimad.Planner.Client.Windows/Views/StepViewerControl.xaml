@@ -1,6 +1,7 @@
 <UserControl x:Class="Meimad.Planner.Client.Windows.Views.StepViewerControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Meimad.Planner.Client.Windows.Views"
              MinHeight="360" Background="#F7F9FB"
              Focusable="True">
     <Grid x:Name="ViewerRoot" Background="#F7F9FB" ClipToBounds="True"
@@ -9,8 +10,21 @@
           MouseMove="Viewer_MouseMove"
           MouseWheel="Viewer_MouseWheel"
           SizeChanged="Viewer_SizeChanged">
-        <local:StepSolidDrawingHost xmlns:local="clr-namespace:Meimad.Planner.Client.Windows.Views"
-                                    x:Name="SolidSurface" IsHitTestVisible="False" />
+        <Viewport3D x:Name="SolidViewport" IsHitTestVisible="False">
+            <Viewport3D.Camera>
+                <OrthographicCamera x:Name="SolidCamera" NearPlaneDistance="0.01" FarPlaneDistance="10000000" />
+            </Viewport3D.Camera>
+            <ModelVisual3D>
+                <ModelVisual3D.Content>
+                    <Model3DGroup x:Name="SolidScene">
+                        <AmbientLight Color="#707C86" />
+                        <DirectionalLight Color="#F2F7FA" Direction="-0.35,-0.45,-1" />
+                        <DirectionalLight Color="#607D91" Direction="0.6,0.25,0.5" />
+                    </Model3DGroup>
+                </ModelVisual3D.Content>
+            </ModelVisual3D>
+        </Viewport3D>
+        <local:StepEdgeDrawingHost x:Name="EdgeSurface" IsHitTestVisible="False" />
         <Canvas x:Name="ModelCanvas" IsHitTestVisible="False" />
         <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10"
                 Padding="8,4" CornerRadius="3" Background="#DDE7F0" Opacity="0.92">

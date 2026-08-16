@@ -1,0 +1,49 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Meimad Production Planner Client"
+    Manufacturer="Meimad"
+    Version="0.1.2"
+    UpgradeCode="{C5B1B980-8EBD-4290-8F55-B4685932C9CA}"
+    Scope="perMachine">
+
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of Meimad Production Planner Client is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Meimad Production Planner Client" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="PROGRAMMENUDIR" Name="Meimad Production Planner" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Meimad Production Planner Client" Level="1">
+      <ComponentGroupRef Id="ClientPayloadComponents" />
+      <ComponentRef Id="ClientShortcutComponent" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ClientShortcutComponent" Guid="{A9373E50-6D1D-4BBC-A42B-F688EA45A2CD}">
+        <File
+          Id="ClientExecutable"
+          Source="$(var.ClientExecutableDir)\Meimad.Planner.Client.Windows.exe"
+          KeyPath="yes" />
+        <Shortcut
+          Id="ClientStartMenuShortcut"
+          Directory="PROGRAMMENUDIR"
+          Name="Meimad Production Planner"
+          Description="Open the Meimad Production Planner Windows client"
+          Advertise="yes"
+          WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder
+          Id="RemoveClientProgramMenuFolder"
+          Directory="PROGRAMMENUDIR"
+          On="uninstall" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

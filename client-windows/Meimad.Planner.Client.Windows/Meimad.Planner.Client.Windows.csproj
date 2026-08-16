@@ -17,7 +17,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="OCCSharp" Version="7.8.0-preview1" />
+    <PackageReference Include="OCCSharp" Version="7.8.0-preview1" GeneratePathProperty="true" />
+    <None Include="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="$(PkgOCCSharp)\runtimes\win-x64\native\**\*">
+      <Link>runtimes\win-x64\native\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

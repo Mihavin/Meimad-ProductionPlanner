@@ -14,6 +14,7 @@ public partial class CaseWorkspaceView : UserControl
         InitializeComponent();
         StepViewer.ModelStateChanged += (_, _) => UpdateStepSnapshotState();
         StepViewer.MeasurementChanged += (_, _) => StepMeasurementText.Text = StepViewer.MeasurementText;
+        StepDisplayModeCombo.SelectionChanged += StepDisplayMode_SelectionChanged;
         DataContextChanged += CaseWorkspaceView_DataContextChanged;
     }
 
@@ -124,6 +125,16 @@ public partial class CaseWorkspaceView : UserControl
     private void StepTop_Click(object sender, RoutedEventArgs e) => StepViewer.SetView("top");
     private void StepRight_Click(object sender, RoutedEventArgs e) => StepViewer.SetView("right");
     private void StepFit_Click(object sender, RoutedEventArgs e) => StepViewer.FitToWindow();
+    private void StepDisplayMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var token = (StepDisplayModeCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        StepViewer.SetDisplayMode(token switch
+        {
+            "visibleEdges" => StepDisplayMode.VisibleEdges,
+            "wireframe" => StepDisplayMode.Wireframe,
+            _ => StepDisplayMode.Shaded
+        });
+    }
     private void StepMeasureDistance_Click(object sender, RoutedEventArgs e) => StepViewer.BeginDistanceMeasurement();
     private void StepClearMeasurement_Click(object sender, RoutedEventArgs e) => StepViewer.ClearMeasurement();
 
@@ -131,6 +142,10 @@ public partial class CaseWorkspaceView : UserControl
     {
         SnapshotStepButton.IsEnabled = StepViewer.HasModel
             && DataContext is CaseWorkspaceViewModel { CanEditForm: true };
+        StepDisplayModeCombo.IsEnabled = StepViewer.IsSolidModel;
+        StepDisplayModeCombo.ToolTip = StepViewer.IsSolidModel
+            ? "Choose shaded faces, shaded faces with visible edges, or wireframe."
+            : "Display modes become available after the STEP file is loaded as a tessellated solid.";
     }
 
     private void BrowseFolder_Click(object sender, System.Windows.RoutedEventArgs e)

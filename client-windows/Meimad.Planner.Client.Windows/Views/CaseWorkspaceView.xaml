@@ -237,6 +237,13 @@
                                     <Button Content="Top" Click="StepTop_Click" />
                                     <Button Content="Right" Click="StepRight_Click" />
                                     <Button Content="Fit" Click="StepFit_Click" ToolTip="Fit the complete part to the viewer and orbit around its center" />
+                                    <TextBlock Text="Display" VerticalAlignment="Center" Margin="10,0,5,0" />
+                                    <ComboBox x:Name="StepDisplayModeCombo" Width="130" SelectedIndex="0" IsEnabled="False"
+                                              ToolTip="Choose shaded faces, shaded faces with visible edges, or wireframe">
+                                        <ComboBoxItem Content="Shaded" Tag="shaded" />
+                                        <ComboBoxItem Content="Visible edges" Tag="visibleEdges" />
+                                        <ComboBoxItem Content="Wireframe" Tag="wireframe" />
+                                    </ComboBox>
                                 </StackPanel>
                             </DockPanel>
                             <Grid Grid.Row="1">

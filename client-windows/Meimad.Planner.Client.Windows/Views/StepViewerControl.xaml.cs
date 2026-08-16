@@ -31,16 +31,19 @@ public partial class StepViewerControl : UserControl
     private readonly List<StepSegment3> segments = [];
     private readonly List<StepTriangle3> triangles = [];
     private readonly List<int> selectablePointIndices = [];
+    private readonly List<StepDisplayEdge> displayEdges = [];
     private Point[] screenPoints = [];
     private Point dragStart;
     private bool isDragging;
     private bool isMeasuring;
     private int? measurementStartIndex;
     private int? measurementEndIndex;
+    private GeometryModel3D? solidGeometryModel;
     private StepPoint3 modelCenter;
     private double yaw = -35 * Math.PI / 180;
     private double pitch = 25 * Math.PI / 180;
     private double zoom = 1;
+    private StepDisplayMode displayMode = StepDisplayMode.Shaded;
 
     public StepViewerControl()
     {
@@ -52,6 +55,12 @@ public partial class StepViewerControl : UserControl
     public bool IsSolidModel => triangles.Count > 0;
 
     public int TriangleCount => triangles.Count;
+
+    public StepDisplayMode DisplayMode => displayMode;
+
+    public bool IsSolidSurfaceVisible => SolidViewport.Visibility == Visibility.Visible;
+
+    public int RenderedEdgeCount { get; private set; }
 
     public string? LoadedPath { get; private set; }
 
@@ -94,11 +103,29 @@ public partial class StepViewerControl : UserControl
         catch (Exception exception) when (exception is InvalidDataException
                                           or TypeInitializationException
                                           or DllNotFoundException
-                                          or EntryPointNotFoundException)
+                                          or EntryPointNotFoundException
+                                          or System.ComponentModel.Win32Exception)
         {
-            solidFallbackReason = exception.Message;
+            solidFallbackReason = InnermostMessage(exception);
             parsed = Parse(File.ReadAllText(path));
         }
+        ApplyModel(parsed, path, solidFallbackReason);
+    }
+
+    internal void LoadModel(StepModelData model, string displayPath) => ApplyModel(model, displayPath, null);
+
+    public void SetDisplayMode(StepDisplayMode mode)
+    {
+        displayMode = mode;
+        if (IsSolidModel && LoadedPath is not null)
+        {
+            UpdateSolidStatus();
+        }
+        RenderModel();
+    }
+
+    private void ApplyModel(StepModelData parsed, string path, string? solidFallbackReason)
+    {
         points.Clear();
         points.AddRange(parsed.Points);
         segments.Clear();
@@ -107,20 +134,23 @@ public partial class StepViewerControl : UserControl
         triangles.AddRange(parsed.Triangles);
         selectablePointIndices.Clear();
         selectablePointIndices.AddRange(parsed.SelectablePointIndices);
-        modelCenter = GeometryCentroid(points, selectablePointIndices);
+        modelCenter = ModelCenterOfGravity(points, triangles, selectablePointIndices);
+        BuildDisplayEdges();
+        BuildSolidModel();
         LoadedPath = path;
         yaw = -35 * Math.PI / 180;
         pitch = 25 * Math.PI / 180;
         zoom = 1;
         ClearMeasurement();
-        StatusText.Text = segments.Count > 0
-            ? $"{Path.GetFileName(path)} · {points.Count:N0} vertices · {segments.Count:N0} edges"
-            : $"{Path.GetFileName(path)} · {points.Count:N0} points · no explicit STEP edges found";
         StatusText.Text = IsSolidModel
             ? $"{Path.GetFileName(path)} · shaded solid · {points.Count:N0} vertices · {triangles.Count:N0} triangles"
             : segments.Count > 0
                 ? $"{Path.GetFileName(path)} · solid faces unavailable · {segments.Count:N0} fallback edges · {solidFallbackReason}"
                 : $"{Path.GetFileName(path)} · solid faces unavailable · {points.Count:N0} fallback points · {solidFallbackReason}";
+        if (IsSolidModel)
+        {
+            UpdateSolidStatus();
+        }
         FitToWindow();
         Dispatcher.BeginInvoke(FitToWindow, DispatcherPriority.Loaded);
         ModelStateChanged?.Invoke(this, EventArgs.Empty);
@@ -132,12 +162,20 @@ public partial class StepViewerControl : UserControl
         segments.Clear();
         triangles.Clear();
         selectablePointIndices.Clear();
+        displayEdges.Clear();
         screenPoints = [];
         modelCenter = default;
         LoadedPath = null;
+        if (solidGeometryModel is not null)
+        {
+            SolidScene.Children.Remove(solidGeometryModel);
+            solidGeometryModel = null;
+        }
         ClearMeasurement();
+        EdgeSurface.Clear();
+        RenderedEdgeCount = 0;
+        SolidViewport.Visibility = Visibility.Hidden;
         ModelCanvas.Children.Clear();
-        SolidSurface.Clear();
         StatusText.Text = "Open a STEP file to preview it.";
         ModelStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -159,6 +197,17 @@ public partial class StepViewerControl : UserControl
     {
         zoom = 1;
         RenderModel();
+    }
+
+    private void UpdateSolidStatus()
+    {
+        var modeLabel = displayMode switch
+        {
+            StepDisplayMode.VisibleEdges => "visible edges",
+            StepDisplayMode.Wireframe => "wireframe",
+            _ => "shaded"
+        };
+        StatusText.Text = $"{Path.GetFileName(LoadedPath)} · {modeLabel} · {points.Count:N0} vertices · {triangles.Count:N0} triangles";
     }
 
     public void BeginDistanceMeasurement()
@@ -236,7 +285,8 @@ public partial class StepViewerControl : UserControl
     private void RenderModel()
     {
         ModelCanvas.Children.Clear();
-        SolidSurface.Clear();
+        EdgeSurface.Clear();
+        RenderedEdgeCount = 0;
         if (!HasModel || ViewerRoot.ActualWidth <= 1 || ViewerRoot.ActualHeight <= 1)
         {
             return;
@@ -263,29 +313,23 @@ public partial class StepViewerControl : UserControl
 
         if (triangles.Count > 0)
         {
-            var renderedTriangles = triangles.Select(triangle =>
+            SolidViewport.Visibility = displayMode == StepDisplayMode.Wireframe
+                ? Visibility.Hidden
+                : Visibility.Visible;
+            UpdateSolidCamera(scale);
+            if (displayMode != StepDisplayMode.Shaded)
             {
-                var first = transformed[triangle.FirstIndex];
-                var second = transformed[triangle.SecondIndex];
-                var third = transformed[triangle.ThirdIndex];
-                var ab = new StepPoint3(second.X - first.X, second.Y - first.Y, second.Z - first.Z);
-                var ac = new StepPoint3(third.X - first.X, third.Y - first.Y, third.Z - first.Z);
-                var nx = ab.Y * ac.Z - ab.Z * ac.Y;
-                var ny = ab.Z * ac.X - ab.X * ac.Z;
-                var nz = ab.X * ac.Y - ab.Y * ac.X;
-                var length = Math.Max(0.000001, Math.Sqrt(nx * nx + ny * ny + nz * nz));
-                var light = Math.Abs((nx * -0.32 + ny * 0.42 + nz * 0.85) / length);
-                return new StepScreenTriangle(
-                    screenPoints[triangle.FirstIndex],
-                    screenPoints[triangle.SecondIndex],
-                    screenPoints[triangle.ThirdIndex],
-                    (first.Z + second.Z + third.Z) / 3,
-                    Math.Clamp(0.3 + light * 0.7, 0.3, 1));
-            }).OrderBy(triangle => triangle.Depth).ToArray();
-            SolidSurface.Draw(renderedTriangles);
+                var renderedEdges = displayEdges
+                    .Where(edge => displayMode == StepDisplayMode.Wireframe || IsVisibleFeatureEdge(edge))
+                    .Select(edge => new StepScreenEdge(screenPoints[edge.FirstPointIndex], screenPoints[edge.SecondPointIndex]))
+                    .ToArray();
+                EdgeSurface.Draw(renderedEdges, displayMode);
+                RenderedEdgeCount = renderedEdges.Length;
+            }
         }
         else if (segments.Count > 0)
         {
+            SolidViewport.Visibility = Visibility.Hidden;
             foreach (var segment in segments)
             {
                 var start = screenPoints[segment.StartIndex];
@@ -304,6 +348,7 @@ public partial class StepViewerControl : UserControl
         }
         else
         {
+            SolidViewport.Visibility = Visibility.Hidden;
             for (var index = 0; index < Math.Min(projected.Length, 10_000); index++)
             {
                 var screen = screenPoints[index];
@@ -320,6 +365,196 @@ public partial class StepViewerControl : UserControl
         }
 
         RenderMeasurement();
+    }
+
+    private void BuildDisplayEdges()
+    {
+        displayEdges.Clear();
+        if (triangles.Count == 0 || points.Count == 0)
+        {
+            return;
+        }
+
+        var minX = points.Min(point => point.X);
+        var maxX = points.Max(point => point.X);
+        var minY = points.Min(point => point.Y);
+        var maxY = points.Max(point => point.Y);
+        var minZ = points.Min(point => point.Z);
+        var maxZ = points.Max(point => point.Z);
+        var tolerance = Math.Max(0.0000001, Math.Max(maxX - minX, Math.Max(maxY - minY, maxZ - minZ)) * 0.00000001);
+        var canonicalByCoordinate = new Dictionary<StepVertexKey, (int Id, int PointIndex)>();
+        var canonicalIds = new int[points.Count];
+        for (var pointIndex = 0; pointIndex < points.Count; pointIndex++)
+        {
+            var point = points[pointIndex];
+            var key = new StepVertexKey(
+                (long)Math.Round((point.X - minX) / tolerance),
+                (long)Math.Round((point.Y - minY) / tolerance),
+                (long)Math.Round((point.Z - minZ) / tolerance));
+            if (!canonicalByCoordinate.TryGetValue(key, out var canonical))
+            {
+                canonical = (canonicalByCoordinate.Count, pointIndex);
+                canonicalByCoordinate.Add(key, canonical);
+            }
+            canonicalIds[pointIndex] = canonical.Id;
+        }
+
+        var representativePointById = canonicalByCoordinate.Values.ToDictionary(value => value.Id, value => value.PointIndex);
+        var edgeBuilders = new Dictionary<(int First, int Second), StepDisplayEdgeBuilder>();
+        for (var triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+        {
+            var triangle = triangles[triangleIndex];
+            AddEdge(triangle.FirstIndex, triangle.SecondIndex, triangleIndex);
+            AddEdge(triangle.SecondIndex, triangle.ThirdIndex, triangleIndex);
+            AddEdge(triangle.ThirdIndex, triangle.FirstIndex, triangleIndex);
+        }
+
+        foreach (var edge in edgeBuilders.Values)
+        {
+            var isBoundaryOrCrease = edge.TriangleIndices.Count != 2;
+            if (!isBoundaryOrCrease)
+            {
+                var firstNormal = TriangleNormal(triangles[edge.TriangleIndices[0]]);
+                var secondNormal = TriangleNormal(triangles[edge.TriangleIndices[1]]);
+                var dot = firstNormal.X * secondNormal.X + firstNormal.Y * secondNormal.Y + firstNormal.Z * secondNormal.Z;
+                isBoundaryOrCrease = dot < Math.Cos(25 * Math.PI / 180);
+            }
+            displayEdges.Add(new StepDisplayEdge(
+                edge.FirstPointIndex,
+                edge.SecondPointIndex,
+                isBoundaryOrCrease,
+                edge.TriangleIndices.ToArray()));
+        }
+        return;
+
+        void AddEdge(int firstPointIndex, int secondPointIndex, int triangleIndex)
+        {
+            var firstId = canonicalIds[firstPointIndex];
+            var secondId = canonicalIds[secondPointIndex];
+            if (firstId == secondId)
+            {
+                return;
+            }
+            var key = firstId < secondId ? (firstId, secondId) : (secondId, firstId);
+            if (!edgeBuilders.TryGetValue(key, out var builder))
+            {
+                builder = new StepDisplayEdgeBuilder(
+                    representativePointById[key.Item1],
+                    representativePointById[key.Item2]);
+                edgeBuilders.Add(key, builder);
+            }
+            builder.TriangleIndices.Add(triangleIndex);
+        }
+    }
+
+    private bool IsVisibleFeatureEdge(StepDisplayEdge edge)
+    {
+        if (edge.IsBoundaryOrCrease || edge.TriangleIndices.Length != 2)
+        {
+            return edge.TriangleIndices.Any(triangleIndex => IsFrontFacing(triangles[triangleIndex]));
+        }
+
+        var firstFacing = ProjectedTriangleArea(triangles[edge.TriangleIndices[0]]);
+        var secondFacing = ProjectedTriangleArea(triangles[edge.TriangleIndices[1]]);
+        return Math.Abs(firstFacing) > 0.000001
+               && Math.Abs(secondFacing) > 0.000001
+               && Math.Sign(firstFacing) != Math.Sign(secondFacing);
+    }
+
+    private bool IsFrontFacing(StepTriangle3 triangle)
+    {
+        var normal = TriangleNormal(triangle);
+        var depthX = Math.Cos(pitch) * Math.Sin(yaw);
+        var depthY = Math.Sin(pitch);
+        var depthZ = Math.Cos(pitch) * Math.Cos(yaw);
+        return normal.X * depthX + normal.Y * depthY + normal.Z * depthZ > 0.0000001;
+    }
+
+    private double ProjectedTriangleArea(StepTriangle3 triangle)
+    {
+        var first = screenPoints[triangle.FirstIndex];
+        var second = screenPoints[triangle.SecondIndex];
+        var third = screenPoints[triangle.ThirdIndex];
+        return (second.X - first.X) * (third.Y - first.Y)
+               - (second.Y - first.Y) * (third.X - first.X);
+    }
+
+    private StepPoint3 TriangleNormal(StepTriangle3 triangle)
+    {
+        var first = points[triangle.FirstIndex];
+        var second = points[triangle.SecondIndex];
+        var third = points[triangle.ThirdIndex];
+        var ux = second.X - first.X;
+        var uy = second.Y - first.Y;
+        var uz = second.Z - first.Z;
+        var vx = third.X - first.X;
+        var vy = third.Y - first.Y;
+        var vz = third.Z - first.Z;
+        var x = uy * vz - uz * vy;
+        var y = uz * vx - ux * vz;
+        var z = ux * vy - uy * vx;
+        var length = Math.Sqrt(x * x + y * y + z * z);
+        return length <= 0.000000001 ? default : new StepPoint3(x / length, y / length, z / length);
+    }
+
+    private void BuildSolidModel()
+    {
+        if (solidGeometryModel is not null)
+        {
+            SolidScene.Children.Remove(solidGeometryModel);
+            solidGeometryModel = null;
+        }
+        if (triangles.Count == 0)
+        {
+            return;
+        }
+
+        var mesh = new MeshGeometry3D
+        {
+            Positions = new Point3DCollection(points.Select(point => new Point3D(point.X, point.Y, point.Z))),
+            TriangleIndices = new Int32Collection(triangles.SelectMany(triangle => new[]
+            {
+                triangle.FirstIndex,
+                triangle.SecondIndex,
+                triangle.ThirdIndex
+            }))
+        };
+        mesh.Freeze();
+        var diffuse = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(45, 136, 196)));
+        var specular = new SpecularMaterial(new SolidColorBrush(Color.FromRgb(210, 228, 240)), 28);
+        var material = new MaterialGroup();
+        material.Children.Add(diffuse);
+        material.Children.Add(specular);
+        material.Freeze();
+        solidGeometryModel = new GeometryModel3D(mesh, material) { BackMaterial = material };
+        SolidScene.Children.Add(solidGeometryModel);
+    }
+
+    private void UpdateSolidCamera(double scale)
+    {
+        var sinYaw = Math.Sin(yaw);
+        var cosYaw = Math.Cos(yaw);
+        var sinPitch = Math.Sin(pitch);
+        var cosPitch = Math.Cos(pitch);
+        var depth = new Vector3D(cosPitch * sinYaw, sinPitch, cosPitch * cosYaw);
+        var up = new Vector3D(-sinPitch * sinYaw, cosPitch, -sinPitch * cosYaw);
+        var extent = points.Select(point =>
+        {
+            var dx = point.X - modelCenter.X;
+            var dy = point.Y - modelCenter.Y;
+            var dz = point.Z - modelCenter.Z;
+            return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }).DefaultIfEmpty(1).Max();
+        var distance = Math.Max(1, extent * 4);
+        SolidCamera.Position = new Point3D(
+            modelCenter.X + depth.X * distance,
+            modelCenter.Y + depth.Y * distance,
+            modelCenter.Z + depth.Z * distance);
+        SolidCamera.LookDirection = -depth * distance;
+        SolidCamera.UpDirection = up;
+        SolidCamera.Width = Math.Max(0.000001, ViewerRoot.ActualWidth / scale);
+        SolidCamera.NearPlaneDistance = Math.Max(0.0001, distance - extent * 2);
+        SolidCamera.FarPlaneDistance = Math.Max(SolidCamera.NearPlaneDistance + 1, distance + extent * 2);
     }
 
     private StepPoint3 Transform(StepPoint3 point)
@@ -464,8 +699,41 @@ public partial class StepViewerControl : UserControl
         ModelCanvas.Children.Add(caption);
     }
 
-    private static StepPoint3 GeometryCentroid(IReadOnlyList<StepPoint3> modelPoints, IReadOnlyList<int> geometryPointIndices)
+    internal static StepPoint3 ModelCenterOfGravity(
+        IReadOnlyList<StepPoint3> modelPoints,
+        IReadOnlyList<StepTriangle3> modelTriangles,
+        IReadOnlyList<int> geometryPointIndices)
     {
+        if (modelTriangles.Count > 0)
+        {
+            var reference = modelPoints[modelTriangles[0].FirstIndex];
+            var weightedX = 0d;
+            var weightedY = 0d;
+            var weightedZ = 0d;
+            var signedVolume6 = 0d;
+            foreach (var triangle in modelTriangles)
+            {
+                var first = Relative(modelPoints[triangle.FirstIndex], reference);
+                var second = Relative(modelPoints[triangle.SecondIndex], reference);
+                var third = Relative(modelPoints[triangle.ThirdIndex], reference);
+                var volume6 = first.X * (second.Y * third.Z - second.Z * third.Y)
+                              - first.Y * (second.X * third.Z - second.Z * third.X)
+                              + first.Z * (second.X * third.Y - second.Y * third.X);
+                signedVolume6 += volume6;
+                weightedX += (first.X + second.X + third.X) * volume6;
+                weightedY += (first.Y + second.Y + third.Y) * volume6;
+                weightedZ += (first.Z + second.Z + third.Z) * volume6;
+            }
+
+            if (Math.Abs(signedVolume6) > 0.000000001)
+            {
+                return new StepPoint3(
+                    reference.X + weightedX / (4 * signedVolume6),
+                    reference.Y + weightedY / (4 * signedVolume6),
+                    reference.Z + weightedZ / (4 * signedVolume6));
+            }
+        }
+
         var x = 0d;
         var y = 0d;
         var z = 0d;
@@ -478,6 +746,11 @@ public partial class StepViewerControl : UserControl
 
         return new StepPoint3(x / geometryPointIndices.Count, y / geometryPointIndices.Count, z / geometryPointIndices.Count);
     }
+
+    private static StepPoint3 Relative(StepPoint3 point, StepPoint3 origin) => new(
+        point.X - origin.X,
+        point.Y - origin.Y,
+        point.Z - origin.Z);
 
     private static StepModelData Parse(string text)
     {
@@ -586,57 +859,32 @@ public partial class StepViewerControl : UserControl
         .Select(match => int.Parse(match.Groups["id"].Value, CultureInfo.InvariantCulture))
         .ToArray();
 
-}
-
-public sealed record StepMeasurement(double Distance, double DeltaX, double DeltaY, double DeltaZ);
-
-internal readonly record struct StepScreenTriangle(
-    Point First,
-    Point Second,
-    Point Third,
-    double Depth,
-    double Shade);
-
-public sealed class StepSolidDrawingHost : FrameworkElement
-{
-    private readonly DrawingVisual visual = new();
-    private static readonly SolidColorBrush[] ShadedBrushes = Enumerable.Range(0, 24).Select(index =>
+    private static string InnermostMessage(Exception exception)
     {
-        var shade = 0.3 + index / 23d * 0.7;
-        var brush = new SolidColorBrush(Color.FromRgb(
-            (byte)(45 * shade),
-            (byte)(136 * shade),
-            (byte)(196 * shade)));
-        brush.Freeze();
-        return brush;
-    }).ToArray();
-
-    public StepSolidDrawingHost() => AddVisualChild(visual);
-
-    public void Clear()
-    {
-        using var context = visual.RenderOpen();
+        while (exception.InnerException is not null)
+        {
+            exception = exception.InnerException;
+        }
+        return exception.Message;
     }
 
-    internal void Draw(IReadOnlyList<StepScreenTriangle> triangles)
+}
+
+public enum StepDisplayMode
+{
+    Shaded,
+    VisibleEdges,
+    Wireframe
+}
+
+public sealed class StepEdgeDrawingHost : FrameworkElement
+{
+    private readonly DrawingVisual visual = new();
+
+    public StepEdgeDrawingHost()
     {
-        using var context = visual.RenderOpen();
-        foreach (var triangle in triangles)
-        {
-            var geometry = new StreamGeometry();
-            using (var geometryContext = geometry.Open())
-            {
-                geometryContext.BeginFigure(triangle.First, true, true);
-                geometryContext.LineTo(triangle.Second, true, false);
-                geometryContext.LineTo(triangle.Third, true, false);
-            }
-            geometry.Freeze();
-            var shadeIndex = Math.Clamp(
-                (int)Math.Round(triangle.Shade * (ShadedBrushes.Length - 1)),
-                0,
-                ShadedBrushes.Length - 1);
-            context.DrawGeometry(ShadedBrushes[shadeIndex], null, geometry);
-        }
+        AddVisualChild(visual);
+        AddLogicalChild(visual);
     }
 
     protected override int VisualChildrenCount => 1;
@@ -644,4 +892,50 @@ public sealed class StepSolidDrawingHost : FrameworkElement
     protected override Visual GetVisualChild(int index) => index == 0
         ? visual
         : throw new ArgumentOutOfRangeException(nameof(index));
+
+    internal void Clear()
+    {
+        using var context = visual.RenderOpen();
+    }
+
+    internal void Draw(IReadOnlyList<StepScreenEdge> edges, StepDisplayMode mode)
+    {
+        var brush = new SolidColorBrush(mode == StepDisplayMode.Wireframe
+            ? Color.FromRgb(38, 77, 105)
+            : Color.FromRgb(17, 42, 61));
+        brush.Freeze();
+        var pen = new Pen(brush, mode == StepDisplayMode.Wireframe ? 0.8 : 1.15);
+        pen.Freeze();
+        var geometry = new StreamGeometry();
+        using (var geometryContext = geometry.Open())
+        {
+            foreach (var edge in edges)
+            {
+                geometryContext.BeginFigure(edge.Start, false, false);
+                geometryContext.LineTo(edge.End, true, false);
+            }
+        }
+        geometry.Freeze();
+        using var context = visual.RenderOpen();
+        context.DrawGeometry(null, pen, geometry);
+    }
 }
+
+internal sealed class StepDisplayEdgeBuilder(int firstPointIndex, int secondPointIndex)
+{
+    public int FirstPointIndex { get; } = firstPointIndex;
+    public int SecondPointIndex { get; } = secondPointIndex;
+    public List<int> TriangleIndices { get; } = [];
+}
+
+internal sealed record StepDisplayEdge(
+    int FirstPointIndex,
+    int SecondPointIndex,
+    bool IsBoundaryOrCrease,
+    int[] TriangleIndices);
+
+internal readonly record struct StepScreenEdge(Point Start, Point End);
+
+internal readonly record struct StepVertexKey(long X, long Y, long Z);
+
+public sealed record StepMeasurement(double Distance, double DeltaX, double DeltaY, double DeltaZ);

@@ -19,6 +19,8 @@ The repository contains an implemented .NET 10 Server host and server-owned SQLi
 
 The API-only Windows client has a compact connection/Edit Mode header and a dedicated Setup page for connection settings, recurring Working Calendar CRUD with usage tags/breaks/dated exceptions, one-window overnight support, and dedicated Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holiday definitions, report/email settings, and staged legacy Excel preview/mapping/commit. Its operational surfaces cover Case/Operation/Order/Batch workflows, allocation-safe optimistic Order editing, a compact manual Machine Planning Board with explicit player-style Start/Pause/Finish/Reset controls and quantity/Order/time projections, and one read-only Timeline shared by the embedded tab and a separate closable window. Deletion is relationship-aware and never removes external files. TV and E-Ink device surfaces are read-only and have no Edit Mode integration. Full human authentication, route reordering, package approval UI/roles and retention, full conflict policy, combined/multiple overnight-window and Calendar archive policy, and physical device firmware remain incomplete.
 
+The Case workspace contains a client-local STEP presentation boundary. `OCCSharp` dynamically invokes OpenCascade to read the selected B-rep and tessellate its faces under explicit file/vertex/triangle limits; WPF `Viewport3D` owns depth-buffered display and PNG capture. The same mesh, camera, Fit target, and orbit target serve three presentation-only modes: Shaded, Visible edges (boundary/crease/silhouette overlay), and Wireframe (unique tessellation edges with faces hidden). No STEP bytes, mesh, display mode, camera state, or measurement is sent to the Server or stored in SQLite. Fit uses only tessellated body vertices, excluding STEP coordinate-system entities. Closed consistently oriented meshes use a signed-volume center of gravity as their orbit target; open/non-solid geometry falls back to its geometry-vertex centroid. If OpenCascade cannot produce faces, the UI labels and displays the bounded legacy edge/point fallback rather than fabricating a solid.
+
 ## 3. System context
 
 ```mermaid
@@ -247,9 +249,11 @@ flowchart TB
 
 - Development may run the Server as a console/executable.
 - Production should run it as a Windows Service using a dedicated identity with least-privilege access to the database, approved Case Working Folders, logs, and backup destination.
+- The implemented Server MSI installs self-contained binaries under Program Files, registers the automatic `Meimad Planner Server` service, and passes explicit `%ProgramData%\MeimadPlanner\Server` database/backup/E-Ink paths. MSI upgrades and uninstall leave this mutable data tree intact. The current package uses LocalSystem as an installation baseline; production must replace or explicitly approve that identity according to required file/network access.
+- The separate client MSI installs the self-contained WPF payload and an all-users Start Menu shortcut. Its ordinary per-user settings remain under LocalAppData and are not managed as authoritative data by the installer.
 - Only the Server host opens the SQLite file.
 - The service binds only to the approved factory interface. No router forwarding or public endpoint is part of MVP.
-- Host discovery, port, TLS, certificates, service account, installer/update method, and firewall policy are TBD.
+- Host discovery, port, TLS, certificates, final service account, code signing, managed rollout, and firewall policy are TBD.
 
 ## 6. Authoritative write flow
 

@@ -28,10 +28,11 @@ The MVP is LAN-only. It excludes public access, automatic scheduling, ERP synchr
 | `AGENTS.md` | Permanent product and engineering rules for work in this repository. |
 | `docs/` | Normalized requirements, target design, contract, and delivery plan. |
 | `server/` | Implemented Server host, SQLite boundary/migrations/verified backup, planning-resource slices, and pure domain time engine. |
-| `client-windows/` | Implemented WPF compact connection/Edit Mode shell, dedicated Setup page, Case workspace with a local simple STEP wireframe/snapshot viewer, compact manual Machine Board, and embedded/separate-window read-only Timeline. |
+| `client-windows/` | Implemented WPF compact connection/Edit Mode shell, dedicated Setup page, Case workspace with a local OpenCascade-tessellated STEP viewer offering Shaded, Visible edges, and Wireframe modes plus measurement/snapshot tools, compact manual Machine Board, and embedded/separate-window read-only Timeline. |
 | `client-tv-dashboard/` | Implemented dependency-free read-only fullscreen/kiosk dashboard served by the Server. |
 | `tests/` | Server and Windows-client settings/API/presentation tests, plus migration, persistence, domain/API, concurrency, backup, allocation/assignment, graph, and foreign-key tests. |
-| `scripts/` | Future development, migration, deployment, backup, and verification tooling. |
+| `installer/` | WiX-based self-contained Windows client and Server MSI packaging, build, and non-installing payload verification. |
+| `scripts/` | Future migration, backup, and additional verification tooling. |
 
 ## Documentation
 
@@ -74,6 +75,15 @@ dotnet build .\server\Meimad.Planner.Server\Meimad.Planner.Server.csproj -c Rele
 
 The resulting executables are under `client-windows\Meimad.Planner.Client.Windows\bin\Release\net10.0-windows\win-x64` and `server\Meimad.Planner.Server\bin\Release\net10.0\win-x64`.
 
+Build the separate Windows client and Server installers with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\build-installers.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\verify-installers.ps1
+```
+
+The self-contained x64 MSI files are written to `installer\artifacts`. The client package creates an all-users Start Menu shortcut. The Server package registers the automatic `Meimad Planner Server` Windows Service; binaries are installed below Program Files while the database, verified backups, and E-Ink packages are directed to `%ProgramData%\MeimadPlanner\Server`. Uninstall/upgrade does not remove that mutable state. The installer retains loopback-only hosting by default; production LAN/TLS/authentication/firewall/service-identity decisions still require site-specific acceptance.
+
 The client defaults to `http://127.0.0.1:5080/`. Its Server URL, local display name, and stable client ID are stored in `%LOCALAPPDATA%\Meimad Planner\client-settings.json`. This is a development-only identity placeholder, not authentication. The client project has no SQLite dependency and never receives a database path.
 
 The default endpoint is `http://127.0.0.1:5080`. Change `Server.Host` and `Server.Port` in `appsettings.json`, set `MEIMAD_Server__Host` / `MEIMAD_Server__Port`, or pass command-line overrides:
@@ -82,7 +92,7 @@ The default endpoint is `http://127.0.0.1:5080`. Change `Server.Host` and `Serve
 dotnet run --project .\server\Meimad.Planner.Server\Meimad.Planner.Server.csproj -- --Server:Host=0.0.0.0 --Server:Port=5080
 ```
 
-The same executable uses normal console lifetime during development and switches to Windows Service lifetime when later registered and launched by the Windows Service Control Manager. Service installation is not part of this skeleton.
+The same executable uses normal console lifetime during development and switches to Windows Service lifetime when registered and launched by the Windows Service Control Manager. The Server MSI provides that registration baseline; service-account hardening and live install/upgrade/recovery acceptance remain deployment tasks.
 
 SQLite defaults to `data/meimad-planner.db` beneath the Server content root. Change `Database.Path` in `appsettings.json`, set `MEIMAD_Database__Path`, or pass `--Database:Path=<server-local-path>`. Startup creates the parent directory, enables foreign keys on every Server connection, and applies missing ordered migrations transactionally. UNC and detected mapped network-share paths are rejected. Clients must use the future API and must never receive or open this database path.
 
