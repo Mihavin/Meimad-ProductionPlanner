@@ -17,7 +17,8 @@ internal sealed record Machine(
     DateTimeOffset UpdatedAt,
     string? PicturePath = null,
     string? MachineTypeId = null,
-    IReadOnlyList<string>? MachineTypeCapabilities = null);
+    IReadOnlyList<string>? MachineTypeCapabilities = null,
+    bool RespectMasterCalendar = true);
 
 internal sealed record MachineValues(
     string? Number,

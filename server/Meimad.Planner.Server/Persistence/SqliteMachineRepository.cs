@@ -43,7 +43,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             SELECT machine_types.capabilities_json
             FROM machine_types
             WHERE machine_types.id = machines.machine_type_id
-        ), '[]') AS machine_type_capabilities_json
+        ), '[]') AS machine_type_capabilities_json,
+        machines.respect_master_calendar
         """;
 
     private readonly SqliteDatabase database;
@@ -80,11 +81,13 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             INSERT INTO machines (
                 id, number, name, machine_type, axis_type, capabilities_json,
                 working_calendar_id, display_configuration_json, status, picture_reference,
-                is_active, display_enabled, version, created_at, updated_at, machine_type_id)
+                is_active, display_enabled, version, created_at, updated_at, machine_type_id,
+                respect_master_calendar)
             VALUES (
                 $id, $number, $name, $processType, $axisType, $capabilities,
                 $calendarId, '{}', $status, $picturePath,
-                $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId);
+                $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId,
+                $respectMasterCalendar);
             """;
         AddWriteParameters(command, machine);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -161,6 +164,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 display_enabled = $displayEnabled,
                 picture_reference = $picturePath,
                 machine_type_id = $machineTypeId,
+                respect_master_calendar = $respectMasterCalendar,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
@@ -337,6 +341,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         command.Parameters.AddWithValue(
             "$machineTypeId",
             machine.MachineTypeId is null ? DBNull.Value : machine.MachineTypeId);
+        command.Parameters.AddWithValue("$respectMasterCalendar", machine.RespectMasterCalendar ? 1 : 0);
     }
 
     private static Machine ReadMachine(SqliteDataReader reader)
@@ -361,7 +366,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             ParseInstant(reader.GetString(14)),
             reader.IsDBNull(9) ? null : reader.GetString(9),
             reader.IsDBNull(15) ? null : reader.GetString(15),
-            typeCapabilities);
+            typeCapabilities,
+            reader.GetInt32(17) == 1);
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

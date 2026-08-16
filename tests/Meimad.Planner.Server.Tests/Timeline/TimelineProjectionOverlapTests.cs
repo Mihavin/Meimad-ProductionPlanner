@@ -6,6 +6,14 @@ namespace Meimad.Planner.Server.Tests.Timeline;
 public sealed class TimelineProjectionOverlapTests
 {
     [Fact]
+    public void Duplicate_block_diagnostic_names_assignment_operation_and_machine()
+    {
+        Assert.Equal(
+            "DUPLICATE_TIMELINE_BLOCK assignmentId={AssignmentId} operationId={OperationId} machineId={MachineId}",
+            TimelineProjectionService.DuplicateTimelineBlockLogTemplate);
+    }
+
+    [Fact]
     public void Overlapping_forecast_blocks_every_later_backlog_row_without_leapfrogging()
     {
         var conflicts = new List<TimelineProjectionConflict>();

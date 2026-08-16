@@ -63,7 +63,13 @@ internal sealed record NewCaseOperation(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false);
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true);
 
 internal sealed record CaseOperationDetails(
     string CaseOperationId,
@@ -85,4 +91,10 @@ internal sealed record CaseOperationDetails(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false);
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true);

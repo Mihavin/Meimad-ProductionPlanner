@@ -88,3 +88,11 @@ internal sealed class ProductionBatchNumberConflictException : Exception
     {
     }
 }
+
+internal sealed class ProductionBatchRouteRequiredException : Exception
+{
+    internal ProductionBatchRouteRequiredException()
+        : base("Cannot generate Production Batch because this Case has no defined operations. Create operations first.")
+    {
+    }
+}

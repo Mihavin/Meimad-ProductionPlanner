@@ -82,6 +82,14 @@ internal static class ProductionBatchEndpoints
                 exception.Message,
                 httpContext);
         }
+        catch (ProductionBatchRouteRequiredException exception)
+        {
+            return Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "case_operations_required",
+                exception.Message,
+                httpContext);
+        }
         catch (EditModeMutationException exception)
         {
             return Error(

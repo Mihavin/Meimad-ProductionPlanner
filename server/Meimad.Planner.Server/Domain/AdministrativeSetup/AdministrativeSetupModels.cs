@@ -4,7 +4,8 @@ internal sealed record EmployeeResource(
     string ResourceId, string EmployeeNumber, string Name, string ResourceType, string? Email,
     string FirstName, string LastName, IReadOnlyList<string> Skills, string AssignedCalendarId,
     string? PhotoPath, string? Notes, bool IsActive, int Version, DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    bool RespectMasterCalendar = true)
 {
     internal bool IsAvailableForFuturePlanning => IsActive && !string.IsNullOrWhiteSpace(AssignedCalendarId);
 }

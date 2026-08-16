@@ -210,7 +210,10 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                    dependency_type, predecessor_case_operation_id, simultaneous_group_key,
                    version, created_at, updated_at,
                    qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                   automatic_loading, load_unload_every_n_parts, day_shift_only
+                   automatic_loading, load_unload_every_n_parts, day_shift_only,
+                   has_external_delay, external_delay_description, external_delay_duration,
+                   external_delay_duration_unit, external_delay_calendar_id,
+                   external_delay_respect_master_calendar
             FROM case_operations
             WHERE case_id = $caseId
             ORDER BY route_position, operation_number, id;
@@ -236,7 +239,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 ParseInstant(reader.GetString(12)),
                 ParseInstant(reader.GetString(13)),
                 reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16) == 1,
-                reader.GetInt32(17) == 1, GetNullableInt32(reader, 18), reader.GetInt32(19) == 1));
+                reader.GetInt32(17) == 1, GetNullableInt32(reader, 18), reader.GetInt32(19) == 1,
+                reader.GetInt32(20) == 1, GetNullableString(reader, 21), reader.GetDouble(22),
+                reader.GetString(23), GetNullableString(reader, 24), reader.GetInt32(25) == 1));
         }
 
         return items;
@@ -293,7 +298,13 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             operation.LoadUnloadRequiresWorker,
             operation.AutomaticLoading,
             operation.LoadUnloadEveryNParts,
-            operation.DayShiftOnly);
+            operation.DayShiftOnly,
+            operation.HasExternalDelay,
+            operation.ExternalDelayDescription,
+            operation.ExternalDelayDuration,
+            operation.ExternalDelayDurationUnit,
+            operation.ExternalDelayCalendarId,
+            operation.RespectMasterCalendar);
 
         ValidateGraph(operation.CaseId, [.. current, candidate]);
 
@@ -306,14 +317,20 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 dependency_type, predecessor_case_operation_id, simultaneous_group_key,
                 version, created_at, updated_at,
                 qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                automatic_loading, load_unload_every_n_parts, day_shift_only)
+                automatic_loading, load_unload_every_n_parts, day_shift_only,
+                has_external_delay, external_delay_description, external_delay_duration,
+                external_delay_duration_unit, external_delay_calendar_id,
+                external_delay_respect_master_calendar)
             VALUES (
                 $id, $caseId, $operationNumber, $routePosition, $name,
                 $requiredMachineType, $setupSeconds, $cycleSeconds,
                 $dependencyType, $predecessorId, $groupKey,
                 1, $createdAt, $createdAt,
                 $qaSeconds, $loadUnloadSeconds, $loadUnloadRequiresWorker,
-                $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly);
+                $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly,
+                $hasExternalDelay, $externalDelayDescription, $externalDelayDuration,
+                $externalDelayDurationUnit, $externalDelayCalendarId,
+                $externalDelayRespectMasterCalendar);
             """;
         command.Parameters.AddWithValue("$id", candidate.CaseOperationId);
         command.Parameters.AddWithValue("$caseId", candidate.CaseId);
@@ -334,6 +351,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         command.Parameters.AddWithValue("$automaticLoading", candidate.AutomaticLoading ? 1 : 0);
         AddNullableInteger(command, "$loadUnloadEveryNParts", candidate.LoadUnloadEveryNParts);
         command.Parameters.AddWithValue("$dayShiftOnly", candidate.DayShiftOnly ? 1 : 0);
+        command.Parameters.AddWithValue("$hasExternalDelay", candidate.HasExternalDelay ? 1 : 0);
+        AddNullableText(command, "$externalDelayDescription", candidate.ExternalDelayDescription);
+        command.Parameters.AddWithValue("$externalDelayDuration", candidate.ExternalDelayDuration);
+        command.Parameters.AddWithValue("$externalDelayDurationUnit", candidate.ExternalDelayDurationUnit);
+        AddNullableText(command, "$externalDelayCalendarId", candidate.ExternalDelayCalendarId);
+        command.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", candidate.RespectMasterCalendar ? 1 : 0);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(candidate.CreatedAt));
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -392,6 +415,14 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 Select(command.AutomaticLoading, current.AutomaticLoading),
                 Select(command.LoadUnloadEveryNParts, current.LoadUnloadEveryNParts),
                 Select(command.DayShiftOnly, current.DayShiftOnly)));
+        var hasExternalDelay = Select(command.HasExternalDelay, current.HasExternalDelay);
+        var externalDelayDescription = Select(command.ExternalDelayDescription, current.ExternalDelayDescription)?.Trim();
+        var externalDelayDuration = Select(command.ExternalDelayDuration, current.ExternalDelayDuration);
+        var externalDelayDurationUnit = Select(command.ExternalDelayDurationUnit, current.ExternalDelayDurationUnit)?.Trim().ToLowerInvariant()
+            ?? "hours";
+        var externalDelayCalendarId = Select(command.ExternalDelayCalendarId, current.ExternalDelayCalendarId)?.Trim();
+        var respectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar);
+        ValidateExternalDelay(hasExternalDelay, externalDelayDescription, externalDelayDuration, externalDelayDurationUnit, externalDelayCalendarId);
         var candidate = current with
         {
             OperationNumber = values.OperationNumber,
@@ -408,6 +439,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             AutomaticLoading = values.AutomaticLoading,
             LoadUnloadEveryNParts = values.LoadUnloadEveryNParts,
             DayShiftOnly = values.DayShiftOnly,
+            HasExternalDelay = hasExternalDelay,
+            ExternalDelayDescription = externalDelayDescription,
+            ExternalDelayDuration = externalDelayDuration,
+            ExternalDelayDurationUnit = externalDelayDurationUnit,
+            ExternalDelayCalendarId = externalDelayCalendarId,
+            RespectMasterCalendar = respectMasterCalendar,
             Version = expectedVersion + 1,
             UpdatedAt = updatedAt
         };
@@ -435,6 +472,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 automatic_loading = $automaticLoading,
                 load_unload_every_n_parts = $loadUnloadEveryNParts,
                 day_shift_only = $dayShiftOnly,
+                has_external_delay = $hasExternalDelay,
+                external_delay_description = $externalDelayDescription,
+                external_delay_duration = $externalDelayDuration,
+                external_delay_duration_unit = $externalDelayDurationUnit,
+                external_delay_calendar_id = $externalDelayCalendarId,
+                external_delay_respect_master_calendar = $externalDelayRespectMasterCalendar,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND case_id = $caseId AND version = $expectedVersion;
@@ -457,6 +500,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         update.Parameters.AddWithValue("$automaticLoading", candidate.AutomaticLoading ? 1 : 0);
         AddNullableInteger(update, "$loadUnloadEveryNParts", candidate.LoadUnloadEveryNParts);
         update.Parameters.AddWithValue("$dayShiftOnly", candidate.DayShiftOnly ? 1 : 0);
+        update.Parameters.AddWithValue("$hasExternalDelay", candidate.HasExternalDelay ? 1 : 0);
+        AddNullableText(update, "$externalDelayDescription", candidate.ExternalDelayDescription);
+        update.Parameters.AddWithValue("$externalDelayDuration", candidate.ExternalDelayDuration);
+        update.Parameters.AddWithValue("$externalDelayDurationUnit", candidate.ExternalDelayDurationUnit);
+        AddNullableText(update, "$externalDelayCalendarId", candidate.ExternalDelayCalendarId);
+        update.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", candidate.RespectMasterCalendar ? 1 : 0);
         update.Parameters.AddWithValue("$version", candidate.Version);
         update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
         update.Parameters.AddWithValue("$updatedAt", FormatInstant(candidate.UpdatedAt));
@@ -467,6 +516,31 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
         await transaction.CommitAsync(cancellationToken);
         return candidate;
+    }
+
+    private static void ValidateExternalDelay(
+        bool enabled,
+        string? description,
+        double duration,
+        string unit,
+        string? calendarId)
+    {
+        if (!enabled && duration == 0)
+        {
+            return;
+        }
+
+        if (!enabled || duration <= 0 || string.IsNullOrWhiteSpace(description)
+            || unit is not ("hours" or "days" or "working_days")
+            || (unit == "working_days"
+                && (duration != Math.Truncate(duration) || string.IsNullOrWhiteSpace(calendarId))))
+        {
+            throw new CaseOperationValidationException([
+                new CaseOperationValidationIssue(
+                    "externalDelay",
+                    "invalid_external_delay",
+                    "Enabled external delay requires a description and positive duration. Working days require a whole-number duration and selected Calendar.")]);
+        }
     }
 
     public async Task<PlannerCase?> UpdateAsync(
@@ -581,7 +655,10 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                    dependency_type, predecessor_case_operation_id, simultaneous_group_key,
                    version, created_at, updated_at,
                    qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                   automatic_loading, load_unload_every_n_parts, day_shift_only
+                   automatic_loading, load_unload_every_n_parts, day_shift_only,
+                   has_external_delay, external_delay_description, external_delay_duration,
+                   external_delay_duration_unit, external_delay_calendar_id,
+                   external_delay_respect_master_calendar
             FROM case_operations
             WHERE case_id = $caseId
             ORDER BY route_position, operation_number, id;
@@ -607,7 +684,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 ParseInstant(reader.GetString(12)),
                 ParseInstant(reader.GetString(13)),
                 reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16) == 1,
-                reader.GetInt32(17) == 1, GetNullableInt32(reader, 18), reader.GetInt32(19) == 1));
+                reader.GetInt32(17) == 1, GetNullableInt32(reader, 18), reader.GetInt32(19) == 1,
+                reader.GetInt32(20) == 1, GetNullableString(reader, 21), reader.GetDouble(22),
+                reader.GetString(23), GetNullableString(reader, 24), reader.GetInt32(25) == 1));
         }
 
         return items;

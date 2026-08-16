@@ -1,6 +1,8 @@
 # Implementation Plan
 
-- **Status:** Server foundation, SQLite schema v25, staged legacy Excel working-plan import, core planning-resource and Setup slices, extended Operation timing, Machine maintenance/breakdown lifecycle, assignment-owned planning modes, derived Batch/Order lifecycles, one canonical embedded/separate-window Timeline, compact Machine Board, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, and Windows Case/Operation/Order/Batch/Machine/Machine-Type/Calendar/Machine-Availability/administrative workspaces implemented; package approval/retention and full conflict policy remain unimplemented
+The eleven-item task list extends existing authority boundaries: staged Case/Order import, a Batch route guard, Batch-Operation backlog/criticality projection, schema-v26 external delay and master-calendar layering, shared icons/application icon, STEP bounding/reference tools, and the row TV dashboard.
+
+- **Status:** Server foundation, SQLite schema v26, staged legacy Excel working-plan import, core planning-resource and Setup slices, extended Operation timing, Machine maintenance/breakdown lifecycle, assignment-owned planning modes, derived Batch/Order lifecycles, one canonical embedded/separate-window Timeline, compact Machine Board, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, and Windows Case/Operation/Order/Batch/Machine/Machine-Type/Calendar/Machine-Availability/administrative workspaces implemented; package approval/retention and full conflict policy remain unimplemented
 - **Sequence source:** Functional Specification v0.3, expanded with decision and verification gates
 
 ## 1. Delivery principles
@@ -181,7 +183,7 @@ Implemented Machine behavior covers master-data normalization, unique numbers, s
 ### Tests and exit gate
 
 - Client tests cover health/Edit Mode parsing, Case query routes, ETag/generation-protected Case saves, Case/tab population, Order/Batch create payloads and editor generation, explicit combined/stock/scrap allocation entry, external-folder launch, required headers/generation, safe Server errors, settings persistence/validation, local identity, and unavailable-Server behavior.
-- Excel-wizard tests cover automatic draft as preview-only state, full-quantity stock policy, exact-Machine/unique-compatible-Operation assignment, ambiguous Pool/Skip fallback with visible reasons and explicit confirmation gating, preservation of explicit decisions, and the absence of automatic Commit, Machine/route creation, compatibility override, or existing-record update.
+- Excel-wizard tests cover automatic draft as preview-only state; exact A/O/F/D Case, B/L/E/N Order, and P/H Batch mappings; aggregation of repeated related Order rows; one Batch per Part+Batch Number; explicit related-Order allocations balanced to summed remaining demand; exact-Machine/unique-compatible-Operation assignment; ambiguous Pool/Skip fallback; preservation of explicit decisions; and the absence of automatic Commit, Machine/route invention, compatibility override, or existing-record update.
 - Editing controls are disabled without current authority or confirmed Server health.
 - Verified the client assembly has no SQLite reference and its local settings contain no database path.
 - Full planning-route validation, stale resource revisions, reconnect compatibility, and production-use sizing remain future exit work.

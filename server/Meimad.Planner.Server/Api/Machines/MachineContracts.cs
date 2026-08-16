@@ -16,7 +16,8 @@ internal sealed record CreateMachineRequest(
     bool? IsActive,
     bool? DisplayEnabled,
     string? PicturePath,
-    string? MachineTypeId = null)
+    string? MachineTypeId = null,
+    bool? RespectMasterCalendar = true)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -28,7 +29,8 @@ internal sealed record CreateMachineRequest(
         IsActive,
         DisplayEnabled,
         PicturePath,
-        MachineTypeId);
+        MachineTypeId,
+        RespectMasterCalendar);
 }
 
 internal sealed class PatchMachineRequest
@@ -50,7 +52,8 @@ internal sealed class PatchMachineRequest
             reader.Boolean("isActive"),
             reader.Boolean("displayEnabled"),
             reader.String("picturePath"),
-            reader.String("machineTypeId"));
+            reader.String("machineTypeId"),
+            reader.Boolean("respectMasterCalendar"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -61,7 +64,7 @@ internal sealed class PatchMachineRequest
         [
             "number", "name", "processType", "axisType", "capabilities",
             "workingCalendarId", "isActive", "displayEnabled", "picturePath",
-            "machineTypeId"
+            "machineTypeId", "respectMasterCalendar"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -180,7 +183,8 @@ internal sealed record MachineResponse(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? MachineTypeId)
+    string? MachineTypeId,
+    bool RespectMasterCalendar)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -198,7 +202,8 @@ internal sealed record MachineResponse(
         machine.Version,
         machine.CreatedAt,
         machine.UpdatedAt,
-        machine.MachineTypeId);
+        machine.MachineTypeId,
+        machine.RespectMasterCalendar);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

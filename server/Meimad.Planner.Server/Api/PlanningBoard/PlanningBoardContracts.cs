@@ -58,7 +58,11 @@ internal sealed record PlanningBoardOperationResponse(
     string? ActualMachineId,
     string? MachineAssignmentId,
     int? AssignmentVersion,
-    string PlanningMode)
+    string PlanningMode,
+    string? WorkFinishDate,
+    DateTimeOffset? LatestStart,
+    string? LatestStartWarning,
+    bool IsLatestStartOverdue)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -93,7 +97,11 @@ internal sealed record PlanningBoardOperationResponse(
         operation.ActualMachineId,
         operation.MachineAssignmentId,
         operation.AssignmentVersion,
-        operation.PlanningMode);
+        operation.PlanningMode,
+        operation.WorkFinishDate,
+        operation.LatestStart,
+        operation.LatestStartWarning,
+        operation.IsLatestStartOverdue);
 }
 
 internal sealed record PlanningBoardMachineResponse(

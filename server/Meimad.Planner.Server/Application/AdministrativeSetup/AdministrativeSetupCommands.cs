@@ -11,13 +11,14 @@ internal readonly record struct AdminField<T>(bool IsSpecified, T Value)
 internal sealed record CreateEmployeeResourceCommand(
     string? EmployeeNumber, string? FirstName, string? LastName, string? ResourceType,
     IReadOnlyList<string?>? Skills, string? AssignedCalendarId, string? PhotoPath, string? Notes,
-    string? Email, bool IsActive);
+    string? Email, bool IsActive, bool RespectMasterCalendar = true);
 
 internal sealed record UpdateEmployeeResourceCommand(
     AdminField<string?> EmployeeNumber, AdminField<string?> FirstName, AdminField<string?> LastName,
     AdminField<string?> ResourceType, AdminField<IReadOnlyList<string?>?> Skills,
     AdminField<string?> AssignedCalendarId, AdminField<string?> PhotoPath, AdminField<string?> Notes,
-    AdminField<string?> Email, AdminField<bool?> IsActive);
+    AdminField<string?> Email, AdminField<bool?> IsActive,
+    AdminField<bool?> RespectMasterCalendar = default);
 
 internal sealed record CreateEmployeeCalendarExceptionCommand(
     DateOnly? Date, string? ExceptionType, bool IsFullDay,

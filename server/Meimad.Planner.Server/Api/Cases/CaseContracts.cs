@@ -50,7 +50,13 @@ internal sealed record CreateCaseOperationRequest(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false)
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true)
 {
     internal CreateCaseOperationCommand ToCommand() => new(
         OperationNumber,
@@ -66,7 +72,13 @@ internal sealed record CreateCaseOperationRequest(
         LoadUnloadRequiresWorker,
         AutomaticLoading,
         LoadUnloadEveryNParts,
-        DayShiftOnly);
+        DayShiftOnly,
+        HasExternalDelay,
+        ExternalDelayDescription,
+        ExternalDelayDuration,
+        ExternalDelayDurationUnit,
+        ExternalDelayCalendarId,
+        RespectMasterCalendar);
 }
 
 internal sealed class PatchCaseRequest
@@ -202,7 +214,13 @@ internal sealed class PatchCaseOperationRequest
             reader.ReadBoolean("loadUnloadRequiresWorker"),
             reader.ReadBoolean("automaticLoading"),
             reader.ReadNullableInt32("loadUnloadEveryNParts"),
-            reader.ReadBoolean("dayShiftOnly"));
+            reader.ReadBoolean("dayShiftOnly"),
+            reader.ReadBoolean("hasExternalDelay"),
+            reader.ReadString("externalDelayDescription"),
+            reader.ReadDouble("externalDelayDuration"),
+            reader.ReadString("externalDelayDurationUnit"),
+            reader.ReadString("externalDelayCalendarId"),
+            reader.ReadBoolean("respectMasterCalendar"));
 
         reader.ThrowIfInvalid();
         return command;
@@ -225,7 +243,13 @@ internal sealed class PatchCaseOperationRequest
             "loadUnloadRequiresWorker",
             "automaticLoading",
             "loadUnloadEveryNParts",
-            "dayShiftOnly"
+            "dayShiftOnly",
+            "hasExternalDelay",
+            "externalDelayDescription",
+            "externalDelayDuration",
+            "externalDelayDurationUnit",
+            "externalDelayCalendarId",
+            "respectMasterCalendar"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -302,6 +326,22 @@ internal sealed class PatchCaseOperationRequest
 
             AddTypeIssue(name, "boolean");
             return OptionalField<bool>.Unspecified;
+        }
+
+        internal OptionalField<double> ReadDouble(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return OptionalField<double>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out var value))
+            {
+                return OptionalField<double>.Specified(value);
+            }
+
+            AddTypeIssue(name, "number");
+            return OptionalField<double>.Unspecified;
         }
 
         internal OptionalField<string?> ReadString(string name)
@@ -406,7 +446,13 @@ internal sealed record CaseOperationResponse(
     bool LoadUnloadRequiresWorker,
     bool AutomaticLoading,
     int? LoadUnloadEveryNParts,
-    bool DayShiftOnly)
+    bool DayShiftOnly,
+    bool HasExternalDelay,
+    string? ExternalDelayDescription,
+    double ExternalDelayDuration,
+    string ExternalDelayDurationUnit,
+    string? ExternalDelayCalendarId,
+    bool RespectMasterCalendar)
 {
     internal static CaseOperationResponse FromApplication(CaseOperationDetails operation) => new(
         operation.CaseOperationId,
@@ -428,7 +474,13 @@ internal sealed record CaseOperationResponse(
         operation.LoadUnloadRequiresWorker,
         operation.AutomaticLoading,
         operation.LoadUnloadEveryNParts,
-        operation.DayShiftOnly);
+        operation.DayShiftOnly,
+        operation.HasExternalDelay,
+        operation.ExternalDelayDescription,
+        operation.ExternalDelayDuration,
+        operation.ExternalDelayDurationUnit,
+        operation.ExternalDelayCalendarId,
+        operation.RespectMasterCalendar);
 }
 
 internal sealed record CaseOperationListResponse(

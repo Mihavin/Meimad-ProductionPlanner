@@ -44,6 +44,12 @@ public partial class StepViewerControl : UserControl
     private double pitch = 25 * Math.PI / 180;
     private double zoom = 1;
     private StepDisplayMode displayMode = StepDisplayMode.Shaded;
+    private StepReferenceFrame? customReference;
+    private bool showBoundingBox = true;
+    private bool isBuildingReference;
+    private readonly List<int> referenceSelection = [];
+    private bool isBuildingFaceReference;
+    private int? referenceTriangleIndex;
 
     public StepViewerControl()
     {
@@ -69,10 +75,83 @@ public partial class StepViewerControl : UserControl
     public string MeasurementText { get; private set; } = "Select Distance, then click two model vertices.";
 
     public StepMeasurement? CurrentMeasurement { get; private set; }
+    public StepBoundingBox? CurrentBoundingBox => HasModel ? CalculateBoundingBox(customReference) : null;
 
     public event EventHandler? ModelStateChanged;
 
     public event EventHandler? MeasurementChanged;
+    public event EventHandler? ReferenceChanged;
+
+    public void ShowBoundingBox(bool visible)
+    {
+        showBoundingBox = visible;
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void ClearCustomReference()
+    {
+        customReference = null;
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void BeginCustomReferenceByPoints()
+    {
+        if (!HasModel) return;
+        referenceSelection.Clear();
+        isBuildingReference = true;
+        MeasurementText = "Reference: select 3 base-plane points, then 2 direction points.";
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void BeginCustomReferenceByFaceAndEdge()
+    {
+        if (!IsSolidModel) throw new InvalidOperationException("Face selection requires a tessellated solid STEP model.");
+        isBuildingFaceReference = true;
+        referenceTriangleIndex = null;
+        MeasurementText = "Reference: click a planar face, then click a visible edge for X direction.";
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetCustomReferenceByPoints(int baseA, int baseB, int baseC, int directionA, int directionB)
+    {
+        foreach (var index in new[] { baseA, baseB, baseC, directionA, directionB })
+        {
+            if (index < 0 || index >= points.Count) throw new ArgumentOutOfRangeException(nameof(baseA));
+        }
+        customReference = BuildReference(points[baseA], points[baseB], points[baseC], points[directionA], points[directionB]);
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetCustomReferenceByFaceAndEdge(int triangleIndex, int edgeIndex)
+    {
+        if (triangleIndex < 0 || triangleIndex >= triangles.Count) throw new ArgumentOutOfRangeException(nameof(triangleIndex));
+        if (edgeIndex < 0 || edgeIndex >= displayEdges.Count) throw new ArgumentOutOfRangeException(nameof(edgeIndex));
+        var face = triangles[triangleIndex];
+        var edge = displayEdges[edgeIndex];
+        customReference = BuildReference(points[face.FirstIndex], points[face.SecondIndex], points[face.ThirdIndex],
+            points[edge.FirstPointIndex], points[edge.SecondPointIndex]);
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void FlipReferenceAxis(string axis)
+    {
+        if (customReference is null) return;
+        customReference = axis.Trim().ToUpperInvariant() switch
+        {
+            "X" => customReference with { X = Scale(customReference.X, -1), Y = Scale(customReference.Y, -1) },
+            "Y" => customReference with { Y = Scale(customReference.Y, -1), Z = Scale(customReference.Z, -1) },
+            "Z" => customReference with { Z = Scale(customReference.Z, -1), Y = Scale(customReference.Y, -1) },
+            _ => throw new ArgumentException("Axis must be X, Y, or Z.", nameof(axis))
+        };
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     public void LoadStep(string path)
     {
@@ -142,6 +221,7 @@ public partial class StepViewerControl : UserControl
         pitch = 25 * Math.PI / 180;
         zoom = 1;
         ClearMeasurement();
+        customReference = null;
         StatusText.Text = IsSolidModel
             ? $"{Path.GetFileName(path)} · shaded solid · {points.Count:N0} vertices · {triangles.Count:N0} triangles"
             : segments.Count > 0
@@ -364,8 +444,64 @@ public partial class StepViewerControl : UserControl
             }
         }
 
+        if (showBoundingBox)
+        {
+            RenderBoundingBox(Screen);
+        }
+        for (var index = 0; index < referenceSelection.Count && screenPoints.Length == points.Count; index++)
+        {
+            AddMeasurementMarker(screenPoints[referenceSelection[index]], $"R{index + 1}");
+        }
         RenderMeasurement();
     }
+
+    private void RenderBoundingBox(Func<Point, Point> screen)
+    {
+        var box = CalculateBoundingBox(customReference);
+        var frame = customReference ?? StepReferenceFrame.Model;
+        var corners = new StepPoint3[8];
+        for (var i = 0; i < 8; i++)
+        {
+            var lx = (i & 1) == 0 ? box.MinX : box.MaxX;
+            var ly = (i & 2) == 0 ? box.MinY : box.MaxY;
+            var lz = (i & 4) == 0 ? box.MinZ : box.MaxZ;
+            corners[i] = Add(frame.Origin, Add(Scale(frame.X, lx), Add(Scale(frame.Y, ly), Scale(frame.Z, lz))));
+        }
+        var projected = corners.Select(point => { var value = Transform(point); return screen(new Point(value.X, value.Y)); }).ToArray();
+        foreach (var (a, b) in new[] { (0,1),(2,3),(4,5),(6,7),(0,2),(1,3),(4,6),(5,7),(0,4),(1,5),(2,6),(3,7) })
+        {
+            ModelCanvas.Children.Add(new Line { X1 = projected[a].X, Y1 = projected[a].Y, X2 = projected[b].X, Y2 = projected[b].Y,
+                Stroke = Brushes.DarkOrange, StrokeThickness = 1.25, StrokeDashArray = new DoubleCollection([5,3]) });
+        }
+    }
+
+    private StepBoundingBox CalculateBoundingBox(StepReferenceFrame? reference)
+    {
+        var frame = reference ?? StepReferenceFrame.Model;
+        var local = selectablePointIndices.Select(index => Relative(points[index], frame.Origin))
+            .Select(value => new StepPoint3(Dot(value, frame.X), Dot(value, frame.Y), Dot(value, frame.Z))).ToArray();
+        return new StepBoundingBox(local.Min(p => p.X), local.Max(p => p.X), local.Min(p => p.Y), local.Max(p => p.Y), local.Min(p => p.Z), local.Max(p => p.Z), reference is not null);
+    }
+
+    private static StepReferenceFrame BuildReference(StepPoint3 a, StepPoint3 b, StepPoint3 c, StepPoint3 directionA, StepPoint3 directionB)
+    {
+        var z = Normalize(Cross(Relative(b, a), Relative(c, a)), "The three base points must not be collinear.");
+        var direction = Relative(directionB, directionA);
+        var x = Normalize(Add(direction, Scale(z, -Dot(direction, z))), "The direction must lie in the base plane.");
+        var y = Normalize(Cross(z, x), "The reference direction is invalid.");
+        return new StepReferenceFrame(a, x, y, z);
+    }
+
+    private static StepPoint3 Normalize(StepPoint3 value, string message)
+    {
+        var length = Math.Sqrt(Dot(value, value));
+        if (length <= 0.000000001) throw new InvalidOperationException(message);
+        return Scale(value, 1 / length);
+    }
+    private static double Dot(StepPoint3 a, StepPoint3 b) => a.X*b.X + a.Y*b.Y + a.Z*b.Z;
+    private static StepPoint3 Cross(StepPoint3 a, StepPoint3 b) => new(a.Y*b.Z-a.Z*b.Y, a.Z*b.X-a.X*b.Z, a.X*b.Y-a.Y*b.X);
+    private static StepPoint3 Scale(StepPoint3 a, double scale) => new(a.X*scale, a.Y*scale, a.Z*scale);
+    private static StepPoint3 Add(StepPoint3 a, StepPoint3 b) => new(a.X+b.X, a.Y+b.Y, a.Z+b.Z);
 
     private void BuildDisplayEdges()
     {
@@ -582,6 +718,18 @@ public partial class StepViewerControl : UserControl
             e.Handled = true;
             return;
         }
+        if (isBuildingReference && HasModel)
+        {
+            SelectReferencePoint(e.GetPosition(ViewerRoot));
+            e.Handled = true;
+            return;
+        }
+        if (isBuildingFaceReference && HasModel)
+        {
+            SelectReferenceFaceOrEdge(e.GetPosition(ViewerRoot));
+            e.Handled = true;
+            return;
+        }
         dragStart = e.GetPosition(ViewerRoot);
         isDragging = true;
         ViewerRoot.CaptureMouse();
@@ -650,6 +798,87 @@ public partial class StepViewerControl : UserControl
         }
 
         MeasureBetweenVertices(measurementStartIndex.Value, nearest.Index);
+    }
+
+    private void SelectReferencePoint(Point pointer)
+    {
+        var nearest = selectablePointIndices
+            .Select(index => (Index: index, Distance: (screenPoints[index] - pointer).Length))
+            .Where(candidate => candidate.Distance <= 14)
+            .OrderBy(candidate => candidate.Distance)
+            .FirstOrDefault((Index: -1, Distance: double.MaxValue));
+        if (nearest.Index < 0)
+        {
+            MeasurementText = "No model vertex at that position.";
+            ReferenceChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+        referenceSelection.Add(nearest.Index);
+        if (referenceSelection.Count == 5)
+        {
+            try
+            {
+                SetCustomReferenceByPoints(referenceSelection[0], referenceSelection[1], referenceSelection[2], referenceSelection[3], referenceSelection[4]);
+                MeasurementText = "Custom reference active.";
+                isBuildingReference = false;
+            }
+            catch (InvalidOperationException exception)
+            {
+                MeasurementText = exception.Message;
+                referenceSelection.Clear();
+            }
+        }
+        else
+        {
+            MeasurementText = $"Reference point {referenceSelection.Count}/5 selected.";
+        }
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SelectReferenceFaceOrEdge(Point pointer)
+    {
+        if (referenceTriangleIndex is null)
+        {
+            var match = Enumerable.Range(0, triangles.Count)
+                .Where(index => IsFrontFacing(triangles[index]) && PointInTriangle(pointer, triangles[index]))
+                .OrderBy(index => Math.Abs(ProjectedTriangleArea(triangles[index])))
+                .LastOrDefault(-1);
+            if (match < 0) MeasurementText = "No visible face at that position.";
+            else { referenceTriangleIndex = match; MeasurementText = "Base face selected. Click a visible edge for direction."; }
+        }
+        else
+        {
+            var edge = displayEdges.Select((value, index) => (value, index,
+                    distance: DistanceToSegment(pointer, screenPoints[value.FirstPointIndex], screenPoints[value.SecondPointIndex])))
+                .Where(value => value.distance <= 14).OrderBy(value => value.distance).FirstOrDefault();
+            if (edge.value is null) MeasurementText = "No visible edge at that position.";
+            else
+            {
+                SetCustomReferenceByFaceAndEdge(referenceTriangleIndex.Value, edge.index);
+                MeasurementText = "Custom face/edge reference active.";
+                isBuildingFaceReference = false;
+                referenceTriangleIndex = null;
+            }
+        }
+        RenderModel();
+        ReferenceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool PointInTriangle(Point point, StepTriangle3 triangle)
+    {
+        var a = screenPoints[triangle.FirstIndex]; var b = screenPoints[triangle.SecondIndex]; var c = screenPoints[triangle.ThirdIndex];
+        static double Sign(Point p1, Point p2, Point p3) => (p1.X-p3.X)*(p2.Y-p3.Y)-(p2.X-p3.X)*(p1.Y-p3.Y);
+        var d1=Sign(point,a,b); var d2=Sign(point,b,c); var d3=Sign(point,c,a);
+        return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+    }
+
+    private static double DistanceToSegment(Point p, Point a, Point b)
+    {
+        var dx=b.X-a.X; var dy=b.Y-a.Y; var length=dx*dx+dy*dy;
+        if (length <= 0) return (p-a).Length;
+        var t=Math.Clamp(((p.X-a.X)*dx+(p.Y-a.Y)*dy)/length,0,1);
+        return (p-new Point(a.X+t*dx,a.Y+t*dy)).Length;
     }
 
     private void RenderMeasurement()
@@ -939,3 +1168,15 @@ internal readonly record struct StepScreenEdge(Point Start, Point End);
 internal readonly record struct StepVertexKey(long X, long Y, long Z);
 
 public sealed record StepMeasurement(double Distance, double DeltaX, double DeltaY, double DeltaZ);
+
+public sealed record StepBoundingBox(double MinX, double MaxX, double MinY, double MaxY, double MinZ, double MaxZ, bool UsesCustomReference)
+{
+    public double X => MaxX - MinX;
+    public double Y => MaxY - MinY;
+    public double Z => MaxZ - MinZ;
+}
+
+internal sealed record StepReferenceFrame(StepPoint3 Origin, StepPoint3 X, StepPoint3 Y, StepPoint3 Z)
+{
+    internal static StepReferenceFrame Model { get; } = new(default, new(1,0,0), new(0,1,0), new(0,0,1));
+}

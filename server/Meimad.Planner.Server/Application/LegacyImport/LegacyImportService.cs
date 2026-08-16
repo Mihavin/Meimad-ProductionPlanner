@@ -24,7 +24,8 @@ internal sealed partial class LegacyImportService
             ["startDate"] = 8,
             ["endDate"] = 9,
             ["plannerDeliveryDate"] = 10,
-            ["customerDeliveryDate"] = 11
+            ["customerDeliveryDate"] = 11,
+            ["batchNumber"] = 16
         };
     private static readonly IReadOnlyDictionary<string, int> DefaultOpenOrderColumns =
         new Dictionary<string, int>(StringComparer.Ordinal)
@@ -41,7 +42,9 @@ internal sealed partial class LegacyImportService
             ["caseReference"] = 11,
             ["orderedQuantity"] = 12,
             ["itemName"] = 15,
-            ["picturePath"] = 21
+            ["picturePath"] = 21,
+            ["productionInstruction"] = 14,
+            ["batchNumber"] = 16
         };
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> PlanningHeaderAliases =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
@@ -49,6 +52,7 @@ internal sealed partial class LegacyImportService
             ["customer"] = ["customer", "customer name", "client", "שם לקוח", "לקוח"],
             ["partNumber"] = ["part number", "part no", "part #", "item number", "item no", "item #", "pn", "מקט", "מספר פריט"],
             ["caseReference"] = ["case", "case reference", "case ref", "job", "job number", "work order"],
+            ["batchNumber"] = ["batch number", "batch no", "production order", "\u05e4\u05e7\"\u05e2"],
             ["notes"] = ["notes", "note", "comments", "comment", "remarks"],
             ["quantity"] = ["quantity", "qty", "planned quantity", "batch quantity", "כמות"],
             ["materialStatus"] = ["material status", "material", "stock status"],
@@ -70,9 +74,11 @@ internal sealed partial class LegacyImportService
             ["notes"] = ["notes", "note", "comments", "comment", "remarks"],
             ["drawingNumber"] = ["drawing number", "drawing no", "drawing #"],
             ["caseReference"] = ["case", "case reference", "case ref", "job", "job number", "work order"],
-            ["orderedQuantity"] = ["ordered quantity", "order quantity", "original quantity"],
+            ["orderedQuantity"] = ["ordered quantity", "order quantity", "original quantity", "\u05db\u05de\u05d5\u05ea \u05d1\u05d4\u05d6\u05de\u05e0\u05d4\u05d4"],
             ["itemName"] = ["item name", "part name", "description", "part description"],
-            ["picturePath"] = ["picture", "picture path", "image", "image path", "preview", "preview path"]
+            ["picturePath"] = ["picture", "picture path", "image", "image path", "preview", "preview path"],
+            ["productionInstruction"] = ["active", "production instruction", "\u05d4\u05d5\u05e8\u05d0\u05ea \u05d9\u05d9\u05e6\u05d5\u05e8"],
+            ["batchNumber"] = ["batch number", "batch no", "production order", "\u05e4\u05e7\"\u05e2"]
         };
 
     private readonly OpenXmlLegacyWorkbookReader reader;
@@ -256,6 +262,13 @@ internal sealed partial class LegacyImportService
         var openOrdersSheet = useApprovedSheets
             ? workbook.Sheets.FirstOrDefault(sheet => string.Equals(sheet.Name, approvedOpenOrdersSheet, StringComparison.Ordinal))
             : FindSheet(workbook, "גיליון1", IsOpenOrdersSheet);
+        var detectedOpenOrderLayout = DetectHeaderLayout(openOrdersSheet, OpenOrderHeaderAliases);
+        var orderDrivenBatchSheet = IsOrderDrivenBatchLayout(openOrdersSheet, detectedOpenOrderLayout);
+        if (!useApprovedSheets && orderDrivenBatchSheet)
+        {
+            planningSheet = openOrdersSheet;
+        }
+
         if (useApprovedSheets
             && !string.IsNullOrWhiteSpace(approvedPlanningSheet)
             && planningSheet is null)
@@ -307,14 +320,16 @@ internal sealed partial class LegacyImportService
                 Scope: mapping.Scope));
         }
 
-        var planningDetected = DetectHeaderLayout(planningSheet, PlanningHeaderAliases);
-        var openOrderDetected = DetectHeaderLayout(openOrdersSheet, OpenOrderHeaderAliases);
+        var openOrderDetected = detectedOpenOrderLayout;
+        var planningDetected = orderDrivenBatchSheet && ReferenceEquals(planningSheet, openOrdersSheet)
+            ? ToOrderDrivenPlanningLayout(openOrderDetected)
+            : DetectHeaderLayout(planningSheet, PlanningHeaderAliases);
         var planningColumns = ResolveColumns(
             "planning",
             planningSheet,
             DefaultPlanningColumns,
             planningDetected,
-            IsLegacyPlanningLayout(planningSheet, planningDetected),
+            !orderDrivenBatchSheet && IsLegacyPlanningLayout(planningSheet, planningDetected),
             mappingsAreAuthoritative,
             mappings,
             issues);
@@ -331,15 +346,23 @@ internal sealed partial class LegacyImportService
             || RequireColumns("planning", planningColumns, ["partNumber", "quantity"], issues);
         var openOrderColumnsValid = openOrdersSheet is null
             || RequireColumns("open_orders", openOrderColumns, ["partNumber"], issues);
-        var sections = planningSheet is null || !planningColumnsValid
+        var sections = planningSheet is null || !planningColumnsValid || orderDrivenBatchSheet
             ? []
             : FindMachineSections(planningSheet, planningColumns.Columns, candidatePool.Machines, issues);
-        var planningRows = planningSheet is null || !planningColumnsValid
-            ? []
-            : BuildPlanningRows(planningSheet, sections, planningColumns.Columns, candidatePool, issues);
         var openOrderRows = openOrdersSheet is null || !openOrderColumnsValid
             ? []
             : BuildOpenOrderRows(openOrdersSheet, openOrderColumns, candidatePool, issues);
+        var planningRows = planningSheet is null || !planningColumnsValid
+            ? []
+            : orderDrivenBatchSheet
+                ? BuildOrderDrivenBatchRows(
+                    planningSheet,
+                    planningColumns.Columns,
+                    openOrderColumns.Columns,
+                    openOrderRows,
+                    candidatePool,
+                    issues)
+                : BuildPlanningRows(planningSheet, sections, planningColumns.Columns, candidatePool, issues);
 
         return new LegacyImportPreviewResponse(
             1,
@@ -412,6 +435,42 @@ internal sealed partial class LegacyImportService
         var detected = DetectHeaderLayout(sheet, OpenOrderHeaderAliases);
         return detected.Columns.ContainsKey("partNumber")
             && detected.Columns.ContainsKey("orderNumber");
+    }
+
+    private static bool IsOrderDrivenBatchLayout(
+        LegacySheetData? sheet,
+        DetectedColumnLayout detected) =>
+        sheet is not null
+        && ((detected.Columns.ContainsKey("partNumber")
+             && detected.Columns.ContainsKey("orderNumber")
+             && detected.Columns.ContainsKey("outstandingQuantity")
+             && detected.Columns.ContainsKey("orderedQuantity")
+             && detected.Columns.ContainsKey("batchNumber"))
+            // The supplied workbook is a stable legacy export whose Hebrew text is
+            // sometimes decoded through an older code page. Its authoritative A/P
+            // layout is still recognizable by the existing legacy-sheet rule.
+            || IsLegacyOpenOrderLayout(sheet, detected) && sheet.MaximumColumn >= 16);
+
+    private static DetectedColumnLayout ToOrderDrivenPlanningLayout(DetectedColumnLayout source)
+    {
+        var columns = new Dictionary<string, int>(StringComparer.Ordinal);
+        Copy("partNumber", "partNumber");
+        Copy("customer", "customer");
+        Copy("quantity", "outstandingQuantity");
+        Copy("batchNumber", "batchNumber");
+        columns.TryAdd("partNumber", 1);
+        columns.TryAdd("customer", 4);
+        columns.TryAdd("quantity", 8);
+        columns.TryAdd("batchNumber", 16);
+        return new DetectedColumnLayout(source.HeaderRow, columns);
+
+        void Copy(string target, string origin)
+        {
+            if (source.Columns.TryGetValue(origin, out var column))
+            {
+                columns[target] = column;
+            }
+        }
     }
 
     private static ResolvedColumnLayout ResolveColumns(
@@ -899,11 +958,24 @@ internal sealed partial class LegacyImportService
 
         var result = new List<LegacyOpenOrderRowResponse>();
         var sourceOrder = 0;
+        var productionInstructionIsActiveFilter = columns.TryGetValue(
+                "productionInstruction", out var productionInstructionColumn)
+            && (HeaderMatches(sheet.Cell(headerRow, productionInstructionColumn)?.Value,
+                    OpenOrderHeaderAliases["productionInstruction"])
+                || productionInstructionColumn == 14
+                && IsLegacyOpenOrderLayout(sheet, DetectHeaderLayout(sheet, OpenOrderHeaderAliases))
+                && !string.IsNullOrWhiteSpace(CleanValue(sheet.Cell(headerRow, 14)?.Value)));
         for (var rowNumber = headerRow + 1; rowNumber <= sheet.MaximumRow; rowNumber++)
         {
             var partNumber = CleanValue(MappedCell(sheet, rowNumber, columns, "partNumber")?.Value);
             var orderNumber = CleanValue(MappedCell(sheet, rowNumber, columns, "orderNumber")?.Value);
             if (string.IsNullOrWhiteSpace(partNumber) && string.IsNullOrWhiteSpace(orderNumber))
+            {
+                continue;
+            }
+            if (productionInstructionIsActiveFilter
+                && string.IsNullOrWhiteSpace(CleanValue(
+                    MappedCell(sheet, rowNumber, columns, "productionInstruction")?.Value)))
             {
                 continue;
             }
@@ -922,7 +994,7 @@ internal sealed partial class LegacyImportService
                     issues,
                     LegacyImportIssueSeverity.Blocking),
                 CleanValue(MappedCell(sheet, rowNumber, columns, "revision")?.Value),
-                ParsePositiveInteger(
+                ParseNonNegativeInteger(
                     MappedCell(sheet, rowNumber, columns, "outstandingQuantity"),
                     sheet.Name,
                     rowNumber,
@@ -938,7 +1010,9 @@ internal sealed partial class LegacyImportService
                     "orderedQuantity",
                     issues),
                 CleanValue(MappedCell(sheet, rowNumber, columns, "itemName")?.Value),
-                CleanValue(MappedCell(sheet, rowNumber, columns, "picturePath")?.Value));
+                CleanValue(MappedCell(sheet, rowNumber, columns, "picturePath")?.Value),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "productionInstruction")?.Value),
+                CleanValue(MappedCell(sheet, rowNumber, columns, "batchNumber")?.Value));
             if (string.IsNullOrWhiteSpace(partNumber))
             {
                 issues.Add(RowIssue(
@@ -1013,8 +1087,191 @@ internal sealed partial class LegacyImportService
                 new LegacyOpenOrderCandidatesResponse(matchingCases, matchingOrders)));
         }
 
+        return AggregateOpenOrderRows(result, issues);
+    }
+
+    private static IReadOnlyList<LegacyOpenOrderRowResponse> AggregateOpenOrderRows(
+        IReadOnlyList<LegacyOpenOrderRowResponse> rows,
+        List<LegacyImportIssue> issues)
+    {
+        var result = new List<LegacyOpenOrderRowResponse>();
+        foreach (var group in rows.GroupBy(
+                     row => $"{NormalizeIdentifier(row.Values.PartNumber)}|{NormalizeIdentifier(row.Values.OrderNumber)}",
+                     StringComparer.Ordinal))
+        {
+            var ordered = group.OrderBy(row => row.SourceOrder).ToArray();
+            var first = ordered[0];
+            if (ordered.Length == 1 || string.IsNullOrWhiteSpace(first.Values.OrderNumber))
+            {
+                result.Add(first);
+                continue;
+            }
+
+            var orderedQuantity = SumPositive(ordered.Select(row => row.Values.OrderedQuantity));
+            var outstandingQuantity = SumPositive(ordered.Select(row => row.Values.OutstandingQuantity));
+            var deliveryDate = ordered.Select(row => row.Values.DeliveryDate)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .FirstOrDefault();
+            var values = first.Values with
+            {
+                DeliveryDate = deliveryDate,
+                OutstandingQuantity = outstandingQuantity,
+                OrderedQuantity = orderedQuantity
+            };
+            issues.Add(new LegacyImportIssue(
+                LegacyImportIssueSeverity.Warning,
+                "related_order_rows_aggregated",
+                $"{ordered.Length} workbook rows for Part '{values.PartNumber}' and Order '{values.OrderNumber}' were combined into one Order; quantity is their sum and Work Finish Date is the earliest date.",
+                first.SheetName,
+                first.RowNumber,
+                "orderNumber",
+                Scope: "open_orders"));
+            result.Add(first with { Values = values });
+        }
+
+        return result.OrderBy(row => row.SourceOrder).ToArray();
+    }
+
+    private static IReadOnlyList<LegacyPlanningRowResponse> BuildOrderDrivenBatchRows(
+        LegacySheetData sheet,
+        IReadOnlyDictionary<string, int> planningColumns,
+        IReadOnlyDictionary<string, int> orderColumns,
+        IReadOnlyList<LegacyOpenOrderRowResponse> openOrderRows,
+        LegacyImportCandidatePool pool,
+        List<LegacyImportIssue> issues)
+    {
+        var headerRow = InferHeaderRow(sheet, orderColumns);
+        var groupedOrders = openOrderRows.ToDictionary(
+            row => $"{NormalizeIdentifier(row.Values.PartNumber)}|{NormalizeIdentifier(row.Values.OrderNumber)}",
+            StringComparer.Ordinal);
+        var sourceRows = new List<OrderDrivenBatchSource>();
+        for (var rowNumber = headerRow + 1; rowNumber <= sheet.MaximumRow; rowNumber++)
+        {
+            var partNumber = CleanValue(MappedCell(sheet, rowNumber, orderColumns, "partNumber")?.Value);
+            var orderNumber = CleanValue(MappedCell(sheet, rowNumber, orderColumns, "orderNumber")?.Value);
+            if (string.IsNullOrWhiteSpace(partNumber) && string.IsNullOrWhiteSpace(orderNumber)) continue;
+
+            var productionInstruction = CleanValue(MappedCell(sheet, rowNumber, orderColumns, "productionInstruction")?.Value);
+            if (string.IsNullOrWhiteSpace(productionInstruction)) continue;
+
+            var batchNumber = CleanValue(MappedCell(sheet, rowNumber, orderColumns, "batchNumber")?.Value);
+            var remaining = ParseNonNegativeInteger(
+                MappedCell(sheet, rowNumber, orderColumns, "outstandingQuantity"),
+                sheet.Name,
+                rowNumber,
+                "outstandingQuantity",
+                issues);
+            if (string.IsNullOrWhiteSpace(batchNumber))
+            {
+                issues.Add(RowIssue(
+                    LegacyImportIssueSeverity.Blocking,
+                    "batch_number_required",
+                    "An active production row must include a Batch Number (פק\"ע).",
+                    sheet.Name,
+                    rowNumber,
+                    "batchNumber"));
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(partNumber) || string.IsNullOrWhiteSpace(orderNumber) || remaining is not > 0)
+            {
+                continue;
+            }
+            sourceRows.Add(new OrderDrivenBatchSource(
+                rowNumber,
+                partNumber,
+                orderNumber,
+                batchNumber,
+                remaining.Value,
+                CleanValue(MappedCell(sheet, rowNumber, orderColumns, "customer")?.Value)));
+        }
+
+        var result = new List<LegacyPlanningRowResponse>();
+        var sourceOrder = 0;
+        foreach (var group in sourceRows.GroupBy(
+                     row => $"{NormalizeIdentifier(row.PartNumber)}|{NormalizeIdentifier(row.BatchNumber)}",
+                     StringComparer.Ordinal))
+        {
+            sourceOrder++;
+            var ordered = group.OrderBy(row => row.RowNumber).ToArray();
+            var first = ordered[0];
+            var total = SumPositive(ordered.Select(row => (int?)row.RemainingQuantity));
+            if (total is not > 0)
+            {
+                issues.Add(RowIssue(
+                    LegacyImportIssueSeverity.Blocking,
+                    "batch_quantity_invalid",
+                    $"The summed remaining quantity for Batch '{first.BatchNumber}' is invalid or too large.",
+                    sheet.Name,
+                    first.RowNumber,
+                    "quantity"));
+                continue;
+            }
+
+            var relatedOrders = ordered.GroupBy(row => NormalizeIdentifier(row.OrderNumber), StringComparer.Ordinal)
+                .Select(orderGroup =>
+                {
+                    var order = orderGroup.First();
+                    var key = $"{NormalizeIdentifier(order.PartNumber)}|{NormalizeIdentifier(order.OrderNumber)}";
+                    groupedOrders.TryGetValue(key, out var sourceOrderRow);
+                    return new LegacyRelatedOrderResponse(
+                        sourceOrderRow?.RowKey ?? $"{sheet.Name}!{order.RowNumber}",
+                        order.OrderNumber,
+                        SumPositive(orderGroup.Select(row => (int?)row.RemainingQuantity)) ?? 0,
+                        sourceOrderRow?.Candidates.Orders.Count == 1
+                            ? sourceOrderRow.Candidates.Orders[0].OrderId
+                            : null);
+                })
+                .Where(order => order.Quantity > 0)
+                .ToArray();
+            var values = new LegacyPlanningValuesResponse(
+                first.Customer,
+                first.PartNumber,
+                first.BatchNumber,
+                null,
+                total,
+                "active production instruction",
+                null,
+                null,
+                null,
+                null);
+            var candidates = MatchPlanningCandidates(values, pool, issues, sheet.Name, first.RowNumber);
+            result.Add(new LegacyPlanningRowResponse(
+                $"{sheet.Name}!batch:{first.RowNumber}",
+                sheet.Name,
+                first.RowNumber,
+                $"pool:{NormalizeIdentifier(first.PartNumber)}",
+                sourceOrder,
+                values,
+                BuildProvenance(sheet, first.RowNumber, planningColumns),
+                candidates,
+                relatedOrders));
+        }
+
         return result;
     }
+
+    private static int? SumPositive(IEnumerable<int?> values)
+    {
+        long total = 0;
+        var found = false;
+        foreach (var value in values)
+        {
+            if (value is not > 0) continue;
+            found = true;
+            total += value.Value;
+            if (total > int.MaxValue) return null;
+        }
+        return found ? (int)total : null;
+    }
+
+    private sealed record OrderDrivenBatchSource(
+        int RowNumber,
+        string PartNumber,
+        string OrderNumber,
+        string BatchNumber,
+        int RemainingQuantity,
+        string? Customer);
 
     private static LegacyPlanningCandidatesResponse MatchPlanningCandidates(
         LegacyPlanningValuesResponse values,
@@ -1197,6 +1454,32 @@ internal sealed partial class LegacyImportService
             required ? LegacyImportIssueSeverity.Blocking : LegacyImportIssueSeverity.Warning,
             "invalid_quantity",
             $"Source value '{value}' is not a positive whole-number quantity.",
+            sheetName,
+            rowNumber,
+            field));
+        return null;
+    }
+
+    private static int? ParseNonNegativeInteger(
+        LegacyCellData? cell,
+        string sheetName,
+        int rowNumber,
+        string field,
+        List<LegacyImportIssue> issues)
+    {
+        var value = CleanValue(cell?.Value);
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number)
+            && number >= 0
+            && number == decimal.Truncate(number)
+            && number <= int.MaxValue)
+        {
+            return (int)number;
+        }
+        issues.Add(RowIssue(
+            LegacyImportIssueSeverity.Blocking,
+            "invalid_quantity",
+            $"Source value '{value}' is not a non-negative whole-number quantity.",
             sheetName,
             rowNumber,
             field));

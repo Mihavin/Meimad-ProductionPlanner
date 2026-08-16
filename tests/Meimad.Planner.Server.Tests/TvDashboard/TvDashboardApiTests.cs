@@ -67,15 +67,18 @@ public sealed class TvDashboardApiTests
             using var styles = await client.GetAsync("/tv-dashboard/styles.css");
             var css = await styles.Content.ReadAsStringAsync();
             Assert.Contains("overflow: hidden", css, StringComparison.Ordinal);
-            Assert.Contains("grid-template-rows: repeat(var(--grid-rows)", css, StringComparison.Ordinal);
+            Assert.Contains("grid-template-rows: repeat(var(--machine-count)", css, StringComparison.Ordinal);
+            Assert.Contains(".machine-row", css, StringComparison.Ordinal);
+            Assert.DoesNotContain(".machine-card", css, StringComparison.Ordinal);
 
             using var script = await client.GetAsync("/tv-dashboard/app.js");
             var javascript = await script.Content.ReadAsStringAsync();
             Assert.Contains("setTimeout(refresh", javascript, StringComparison.Ordinal);
             Assert.Contains("fitGrid(machines.length)", javascript, StringComparison.Ordinal);
             Assert.Contains("server-status-connected", css, StringComparison.Ordinal);
-            Assert.DoesNotContain("machine.current", javascript, StringComparison.Ordinal);
-            Assert.DoesNotContain("machine.next", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.current", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.next", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.third", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("connection-banner", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);

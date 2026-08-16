@@ -98,7 +98,13 @@ internal sealed record BatchOperationResponse(
     bool DayShiftOnly,
     DateTimeOffset? ActualStart,
     DateTimeOffset? ActualEnd,
-    string? ActualMachineId)
+    string? ActualMachineId,
+    bool HasExternalDelay,
+    string? ExternalDelayDescription,
+    double ExternalDelayDuration,
+    string ExternalDelayDurationUnit,
+    string? ExternalDelayCalendarId,
+    bool RespectMasterCalendar)
 {
     internal static BatchOperationResponse FromDomain(BatchOperation operation) => new(
         operation.BatchOperationId,
@@ -122,7 +128,13 @@ internal sealed record BatchOperationResponse(
         operation.DayShiftOnly,
         operation.ActualStart,
         operation.ActualEnd,
-        operation.ActualMachineId);
+        operation.ActualMachineId,
+        operation.HasExternalDelay,
+        operation.ExternalDelayDescription,
+        operation.ExternalDelayDuration,
+        operation.ExternalDelayDurationUnit,
+        operation.ExternalDelayCalendarId,
+        operation.RespectMasterCalendar);
 }
 
 internal sealed record BatchOperationListResponse(

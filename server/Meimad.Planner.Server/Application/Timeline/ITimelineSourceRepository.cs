@@ -16,7 +16,9 @@ internal sealed record TimelineSourceSnapshot(
     string? SetupCalendarJson,
     string? SetupCalendarTimeZoneId,
     IReadOnlyList<TimelineSourceHoliday> Holidays,
-    IReadOnlyList<TimelineSourceResource> Resources);
+    IReadOnlyList<TimelineSourceResource> Resources,
+    string? MasterCalendarJson = null,
+    string? MasterCalendarTimeZoneId = null);
 
 internal sealed record TimelineSourceHoliday(
     DateOnly Date, string Name, string Status, string? StartsAtLocal, string? EndsAtLocal);
@@ -27,7 +29,8 @@ internal sealed record TimelineSourceMachine(
     string Name,
     string TimeZoneId,
     string CalendarJson,
-    IReadOnlyList<string> SkillTokens);
+    IReadOnlyList<string> SkillTokens,
+    bool RespectMasterCalendar = true);
 
 internal sealed record TimelineSourceOperation(
     string OperationId,
@@ -65,7 +68,12 @@ internal sealed record TimelineSourceOperation(
     DateTimeOffset? MovePauseEndedAt,
     DateTimeOffset? ActualStart,
     DateTimeOffset? ActualEnd,
-    string? ActualMachineId);
+    string? ActualMachineId,
+    TimeSpan ExternalDelayAfter = default,
+    int ExternalDelayWorkingDays = 0,
+    string? ExternalDelayCalendarJson = null,
+    string? ExternalDelayCalendarTimeZoneId = null,
+    bool ExternalDelayRespectMasterCalendar = true);
 
 internal sealed record TimelineSourceResource(
     string ResourceId,
@@ -73,7 +81,8 @@ internal sealed record TimelineSourceResource(
     string TimeZoneId,
     string CalendarJson,
     IReadOnlyList<TimelineSourceResourceException> Exceptions,
-    IReadOnlyList<string> Skills);
+    IReadOnlyList<string> Skills,
+    bool RespectMasterCalendar = true);
 
 internal sealed record TimelineSourceResourceException(
     DateOnly Date,

@@ -37,7 +37,9 @@ internal sealed class MachineService
             now,
             now,
             values.PicturePath,
-            values.MachineTypeId);
+            values.MachineTypeId,
+            null,
+            command.RespectMasterCalendar ?? true);
         return await repository.CreateAsync(machine, editAuthority, cancellationToken);
     }
 
@@ -82,6 +84,7 @@ internal sealed class MachineService
             DisplayEnabled = values.DisplayEnabled,
             PicturePath = values.PicturePath,
             MachineTypeId = values.MachineTypeId,
+            RespectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar) ?? true,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };

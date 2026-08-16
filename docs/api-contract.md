@@ -1,6 +1,12 @@
 # API Contract
 
-- **Status:** Draft target contract; schema-v25 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
+## Schema-v26 planning additions
+
+Case/Batch Operation representations include external-delay fields. Planning Board operations add `workFinishDate`, `latestStart`, `latestStartWarning`, and `isLatestStartOverdue`. `POST /api/v1/batches` returns `422 case_operations_required` when its Case has no defined route.
+
+`GET|PUT|DELETE /api/v1/master-calendar` reads, selects, or clears the global Israel Master Calendar; mutations require Edit Mode. Machine and employee-resource representations accept/return `respectMasterCalendar`. Working-day external delay requires a whole-number duration and selected active Working Calendar; Timeline dependency calculations count that calendar's working dates and intersect it with the master when enabled.
+
+- **Status:** Draft target contract; schema-v26 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -841,6 +847,8 @@ The implemented importer is a two-stage migration workflow, not a spreadsheet sy
 | `POST` | `/api/v1/imports/legacy-working-plan/commit` | Current Edit Mode | Atomically apply only the operator-approved mappings/selections and store an idempotency receipt. |
 
 Preview requires `multipart/form-data` with exactly one file field named `workbook`. Optional text fields `planningSheet` and `openOrdersSheet` select either role explicitly; optional `columnMappings` is a JSON array of `{ scope, field, column }` objects using scope `planning` or `open_orders`. Submitting the workbook again with corrected sheet/column choices performs another read-only preview and returns a fresh token; it does not commit or reuse stale rendered rows. A complete submitted mapping set containing every required field for each selected sheet is authoritative through commit, so a deliberately omitted optional field is not restored by automatic detection. An empty or incomplete mapping set retains the legacy overlay behavior for older clients. The workbook limit is 64 MiB and the route multipart limit is 65 MiB. At most two previews parse concurrently. The Server uses a bounded OpenXML ZIP/XML reader, never evaluates formulas or follows external relationships, and consumes only cached formula values. It rejects an unsafe/invalid archive, the Excel 1904 date system, unsupported content, or configured expansion/cell limits with a structured error. A successful response has `schemaVersion: 1` and includes:
+
+For the supplied `גיליון1` order-driven layout, Case mapping is Part Number=A, Name=O, Revision=F, Customer=D; Order mapping is Order Number=B, Quantity=L, Work Finish Date=E, active marker=N; Batch mapping is Batch Number=P and remaining demand=H. Preview groups repeated Part+Order rows into one Order and emits one planning row per Part+Batch Number. Such planning rows append `relatedOrders[]` with source-row or existing-Order identity and the positive remaining quantity; their `values.quantity` is the exact sum of those allocations.
 
 - an opaque `importToken`, lowercase `workbookSha256`, and `expiresAt`;
 - workbook filename and sheet names/dimensions plus a bounded source-column catalog (`column`, detected `header`, representative `sample`) for manual mapping when aliases are unclear;

@@ -37,4 +37,8 @@ internal interface IWorkingCalendarRepository
         DateTimeOffset now,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
+
+    Task<WorkingCalendar?> GetMasterCalendarAsync(CancellationToken cancellationToken);
+    Task<WorkingCalendar> SetMasterCalendarAsync(string workingCalendarId, EditAuthority editAuthority, CancellationToken cancellationToken);
+    Task ClearMasterCalendarAsync(EditAuthority editAuthority, CancellationToken cancellationToken);
 }

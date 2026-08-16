@@ -65,6 +65,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private bool newOperationLoadUnloadRequiresWorker;
     private bool newOperationAutomaticLoading;
     private bool newOperationDayShiftOnly;
+    private bool newOperationHasExternalDelay;
+    private string? newOperationExternalDelayDescription;
+    private string newOperationExternalDelayDuration = "0";
+    private string newOperationExternalDelayDurationUnit = "hours";
+    private string? newOperationExternalDelayCalendarId;
+    private bool newOperationRespectMasterCalendar = true;
     private string newOperationDependencyType = "INDEPENDENT";
     private CaseOperation? newOperationPredecessor;
     private string newOperationSimultaneousGroupKey = string.Empty;
@@ -96,7 +102,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditOrderCommand = new AsyncCommand(BeginEditOrderAsync, () => CanBeginEditOrder);
         CancelCreateOrderCommand = new AsyncCommand(CancelCreateOrderAsync, () => IsOrderFormOpen && !IsBusy);
         CreateOrderCommand = new AsyncCommand(CreateOrderAsync, () => CanCreateOrder);
-        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanBeginChildCreate);
+        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanBeginChildCreate && Operations.Count > 0);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
     }
@@ -116,6 +122,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<PlannerOrder> Orders { get; } = [];
 
     public ObservableCollection<ProductionBatch> Batches { get; } = [];
+
+    public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public ObservableCollection<BatchOrderAllocationViewModel> BatchOrderAllocations { get; } = [];
 
@@ -360,6 +368,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public bool NewOperationLoadUnloadRequiresWorker { get => newOperationLoadUnloadRequiresWorker; set => SetField(ref newOperationLoadUnloadRequiresWorker, value); }
     public bool NewOperationAutomaticLoading { get => newOperationAutomaticLoading; set => SetField(ref newOperationAutomaticLoading, value); }
     public bool NewOperationDayShiftOnly { get => newOperationDayShiftOnly; set => SetField(ref newOperationDayShiftOnly, value); }
+    public bool NewOperationHasExternalDelay { get => newOperationHasExternalDelay; set => SetField(ref newOperationHasExternalDelay, value); }
+    public string? NewOperationExternalDelayDescription { get => newOperationExternalDelayDescription; set => SetField(ref newOperationExternalDelayDescription, value); }
+    public string NewOperationExternalDelayDuration { get => newOperationExternalDelayDuration; set => SetField(ref newOperationExternalDelayDuration, value); }
+    public string NewOperationExternalDelayDurationUnit { get => newOperationExternalDelayDurationUnit; set => SetField(ref newOperationExternalDelayDurationUnit, value); }
+    public string? NewOperationExternalDelayCalendarId { get => newOperationExternalDelayCalendarId; set => SetField(ref newOperationExternalDelayCalendarId, value); }
+    public bool NewOperationRespectMasterCalendar { get => newOperationRespectMasterCalendar; set => SetField(ref newOperationRespectMasterCalendar, value); }
     public string NewOperationDependencyType
     {
         get => newOperationDependencyType;
@@ -557,6 +571,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOperationAutomaticLoading = operation.AutomaticLoading;
         NewOperationLoadUnloadEveryNParts = operation.LoadUnloadEveryNParts?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         NewOperationDayShiftOnly = operation.DayShiftOnly;
+        NewOperationHasExternalDelay = operation.HasExternalDelay;
+        NewOperationExternalDelayDescription = operation.ExternalDelayDescription;
+        NewOperationExternalDelayDuration = operation.ExternalDelayDuration.ToString(CultureInfo.InvariantCulture);
+        NewOperationExternalDelayDurationUnit = operation.ExternalDelayDurationUnit;
+        NewOperationExternalDelayCalendarId = operation.ExternalDelayCalendarId;
+        NewOperationRespectMasterCalendar = operation.RespectMasterCalendar;
         NewOperationDependencyType = operation.DependencyType;
         NewOperationPredecessor = OperationReferenceOptions.FirstOrDefault(value =>
             value.CaseOperationId == operation.PredecessorCaseOperationId);
@@ -609,6 +629,21 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             }
             everyNParts = parsedEveryN;
         }
+        if (!double.TryParse(NewOperationExternalDelayDuration, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var externalDelayDuration)
+            || externalDelayDuration < 0)
+        {
+            StatusMessage = "External delay duration must be zero or a positive number.";
+            return;
+        }
+        if (NewOperationHasExternalDelay
+            && string.Equals(NewOperationExternalDelayDurationUnit, "working_days", StringComparison.Ordinal)
+            && (externalDelayDuration != Math.Truncate(externalDelayDuration)
+                || string.IsNullOrWhiteSpace(NewOperationExternalDelayCalendarId)))
+        {
+            StatusMessage = "Working-day external delay requires a whole number of days and a selected Calendar ID.";
+            return;
+        }
 
         IsBusy = true;
         try
@@ -630,7 +665,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                         NullIfBlank(NewOperationSimultaneousGroupKey),
                         qaSeconds ?? 0, loadUnloadSeconds ?? 0,
                         NewOperationLoadUnloadRequiresWorker, NewOperationAutomaticLoading,
-                        everyNParts, NewOperationDayShiftOnly),
+                        everyNParts, NewOperationDayShiftOnly,
+                        NewOperationHasExternalDelay,
+                        NewOperationExternalDelayDescription?.Trim() is { Length: > 0 } updateExternalDescription ? updateExternalDescription : null,
+                        externalDelayDuration,
+                        NewOperationExternalDelayDurationUnit,
+                        NewOperationExternalDelayCalendarId?.Trim() is { Length: > 0 } updateExternalCalendar ? updateExternalCalendar : null,
+                        NewOperationRespectMasterCalendar),
                     $"\"case-operation:{operation.CaseOperationId}:v{operation.Version}\"",
                     clientId,
                     editGeneration);
@@ -657,7 +698,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                         NullIfBlank(NewOperationSimultaneousGroupKey),
                         qaSeconds ?? 0, loadUnloadSeconds ?? 0,
                         NewOperationLoadUnloadRequiresWorker, NewOperationAutomaticLoading,
-                        everyNParts, NewOperationDayShiftOnly),
+                        everyNParts, NewOperationDayShiftOnly,
+                        NewOperationHasExternalDelay,
+                        NewOperationExternalDelayDescription?.Trim() is { Length: > 0 } externalDescription ? externalDescription : null,
+                        externalDelayDuration,
+                        NewOperationExternalDelayDurationUnit,
+                        NewOperationExternalDelayCalendarId?.Trim() is { Length: > 0 } externalCalendar ? externalCalendar : null,
+                        NewOperationRespectMasterCalendar),
                     clientId,
                     editGeneration);
                 Operations.Add(saved);
@@ -840,6 +887,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     internal Task BeginCreateBatchAsync()
     {
+        if (CanBeginChildCreate && Operations.Count == 0)
+        {
+            StatusMessage = "Cannot generate Production Batch because this Case has no defined operations. Create operations first.";
+            return Task.CompletedTask;
+        }
         if (!CanBeginChildCreate)
         {
             return Task.CompletedTask;
@@ -1002,6 +1054,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             var batchesTask = apiClient.ListBatchesAsync(caseId);
             var machinesTask = apiClient.ListMachinesAsync();
             var machineTypesTask = apiClient.ListMachineTypesAsync();
+            var calendarsTask = apiClient.ListWorkingCalendarsAsync();
             var previewTask = apiClient.GetCasePreviewAsync(caseId);
             await Task.WhenAll(
                 caseTask,
@@ -1010,6 +1063,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 batchesTask,
                 machinesTask,
                 machineTypesTask,
+                calendarsTask,
                 previewTask);
 
             if (SelectedCase?.CaseId != caseId)
@@ -1023,6 +1077,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             Replace(Operations, await operationsTask);
             RebuildOperationReferenceOptions(isEditingOperation ? SelectedOperation?.CaseOperationId : null);
             ApplyMachineTypeOptions(await machinesTask, await machineTypesTask);
+            Replace(WorkingCalendars, await calendarsTask);
             Replace(Orders, await ordersTask);
             Replace(Batches, await batchesTask);
             DetailPreview = ToBitmap(await previewTask);
@@ -1254,6 +1309,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOperationAutomaticLoading = false;
         NewOperationLoadUnloadEveryNParts = string.Empty;
         NewOperationDayShiftOnly = false;
+        NewOperationHasExternalDelay = false;
+        NewOperationExternalDelayDescription = null;
+        NewOperationExternalDelayDuration = "0";
+        NewOperationExternalDelayDurationUnit = "hours";
+        NewOperationExternalDelayCalendarId = null;
+        NewOperationRespectMasterCalendar = true;
         NewOperationDependencyType = "INDEPENDENT";
         NewOperationPredecessor = null;
         NewOperationSimultaneousGroupKey = string.Empty;

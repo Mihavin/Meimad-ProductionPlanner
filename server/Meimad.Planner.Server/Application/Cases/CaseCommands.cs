@@ -49,7 +49,13 @@ internal sealed record CreateCaseOperationCommand(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false);
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true);
 
 internal sealed record UpdateCaseOperationCommand(
     OptionalField<int> OperationNumber,
@@ -65,4 +71,10 @@ internal sealed record UpdateCaseOperationCommand(
     OptionalField<bool> LoadUnloadRequiresWorker = default,
     OptionalField<bool> AutomaticLoading = default,
     OptionalField<int?> LoadUnloadEveryNParts = default,
-    OptionalField<bool> DayShiftOnly = default);
+    OptionalField<bool> DayShiftOnly = default,
+    OptionalField<bool> HasExternalDelay = default,
+    OptionalField<string?> ExternalDelayDescription = default,
+    OptionalField<double> ExternalDelayDuration = default,
+    OptionalField<string?> ExternalDelayDurationUnit = default,
+    OptionalField<string?> ExternalDelayCalendarId = default,
+    OptionalField<bool> RespectMasterCalendar = default);

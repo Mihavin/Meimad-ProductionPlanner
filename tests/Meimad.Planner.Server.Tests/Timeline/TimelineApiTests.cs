@@ -625,6 +625,57 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Machine_calendar_can_include_or_ignore_the_Israel_Master_Calendar()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE working_calendars SET time_zone_id='UTC',
+                      calendar_json='{"weeklySchedule":{"workdays":["tuesday"],"windows":[{"startsAtLocal":"08:00","endsAtLocal":"12:00"}]}}'
+                    WHERE id='calendar-1';
+                    INSERT INTO working_calendars(id,name,time_zone_id,calendar_json)
+                    VALUES('israel-master','Israel Master Calendar','UTC',
+                      '{"weeklySchedule":{"workdays":["tuesday"],"windows":[{"startsAtLocal":"09:00","endsAtLocal":"11:00"}]}}');
+                    UPDATE application_settings SET value='israel-master' WHERE key='master_calendar_id';
+                    UPDATE machines SET respect_master_calendar=1 WHERE id='machine-1';
+                    DELETE FROM machine_assignments;
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            async Task<JsonElement> MachineAsync()
+            {
+                using var response = await client.GetAsync("/api/v1/timeline?from=2026-08-11T07:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T07:00:00Z");
+                response.EnsureSuccessStatusCode();
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                return document.RootElement.GetProperty("machines").EnumerateArray()
+                    .Single(value => value.GetProperty("machineId").GetString() == "machine-1").Clone();
+            }
+
+            var layered = await MachineAsync();
+            Assert.Collection(layered.GetProperty("nonWorkingWindows").EnumerateArray(),
+                before => AssertCalendarBackground(before, "2026-08-11T07:00:00+00:00", "2026-08-11T09:00:00+00:00"),
+                after => AssertCalendarBackground(after, "2026-08-11T11:00:00+00:00", "2026-08-11T18:00:00+00:00"));
+
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE machines SET respect_master_calendar=0 WHERE id='machine-1';";
+                await command.ExecuteNonQueryAsync();
+            }
+            var independent = await MachineAsync();
+            Assert.Collection(independent.GetProperty("nonWorkingWindows").EnumerateArray(),
+                before => AssertCalendarBackground(before, "2026-08-11T07:00:00+00:00", "2026-08-11T08:00:00+00:00"),
+                after => AssertCalendarBackground(after, "2026-08-11T12:00:00+00:00", "2026-08-11T18:00:00+00:00"));
+        });
+    }
+
+    [Fact]
     public async Task Invalid_machine_calendar_returns_full_horizon_background_and_existing_blocking_conflict()
     {
         await RunWithServerAsync(async (application, client) =>

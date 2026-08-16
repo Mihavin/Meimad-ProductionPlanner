@@ -45,4 +45,10 @@ internal sealed record BatchOperation(
     bool DayShiftOnly = false,
     DateTimeOffset? ActualStart = null,
     DateTimeOffset? ActualEnd = null,
-    string? ActualMachineId = null);
+    string? ActualMachineId = null,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true);

@@ -88,6 +88,9 @@ internal sealed class CaseService
                 command.AutomaticLoading,
                 command.LoadUnloadEveryNParts,
                 command.DayShiftOnly));
+        ValidateExternalDelay(command.HasExternalDelay, command.ExternalDelayDescription,
+            command.ExternalDelayDuration, command.ExternalDelayDurationUnit,
+            command.ExternalDelayCalendarId);
         var now = timeProvider.GetUtcNow();
         var operation = new NewCaseOperation(
             Guid.NewGuid().ToString("N"),
@@ -106,13 +109,33 @@ internal sealed class CaseService
             values.LoadUnloadRequiresWorker,
             values.AutomaticLoading,
             values.LoadUnloadEveryNParts,
-            values.DayShiftOnly);
+            values.DayShiftOnly,
+            command.HasExternalDelay,
+            command.ExternalDelayDescription?.Trim(),
+            command.ExternalDelayDuration,
+            command.ExternalDelayDurationUnit.Trim().ToLowerInvariant(),
+            command.ExternalDelayCalendarId?.Trim(),
+            command.RespectMasterCalendar);
 
         return await repository.CreateOperationAsync(
                 operation,
                 editAuthority,
                 cancellationToken)
             ?? throw new CaseNotFoundException(caseId);
+    }
+
+    private static void ValidateExternalDelay(bool enabled, string? description, double duration, string unit, string? calendarId)
+    {
+        if (!enabled && duration == 0) return;
+        if (!enabled || duration <= 0 || string.IsNullOrWhiteSpace(description)
+            || unit.Trim().ToLowerInvariant() is not ("hours" or "days" or "working_days")
+            || (unit.Trim().Equals("working_days", StringComparison.OrdinalIgnoreCase)
+                && (duration != Math.Truncate(duration) || string.IsNullOrWhiteSpace(calendarId))))
+        {
+            throw new CaseOperationValidationException([
+                new CaseOperationValidationIssue("externalDelay", "invalid_external_delay",
+                    "Enabled external delay requires a description and positive duration. Working days require a whole-number duration and selected Calendar.")]);
+        }
     }
 
     internal Task<CaseOperationDetails> UpdateOperationAsync(

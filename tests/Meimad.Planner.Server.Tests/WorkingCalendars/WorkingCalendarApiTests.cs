@@ -349,6 +349,20 @@ public sealed class WorkingCalendarApiTests
             using var emptyJson = JsonDocument.Parse(await empty.Content.ReadAsStringAsync());
             Assert.Equal(JsonValueKind.Null, emptyJson.RootElement.GetProperty("workingCalendarId").ValueKind);
 
+            using var selectMaster = await client.PutAsJsonAsync("/api/v1/master-calendar", new
+            {
+                workingCalendarId = id
+            });
+            Assert.Equal(HttpStatusCode.OK, selectMaster.StatusCode);
+            using var master = await client.GetAsync("/api/v1/master-calendar");
+            master.EnsureSuccessStatusCode();
+            using var masterJson = JsonDocument.Parse(await master.Content.ReadAsStringAsync());
+            Assert.Equal(id, masterJson.RootElement.GetProperty("workingCalendarId").GetString());
+            using var masterBlockedDelete = await client.DeleteAsync($"/api/v1/working-calendars/{id}");
+            Assert.Equal(HttpStatusCode.Conflict, masterBlockedDelete.StatusCode);
+            using var clearMaster = await client.DeleteAsync("/api/v1/master-calendar");
+            Assert.Equal(HttpStatusCode.NoContent, clearMaster.StatusCode);
+
             using var delete = await client.DeleteAsync($"/api/v1/working-calendars/{id}");
             Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
         });

@@ -124,6 +124,16 @@ internal sealed class WorkingCalendarService
             editAuthority,
             cancellationToken);
 
+    internal Task<WorkingCalendar?> GetMasterCalendarAsync(CancellationToken cancellationToken = default) =>
+        repository.GetMasterCalendarAsync(cancellationToken);
+
+    internal Task<WorkingCalendar> SetMasterCalendarAsync(string workingCalendarId, EditAuthority editAuthority,
+        CancellationToken cancellationToken = default) =>
+        repository.SetMasterCalendarAsync(workingCalendarId, editAuthority, cancellationToken);
+
+    internal Task ClearMasterCalendarAsync(EditAuthority editAuthority, CancellationToken cancellationToken = default) =>
+        repository.ClearMasterCalendarAsync(editAuthority, cancellationToken);
+
     private static T Select<T>(WorkingCalendarField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;
 }

@@ -122,7 +122,9 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
                     UNION ALL
                     SELECT 1 FROM setup_calendar_settings WHERE working_calendar_id = $id
                     UNION ALL
-                    SELECT 1 FROM employee_resources WHERE assigned_calendar_id = $id);
+                    SELECT 1 FROM employee_resources WHERE assigned_calendar_id = $id
+                    UNION ALL
+                    SELECT 1 FROM application_settings WHERE key = 'master_calendar_id' AND value = $id);
                 """;
             used.Parameters.AddWithValue("$id", workingCalendarId);
             if (Convert.ToInt32(await used.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
@@ -209,6 +211,48 @@ internal sealed class SqliteWorkingCalendarRepository : IWorkingCalendarReposito
             WHERE id = 1;
             """;
         update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<WorkingCalendar?> GetMasterCalendarAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM application_settings WHERE key = 'master_calendar_id';";
+        var id = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+        return string.IsNullOrWhiteSpace(id)
+            ? null
+            : await ReadByIdAsync(connection, null, id, cancellationToken);
+    }
+
+    public async Task<WorkingCalendar> SetMasterCalendarAsync(
+        string workingCalendarId,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var calendar = await ReadByIdAsync(connection, transaction, workingCalendarId, cancellationToken)
+            ?? throw new WorkingCalendarNotFoundException(workingCalendarId);
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = "INSERT INTO application_settings (key, value) VALUES ('master_calendar_id', $id) ON CONFLICT(key) DO UPDATE SET value = excluded.value;";
+        update.Parameters.AddWithValue("$id", workingCalendarId);
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return calendar;
+    }
+
+    public async Task ClearMasterCalendarAsync(EditAuthority editAuthority, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = "INSERT INTO application_settings (key, value) VALUES ('master_calendar_id', '') ON CONFLICT(key) DO UPDATE SET value = '';";
         await update.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }

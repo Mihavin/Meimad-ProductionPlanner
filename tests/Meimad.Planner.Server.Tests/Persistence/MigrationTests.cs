@@ -43,7 +43,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(25L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(26L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -159,7 +159,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(25L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(26L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -473,7 +473,7 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25);
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -614,7 +614,7 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25);
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -751,7 +751,7 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25);
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
@@ -837,7 +837,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 26;";
+            command.CommandText = "PRAGMA user_version = 27;";
             await command.ExecuteNonQueryAsync();
         }
 

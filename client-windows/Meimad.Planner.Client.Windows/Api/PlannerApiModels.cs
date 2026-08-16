@@ -93,7 +93,8 @@ internal sealed record PlannerMachine(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? MachineTypeId = null)
+    string? MachineTypeId = null,
+    bool RespectMasterCalendar = true)
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -202,7 +203,14 @@ internal sealed record LegacyImportPlanningRow(
     int SourceOrder,
     LegacyImportPlanningValues Values,
     IReadOnlyList<LegacyImportProvenance> Provenance,
-    LegacyImportPlanningCandidates Candidates);
+    LegacyImportPlanningCandidates Candidates,
+    IReadOnlyList<LegacyImportRelatedOrder>? RelatedOrders = null);
+
+internal sealed record LegacyImportRelatedOrder(
+    string RowKey,
+    string OrderNumber,
+    int Quantity,
+    string? ExistingOrderId);
 
 internal sealed record LegacyImportOpenOrderRow(
     string RowKey,
@@ -238,7 +246,9 @@ internal sealed record LegacyImportOpenOrderValues(
     string? CaseReference,
     int? OrderedQuantity,
     string? ItemName,
-    string? PicturePath);
+    string? PicturePath,
+    string? ProductionInstruction = null,
+    string? BatchNumber = null);
 
 internal sealed record LegacyImportProvenance(
     string Field,
@@ -430,7 +440,8 @@ internal sealed record MachineCreate(
     bool IsActive,
     bool DisplayEnabled,
     string? PicturePath,
-    string? MachineTypeId = null);
+    string? MachineTypeId = null,
+    bool RespectMasterCalendar = true);
 
 internal sealed record WorkingCalendar(
     string WorkingCalendarId,
@@ -541,7 +552,8 @@ internal sealed record PlannerResource(
     bool IsActive,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    bool RespectMasterCalendar = true)
 {
     public string DisplayName => $"{EmployeeNumber} - {Name}";
 }
@@ -558,7 +570,8 @@ internal sealed record ResourceCreate(
     string? PhotoPath,
     string? Notes,
     string? Email,
-    bool IsActive);
+    bool IsActive,
+    bool RespectMasterCalendar = true);
 
 internal sealed record ResourceUpdate(
     string EmployeeNumber,
@@ -570,7 +583,8 @@ internal sealed record ResourceUpdate(
     string? PhotoPath,
     string? Notes,
     string? Email,
-    bool IsActive);
+    bool IsActive,
+    bool RespectMasterCalendar = true);
 
 internal sealed record EmployeeCalendarException(
     string ExceptionId,
@@ -703,7 +717,13 @@ internal sealed record CaseOperation(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false)
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true)
 {
     public string DisplayName => $"OP{OperationNumber} - {Name}";
 
@@ -728,7 +748,13 @@ internal sealed record CaseOperationCreate(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false);
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true);
 
 internal sealed record CaseOperationUpdate(
     int OperationNumber,
@@ -744,7 +770,13 @@ internal sealed record CaseOperationUpdate(
     bool LoadUnloadRequiresWorker = false,
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
-    bool DayShiftOnly = false);
+    bool DayShiftOnly = false,
+    bool HasExternalDelay = false,
+    string? ExternalDelayDescription = null,
+    double ExternalDelayDuration = 0,
+    string ExternalDelayDurationUnit = "hours",
+    string? ExternalDelayCalendarId = null,
+    bool RespectMasterCalendar = true);
 
 internal sealed record PlannerOrder(
     string OrderId,
@@ -846,7 +878,11 @@ internal sealed record PlanningBoardOperation(
     string? CaseName = null,
     string? MachineAssignmentId = null,
     int? AssignmentVersion = null,
-    string PlanningMode = "manual");
+    string PlanningMode = "manual",
+    string? WorkFinishDate = null,
+    DateTimeOffset? LatestStart = null,
+    string? LatestStartWarning = null,
+    bool IsLatestStartOverdue = false);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

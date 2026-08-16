@@ -9,6 +9,8 @@ namespace Meimad.Planner.Server.Application.Timeline;
 
 internal sealed class TimelineProjectionService
 {
+    internal const string DuplicateTimelineBlockLogTemplate =
+        "DUPLICATE_TIMELINE_BLOCK assignmentId={AssignmentId} operationId={OperationId} machineId={MachineId}";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ITimelineSourceRepository repository;
     private readonly TimelineCalculationEngine engine;
@@ -184,6 +186,9 @@ internal sealed class TimelineProjectionService
         }
 
         var calendars = new List<TimelineMachineCalendar>();
+        var masterAvailability = source.MasterCalendarJson is null ? null : ReadAvailability(
+            source.MasterCalendarJson, source.MasterCalendarTimeZoneId, horizonStart, horizonEnd,
+            "Israel Master Calendar", mappingConflicts, [], source.Holidays);
         foreach (var machine in source.Machines)
         {
             var windows = ReadAvailability(
@@ -195,7 +200,11 @@ internal sealed class TimelineProjectionService
                 mappingConflicts,
                 [machine.MachineId],
                 source.Holidays);
-            calendars.Add(new TimelineMachineCalendar(machine.MachineId, windows, machine.SkillTokens));
+            calendars.Add(new TimelineMachineCalendar(machine.MachineId,
+                machine.RespectMasterCalendar && masterAvailability is not null
+                    ? IntersectAvailability(windows, masterAvailability)
+                    : windows,
+                machine.SkillTokens));
         }
         var machineCalendarsById = calendars.ToDictionary(
             calendar => calendar.MachineId,
@@ -212,18 +221,42 @@ internal sealed class TimelineProjectionService
                 mappingConflicts,
                 [],
                 source.Holidays);
-        var resourceCalendars = source.Resources.Select(resource => new TimelineResourceCalendar(
-            resource.ResourceId,
-            ResourceRole(resource.Role),
-            ApplyResourceExceptions(
+        var resourceCalendars = source.Resources.Select(resource =>
+        {
+            var windows = ApplyResourceExceptions(
                 ReadAvailability(resource.CalendarJson, resource.TimeZoneId, horizonStart, horizonEnd,
                     $"Employee resource {resource.ResourceId} calendar", mappingConflicts, [], source.Holidays),
-                resource.TimeZoneId, resource.Exceptions, horizonStart, horizonEnd),
-            resource.Skills)).ToArray();
+                resource.TimeZoneId, resource.Exceptions, horizonStart, horizonEnd);
+            if (resource.RespectMasterCalendar && masterAvailability is not null)
+                windows = IntersectAvailability(windows, masterAvailability);
+            return new TimelineResourceCalendar(resource.ResourceId, ResourceRole(resource.Role), windows, resource.Skills);
+        }).ToArray();
         var dayShiftCalendars = source.Machines.Select(machine => new TimelineMachineCalendar(
             machine.MachineId,
             ExpandDailyWindow(machine.TimeZoneId, options.DayShiftStartsAtLocal,
                 options.DayShiftEndsAtLocal, horizonStart, horizonEnd))).ToArray();
+        var externalWorkingDayDelays = source.Operations
+            .Where(operation => operation.ExternalDelayWorkingDays > 0
+                && operation.ExternalDelayCalendarJson is not null
+                && operation.ExternalDelayCalendarTimeZoneId is not null)
+            .ToDictionary(operation => operation.OperationId, operation =>
+            {
+                var windows = ReadAvailability(
+                    operation.ExternalDelayCalendarJson!,
+                    operation.ExternalDelayCalendarTimeZoneId,
+                    horizonStart,
+                    horizonEnd,
+                    $"External delay calendar for Batch {operation.BatchNumber} OP{operation.OperationNumber}",
+                    mappingConflicts,
+                    operation.MachineId is null ? [] : [operation.MachineId],
+                    source.Holidays);
+                if (operation.ExternalDelayRespectMasterCalendar && masterAvailability is not null)
+                    windows = IntersectAvailability(windows, masterAvailability);
+                return new TimelineWorkingDayDelay(
+                    operation.ExternalDelayWorkingDays,
+                    operation.ExternalDelayCalendarTimeZoneId!,
+                    windows);
+            }, StringComparer.Ordinal);
         var dependencyBlockedOperationIds = new HashSet<string>(StringComparer.Ordinal);
         var dependencies = BuildDependencies(
             source.Operations,
@@ -271,7 +304,9 @@ internal sealed class TimelineProjectionService
                         CalculationPlanningMode(operation),
                         operation.PlannedQuantity,
                         operation.AutomaticLoading,
-                        operation.LoadUnloadEveryNParts))
+                        operation.LoadUnloadEveryNParts,
+                        operation.ExternalDelayAfter,
+                        externalWorkingDayDelays.GetValueOrDefault(operation.OperationId)))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number
@@ -859,6 +894,21 @@ internal sealed class TimelineProjectionService
         }
 
         return windows;
+    }
+
+    private static IReadOnlyList<TimelineWindow> IntersectAvailability(
+        IReadOnlyList<TimelineWindow> resource,
+        IReadOnlyList<TimelineWindow> master)
+    {
+        var result = new List<TimelineWindow>();
+        foreach (var left in resource)
+        foreach (var right in master)
+        {
+            var start = left.StartsAt > right.StartsAt ? left.StartsAt : right.StartsAt;
+            var end = left.EndsAt < right.EndsAt ? left.EndsAt : right.EndsAt;
+            if (end > start) result.Add(new TimelineWindow(start, end));
+        }
+        return result.OrderBy(window => window.StartsAt).ThenBy(window => window.EndsAt).ToArray();
     }
 
     private static (int Start, int End)[] ReadLocalWindows(
@@ -1557,9 +1607,12 @@ internal sealed class TimelineProjectionService
         {
             foreach (var group in duplicate)
             {
+                var duplicateBlock = group.First();
                 logger.LogError(
-                    "DUPLICATE_TIMELINE_BLOCK operationAssignmentId={MachineAssignmentId}",
-                    group.Key);
+                    DuplicateTimelineBlockLogTemplate,
+                    group.Key,
+                    duplicateBlock.OperationId,
+                    duplicateBlock.MachineId);
             }
         }
         logger.LogDebug(
@@ -1682,9 +1735,9 @@ internal sealed class TimelineProjectionService
                 else
                 {
                     logger.LogError(
-                        "DUPLICATE_TIMELINE_BLOCK operationId={OperationId}, assignmentId={MachineAssignmentId}, Machine={MachineId}; the duplicate facts were folded into the canonical block and the duplicate block was dropped.",
-                        operation.OperationId,
+                        DuplicateTimelineBlockLogTemplate,
                         extra.Interval.MachineAssignmentId,
+                        operation.OperationId,
                         extra.Machine.MachineId);
                 }
                 replacements[(extra.MachineIndex, extra.IntervalIndex)] = null;
@@ -1710,16 +1763,26 @@ internal sealed class TimelineProjectionService
                      && operation.MachineId is not null
                      && !string.IsNullOrWhiteSpace(operation.MachineAssignmentId)))
         {
-            var publicBlockCount = normalized.SelectMany(machine => machine.Intervals)
-                .Count(interval => string.Equals(
-                    interval.OperationId, operation.OperationId, StringComparison.Ordinal));
-            if (publicBlockCount != 1)
+            var publicAssignmentBlocks = normalized.SelectMany(machine => machine.Intervals)
+                .Where(interval => string.Equals(
+                    interval.MachineAssignmentId,
+                    operation.MachineAssignmentId,
+                    StringComparison.Ordinal))
+                .ToArray();
+            if (publicAssignmentBlocks.Length > 1)
             {
                 logger.LogError(
-                    "TIMELINE_OPERATION_IDENTITY_INVARIANT operationId={OperationId}, assignmentId={MachineAssignmentId}; expected one public identified block but produced {BlockCount}.",
-                    operation.OperationId,
+                    DuplicateTimelineBlockLogTemplate,
                     operation.MachineAssignmentId,
-                    publicBlockCount);
+                    operation.OperationId,
+                    operation.MachineId);
+            }
+            else if (publicAssignmentBlocks.Length == 0)
+            {
+                logger.LogError(
+                    "TIMELINE_OPERATION_IDENTITY_INVARIANT operationId={OperationId}, assignmentId={MachineAssignmentId}; expected one public assignment block but produced none.",
+                    operation.OperationId,
+                    operation.MachineAssignmentId);
             }
         }
         logger.LogDebug(

@@ -32,6 +32,35 @@ public sealed class StepViewerControlTests
     }
 
     [Fact]
+    public void Step_loader_reads_a_solid_from_a_unicode_factory_path()
+    {
+        var asciiPath = Path.Combine(Path.GetTempPath(), $"meimad-source-{Guid.NewGuid():N}.step");
+        var unicodeDirectory = Path.Combine(Path.GetTempPath(), $"מפעל-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(unicodeDirectory);
+        var unicodePath = Path.Combine(unicodeDirectory, "חלק ייצור.step");
+        try
+        {
+            using var box = new BRepPrimAPI_MakeBox(10, 20, 30);
+            using var shape = box.Shape();
+            using var writer = new STEPControl_Writer();
+            using var progress = new Message_ProgressRange();
+            Assert.Equal(IFSelect_ReturnStatus.IFSelect_RetDone,
+                writer.Transfer(shape, STEPControl_StepModelType.STEPControl_AsIs, true, progress));
+            Assert.Equal(IFSelect_ReturnStatus.IFSelect_RetDone, writer.Write(asciiPath));
+            File.Copy(asciiPath, unicodePath);
+
+            var model = StepSolidMeshLoader.Load(unicodePath);
+
+            Assert.True(model.Triangles.Count >= 12);
+        }
+        finally
+        {
+            File.Delete(asciiPath);
+            Directory.Delete(unicodeDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Step_viewer_tessellates_a_cad_body_as_a_shaded_triangle_mesh()
     {
         using var box = new BRepPrimAPI_MakeBox(new gp_Pnt(1000, 2000, 3000), 10, 20, 30);
@@ -107,6 +136,41 @@ public sealed class StepViewerControlTests
         File.Delete(snapshotPath);
         File.Delete(visibleEdgesPath);
         File.Delete(wireframePath);
+    }
+
+    [Fact]
+    public void Bounding_box_supports_model_and_custom_point_references_without_changing_geometry()
+    {
+        var model = new StepModelData(
+            [new(0,0,0), new(10,0,0), new(0,20,0), new(0,0,30), new(10,20,30)],
+            [], [], [0,1,2,3,4]);
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var viewer = new StepViewerControl { Width = 500, Height = 400 };
+                viewer.Measure(new Size(500,400));
+                viewer.Arrange(new Rect(0,0,500,400));
+                viewer.LoadModel(model, "bounds.step");
+                Assert.Equal(10, viewer.CurrentBoundingBox!.X, 6);
+                Assert.Equal(20, viewer.CurrentBoundingBox.Y, 6);
+                Assert.Equal(30, viewer.CurrentBoundingBox.Z, 6);
+                viewer.SetCustomReferenceByPoints(0, 1, 2, 0, 1);
+                Assert.True(viewer.CurrentBoundingBox!.UsesCustomReference);
+                Assert.Equal(10, viewer.CurrentBoundingBox.X, 6);
+                viewer.FlipReferenceAxis("X");
+                Assert.Equal(10, viewer.CurrentBoundingBox.X, 6);
+                viewer.ClearCustomReference();
+                Assert.False(viewer.CurrentBoundingBox!.UsesCustomReference);
+                Assert.Throws<InvalidOperationException>(() => viewer.SetCustomReferenceByPoints(0, 1, 1, 0, 1));
+            }
+            catch (Exception exception) { error = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        Assert.Null(error);
     }
 
     [Fact]

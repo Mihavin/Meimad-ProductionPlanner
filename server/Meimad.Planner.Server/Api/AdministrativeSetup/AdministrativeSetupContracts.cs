@@ -10,16 +10,16 @@ namespace Meimad.Planner.Server.Api.AdministrativeSetup;
 internal sealed record CreateEmployeeResourceRequest(
     string? EmployeeNumber, string? FirstName, string? LastName, string? Role,
     IReadOnlyList<string?>? Skills, string? AssignedCalendarId, string? PhotoPath, string? Notes,
-    string? Email, bool IsActive)
-{ internal CreateEmployeeResourceCommand ToCommand() => new(EmployeeNumber, FirstName, LastName, Role, Skills, AssignedCalendarId, PhotoPath, Notes, Email, IsActive); }
+    string? Email, bool IsActive, bool RespectMasterCalendar = true)
+{ internal CreateEmployeeResourceCommand ToCommand() => new(EmployeeNumber, FirstName, LastName, Role, Skills, AssignedCalendarId, PhotoPath, Notes, Email, IsActive, RespectMasterCalendar); }
 
 internal sealed class PatchEmployeeResourceRequest
 {
     [JsonExtensionData] public Dictionary<string, JsonElement> Fields { get; init; } = new(StringComparer.Ordinal);
     internal UpdateEmployeeResourceCommand ToCommand()
     {
-        var reader = new AdministrativePatchReader(Fields, new HashSet<string>(["employeeNumber","firstName","lastName","role","skills","assignedCalendarId","photoPath","notes","email","isActive"], StringComparer.Ordinal));
-        var result = new UpdateEmployeeResourceCommand(reader.String("employeeNumber"), reader.String("firstName"), reader.String("lastName"), reader.String("role"), reader.StringArray("skills"), reader.String("assignedCalendarId"), reader.String("photoPath"), reader.String("notes"), reader.String("email"), reader.Boolean("isActive"));
+        var reader = new AdministrativePatchReader(Fields, new HashSet<string>(["employeeNumber","firstName","lastName","role","skills","assignedCalendarId","photoPath","notes","email","isActive","respectMasterCalendar"], StringComparer.Ordinal));
+        var result = new UpdateEmployeeResourceCommand(reader.String("employeeNumber"), reader.String("firstName"), reader.String("lastName"), reader.String("role"), reader.StringArray("skills"), reader.String("assignedCalendarId"), reader.String("photoPath"), reader.String("notes"), reader.String("email"), reader.Boolean("isActive"), reader.Boolean("respectMasterCalendar"));
         reader.ThrowIfInvalid(); return result;
     }
 }
@@ -57,8 +57,8 @@ internal sealed record UpdateReportEmailSettingsRequest(
 internal sealed record EmployeeResourceResponse(
     string ResourceId, string EmployeeNumber, string Name, string FirstName, string LastName, string Role, IReadOnlyList<string> Skills,
     string AssignedCalendarId, string? PhotoPath, string? Notes, string? Email, bool IsActive,
-    int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)
-{ internal static EmployeeResourceResponse FromDomain(EmployeeResource value) => new(value.ResourceId,value.EmployeeNumber,value.Name,value.FirstName,value.LastName,value.ResourceType,value.Skills,value.AssignedCalendarId,value.PhotoPath,value.Notes,value.Email,value.IsActive,value.Version,value.CreatedAt,value.UpdatedAt); }
+    int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool RespectMasterCalendar)
+{ internal static EmployeeResourceResponse FromDomain(EmployeeResource value) => new(value.ResourceId,value.EmployeeNumber,value.Name,value.FirstName,value.LastName,value.ResourceType,value.Skills,value.AssignedCalendarId,value.PhotoPath,value.Notes,value.Email,value.IsActive,value.Version,value.CreatedAt,value.UpdatedAt,value.RespectMasterCalendar); }
 internal sealed record EmployeeResourceListResponse(IReadOnlyList<EmployeeResourceResponse> Items, string? NextCursor);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

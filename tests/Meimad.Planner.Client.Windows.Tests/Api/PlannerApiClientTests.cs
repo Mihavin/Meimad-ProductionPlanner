@@ -490,6 +490,57 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public void Order_driven_batch_uses_source_batch_number_and_related_order_allocations()
+    {
+        var owner = new LegacyExcelImportViewModel();
+        var caseCandidate = new LegacyImportCaseCandidate("case-1", "PN-X", "Part X", "A", "Customer", "exact");
+        var route = new LegacyImportCaseOperationCandidate("route-1", "case-1", 10, "Machine", null, 0, 10, 2);
+        var existingOrder = new LegacyImportOrderCandidate("order-1", "ORD-1", 16, "2026-09-10", "exact");
+        var row = LegacyImportRowViewModel.Planning(new LegacyImportPlanningRow(
+            "batch-row", "Orders", 2, "pool:pn-x", 1,
+            new LegacyImportPlanningValues("Customer", "PN-X", "WO-7", null, 12, null, null, null, null, null),
+            [],
+            new LegacyImportPlanningCandidates([caseCandidate], [existingOrder], [], [route], []),
+            [
+                new LegacyImportRelatedOrder("order-row-1", "ORD-1", 7, "order-1"),
+                new LegacyImportRelatedOrder("order-row-2", "ORD-2", 5, null)
+            ]), [], owner);
+
+        row.PreparePlanningAutomatically("WO-7");
+
+        Assert.Equal("create_batch_to_pool", row.Decision);
+        Assert.Equal("WO-7", row.BatchNumber);
+        Assert.Equal(2, row.Allocations.Count);
+        Assert.Equal(12, row.Allocations.Sum(allocation => int.Parse(allocation.Quantity)));
+        Assert.Equal("order-1", row.Allocations[0].SelectedOrderCandidate?.OrderId);
+        Assert.Equal("order-row-2", row.Allocations[1].OrderSourceRowKey);
+        Assert.DoesNotContain(row.Allocations, allocation => allocation.Type == "stock");
+    }
+
+    [Fact]
+    public void Case_stage_maps_only_requested_case_fields_and_generates_system_working_folder()
+    {
+        var owner = new LegacyExcelImportViewModel();
+        var row = LegacyImportRowViewModel.OpenOrder(new LegacyImportOpenOrderRow(
+            "order-row", "Orders", 2, 1,
+            new LegacyImportOpenOrderValues(
+                "PN-X", "ORD-1", null, "Customer X", "2026-09-10", "A", 7,
+                "source notes", null, "source reference", 16, "Part X", null, "#", "WO-7"),
+            [], new LegacyImportOpenOrderCandidates([], [])), [], owner);
+
+        row.PrepareNewCaseAutomatically(@"C:\Import\_MeimadPlanner\Cases\PN-X");
+
+        Assert.Equal("create_case", row.Decision);
+        Assert.Equal("PN-X", row.NewCasePartNumber);
+        Assert.Equal("Part X", row.NewCaseName);
+        Assert.Equal("A", row.NewCaseRevision);
+        Assert.Equal("Customer X", row.NewCaseCustomer);
+        Assert.Equal(string.Empty, row.NewCaseCustomerReference);
+        Assert.Equal(string.Empty, row.NewCaseNotes);
+        Assert.Equal(@"C:\Import\_MeimadPlanner\Cases\PN-X", row.NewCaseWorkingFolderPath);
+    }
+
+    [Fact]
     public void Legacy_import_row_mirrors_complete_machine_compatibility_facts_and_requires_an_explicit_override()
     {
         var owner = new LegacyExcelImportViewModel();
@@ -1063,7 +1114,7 @@ public sealed class PlannerApiClientTests
         Assert.Equal(4, viewModel.AutomaticSkippedRows);
         Assert.Equal(4, viewModel.AutomaticAttentionRows.Count);
         Assert.All(viewModel.AutomaticAttentionRows, row => Assert.False(string.IsNullOrWhiteSpace(row.AutomaticReason)));
-        Assert.Contains("2 full-quantity stock allocation(s)", viewModel.AutomaticImportSummary, StringComparison.Ordinal);
+        Assert.Contains("2 explicit stock allocation(s)", viewModel.AutomaticImportSummary, StringComparison.Ordinal);
         Assert.True(viewModel.RequiresAutomaticSkipConfirmation);
         Assert.False(viewModel.CanCommit);
         Assert.Equal(4, viewModel.WizardStep);

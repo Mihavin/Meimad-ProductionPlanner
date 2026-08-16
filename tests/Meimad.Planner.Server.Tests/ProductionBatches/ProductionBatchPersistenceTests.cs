@@ -218,7 +218,9 @@ public sealed class ProductionBatchPersistenceTests
                 ('case-op-10', 'case-1', 10, 0, 'Saw', 'saw', 120, 30,
                  'independent', NULL),
                 ('case-op-20', 'case-1', 20, 1, 'Mill', 'mill', 600, 300,
-                 'sequential', 'case-op-10');
+                 'sequential', 'case-op-10'),
+                ('case-op-stock', 'case-2', 10, 0, 'Stock route', 'mill', 60, 30,
+                 'independent', NULL);
             """;
         await command.ExecuteNonQueryAsync();
     }

@@ -32,6 +32,12 @@ public sealed class CaseOperationCreateApiTests
                 automaticLoading = true,
                 loadUnloadEveryNParts = 5,
                 dayShiftOnly = true,
+                hasExternalDelay = true,
+                externalDelayDescription = "Outside coating",
+                externalDelayDuration = 4.0,
+                externalDelayDurationUnit = "hours",
+                externalDelayCalendarId = (string?)null,
+                respectMasterCalendar = true,
                 dependencyType = "INDEPENDENT",
                 predecessorCaseOperationId = (string?)null,
                 simultaneousGroupKey = (string?)null
@@ -42,6 +48,27 @@ public sealed class CaseOperationCreateApiTests
             Assert.True(operation.GetProperty("automaticLoading").GetBoolean());
             Assert.Equal(5, operation.GetProperty("loadUnloadEveryNParts").GetInt32());
             Assert.True(operation.GetProperty("dayShiftOnly").GetBoolean());
+
+            var operationId = operation.GetProperty("caseOperationId").GetString()!;
+            using (var delayPatch = PatchRequest(caseId, operationId, 1, new
+            {
+                externalDelayDescription = "Outside coating and inspection",
+                externalDelayDuration = 6.5,
+                externalDelayDurationUnit = "days",
+                respectMasterCalendar = false
+            }))
+            using (var delayPatchResponse = await client.SendAsync(delayPatch))
+            {
+                var delayPatchBody = await delayPatchResponse.Content.ReadAsStringAsync();
+                Assert.True(delayPatchResponse.StatusCode == HttpStatusCode.OK, delayPatchBody);
+                using var delayPatchDocument = JsonDocument.Parse(
+                    delayPatchBody);
+                Assert.True(delayPatchDocument.RootElement.GetProperty("hasExternalDelay").GetBoolean());
+                Assert.Equal("Outside coating and inspection", delayPatchDocument.RootElement.GetProperty("externalDelayDescription").GetString());
+                Assert.Equal(6.5, delayPatchDocument.RootElement.GetProperty("externalDelayDuration").GetDouble());
+                Assert.Equal("days", delayPatchDocument.RootElement.GetProperty("externalDelayDurationUnit").GetString());
+                Assert.False(delayPatchDocument.RootElement.GetProperty("respectMasterCalendar").GetBoolean());
+            }
 
             using var orderResponse = await client.PostAsJsonAsync("/api/v1/orders", new
             {
@@ -62,6 +89,11 @@ public sealed class CaseOperationCreateApiTests
             Assert.Equal(45, item.GetProperty("loadUnloadTimeSeconds").GetInt32());
             Assert.Equal(5, item.GetProperty("loadUnloadEveryNParts").GetInt32());
             Assert.True(item.GetProperty("dayShiftOnly").GetBoolean());
+            Assert.True(item.GetProperty("hasExternalDelay").GetBoolean());
+            Assert.Equal("Outside coating and inspection", item.GetProperty("externalDelayDescription").GetString());
+            Assert.Equal(6.5, item.GetProperty("externalDelayDuration").GetDouble());
+            Assert.Equal("days", item.GetProperty("externalDelayDurationUnit").GetString());
+            Assert.False(item.GetProperty("respectMasterCalendar").GetBoolean());
 
             using var boardResponse = await client.GetAsync("/api/v1/planning-board");
             var board = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());

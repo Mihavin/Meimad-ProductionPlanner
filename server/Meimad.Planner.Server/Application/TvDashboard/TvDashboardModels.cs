@@ -31,6 +31,7 @@ internal sealed record TvMachine(
     TvStatus Status,
     TvJob? Current,
     TvJob? Next,
+    TvJob? Third,
     TvDowntime? Downtime,
     IReadOnlyList<TvConflict> Conflicts);
 
@@ -46,7 +47,8 @@ internal sealed record TvJob(
     string Status,
     DateTimeOffset? ProjectedFinish,
     bool Urgent,
-    string? WorkFinishDate);
+    string? WorkFinishDate,
+    string? PreviewUrl);
 
 internal sealed record TvDowntime(
     string DowntimeId,

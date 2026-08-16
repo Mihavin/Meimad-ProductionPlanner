@@ -76,6 +76,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
             SELECT machine_assignments.machine_id,
                    batch_operations.id,
                    production_batches.id,
+                   cases.id,
                    production_batches.batch_number,
                    cases.part_number,
                    batch_operations.operation_number,
@@ -100,8 +101,8 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                 reader.GetString(0),
                 new TvSourceOperation(
                     reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                    reader.GetString(4), reader.GetInt32(5), reader.GetString(6),
-                    reader.GetString(7), reader.GetInt32(8))));
+                    reader.GetString(4), reader.GetString(5), reader.GetInt32(6), reader.GetString(7),
+                    reader.GetString(8), reader.GetInt32(9))));
         }
 
         return values;

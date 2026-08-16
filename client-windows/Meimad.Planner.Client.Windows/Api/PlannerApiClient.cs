@@ -200,6 +200,16 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<SetupCalendarSelection> GetMasterCalendarAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new SetupCalendarSelection(null, null));
+
+    Task<SetupCalendarSelection> SetMasterCalendarAsync(
+        string workingCalendarId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task ClearMasterCalendarAsync(string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerMachineType>> ListMachineTypesAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerMachineType>>([]);
@@ -1012,6 +1022,28 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         long editGeneration,
         CancellationToken cancellationToken = default) =>
         DeleteAsync("api/v1/setup-calendar", clientId, editGeneration, cancellationToken);
+
+    public async Task<SetupCalendarSelection> GetMasterCalendarAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/master-calendar", cancellationToken);
+        return await ReadSuccessAsync<SetupCalendarSelection>(response, cancellationToken);
+    }
+
+    public async Task<SetupCalendarSelection> SetMasterCalendarAsync(
+        string workingCalendarId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/master-calendar", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new SetupCalendarUpdate(workingCalendarId));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<SetupCalendarSelection>(response, cancellationToken);
+    }
+
+    public Task ClearMasterCalendarAsync(string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync("api/v1/master-calendar", clientId, editGeneration, cancellationToken);
 
     public async Task<IReadOnlyList<PlannerMachineType>> ListMachineTypesAsync(
         CancellationToken cancellationToken = default) =>

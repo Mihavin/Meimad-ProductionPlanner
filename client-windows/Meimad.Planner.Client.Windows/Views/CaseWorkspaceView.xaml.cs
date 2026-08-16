@@ -14,6 +14,7 @@ public partial class CaseWorkspaceView : UserControl
         InitializeComponent();
         StepViewer.ModelStateChanged += (_, _) => UpdateStepSnapshotState();
         StepViewer.MeasurementChanged += (_, _) => StepMeasurementText.Text = StepViewer.MeasurementText;
+        StepViewer.ReferenceChanged += (_, _) => UpdateStepReferenceState();
         StepDisplayModeCombo.SelectionChanged += StepDisplayMode_SelectionChanged;
         DataContextChanged += CaseWorkspaceView_DataContextChanged;
     }
@@ -137,6 +138,25 @@ public partial class CaseWorkspaceView : UserControl
     }
     private void StepMeasureDistance_Click(object sender, RoutedEventArgs e) => StepViewer.BeginDistanceMeasurement();
     private void StepClearMeasurement_Click(object sender, RoutedEventArgs e) => StepViewer.ClearMeasurement();
+    private void StepReferencePoints_Click(object sender, RoutedEventArgs e) => StepViewer.BeginCustomReferenceByPoints();
+    private void StepReferenceFace_Click(object sender, RoutedEventArgs e)
+    {
+        try { StepViewer.BeginCustomReferenceByFaceAndEdge(); }
+        catch (InvalidOperationException exception) { MessageBox.Show(exception.Message, "STEP reference", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+    private void StepReferenceClear_Click(object sender, RoutedEventArgs e) => StepViewer.ClearCustomReference();
+    private void StepFlipX_Click(object sender, RoutedEventArgs e) => StepViewer.FlipReferenceAxis("X");
+    private void StepFlipY_Click(object sender, RoutedEventArgs e) => StepViewer.FlipReferenceAxis("Y");
+    private void StepFlipZ_Click(object sender, RoutedEventArgs e) => StepViewer.FlipReferenceAxis("Z");
+
+    private void UpdateStepReferenceState()
+    {
+        var box = StepViewer.CurrentBoundingBox;
+        StepBoundingBoxText.Text = box is null
+            ? "Open a STEP model to calculate its bounding box."
+            : $"{(box.UsesCustomReference ? "Custom" : "Model XYZ")}\nX {box.X:0.####}   Y {box.Y:0.####}   Z {box.Z:0.####}";
+        StepMeasurementText.Text = StepViewer.MeasurementText;
+    }
 
     private void UpdateStepSnapshotState()
     {
@@ -146,6 +166,7 @@ public partial class CaseWorkspaceView : UserControl
         StepDisplayModeCombo.ToolTip = StepViewer.IsSolidModel
             ? "Choose shaded faces, shaded faces with visible edges, or wireframe."
             : "Display modes become available after the STEP file is loaded as a tessellated solid.";
+        UpdateStepReferenceState();
     }
 
     private void BrowseFolder_Click(object sender, System.Windows.RoutedEventArgs e)

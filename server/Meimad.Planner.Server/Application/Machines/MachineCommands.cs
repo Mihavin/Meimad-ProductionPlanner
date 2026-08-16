@@ -10,7 +10,8 @@ internal sealed record CreateMachineCommand(
     bool? IsActive,
     bool? DisplayEnabled,
     string? PicturePath = null,
-    string? MachineTypeId = null);
+    string? MachineTypeId = null,
+    bool? RespectMasterCalendar = true);
 
 internal readonly record struct MachineField<T>(bool IsSpecified, T Value)
 {
@@ -29,4 +30,5 @@ internal sealed record UpdateMachineCommand(
     MachineField<bool?> IsActive,
     MachineField<bool?> DisplayEnabled,
     MachineField<string?> PicturePath = default,
-    MachineField<string?> MachineTypeId = default);
+    MachineField<string?> MachineTypeId = default,
+    MachineField<bool?> RespectMasterCalendar = default);

@@ -37,7 +37,14 @@ internal sealed record TimelineOperationInput(
     TimelinePlanningMode PlanningMode = TimelinePlanningMode.Manual,
     int PlannedQuantity = 1,
     bool AutomaticLoading = false,
-    int? LoadUnloadEveryNParts = null);
+    int? LoadUnloadEveryNParts = null,
+    TimeSpan ExternalDelayAfter = default,
+    TimelineWorkingDayDelay? ExternalWorkingDayDelay = null);
+
+internal sealed record TimelineWorkingDayDelay(
+    int Days,
+    string TimeZoneId,
+    IReadOnlyList<TimelineWindow> Availability);
 
 internal static class TimelinePriorityComparer
 {

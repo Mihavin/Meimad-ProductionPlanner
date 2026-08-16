@@ -848,7 +848,12 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     private void Apply(PlanningBoardSnapshot snapshot)
     {
         Pool.Clear();
-        foreach (var operation in snapshot.Pool)
+        foreach (var operation in snapshot.Pool
+                     .OrderBy(operation => operation.Status == "not_started" ? 0 : 1)
+                     .ThenBy(operation => operation.IsLatestStartOverdue ? 0 : 1)
+                     .ThenBy(operation => operation.LatestStart ?? DateTimeOffset.MaxValue)
+                     .ThenBy(operation => operation.WorkFinishDate, StringComparer.Ordinal)
+                     .ThenBy(operation => operation.BatchOperationId, StringComparer.Ordinal))
         {
             Pool.Add(new PlanningOperationViewModel(operation, isEditor));
         }
@@ -1088,6 +1093,10 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         ActivePauseReason = operation.ActivePauseReason;
         PausedBy = operation.PausedBy;
         PauseStartedAt = operation.PauseStartedAt;
+        WorkFinishDate = operation.WorkFinishDate;
+        LatestStart = operation.LatestStart;
+        LatestStartWarning = operation.LatestStartWarning;
+        IsLatestStartOverdue = operation.IsLatestStartOverdue;
     }
 
     public string BatchOperationId { get; }
@@ -1108,6 +1117,13 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string? MachineAssignmentId { get; }
     public int? AssignmentVersion { get; }
     public string PlanningMode { get; }
+    public string? WorkFinishDate { get; }
+    public DateTimeOffset? LatestStart { get; }
+    public string? LatestStartWarning { get; }
+    public bool IsLatestStartOverdue { get; }
+    public string LatestStartText => LatestStart.HasValue
+        ? $"Latest start {LatestStart.Value:yyyy-MM-dd HH:mm}"
+        : LatestStartWarning ?? "Latest start unavailable";
     public BitmapImage? Preview
     {
         get => preview;

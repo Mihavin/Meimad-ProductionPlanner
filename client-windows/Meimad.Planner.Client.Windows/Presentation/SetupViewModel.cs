@@ -32,6 +32,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string statusMessage = "Connect to manage factory setup.";
     private WorkingCalendar? selectedCalendar;
     private WorkingCalendar? selectedSetupCalendar;
+    private WorkingCalendar? selectedMasterCalendar;
     private string? editingCalendarId;
     private string calendarName = string.Empty;
     private string calendarTimeZoneId = "Asia/Jerusalem";
@@ -64,6 +65,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string machinePicturePath = string.Empty;
     private bool machineIsActive = true;
     private bool machineDisplayEnabled = true;
+    private bool machineRespectMasterCalendar = true;
     private MachineDowntime? selectedDowntime;
     private string? editingDowntimeId;
     private PlannerMachine? selectedDowntimeMachine;
@@ -89,6 +91,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string resourceNotes = string.Empty;
     private string resourceEmail = string.Empty;
     private bool resourceIsActive = true;
+    private bool resourceRespectMasterCalendar = true;
     private EmployeeCalendarException? selectedResourceException;
     private string? editingResourceExceptionId;
     private string resourceExceptionDate = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
@@ -146,6 +149,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DeleteCalendarCommand = new AsyncCommand(DeleteSelectedCalendarAsync, CanDeleteCalendar);
         SetSetupCalendarCommand = new AsyncCommand(SetSetupCalendarAsync, CanSetSetupCalendar);
         ClearSetupCalendarCommand = new AsyncCommand(ClearSetupCalendarAsync, CanClearSetupCalendar);
+        SetMasterCalendarCommand = new AsyncCommand(SetMasterCalendarAsync, CanSetMasterCalendar);
+        ClearMasterCalendarCommand = new AsyncCommand(ClearMasterCalendarAsync, CanClearMasterCalendar);
 
         NewMachineCommand = new AsyncCommand(BeginNewMachineAsync, CanManage);
         SaveMachineCommand = new AsyncCommand(SaveMachineAsync, CanSaveMachine);
@@ -223,6 +228,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand DeleteCalendarCommand { get; }
     public AsyncCommand SetSetupCalendarCommand { get; }
     public AsyncCommand ClearSetupCalendarCommand { get; }
+    public AsyncCommand SetMasterCalendarCommand { get; }
+    public AsyncCommand ClearMasterCalendarCommand { get; }
     public AsyncCommand NewMachineCommand { get; }
     public AsyncCommand SaveMachineCommand { get; }
     public AsyncCommand DeactivateMachineCommand { get; }
@@ -324,6 +331,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
     }
 
+    public WorkingCalendar? SelectedMasterCalendar
+    {
+        get => selectedMasterCalendar;
+        set { if (SetField(ref selectedMasterCalendar, value)) RaiseCommandStates(); }
+    }
+
     public string CalendarName { get => calendarName; set => SetField(ref calendarName, value); }
     public string CalendarTimeZoneId { get => calendarTimeZoneId; set => SetField(ref calendarTimeZoneId, value); }
     public string CalendarShiftStartsAt { get => calendarShiftStartsAt; set => SetField(ref calendarShiftStartsAt, value); }
@@ -381,6 +394,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     }
     public string MachinePicturePath { get => machinePicturePath; set => SetField(ref machinePicturePath, value); }
     public bool MachineIsActive { get => machineIsActive; set => SetField(ref machineIsActive, value); }
+    public bool MachineRespectMasterCalendar { get => machineRespectMasterCalendar; set => SetField(ref machineRespectMasterCalendar, value); }
     public bool MachineDisplayEnabled { get => machineDisplayEnabled; set => SetField(ref machineDisplayEnabled, value); }
     public string MachineFormHeading => editingMachineId is null ? "New machine" : "Edit machine";
 
@@ -461,6 +475,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string ResourceNotes { get => resourceNotes; set => SetField(ref resourceNotes, value); }
     public string ResourceEmail { get => resourceEmail; set => SetField(ref resourceEmail, value); }
     public bool ResourceIsActive { get => resourceIsActive; set => SetField(ref resourceIsActive, value); }
+    public bool ResourceRespectMasterCalendar { get => resourceRespectMasterCalendar; set => SetField(ref resourceRespectMasterCalendar, value); }
     public string ResourceFormHeading => editingResourceId is null ? "New employee / resource" : "Edit employee / resource";
     public string ResourceSaveActionText => editingResourceId is null ? "Save employee / resource" : "Save employee / resource changes";
     public EmployeeCalendarException? SelectedResourceException
@@ -580,10 +595,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var downtimesTask = apiClient.ListDowntimesAsync();
             var machineTypesTask = apiClient.ListMachineTypesAsync();
             var setupCalendarTask = apiClient.GetSetupCalendarAsync();
+            var masterCalendarTask = apiClient.GetMasterCalendarAsync();
             var resourcesTask = apiClient.ListResourcesAsync();
             var holidaysTask = apiClient.ListIsraeliHolidaysAsync();
             var reportSettingsTask = apiClient.GetReportEmailSettingsAsync();
-            await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, setupCalendarTask,
+            await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, setupCalendarTask, masterCalendarTask,
                 resourcesTask, holidaysTask, reportSettingsTask);
 
             Replace(WorkingCalendars, await calendarsTask);
@@ -602,6 +618,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
             SelectedCalendar = FindCalendar(calendarId) ?? WorkingCalendars.FirstOrDefault();
             SelectedSetupCalendar = FindCalendar(setup.WorkingCalendarId);
+            SelectedMasterCalendar = FindCalendar((await masterCalendarTask).WorkingCalendarId);
             SelectedMachine = Machines.FirstOrDefault(value => value.MachineId == machineId)
                 ?? Machines.FirstOrDefault();
             SelectedDowntime = Downtimes.FirstOrDefault(value => value.DowntimeId == downtimeId)
@@ -764,6 +781,28 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
     }
 
+    internal async Task SetMasterCalendarAsync()
+    {
+        if (!CanSetMasterCalendar()) return;
+        var selected = SelectedMasterCalendar!;
+        if (await TryMutationAsync(() => apiClient!.SetMasterCalendarAsync(selected.WorkingCalendarId, clientId, editGeneration)))
+        {
+            StatusMessage = $"{selected.Name} is the Israel Master Calendar.";
+            ConfigurationChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    internal async Task ClearMasterCalendarAsync()
+    {
+        if (!CanClearMasterCalendar()) return;
+        if (await TryMutationAsync(() => apiClient!.ClearMasterCalendarAsync(clientId, editGeneration)))
+        {
+            SelectedMasterCalendar = null;
+            StatusMessage = "Israel Master Calendar cleared.";
+            ConfigurationChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     internal Task BeginNewMachineAsync()
     {
         editingMachineId = null;
@@ -779,6 +818,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachinePicturePath = string.Empty;
         MachineIsActive = true;
         MachineDisplayEnabled = true;
+        MachineRespectMasterCalendar = true;
         OnPropertyChanged(nameof(MachineFormHeading));
         StatusMessage = "Enter the Machine master data.";
         RaiseCommandStates();
@@ -1072,6 +1112,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceNotes = string.Empty;
         ResourceEmail = string.Empty;
         ResourceIsActive = true;
+        ResourceRespectMasterCalendar = true;
         OnPropertyChanged(nameof(ResourceFormHeading));
         OnPropertyChanged(nameof(ResourceSaveActionText));
         StatusMessage = "Enter the employee or resource master data.";
@@ -1105,7 +1146,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         var update = new ResourceUpdate(ResourceEmployeeNumber.Trim(), ResourceFirstName.Trim(), ResourceLastName.Trim(), ResourceRole,
             ResourceMachineSkills.Where(value => value.IsSelected).Select(value => value.MachineId).ToArray(),
             SelectedResourceCalendar.WorkingCalendarId, NullIfBlank(ResourcePhotoPath),
-            NullIfBlank(ResourceNotes), NullIfBlank(ResourceEmail), ResourceIsActive);
+            NullIfBlank(ResourceNotes), NullIfBlank(ResourceEmail), ResourceIsActive, ResourceRespectMasterCalendar);
         var succeeded = false;
         IsBusy = true;
         try
@@ -1113,7 +1154,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             if (savedId is null)
             {
                 savedId = (await apiClient!.CreateResourceAsync(
-                    new ResourceCreate(update.EmployeeNumber, update.FirstName, update.LastName, update.Role, update.Skills, update.AssignedCalendarId, update.PhotoPath, update.Notes, update.Email, update.IsActive),
+                    new ResourceCreate(update.EmployeeNumber, update.FirstName, update.LastName, update.Role, update.Skills, update.AssignedCalendarId, update.PhotoPath, update.Notes, update.Email, update.IsActive, update.RespectMasterCalendar),
                     clientId, editGeneration)).ResourceId;
             }
             else
@@ -1454,6 +1495,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachinePicturePath = value.PicturePath ?? string.Empty;
         MachineIsActive = value.IsActive;
         MachineDisplayEnabled = value.DisplayEnabled;
+        MachineRespectMasterCalendar = value.RespectMasterCalendar;
         OnPropertyChanged(nameof(MachineFormHeading));
     }
 
@@ -1492,6 +1534,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceNotes = value.Notes ?? string.Empty;
         ResourceEmail = value.Email ?? string.Empty;
         ResourceIsActive = value.IsActive;
+        ResourceRespectMasterCalendar = value.RespectMasterCalendar;
         OnPropertyChanged(nameof(ResourceFormHeading));
         OnPropertyChanged(nameof(ResourceSaveActionText));
     }
@@ -1557,7 +1600,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         active,
         MachineDisplayEnabled,
         NullIfBlank(MachinePicturePath),
-        SelectedMachineTypeForMachine?.MachineTypeId);
+        SelectedMachineTypeForMachine?.MachineTypeId,
+        MachineRespectMasterCalendar);
 
     private IReadOnlyList<string> SelectedWorkdays()
     {
@@ -1681,6 +1725,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool CanDeleteCalendar() => CanManage() && SelectedCalendar is not null;
     private bool CanSetSetupCalendar() => CanManage() && SelectedSetupCalendar is not null;
     private bool CanClearSetupCalendar() => CanManage() && SelectedSetupCalendar is not null;
+    private bool CanSetMasterCalendar() => CanManage() && SelectedMasterCalendar is not null;
+    private bool CanClearMasterCalendar() => CanManage() && SelectedMasterCalendar is not null;
     private bool CanSaveMachine() => CanManage() && SelectedMachineCalendar is not null;
     private bool CanDeactivateMachine() => CanManage() && SelectedMachine is { IsActive: true };
     private bool CanDeleteMachine() => CanManage() && SelectedMachine is not null;
@@ -1709,6 +1755,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DeleteCalendarCommand.RaiseCanExecuteChanged();
         SetSetupCalendarCommand.RaiseCanExecuteChanged();
         ClearSetupCalendarCommand.RaiseCanExecuteChanged();
+        SetMasterCalendarCommand.RaiseCanExecuteChanged();
+        ClearMasterCalendarCommand.RaiseCanExecuteChanged();
         NewMachineCommand.RaiseCanExecuteChanged();
         SaveMachineCommand.RaiseCanExecuteChanged();
         DeactivateMachineCommand.RaiseCanExecuteChanged();
@@ -1749,6 +1797,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         IsraeliHolidays.Clear();
         selectedCalendar = null;
         selectedSetupCalendar = null;
+        selectedMasterCalendar = null;
         selectedMachine = null;
         selectedDowntime = null;
         selectedMachineType = null;
@@ -1765,6 +1814,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         reportEmailSettingsEntityTag = null;
         OnPropertyChanged(nameof(SelectedCalendar));
         OnPropertyChanged(nameof(SelectedSetupCalendar));
+        OnPropertyChanged(nameof(SelectedMasterCalendar));
         OnPropertyChanged(nameof(SelectedMachine));
         OnPropertyChanged(nameof(SelectedDowntime));
         OnPropertyChanged(nameof(SelectedMachineType));

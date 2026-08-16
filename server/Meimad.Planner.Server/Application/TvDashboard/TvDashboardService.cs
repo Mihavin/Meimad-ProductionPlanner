@@ -107,6 +107,7 @@ internal sealed class TvDashboardService
             .ToArray();
         var currentSource = unfinished.FirstOrDefault();
         var nextSource = unfinished.Skip(1).FirstOrDefault();
+        var thirdSource = unfinished.Skip(2).FirstOrDefault();
         var downtimeSource = allDowntimes
             .Where(value => value.MachineId == machine.MachineId && value.EndsAt > now)
             .OrderBy(value => value.StartsAt)
@@ -134,6 +135,7 @@ internal sealed class TvDashboardService
             status,
             Job(currentSource, urgentDueByBatch, projectedFinishByOperation),
             Job(nextSource, urgentDueByBatch, projectedFinishByOperation),
+            Job(thirdSource, urgentDueByBatch, projectedFinishByOperation),
             downtime,
             conflicts);
     }
@@ -159,7 +161,8 @@ internal sealed class TvDashboardService
             operation.Status,
             projectedFinishByOperation.GetValueOrDefault(operation.OperationId),
             urgent is not null,
-            urgent?.WorkFinishDate.ToString("yyyy-MM-dd"));
+            urgent?.WorkFinishDate.ToString("yyyy-MM-dd"),
+            $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview");
     }
 
     private static TvStatus Status(

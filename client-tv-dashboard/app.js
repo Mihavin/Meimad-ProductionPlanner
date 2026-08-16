@@ -37,12 +37,21 @@ function renderMachine(machine) {
   const number = escapeHtml(machine.number);
   const name = escapeHtml(machine.name);
   const label = escapeHtml(machine.status?.label ?? "Unknown");
-  return `<article class="machine-card status-${code}" aria-label="${number} ${name}: ${label}">
-    <div class="machine-identity">
-      <span class="machine-number">${number}</span>
-      <span class="machine-name">${name}</span>
-    </div>
+  const job = (value, prefix) => value
+    ? `<div class="job ${prefix}"><span class="job-prefix">${prefix === "current" ? "Current" : prefix === "next" ? "Next" : "After"}:</span> ${escapeHtml(value.partNumber)} <span class="job-op">OP${escapeHtml(value.operationNumber)}</span> <span class="job-name">${escapeHtml(value.operationName)}</span></div>`
+    : `<div class="job ${prefix} empty">${prefix === "current" ? "No current work" : "—"}</div>`;
+  const preview = machine.current?.previewUrl
+    ? `<img class="job-preview" src="${escapeHtml(machine.current.previewUrl)}" alt="" loading="lazy" onerror="this.hidden=true">`
+    : `<span class="job-preview placeholder" aria-hidden="true"></span>`;
+  return `<article class="machine-row status-${code}" aria-label="${number} ${name}: ${label}">
+    <div class="machine-number">${number}</div>
+    <div class="machine-name">${name}</div>
+    ${preview}
+    ${job(machine.current, "current")}
     <div class="machine-status">${label}</div>
+    ${job(machine.next, "next")}
+    ${job(machine.third, "third")}
+    <div class="warning-indicator" title="${escapeHtml(machine.conflicts?.[0]?.message ?? "")}">${machine.conflicts?.length ? "▲" : ""}</div>
   </article>`;
 }
 
@@ -55,25 +64,7 @@ function fitGrid(machineCount) {
     return;
   }
 
-  const width = Math.max(1, grid.clientWidth);
-  const height = Math.max(1, grid.clientHeight);
-  const preferredAspect = 1.65;
-  let best = null;
-
-  for (let columns = 1; columns <= machineCount; columns += 1) {
-    const rows = Math.ceil(machineCount / columns);
-    const cellAspect = (width / columns) / (height / rows);
-    const emptyCells = (columns * rows) - machineCount;
-    const score = Math.abs(Math.log(cellAspect / preferredAspect)) + (emptyCells * 0.025);
-    if (!best || score < best.score) best = { columns, rows, score };
-  }
-
-  const cellWidth = width / best.columns;
-  const cellHeight = height / best.rows;
-  const density = Math.max(.48, Math.min(1.2, cellWidth / 360, cellHeight / 170));
-  grid.style.setProperty("--grid-columns", String(best.columns));
-  grid.style.setProperty("--grid-rows", String(best.rows));
-  grid.style.setProperty("--density", density.toFixed(3));
+  grid.style.setProperty("--machine-count", String(machineCount));
 }
 
 function render(data) {

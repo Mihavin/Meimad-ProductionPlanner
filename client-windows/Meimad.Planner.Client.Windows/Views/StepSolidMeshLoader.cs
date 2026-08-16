@@ -36,11 +36,13 @@ internal static class StepSolidMeshLoader
     public static StepModelData Load(string path)
     {
         EnsureNativeRuntime();
+        using var stagedFile = StageForOpenCascade(path);
         using var progress = new Message_ProgressRange();
         using var reader = new STEPControl_Reader();
-        if (reader.ReadFile(path) != IFSelect_ReturnStatus.IFSelect_RetDone)
+        var status = reader.ReadFile(stagedFile.Path);
+        if (status != IFSelect_ReturnStatus.IFSelect_RetDone)
         {
-            throw new InvalidDataException("OpenCascade could not read this STEP model.");
+            throw new InvalidDataException($"OpenCascade could not read this STEP model ({status}).");
         }
 
         var roots = reader.NbRootsForTransfer();
@@ -56,6 +58,18 @@ internal static class StepSolidMeshLoader
         }
 
         return Tessellate(shape, progress);
+    }
+
+    private static StagedStepFile StageForOpenCascade(string sourcePath)
+    {
+        // OCCSharp's native STEP reader receives a narrow Windows path. Always stage through an
+        // ASCII-only local name so Unicode factory folders, UNC shares, and long Case paths do not
+        // turn a valid solid into the legacy wire fallback.
+        var directory = Path.Combine(Path.GetTempPath(), "MeimadPlannerStep");
+        Directory.CreateDirectory(directory);
+        var stagedPath = Path.Combine(directory, $"{Guid.NewGuid():N}{Path.GetExtension(sourcePath).ToLowerInvariant()}");
+        File.Copy(sourcePath, stagedPath, overwrite: false);
+        return new StagedStepFile(stagedPath);
     }
 
     private static void EnsureNativeRuntime()
@@ -94,6 +108,17 @@ internal static class StepSolidMeshLoader
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetDllDirectory(string pathName);
+
+    private sealed class StagedStepFile(string path) : IDisposable
+    {
+        internal string Path { get; } = path;
+        public void Dispose()
+        {
+            try { File.Delete(Path); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
 
     internal static StepModelData Tessellate(TopoDS_Shape shape)
     {

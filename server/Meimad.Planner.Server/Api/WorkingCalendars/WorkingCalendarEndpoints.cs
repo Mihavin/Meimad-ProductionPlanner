@@ -18,6 +18,9 @@ internal static class WorkingCalendarEndpoints
         endpoints.MapGet("/api/v1/setup-calendar", GetSetupAsync);
         endpoints.MapPut("/api/v1/setup-calendar", SetSetupAsync);
         endpoints.MapDelete("/api/v1/setup-calendar", ClearSetupAsync);
+        endpoints.MapGet("/api/v1/master-calendar", GetMasterAsync);
+        endpoints.MapPut("/api/v1/master-calendar", SetMasterAsync);
+        endpoints.MapDelete("/api/v1/master-calendar", ClearMasterAsync);
     }
 
     private static async Task<IResult> ListAsync(
@@ -182,6 +185,46 @@ internal static class WorkingCalendarEndpoints
         try
         {
             await service.ClearSetupCalendarAsync(authority!, cancellationToken);
+            return Results.NoContent();
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var mapped))
+        {
+            return mapped!;
+        }
+    }
+
+    private static async Task<IResult> GetMasterAsync(WorkingCalendarService service, CancellationToken cancellationToken) =>
+        Results.Ok(SetupCalendarResponse.FromDomain(await service.GetMasterCalendarAsync(cancellationToken)));
+
+    private static async Task<IResult> SetMasterAsync(
+        SetSetupCalendarRequest request,
+        HttpContext context,
+        WorkingCalendarService service,
+        CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (string.IsNullOrWhiteSpace(request.WorkingCalendarId))
+            return PlanningHttpSupport.Error(422, "validation_failed", "workingCalendarId is required.", context);
+        try
+        {
+            var calendar = await service.SetMasterCalendarAsync(request.WorkingCalendarId.Trim(), authority!, cancellationToken);
+            return Results.Ok(SetupCalendarResponse.FromDomain(calendar));
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var mapped))
+        {
+            return mapped!;
+        }
+    }
+
+    private static async Task<IResult> ClearMasterAsync(
+        HttpContext context,
+        WorkingCalendarService service,
+        CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        try
+        {
+            await service.ClearMasterCalendarAsync(authority!, cancellationToken);
             return Results.NoContent();
         }
         catch (Exception exception) when (TryMapError(exception, context, out var mapped))

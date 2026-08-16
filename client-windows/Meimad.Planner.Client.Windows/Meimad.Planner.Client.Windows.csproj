@@ -10,10 +10,12 @@
     <RootNamespace>Meimad.Planner.Client.Windows</RootNamespace>
     <AssemblyName>Meimad.Planner.Client.Windows</AssemblyName>
     <Version>0.1.2</Version>
+    <ApplicationIcon>Assets\MeimadPlanner.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\ui-button-icons-template.png" />
+    <Resource Include="Assets\MeimadPlanner.ico" />
   </ItemGroup>
 
   <ItemGroup>

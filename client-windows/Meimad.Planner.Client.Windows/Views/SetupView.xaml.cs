@@ -24,11 +24,10 @@ public partial class SetupView : UserControl
 
         if (dialog.ShowDialog() == true && DataContext is SetupViewModel viewModel)
         {
-            // Preview is read-only and is the natural continuation of choosing a file.
-            // Automatic decisions stay separate because they prepare explicit stock,
-            // Pool, skip, and Machine choices for the planner's review.
+            // The simplified flow previews the workbook and prepares the four fixed
+            // import stages from the approved mapping. Commit remains explicit.
             viewModel.LegacyImport.SetWorkbookSelection(dialog.FileName);
-            await viewModel.LegacyImport.PreviewAsync();
+            await viewModel.LegacyImport.PreviewDefinedImportAsync();
         }
     }
 

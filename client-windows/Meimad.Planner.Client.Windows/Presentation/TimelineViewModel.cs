@@ -329,13 +329,20 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
 
     private static void TraceDuplicateBlocks(IEnumerable<TimelineMachine> machines)
     {
-        var duplicateIds = DuplicateMachineAssignmentIds(machines);
+        var materialized = machines.ToArray();
+        var duplicateIds = DuplicateMachineAssignmentIds(materialized);
         Trace.WriteLine(
             $"Timeline duplicate assignment-block detection: {duplicateIds.Count} duplicate assignment ID(s).");
         foreach (var duplicateId in duplicateIds)
         {
+            var duplicate = materialized
+                .SelectMany(machine => machine.Intervals.Select(interval => (machine, interval)))
+                .First(value => string.Equals(
+                    value.interval.MachineAssignmentId, duplicateId, StringComparison.Ordinal));
             Trace.WriteLine(
-                $"DUPLICATE_TIMELINE_BLOCK operationAssignmentId={duplicateId}");
+                $"DUPLICATE_TIMELINE_BLOCK assignmentId={duplicateId} "
+                + $"operationId={duplicate.interval.OperationId} "
+                + $"machineId={duplicate.machine.MachineId}");
         }
     }
 

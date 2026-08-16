@@ -42,7 +42,13 @@ internal sealed record PlanningBoardOperation(
     string? ActualMachineId = null,
     string? MachineAssignmentId = null,
     int? AssignmentVersion = null,
-    string PlanningMode = "manual");
+    string PlanningMode = "manual",
+    string? WorkFinishDate = null,
+    DateTimeOffset? LatestStart = null,
+    string? LatestStartWarning = null,
+    bool IsLatestStartOverdue = false,
+    int RoutePosition = 0,
+    long ExternalDelaySeconds = 0);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

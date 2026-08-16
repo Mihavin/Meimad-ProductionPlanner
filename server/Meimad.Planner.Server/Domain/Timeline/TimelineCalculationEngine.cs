@@ -763,7 +763,12 @@ internal sealed class TimelineCalculationEngine
                     occupied.Add(reservation);
                 }
 
-                completedFinish[nodeKey] = scheduled.FinishesAt;
+                completedFinish[nodeKey] = node.Members
+                    .Select(id => FinishAfterExternalDelay(
+                        operations[id].Operation,
+                        scheduled.FinishesAt))
+                    .DefaultIfEmpty(scheduled.FinishesAt)
+                    .Max();
             }
         }
 
@@ -845,6 +850,12 @@ internal sealed class TimelineCalculationEngine
                     var latest = scheduledSuccessors.Length == 0
                         ? horizonEnd
                         : scheduledSuccessors.Min(successor => scheduledStarts[successor]);
+                    latest = node.Members
+                        .Select(id => FinishBeforeExternalDelay(
+                            operations[id].Operation,
+                            latest))
+                        .DefaultIfEmpty(latest)
+                        .Min();
                     var memberCutoffs = node.Members
                         .Select(operationId => operations[operationId].Operation.LatestFinish)
                         .Where(value => value.HasValue)
@@ -1057,7 +1068,12 @@ internal sealed class TimelineCalculationEngine
 
                         var forwardPredecessorFinish = predecessors[nodeKey]
                             .Where(predecessor => nodeModes[predecessor] != TimelinePlanningMode.Backward)
-                            .Select(predecessor => scheduled[predecessor].FinishesAt)
+                            .Select(predecessor => nodes[predecessor].Members
+                                .Select(id => FinishAfterExternalDelay(
+                                    operations[id].Operation,
+                                    scheduled[predecessor].FinishesAt))
+                                .DefaultIfEmpty(scheduled[predecessor].FinishesAt)
+                                .Max())
                             .DefaultIfEmpty(horizonStart)
                             .Max();
                         var adjustedOperations = operations;
@@ -1092,7 +1108,12 @@ internal sealed class TimelineCalculationEngine
                     {
                         var earliest = predecessors[nodeKey].Count == 0
                             ? horizonStart
-                            : predecessors[nodeKey].Max(predecessor => scheduled[predecessor].FinishesAt);
+                            : predecessors[nodeKey].Max(predecessor => nodes[predecessor].Members
+                                .Select(id => FinishAfterExternalDelay(
+                                    operations[id].Operation,
+                                    scheduled[predecessor].FinishesAt))
+                                .DefaultIfEmpty(scheduled[predecessor].FinishesAt)
+                                .Max());
                         var memberEarliest = node.Members
                             .Select(operationId => operations[operationId].Operation.EarliestStart)
                             .Where(value => value.HasValue)
@@ -2605,6 +2626,55 @@ internal sealed class TimelineCalculationEngine
 
     private sealed record DependencyModel(
         IReadOnlyDictionary<string, string> LockedGroupByOperation);
+
+    private static DateTimeOffset FinishAfterExternalDelay(
+        TimelineOperationInput operation,
+        DateTimeOffset operationFinish)
+    {
+        if (operation.ExternalWorkingDayDelay is not { Days: > 0 } working)
+            return operationFinish + operation.ExternalDelayAfter;
+        return MoveByWorkingDays(operationFinish, working, forward: true);
+    }
+
+    private static DateTimeOffset FinishBeforeExternalDelay(
+        TimelineOperationInput operation,
+        DateTimeOffset successorStart)
+    {
+        if (operation.ExternalWorkingDayDelay is not { Days: > 0 } working)
+            return successorStart - operation.ExternalDelayAfter;
+        return MoveByWorkingDays(successorStart, working, forward: false);
+    }
+
+    private static DateTimeOffset MoveByWorkingDays(
+        DateTimeOffset instant,
+        TimelineWorkingDayDelay delay,
+        bool forward)
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(delay.TimeZoneId);
+        var local = TimeZoneInfo.ConvertTime(instant, zone);
+        var availableDates = delay.Availability
+            .SelectMany(window => new[]
+            {
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(window.StartsAt, zone).DateTime),
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(window.EndsAt.AddTicks(-1), zone).DateTime)
+            })
+            .Distinct()
+            .OrderBy(value => value)
+            .ToArray();
+        var dates = forward
+            ? availableDates.Where(value => value > DateOnly.FromDateTime(local.DateTime)).Take(delay.Days).ToArray()
+            : availableDates.Where(value => value < DateOnly.FromDateTime(local.DateTime)).Reverse().Take(delay.Days).ToArray();
+        if (dates.Length < delay.Days)
+            return forward ? DateTimeOffset.MaxValue : DateTimeOffset.MinValue;
+
+        var targetDate = dates[^1];
+        var targetLocal = targetDate.ToDateTime(TimeOnly.FromDateTime(local.DateTime), DateTimeKind.Unspecified);
+        while (zone.IsInvalidTime(targetLocal)) targetLocal = targetLocal.AddMinutes(1);
+        var offset = zone.IsAmbiguousTime(targetLocal)
+            ? zone.GetAmbiguousTimeOffsets(targetLocal).Min()
+            : zone.GetUtcOffset(targetLocal);
+        return new DateTimeOffset(targetLocal, offset).ToUniversalTime();
+    }
 
     private sealed record ScheduleNode(string Key, List<string> Members);
 

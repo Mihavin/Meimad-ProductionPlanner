@@ -70,7 +70,14 @@ internal sealed record LegacyPlanningRowResponse(
     int SourceOrder,
     LegacyPlanningValuesResponse Values,
     IReadOnlyList<LegacyCellProvenanceResponse> Provenance,
-    LegacyPlanningCandidatesResponse Candidates);
+    LegacyPlanningCandidatesResponse Candidates,
+    IReadOnlyList<LegacyRelatedOrderResponse>? RelatedOrders = null);
+
+internal sealed record LegacyRelatedOrderResponse(
+    string RowKey,
+    string OrderNumber,
+    int Quantity,
+    string? ExistingOrderId);
 
 internal sealed record LegacyPlanningValuesResponse(
     string? Customer,
@@ -106,7 +113,9 @@ internal sealed record LegacyOpenOrderValuesResponse(
     string? CaseReference,
     int? OrderedQuantity,
     string? ItemName,
-    string? PicturePath);
+    string? PicturePath,
+    string? ProductionInstruction = null,
+    string? BatchNumber = null);
 
 internal sealed record LegacyCellProvenanceResponse(
     string Field,

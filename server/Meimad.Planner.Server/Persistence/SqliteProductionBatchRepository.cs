@@ -53,7 +53,13 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         day_shift_only,
         actual_start,
         actual_end,
-        actual_machine_id
+        actual_machine_id,
+        has_external_delay,
+        external_delay_description,
+        external_delay_duration,
+        external_delay_duration_unit,
+        external_delay_calendar_id,
+        external_delay_respect_master_calendar
         """;
 
     private readonly SqliteDatabase database;
@@ -74,6 +80,11 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         if (!await CaseExistsAsync(connection, transaction, batch.CaseId, cancellationToken))
         {
             throw new ProductionBatchCaseNotFoundException(batch.CaseId);
+        }
+
+        if (!await CaseHasOperationsAsync(connection, transaction, batch.CaseId, cancellationToken))
+        {
+            throw new ProductionBatchRouteRequiredException();
         }
 
         if (await BatchNumberExistsAsync(
@@ -112,6 +123,19 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return batch with { Operations = operations };
+    }
+
+    private static async Task<bool> CaseHasOperationsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string caseId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM case_operations WHERE case_id = $caseId);";
+        command.Parameters.AddWithValue("$caseId", caseId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
     }
 
     public async Task<ProductionBatch?> GetByIdAsync(
@@ -262,7 +286,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                        dependency_type, predecessor_case_operation_id,
                        simultaneous_group_key,
                        qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                       automatic_loading, load_unload_every_n_parts, day_shift_only
+                       automatic_loading, load_unload_every_n_parts, day_shift_only,
+                       has_external_delay, external_delay_description, external_delay_duration,
+                       external_delay_duration_unit, external_delay_calendar_id,
+                       external_delay_respect_master_calendar
                 FROM case_operations
                 WHERE case_id = $caseId
                 ORDER BY route_position, operation_number, id;
@@ -287,7 +314,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                         batch.CreatedAt,
                         batch.CreatedAt,
                         reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12) == 1,
-                        reader.GetInt32(13) == 1, GetNullableInt32(reader, 14), reader.GetInt32(15) == 1),
+                        reader.GetInt32(13) == 1, GetNullableInt32(reader, 14), reader.GetInt32(15) == 1,
+                        null, null, null,
+                        reader.GetInt32(16) == 1, GetNullableString(reader, 17), reader.GetDouble(18),
+                        reader.GetString(19), GetNullableString(reader, 20), reader.GetInt32(21) == 1),
                     reader.GetString(7),
                     GetNullableString(reader, 8),
                     GetNullableString(reader, 9)));
@@ -307,14 +337,20 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                     dependency_type, predecessor_source_case_operation_id,
                     simultaneous_group_key,
                     qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                    automatic_loading, load_unload_every_n_parts, day_shift_only)
+                    automatic_loading, load_unload_every_n_parts, day_shift_only,
+                    has_external_delay, external_delay_description, external_delay_duration,
+                    external_delay_duration_unit, external_delay_calendar_id,
+                    external_delay_respect_master_calendar)
                 VALUES (
                     $id, $batchId, $sourceId,
                     $operationNumber, $routePosition, $name, $requiredMachineType,
                     $setupSeconds, $cycleSeconds, $status, $version, $createdAt, $updatedAt,
                     $dependencyType, $predecessorSourceId, $simultaneousGroupKey,
                     $qaSeconds, $loadUnloadSeconds, $loadUnloadRequiresWorker,
-                    $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly);
+                    $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly,
+                    $hasExternalDelay, $externalDelayDescription, $externalDelayDuration,
+                    $externalDelayDurationUnit, $externalDelayCalendarId,
+                    $externalDelayRespectMasterCalendar);
                 """;
             insertCommand.Parameters.AddWithValue("$id", operation.BatchOperationId);
             insertCommand.Parameters.AddWithValue("$batchId", operation.BatchId);
@@ -343,6 +379,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             insertCommand.Parameters.AddWithValue("$automaticLoading", operation.AutomaticLoading ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$loadUnloadEveryNParts", operation.LoadUnloadEveryNParts.HasValue ? operation.LoadUnloadEveryNParts.Value : DBNull.Value);
             insertCommand.Parameters.AddWithValue("$dayShiftOnly", operation.DayShiftOnly ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$hasExternalDelay", operation.HasExternalDelay ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$externalDelayDescription", operation.ExternalDelayDescription is null ? DBNull.Value : operation.ExternalDelayDescription);
+            insertCommand.Parameters.AddWithValue("$externalDelayDuration", operation.ExternalDelayDuration);
+            insertCommand.Parameters.AddWithValue("$externalDelayDurationUnit", operation.ExternalDelayDurationUnit);
+            insertCommand.Parameters.AddWithValue("$externalDelayCalendarId", operation.ExternalDelayCalendarId is null ? DBNull.Value : operation.ExternalDelayCalendarId);
+            insertCommand.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", operation.RespectMasterCalendar ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$dependencyType", snapshot.DependencyType);
             insertCommand.Parameters.AddWithValue(
                 "$predecessorSourceId",
@@ -569,7 +611,9 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         ParseInstant(reader.GetString(12)),
         reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15) == 1,
         reader.GetInt32(16) == 1, GetNullableInt32(reader, 17), reader.GetInt32(18) == 1,
-        GetNullableInstant(reader, 19), GetNullableInstant(reader, 20), GetNullableString(reader, 21));
+        GetNullableInstant(reader, 19), GetNullableInstant(reader, 20), GetNullableString(reader, 21),
+        reader.GetInt32(22) == 1, GetNullableString(reader, 23), reader.GetDouble(24),
+        reader.GetString(25), GetNullableString(reader, 26), reader.GetInt32(27) == 1);
 
     private static string? GetNullableString(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

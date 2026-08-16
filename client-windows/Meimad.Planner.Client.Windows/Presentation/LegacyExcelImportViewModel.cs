@@ -96,6 +96,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             if (preview is not null && preview.ExpiresAt <= DateTimeOffset.UtcNow) RaiseState();
         };
         PreviewCommand = new AsyncCommand(PreviewAsync, CanPreview);
+        PreviewDefinedImportCommand = new AsyncCommand(PreviewDefinedImportAsync, CanPreview);
         CommitCommand = new AsyncCommand(CommitAsync, () => CanCommitNow);
         SkipRowCommand = new AsyncCommand<LegacyImportRowViewModel>(SkipRowAsync, CanSkipRow);
         SkipAllUnresolvedCommand = new AsyncCommand(SkipAllUnresolvedAsync,
@@ -186,6 +187,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     public AsyncCommand PreviewCommand { get; }
 
+    public AsyncCommand PreviewDefinedImportCommand { get; }
+
     public AsyncCommand CommitCommand { get; }
 
     public AsyncCommand<LegacyImportRowViewModel> SkipRowCommand { get; }
@@ -246,9 +249,9 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     public string CurrentImportStageDescription => CurrentImportStage switch
     {
-        "cases" => "Match each Part Number to an existing Case or create its Case record. No Batch or Machine choice is made here.",
-        "orders" => "Review Orders under their selected Case. Existing Orders stay unchanged; create only the missing Orders you approve.",
-        "batches" => "Create full-route Batches in the unassigned Pool. A Case needs an existing complete route before it can produce a Batch.",
+        "cases" => "One Case per Part Number: A=Part Number, O=Name, F=Revision, D=Customer. Other workbook fields are not copied into the Case.",
+        "orders" => "One related Order per Part+Order Number: B=Order Number, L=Quantity, E=Work Finish Date, N=active production instruction.",
+        "batches" => "One Batch per Part+פק\"ע (P). Planned Quantity and Order allocations equal the summed positive יתרה לאספקה (H).",
         "assignments" => "For the Pool Batches you want to dispatch now, choose one compatible route Operation and an existing Machine. Leave the rest in Pool.",
         _ => string.Empty
     };
@@ -395,9 +398,15 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             var orders = selected.Count(row => row.Decision == "create_order");
             var pool = selected.Count(row => row.Decision == "create_batch_to_pool");
             var assignments = selected.Count(row => row.Decision == "create_batch_and_assign");
-            var stock = pool + assignments;
+            var relatedOrderAllocations = selected.Where(row => row.Decision is "create_batch_to_pool" or "create_batch_and_assign")
+                .SelectMany(row => row.Allocations)
+                .Count(allocation => allocation.Type == "order");
+            var stock = selected.Where(row => row.Decision is "create_batch_to_pool" or "create_batch_and_assign")
+                .SelectMany(row => row.Allocations)
+                .Count(allocation => allocation.Type == "stock");
             return $"Automatic draft: {orders} Order(s), {pool} Pool Batch(es), "
-                + $"{assignments} Batch-and-Machine assignment(s), and {stock} full-quantity stock allocation(s). "
+                + $"{assignments} Batch-and-Machine assignment(s), {relatedOrderAllocations} related-Order allocation(s), "
+                + $"and {stock} explicit stock allocation(s). "
                 + $"{AutomaticSkippedRows} row(s) were safely skipped"
                 + (AutomaticSkippedRows > 0
                     ? " and require explicit confirmation before import; "
@@ -542,6 +551,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             if (SetField(ref sourceSheetName, value))
             {
                 if (preview is not null && !isApplyingPreview) hasSheetSelectionCorrections = true;
+                OnPropertyChanged(nameof(ImportSheetName));
                 MarkPreviewCorrectionPending();
             }
         }
@@ -555,8 +565,31 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             if (SetField(ref openOrdersSheetName, value))
             {
                 if (preview is not null && !isApplyingPreview) hasSheetSelectionCorrections = true;
+                OnPropertyChanged(nameof(ImportSheetName));
                 MarkPreviewCorrectionPending();
             }
+        }
+    }
+
+    /// <summary>
+    /// The simplified importer reads Cases, Orders, and Batches from one approved worksheet.
+    /// Updating this value keeps both legacy contract sheet roles synchronized.
+    /// </summary>
+    public string ImportSheetName
+    {
+        get => !string.IsNullOrWhiteSpace(SourceSheetName) ? SourceSheetName : OpenOrdersSheetName;
+        set
+        {
+            var normalized = value?.Trim() ?? string.Empty;
+            if (string.Equals(SourceSheetName, normalized, StringComparison.Ordinal)
+                && string.Equals(OpenOrdersSheetName, normalized, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            SourceSheetName = normalized;
+            OpenOrdersSheetName = normalized;
+            OnPropertyChanged();
         }
     }
 
@@ -687,6 +720,17 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    internal async Task PreviewDefinedImportAsync()
+    {
+        await PreviewAsync();
+        if (preview is not null
+            && !HasPendingPreviewCorrections
+            && string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            await PrepareAutomaticallyAsync();
         }
     }
 
@@ -866,6 +910,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
                 }
             }
 
+            PrepareCasesAndOrdersAutomatically();
+
             foreach (var row in Rows.Where(IsIncludedInSelectedOutcome))
             {
                 if (row.HasExplicitDecision)
@@ -873,13 +919,12 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
                     continue;
                 }
 
-                if (row.Kind == "open_orders")
+                if (row.Kind == "planning")
                 {
-                    row.PrepareOpenOrderAutomatically();
-                }
-                else if (row.Kind == "planning")
-                {
-                    row.PreparePlanningAutomatically(BuildAutomaticBatchNumber(row));
+                    row.PreparePlanningAutomatically(
+                        string.IsNullOrWhiteSpace(row.SourceBatchNumber)
+                            ? BuildAutomaticBatchNumber(row)
+                            : row.SourceBatchNumber);
                 }
             }
 
@@ -913,6 +958,59 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedWizardRow));
         RaiseState();
         return Task.CompletedTask;
+    }
+
+    private void PrepareCasesAndOrdersAutomatically()
+    {
+        var workbookDirectory = Path.GetDirectoryName(SelectedFilePath) ?? Environment.CurrentDirectory;
+        foreach (var group in Rows.Where(row => row.Kind == "open_orders")
+                     .GroupBy(row => NormalizeKey(row.SourcePartNumber), StringComparer.OrdinalIgnoreCase))
+        {
+            var rows = group.OrderBy(row => row.RowNumber).ToArray();
+            if (rows.Length == 0) continue;
+            var caseCandidates = rows.SelectMany(row => row.CaseCandidates)
+                .GroupBy(candidate => candidate.CaseId, StringComparer.Ordinal)
+                .Select(candidate => candidate.First())
+                .ToArray();
+            if (caseCandidates.Length == 1)
+            {
+                foreach (var row in rows.Where(row => !row.HasExplicitDecision))
+                {
+                    row.SelectExistingCaseAndPrepareOrder(caseCandidates[0]);
+                }
+                continue;
+            }
+            if (caseCandidates.Length > 1)
+            {
+                foreach (var row in rows.Where(row => !row.HasExplicitDecision))
+                {
+                    row.PrepareOpenOrderAutomatically();
+                }
+                continue;
+            }
+
+            var representative = rows.FirstOrDefault(row => !row.HasExplicitDecision);
+            if (representative is null) continue;
+            var folder = Path.Combine(
+                workbookDirectory,
+                "_MeimadPlanner",
+                "Cases",
+                SafePathSegment(representative.SourcePartNumber));
+            representative.PrepareNewCaseAutomatically(folder);
+            if (representative.Decision != "create_case") continue;
+            foreach (var row in rows.Where(row => !ReferenceEquals(row, representative) && !row.HasExplicitDecision))
+            {
+                row.PrepareOrderForCreatedCase(representative.RowKey);
+            }
+        }
+
+        static string NormalizeKey(string? value) => value?.Trim() ?? string.Empty;
+        static string SafePathSegment(string? value)
+        {
+            var result = string.IsNullOrWhiteSpace(value) ? "Unspecified" : value.Trim();
+            foreach (var character in Path.GetInvalidFileNameChars()) result = result.Replace(character, '_');
+            return result;
+        }
     }
 
     private string BuildAutomaticBatchNumber(LegacyImportRowViewModel row)
@@ -1221,6 +1319,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(DetectedSheets));
         OnPropertyChanged(nameof(SheetChoices));
         OnPropertyChanged(nameof(OptionalSheetChoices));
+        OnPropertyChanged(nameof(ImportSheetName));
         OnPropertyChanged(nameof(AutomaticPrepared));
         OnPropertyChanged(nameof(ConfirmAutomaticSkips));
         OnPropertyChanged(nameof(ImportOrders));
@@ -1297,6 +1396,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(PreviewActionText));
         OnPropertyChanged(nameof(HasPendingPreviewCorrections));
         PreviewCommand.RaiseCanExecuteChanged();
+        PreviewDefinedImportCommand.RaiseCanExecuteChanged();
         CommitCommand.RaiseCanExecuteChanged();
         SkipRowCommand.RaiseCanExecuteChanged();
         SkipAllUnresolvedCommand.RaiseCanExecuteChanged();
@@ -1825,6 +1925,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     public int? SourceQuantity { get; private init; }
     public string? SourceCustomer { get; private init; }
     public string? SourceReferenceOrOrderNumber { get; private init; }
+    public string? SourceBatchNumber { get; private init; }
     public string? PartNumber => SourcePartNumber;
     public int? PlannedQuantity => SourceQuantity;
     public string SourceSummary => string.Join(" · ", new[]
@@ -1838,6 +1939,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
     public IReadOnlyList<LegacyImportCaseCandidate> CaseCandidates { get; private init; } = [];
     public IReadOnlyList<LegacyImportOrderCandidate> OrderCandidates { get; private init; } = [];
     public IReadOnlyList<LegacyImportBatchCandidate> BatchCandidates { get; private init; } = [];
+    public IReadOnlyList<LegacyImportRelatedOrder> RelatedOrders { get; private init; } = [];
     private IReadOnlyList<LegacyImportCaseOperationCandidate> AllRouteOperationCandidates { get; init; } = [];
     public IReadOnlyList<LegacyImportCaseOperationCandidate> RouteOperationCandidates => selectedCaseCandidate is null
         ? []
@@ -2042,7 +2144,10 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             SourcePartNumber = row.Values?.PartNumber,
             SourceQuantity = row.Values?.Quantity,
             SourceCustomer = row.Values?.Customer,
-            SourceReferenceOrOrderNumber = row.Values?.CaseReference
+            SourceReferenceOrOrderNumber = row.Values?.CaseReference,
+            SourceBatchNumber = row.RelatedOrders is { Count: > 0 } ? row.Values?.CaseReference : null,
+            RelatedOrders = row.RelatedOrders ?? [],
+            batchNumber = row.RelatedOrders is { Count: > 0 } ? row.Values?.CaseReference ?? string.Empty : string.Empty
         };
 
     private static IReadOnlyList<LegacyImportBatchOperationCandidate> EnrichBatchOperationCandidates(
@@ -2068,17 +2173,17 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             CaseCandidates = row.Candidates?.Cases ?? [],
             OrderCandidates = row.Candidates?.Orders ?? [],
             SourcePartNumber = values?.PartNumber,
-            SourceQuantity = values?.OutstandingQuantity ?? values?.OrderedQuantity,
+            SourceQuantity = values?.OrderedQuantity ?? values?.OutstandingQuantity,
             SourceCustomer = values?.Customer,
             SourceReferenceOrOrderNumber = values?.OrderNumber ?? values?.CaseReference,
             newCasePartNumber = values?.PartNumber ?? string.Empty,
             newCaseName = values?.ItemName ?? values?.PartNumber ?? string.Empty,
             newCaseRevision = values?.Revision ?? string.Empty,
             newCaseCustomer = values?.Customer ?? string.Empty,
-            newCaseCustomerReference = values?.CaseReference ?? string.Empty,
-            newCaseNotes = values?.Notes ?? string.Empty,
+            newCaseCustomerReference = string.Empty,
+            newCaseNotes = string.Empty,
             orderNumber = values?.OrderNumber ?? string.Empty,
-            orderQuantity = (values?.OutstandingQuantity ?? values?.OrderedQuantity)?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            orderQuantity = (values?.OrderedQuantity ?? values?.OutstandingQuantity)?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             orderWorkFinishDate = NormalizeDate(values?.DeliveryDate),
             orderNotes = values?.Notes ?? string.Empty
         };
@@ -2125,6 +2230,47 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         AutomaticReason = "Prepared automatically under the one exact existing Case match.";
     }
 
+    internal void SelectExistingCaseAndPrepareOrder(LegacyImportCaseCandidate candidate)
+    {
+        SelectedCaseCandidate = CaseCandidates.FirstOrDefault(item =>
+            string.Equals(item.CaseId, candidate.CaseId, StringComparison.Ordinal)) ?? candidate;
+        PrepareOpenOrderAutomatically();
+    }
+
+    internal void PrepareNewCaseAutomatically(string workingFolderPath)
+    {
+        if (string.IsNullOrWhiteSpace(NewCasePartNumber) || string.IsNullOrWhiteSpace(NewCaseName))
+        {
+            SkipAutomatically("Skipped automatically because Part Number or Case Name is missing.");
+            return;
+        }
+        NewCaseCustomerReference = string.Empty;
+        NewCaseNotes = string.Empty;
+        NewCaseWorkingFolderPath = workingFolderPath;
+        IncludeOrderWithNewCase = HasCompleteOrderInput && !HasAutomaticBlockingIssue();
+        Decision = "create_case";
+        AutomaticReason = IncludeOrderWithNewCase
+            ? "Prepared one new Case for this Part Number and its first related Order. Other Case fields remain empty."
+            : "Prepared one new Case for this Part Number. Its invalid or incomplete Order remains excluded.";
+    }
+
+    internal void PrepareOrderForCreatedCase(string sourceCaseRowKey)
+    {
+        if (HasAutomaticBlockingIssue() || !HasCompleteOrderInput)
+        {
+            SkipAutomatically("Skipped automatically because the related Order fields are invalid or incomplete.");
+            return;
+        }
+        if (OrderCandidates.Count > 0)
+        {
+            SkipAutomatically($"Skipped automatically because Order {OrderCandidates[0].OrderNumber} already exists.");
+            return;
+        }
+        CaseSourceRowKey = sourceCaseRowKey;
+        Decision = "create_order";
+        AutomaticReason = "Prepared under the new Case created from the same Part Number.";
+    }
+
     internal void PreparePlanningAutomatically(string automaticBatchNumber)
     {
         if (HasAutomaticBlockingIssue())
@@ -2168,16 +2314,32 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         }
 
         BatchNumber = automaticBatchNumber;
-        var allocation = new LegacyImportAllocationViewModel(OrderCandidates, () =>
+        if (RelatedOrders.Count > 0)
         {
-            owner.RowOrMappingChanged();
-            RaiseStateProperties();
-        })
+            foreach (var related in RelatedOrders)
+            {
+                var allocation = NewAllocation();
+                allocation.Type = "order";
+                allocation.Quantity = related.Quantity.ToString(CultureInfo.InvariantCulture);
+                if (!string.IsNullOrWhiteSpace(related.ExistingOrderId))
+                {
+                    allocation.SelectedOrderCandidate = OrderCandidates.FirstOrDefault(candidate =>
+                        string.Equals(candidate.OrderId, related.ExistingOrderId, StringComparison.Ordinal));
+                }
+                if (allocation.SelectedOrderCandidate is null)
+                {
+                    allocation.OrderSourceRowKey = related.RowKey;
+                }
+                Allocations.Add(allocation);
+            }
+        }
+        else
         {
-            Type = "stock",
-            Quantity = SourceQuantity.Value.ToString(CultureInfo.InvariantCulture)
-        };
-        Allocations.Add(allocation);
+            var allocation = NewAllocation();
+            allocation.Type = "stock";
+            allocation.Quantity = SourceQuantity.Value.ToString(CultureInfo.InvariantCulture);
+            Allocations.Add(allocation);
+        }
 
         var machine = SelectedMachineCandidate;
         var compatibleRoute = owner.HasSafeAutomaticMachineSelection(SectionKey)
@@ -2199,6 +2361,12 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
             : compatibleRoute.Length == 0
                 ? "Prepared automatically in Pool because no route Operation was safely compatible with the exact Machine."
                 : "Prepared automatically in Pool because more than one route Operation was compatible with the exact Machine.";
+
+        LegacyImportAllocationViewModel NewAllocation() => new(OrderCandidates, () =>
+        {
+            owner.RowOrMappingChanged();
+            RaiseStateProperties();
+        });
     }
 
     private void SkipAutomatically(string reason)

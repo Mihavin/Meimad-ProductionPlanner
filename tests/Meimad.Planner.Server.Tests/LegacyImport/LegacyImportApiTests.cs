@@ -68,6 +68,47 @@ public sealed class LegacyImportApiTests
     }
 
     [Fact]
+    public async Task Order_driven_sheet_uses_exact_case_order_batch_mapping_and_aggregates_one_batch()
+    {
+        await RunWithServerAsync(async (_, client) =>
+        {
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateOrderDrivenImport());
+
+            Assert.Equal("Orders", preview.RootElement.GetProperty("suggestions").GetProperty("planningSheet").GetString());
+            Assert.Equal("Orders", preview.RootElement.GetProperty("suggestions").GetProperty("openOrdersSheet").GetString());
+            var orderMappings = preview.RootElement.GetProperty("suggestions").GetProperty("openOrderColumns")
+                .EnumerateArray().ToDictionary(value => value.GetProperty("field").GetString()!);
+            Assert.Equal("A", orderMappings["partNumber"].GetProperty("column").GetString());
+            Assert.Equal("B", orderMappings["orderNumber"].GetProperty("column").GetString());
+            Assert.Equal("D", orderMappings["customer"].GetProperty("column").GetString());
+            Assert.Equal("E", orderMappings["deliveryDate"].GetProperty("column").GetString());
+            Assert.Equal("F", orderMappings["revision"].GetProperty("column").GetString());
+            Assert.Equal("H", orderMappings["outstandingQuantity"].GetProperty("column").GetString());
+            Assert.Equal("L", orderMappings["orderedQuantity"].GetProperty("column").GetString());
+            Assert.Equal("N", orderMappings["productionInstruction"].GetProperty("column").GetString());
+            Assert.Equal("O", orderMappings["itemName"].GetProperty("column").GetString());
+            Assert.Equal("P", orderMappings["batchNumber"].GetProperty("column").GetString());
+
+            var orders = preview.RootElement.GetProperty("openOrderRows").EnumerateArray().ToArray();
+            Assert.Equal(2, orders.Length);
+            var firstOrder = orders.Single(row => row.GetProperty("values").GetProperty("orderNumber").GetString() == "ORD-1");
+            Assert.Equal(16, firstOrder.GetProperty("values").GetProperty("orderedQuantity").GetInt32());
+            Assert.Equal(7, firstOrder.GetProperty("values").GetProperty("outstandingQuantity").GetInt32());
+            Assert.Equal("2026-09-10", firstOrder.GetProperty("values").GetProperty("deliveryDate").GetString());
+            Assert.Equal("Part X", firstOrder.GetProperty("values").GetProperty("itemName").GetString());
+
+            var batch = Assert.Single(preview.RootElement.GetProperty("rows").EnumerateArray());
+            Assert.Equal("PN-X", batch.GetProperty("values").GetProperty("partNumber").GetString());
+            Assert.Equal("WO-7", batch.GetProperty("values").GetProperty("caseReference").GetString());
+            Assert.Equal(12, batch.GetProperty("values").GetProperty("quantity").GetInt32());
+            var related = batch.GetProperty("relatedOrders").EnumerateArray().ToArray();
+            Assert.Equal(2, related.Length);
+            Assert.Equal(12, related.Sum(item => item.GetProperty("quantity").GetInt32()));
+            Assert.Empty(preview.RootElement.GetProperty("machineSections").EnumerateArray());
+        });
+    }
+
+    [Fact]
     public async Task Supplied_legacy_layout_keeps_known_part_column_when_two_headers_are_ambiguous()
     {
         await RunWithServerAsync(async (_, client) =>

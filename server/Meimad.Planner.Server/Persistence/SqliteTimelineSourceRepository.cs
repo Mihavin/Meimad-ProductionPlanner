@@ -57,6 +57,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         var holidaysElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
         var resources = await ReadResourcesAsync(connection, transaction, horizonStart, horizonEnd, cancellationToken);
+        var masterCalendar = await ReadMasterCalendarAsync(connection, transaction, cancellationToken);
         var resourcesElapsed = phase.ElapsedMilliseconds;
         await transaction.CommitAsync(cancellationToken);
         total.Stop();
@@ -73,7 +74,9 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             setupCalendar.Json,
             setupCalendar.TimeZoneId,
             holidays,
-            resources);
+            resources,
+            masterCalendar.Json,
+            masterCalendar.TimeZoneId);
     }
 
     private static async Task<IReadOnlyList<TimelineSourceMachine>> ReadMachinesAsync(
@@ -87,7 +90,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             SELECT machines.id, machines.number, machines.name,
                    working_calendars.time_zone_id, working_calendars.calendar_json,
                    machines.machine_type, machines.axis_type, machines.capabilities_json,
-                   machine_types.capabilities_json
+                   machine_types.capabilities_json,
+                   machines.respect_master_calendar
             FROM machines
             JOIN working_calendars
               ON working_calendars.id = machines.working_calendar_id
@@ -105,7 +109,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             values.Add(new TimelineSourceMachine(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2),
                 reader.GetString(3), reader.GetString(4),
-                MachineSkillTokens(reader)));
+                MachineSkillTokens(reader),
+                reader.GetInt32(9) == 1));
         }
 
         return values;
@@ -228,7 +233,17 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    batch_operations.actual_machine_id,
                    effective_machine_moves.occurred_at,
                    relevant_move_pauses.pause_started_at,
-                   relevant_move_pauses.pause_ended_at
+                   relevant_move_pauses.pause_ended_at,
+                   CASE WHEN batch_operations.has_external_delay = 0 THEN 0
+                        WHEN batch_operations.external_delay_duration_unit = 'hours' THEN batch_operations.external_delay_duration * 3600
+                        WHEN batch_operations.external_delay_duration_unit = 'days' THEN batch_operations.external_delay_duration * 86400
+                        ELSE 0 END,
+                   CASE WHEN batch_operations.has_external_delay = 1
+                          AND batch_operations.external_delay_duration_unit = 'working_days'
+                        THEN CAST(batch_operations.external_delay_duration AS INTEGER) ELSE 0 END,
+                   external_delay_calendars.calendar_json,
+                   external_delay_calendars.time_zone_id,
+                   batch_operations.external_delay_respect_master_calendar
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -242,6 +257,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
               ON effective_machine_moves.operation_id = batch_operations.id
             LEFT JOIN relevant_move_pauses
               ON relevant_move_pauses.batch_operation_id = batch_operations.id
+            LEFT JOIN working_calendars AS external_delay_calendars
+              ON external_delay_calendars.id = batch_operations.external_delay_calendar_id
             ORDER BY production_batches.id, batch_operations.route_position;
             """;
         var values = new List<TimelineSourceOperation>();
@@ -272,7 +289,12 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 NullableString(reader, 36) is { } movePauseEnd ? Parse(movePauseEnd) : null,
                 NullableString(reader, 31) is { } actualStart ? Parse(actualStart) : null,
                 NullableString(reader, 32) is { } actualEnd ? Parse(actualEnd) : null,
-                NullableString(reader, 33)));
+                NullableString(reader, 33),
+                TimeSpan.FromSeconds(reader.GetDouble(37)),
+                reader.GetInt32(38),
+                NullableString(reader, 39),
+                NullableString(reader, 40),
+                reader.GetInt32(41) == 1));
         }
 
         return values;
@@ -389,7 +411,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         command.CommandText = """
             SELECT employee_resources.id, employee_resources.resource_type,
                    working_calendars.time_zone_id, working_calendars.calendar_json,
-                   employee_resources.skills_json
+                   employee_resources.skills_json,
+                   employee_resources.respect_master_calendar
             FROM employee_resources
             JOIN working_calendars ON working_calendars.id = employee_resources.assigned_calendar_id
             WHERE employee_resources.is_active = 1
@@ -400,7 +423,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         {
             resources.Add(new TimelineSourceResource(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), [],
-                JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? []));
+                JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
+                reader.GetInt32(5) == 1));
         }
         await reader.DisposeAsync();
 
@@ -454,6 +478,23 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             };
         }
         return resources;
+    }
+
+    private static async Task<(string? Json, string? TimeZoneId)> ReadMasterCalendarAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT working_calendars.calendar_json, working_calendars.time_zone_id
+            FROM application_settings
+            JOIN working_calendars ON working_calendars.id = application_settings.value
+            WHERE application_settings.key = 'master_calendar_id';
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? (reader.GetString(0), reader.GetString(1))
+            : (null, null);
     }
 
     private static IReadOnlyList<string> MachineSkillTokens(SqliteDataReader reader)

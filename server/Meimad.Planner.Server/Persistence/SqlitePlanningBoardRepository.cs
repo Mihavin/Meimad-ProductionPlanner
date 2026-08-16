@@ -134,7 +134,16 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    batch_operations.actual_machine_id,
                    machine_assignments.id,
                    machine_assignments.version,
-                   COALESCE(machine_assignments.planning_mode, 'manual')
+                   COALESCE(machine_assignments.planning_mode, 'manual'),
+                   (SELECT MIN(orders.work_finish_date)
+                    FROM batch_allocations
+                    JOIN orders ON orders.id = batch_allocations.order_id
+                    WHERE batch_allocations.production_batch_id = production_batches.id
+                      AND batch_allocations.allocation_type = 'order'),
+                   batch_operations.route_position,
+                   CASE WHEN batch_operations.has_external_delay = 0 THEN 0
+                        WHEN batch_operations.external_delay_duration_unit = 'hours' THEN CAST(batch_operations.external_delay_duration * 3600 AS INTEGER)
+                        ELSE CAST(batch_operations.external_delay_duration * 86400 AS INTEGER) END
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -187,10 +196,35 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 GetNullableString(reader, 28),
                 GetNullableString(reader, 29),
                 GetNullableInt32(reader, 30),
-                reader.GetString(31)));
+                reader.GetString(31),
+                GetNullableString(reader, 32),
+                null,
+                null,
+                false,
+                reader.GetInt32(33),
+                reader.GetInt64(34)));
         }
 
-        return operations;
+        var now = DateTimeOffset.UtcNow;
+        return operations.Select(operation =>
+        {
+            if (operation.WorkFinishDate is null)
+            {
+                return operation with { LatestStartWarning = "Latest Start unavailable: no linked Order Work Finish Date." };
+            }
+            var route = operations.Where(candidate => candidate.BatchId == operation.BatchId
+                    && candidate.RoutePosition >= operation.RoutePosition)
+                .OrderBy(candidate => candidate.RoutePosition).ToArray();
+            if (route.Any(candidate => !candidate.EstimatedTimeSeconds.HasValue))
+            {
+                return operation with { LatestStartWarning = "Latest Start unavailable: a remaining route operation has no duration." };
+            }
+            var remaining = route.Sum(candidate => candidate.EstimatedTimeSeconds!.Value + candidate.ExternalDelaySeconds);
+            var dueDate = DateOnly.ParseExact(operation.WorkFinishDate, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            var due = new DateTimeOffset(dueDate.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            var latest = due.AddSeconds(-remaining);
+            return operation with { LatestStart = latest, IsLatestStartOverdue = latest < now };
+        }).ToArray();
     }
 
     private static string? GetNullableString(SqliteDataReader reader, int ordinal) =>

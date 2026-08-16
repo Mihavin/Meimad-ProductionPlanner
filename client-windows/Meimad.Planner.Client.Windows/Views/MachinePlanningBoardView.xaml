@@ -213,7 +213,7 @@
                                        ToolTip="Planning mode for this Machine assignment" />
                             <TextBlock Text="{Binding BatchOrderText}" FontSize="10"
                                        Foreground="{StaticResource MutedTextBrush}"
-                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding BatchOrderText}" />
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding LatestStartText}" />
                         </DockPanel>
                     </Grid>
 

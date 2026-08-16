@@ -20,6 +20,7 @@ internal sealed record TvSourceMachine(
 internal sealed record TvSourceOperation(
     string OperationId,
     string BatchId,
+    string CaseId,
     string BatchNumber,
     string PartNumber,
     int OperationNumber,

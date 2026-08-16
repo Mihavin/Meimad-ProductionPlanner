@@ -12,6 +12,38 @@ namespace Meimad.Planner.Server.Tests.ProductionBatches;
 public sealed class ProductionBatchApiTests
 {
     [Fact]
+    public async Task Create_is_blocked_until_the_case_has_an_operation_route()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningDataAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var removeRoute = connection.CreateCommand())
+            {
+                removeRoute.CommandText = "DELETE FROM case_operations WHERE case_id = 'case-1';";
+                await removeRoute.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/v1/batches",
+                StockBatchBody("B-NO-ROUTE", 5, 5));
+
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var error = document.RootElement.GetProperty("error");
+            Assert.Equal("case_operations_required", error.GetProperty("code").GetString());
+            Assert.Contains("Create operations first", error.GetProperty("message").GetString());
+            await using var verify = await database.OpenConnectionAsync();
+            await using var count = verify.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM production_batches;";
+            Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
     public async Task Create_and_read_batch_returns_allocations_and_instantiated_operations()
     {
         await RunWithServerAsync(async (application, client) =>

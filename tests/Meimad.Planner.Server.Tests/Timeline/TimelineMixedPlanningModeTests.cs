@@ -8,6 +8,37 @@ public sealed class TimelineMixedPlanningModeTests
     private static readonly DateTimeOffset End = Utc(18);
 
     [Fact]
+    public void Working_day_external_delay_skips_closed_master_calendar_dates()
+    {
+        var horizonEnd = new DateTimeOffset(2026, 8, 14, 18, 0, 0, TimeSpan.Zero);
+        var workWindows = new[]
+        {
+            new TimelineWindow(new DateTimeOffset(2026, 8, 12, 8, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 8, 12, 18, 0, 0, TimeSpan.Zero)),
+            new TimelineWindow(new DateTimeOffset(2026, 8, 13, 8, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 8, 13, 18, 0, 0, TimeSpan.Zero))
+        };
+        var result = new TimelineCalculationEngine().Calculate(new TimelineCalculationInput(
+            Start, horizonEnd,
+            [
+                new TimelineMachineBacklog("machine-1", [new TimelineOperationInput(
+                    "op-1", TimeSpan.Zero, TimeSpan.FromHours(1), EarliestStart: Start,
+                    ExternalWorkingDayDelay: new TimelineWorkingDayDelay(2, "UTC", workWindows))]),
+                new TimelineMachineBacklog("machine-2", [new TimelineOperationInput(
+                    "op-2", TimeSpan.Zero, TimeSpan.FromHours(1), EarliestStart: Start)])
+            ],
+            [
+                new TimelineMachineCalendar("machine-1", [new TimelineWindow(Start, horizonEnd)]),
+                new TimelineMachineCalendar("machine-2", [new TimelineWindow(Start, horizonEnd)])
+            ],
+            new TimelineSetupCalendar([new TimelineWindow(Start, horizonEnd)]), [],
+            [new TimelineDependency("dep", TimelineDependencyType.Sequential, "op-1", "op-2")], []));
+
+        var predecessor = Assert.Single(result.Operations, value => value.OperationId == "op-1");
+        var successor = Assert.Single(result.Operations, value => value.OperationId == "op-2");
+        Assert.Equal(Utc(9), predecessor.FinishesAt);
+        Assert.Equal(new DateTimeOffset(2026, 8, 13, 9, 0, 0, TimeSpan.Zero), successor.StartsAt);
+    }
+
+    [Fact]
     public void Mixed_forward_and_backward_assignments_share_one_machine_without_overlap_or_reorder()
     {
         var backlog = new TimelineMachineBacklog("machine-1",
@@ -60,6 +91,29 @@ public sealed class TimelineMixedPlanningModeTests
         Assert.Equal(Utc(16), op30.StartsAt);
         Assert.Equal(Utc(17), op30.FinishesAt);
         Assert.DoesNotContain(result.Conflicts, value => value.Code == "dependency_unresolved");
+    }
+
+    [Fact]
+    public void External_delay_moves_the_successor_without_reserving_the_predecessor_machine()
+    {
+        var first = Operation("op-10", 1, TimelinePlanningMode.Manual) with
+        {
+            ExternalDelayAfter = TimeSpan.FromHours(2)
+        };
+        var result = Calculate(
+        [
+            new TimelineMachineBacklog("machine-1", [first]),
+            new TimelineMachineBacklog("machine-2", [Operation("op-20", 1, TimelinePlanningMode.Manual)])
+        ],
+        [Calendar("machine-1"), Calendar("machine-2")],
+        [new TimelineDependency("dep", TimelineDependencyType.Sequential, "op-10", "op-20")]);
+
+        var predecessor = Assert.Single(result.Operations, value => value.OperationId == "op-10");
+        var successor = Assert.Single(result.Operations, value => value.OperationId == "op-20");
+        Assert.Equal(Utc(9), predecessor.FinishesAt);
+        Assert.Equal(Utc(11), successor.StartsAt);
+        Assert.Contains(result.Machines.Single(value => value.MachineId == "machine-1").Intervals,
+            value => value.Type == TimelineIntervalType.Idle && value.StartsAt <= Utc(9) && value.EndsAt >= Utc(11));
     }
 
     [Fact]
