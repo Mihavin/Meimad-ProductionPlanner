@@ -1,0 +1,369 @@
+mapping_version: 1
+status: draft_for_manual_completion
+generated_utc: 2026-08-17T17:08:26Z
+
+safety:
+  source_access: read_only
+  source_writes_allowed: false
+  planner_writes_enabled_by_this_file: false
+  secret_values_in_file: false
+  notes:
+    - This file is analysis only. It does not enable synchronization.
+    - Never overwrite a manually edited Meimad value without an explicit field-level policy.
+    - Never create Machine assignments or reorder a backlog from this mapping.
+
+source:
+  requested:
+    server: 192.168.0.240
+    port: 1433
+    database: KitaronData2550OLAP
+    schema: dbo
+    view: VProductionPlanning
+    status: inaccessible_to_configured_login
+    decision_required: Confirm the database name and grant the read-only login access to the intended view.
+  analyzed_fallback:
+    operational_database: KitaronData229
+    reporting_database: KitaronData229OLAP
+    status: metadata_and_bounded_samples_analyzed
+    preferred_active_projection: dbo.VQWorkPlanningForStationF4
+    canonical_tables:
+      item_master: dbo.TDetails
+      customer_master: dbo.TCUSTOMER
+      sales_order_header: dbo.TOrder
+      sales_order_line: dbo.TSubOrder
+      production_work_order: dbo.TRootCard
+      work_order_operation: dbo.TSubRootCard
+      reusable_item_route: dbo.TDirection
+      operation_master: dbo.TOperation
+      station_master: dbo.TStation
+
+target:
+  database: Meimad Planner SQLite schema v28
+  authority: Meimad Planner Server
+  entities:
+    case: cases
+    order: orders
+    case_operation: case_operations
+    production_batch: production_batches
+    batch_operation: batch_operations
+    machine_assignment: machine_assignments
+
+confidence_scale:
+  high: Same business identity and sampled values agree.
+  medium: Plausible field, but aggregation, lifecycle, or ownership needs confirmation.
+  low: Name similarity only or source units/semantics are unverified.
+  blocked: Target model decision or required source access is missing.
+
+recommended_domain_model:
+  selected_for_this_draft: true
+  case_identity: Kitaron item
+  order_identity: Kitaron sales-order line
+  production_batch_identity: Kitaron production work order
+  batch_operation_identity: Kitaron production work order plus operation number
+  explanation: >-
+    This preserves Meimad's Case -> Order demand -> Production Batch -> Batch Operation model.
+    It is safer than treating a production work order as customer demand.
+
+requested_flat_model:
+  selected_for_this_draft: false
+  requested_keys:
+    case: ITEM_NUMBER
+    order: WORKORDER_NUMBER
+    operation: WORKORDER_NUMBER + OPER_NUMBER
+  accessible_equivalents:
+    ITEM_NUMBER: DetailNumber
+    WORKORDER_NUMBER: RootID
+    OPER_NUMBER: ActionNumber
+  warning: >-
+    This model would put a Kitaron production work order into Meimad Orders and a
+    work-order-specific operation into reusable Case Operations. Enable it only if that
+    deliberate domain change is approved.
+
+identity_cross_references:
+  required_before_live_sync: true
+  proposed_table: external_entity_links
+  proposed_key: [source_system, source_entity_type, source_key]
+  proposed_values:
+    - target_entity_type
+    - target_entity_id
+    - source_row_version_or_modified_at
+    - source_fingerprint
+    - last_seen_at
+  reason: >-
+    Target natural text fields are not sufficient for durable idempotency, renames,
+    source deletions, or detecting manual Meimad changes.
+
+entities:
+  cases:
+    source_grain: one row per Kitaron item
+    source_key: TDetails.DetailID
+    stable_business_key: trim_upper(TDetails.DetailNumber)
+    target_key: cases.part_number
+    match_policy: exact_case_insensitive_part_number
+    create_policy: create_when_missing
+    update_policy: proposed_values_only_never_silent_overwrite
+    fields:
+      - target: cases.part_number
+        source: TDetails.DetailNumber
+        projection: VQWorkPlanningForStationF4.DetailNumber
+        confidence: high
+        transform: trim
+        required: true
+      - target: cases.name
+        source: TDetails.DetailName
+        projection: VQWorkPlanningForStationF4.DetailName
+        confidence: high
+        transform: trim_and_collapse_control_whitespace
+        required: true
+      - target: cases.revision
+        source: TDetails.REV
+        projection: VQWorkPlanningForStationF4.REV
+        confidence: high
+        transform: trim_or_null
+      - target: cases.customer
+        source: TCUSTOMER.CompanyName
+        source_join: TDetails.CustomerID -> TCUSTOMER.CustomerID
+        fallback_join: unique customer across TOrder/TSubOrder for this DetailID
+        confidence: medium
+        transform: trim_or_null
+        decision_required: >-
+          733 of 4,113 items with work orders have more than one historical customer.
+          Prefer the item-master customer; otherwise set only when exactly one customer exists.
+      - target: cases.customer_reference
+        source: null
+        confidence: blocked
+        decision_required: Choose between TDetails.KatalogNumber, customer item number, or no mapping.
+      - target: cases.working_folder_path
+        source: TDetails.DetailFolder
+        alternate_source: TDetails.Folder
+        confidence: low
+        decision_required: >-
+          Validate that the path is an allowed factory-local working folder. Otherwise generate
+          a Server-owned folder below a configured Kitaron import root. Never modify source files.
+      - target: cases.preview_reference
+        source: TDetails.PictureAPath
+        confidence: medium
+        transform: trim_or_null_if_file_reference_is_not_allowed
+      - target: cases.material_type
+        source: TDetails.Technology
+        confidence: low
+        decision_required: Confirm whether Technology describes material or manufacturing family.
+      - target: cases.material_specification
+        source: TDetails.TechnicalSpec
+        confidence: medium
+      - target: cases.raw_material_form
+        source: null
+        confidence: blocked
+      - target: cases.raw_material_dimensions
+        source: DetailLength + DetailWidth + DetailHeight
+        confidence: low
+        decision_required: Confirm units and whether dimensions describe finished or raw stock.
+      - target: cases.current_setup_seconds
+        source: null
+        confidence: blocked
+        reason: Operation timing must not be collapsed silently into the Case timing fields.
+      - target: cases.current_cycle_seconds
+        source: null
+        confidence: blocked
+        reason: Operation timing must not be collapsed silently into the Case timing fields.
+
+  orders:
+    source_grain: one Kitaron sales-order line
+    source_key: TSubOrder.RecordID
+    case_lookup: TSubOrder.DetailID -> TDetails.DetailNumber -> cases.part_number
+    target_key: [orders.case_id, orders.order_reference]
+    fields:
+      - target: orders.order_reference
+        source: TOrder.OrderNumber + '/' + normalized(TSubOrder.Row)
+        confidence: medium
+        decision_required: >-
+          A single Kitaron sales order can contain multiple lines for the same item.
+          Using only TOrder.OrderNumber would merge 3,429 multi-line Order+Item groups.
+          Approve the visible line suffix or approve an explicit aggregation rule.
+      - target: orders.customer_reference
+        source: TSubOrder.CustWorkOrderNumber
+        confidence: medium
+        transform: trim_or_null
+      - target: orders.quantity
+        source: TSubOrder.Number
+        confidence: high
+        transform: require_positive_integral_value_within_int32
+      - target: orders.work_finish_date
+        source: TSubOrder.SupplyDate
+        alternate_source: TSubOrder.PlanDate
+        confidence: high
+        transform: date_only
+        decision_required: Confirm SupplyDate is the customer commitment used by planning.
+      - target: orders.status
+        source: [TSubOrder.Closed, TSubOrder.StopProduction, TSubOrder.ProductStatus]
+        confidence: blocked
+        decision_required: >-
+          Define exact active/complete/cancelled semantics. Never set in_production directly;
+          Meimad derives it from Batch execution.
+      - target: orders.notes
+        source: TSubOrder.RemarksRow
+        confidence: medium
+        transform: trim_or_null
+
+  case_operations:
+    source_grain: reusable Kitaron item route row
+    source_key: TDirection.DirectionID
+    stable_business_key: [TDetails.DetailNumber, TDirection.ActionNumber]
+    target_key: [case_operations.case_id, case_operations.operation_number]
+    fields:
+      - target: case_operations.operation_number
+        source: TDirection.ActionNumber
+        confidence: high
+        transform: require_positive_int
+        observed_blockers: 19 of 58,460 route rows are blank, nonnumeric, or nonpositive
+      - target: case_operations.route_position
+        source: ordered_row_number_within_DetailID_by_NumOrder_then_ActionNumber
+        confidence: medium
+        decision_required: Confirm NumOrder is the authoritative route order.
+      - target: case_operations.name
+        source: coalesce(TDirection.OperationName, TOperation.Operation, TDirection.OperationDescription)
+        confidence: medium
+        warning: TSubRootCard.OperationName appears to contain employee names and must not be used.
+      - target: case_operations.required_machine_type
+        source: TStation.StationType
+        alternate_source: TStation.Station
+        confidence: low
+        decision_required: Map Kitaron work centers to Meimad Machine Types manually.
+      - target: case_operations.setup_seconds
+        source: coalesce(TDirection.DirectionTime, TOperation.DirectionTime)
+        confidence: blocked
+        decision_required: Confirm unit and precedence. Most source route rows have no value.
+      - target: case_operations.cycle_seconds
+        source: coalesce(TDirection.TimeProduction, TOperation.TimeProduction)
+        confidence: blocked
+        decision_required: Confirm unit and whether value is per part, per cycle, or total.
+      - target: case_operations.qa_seconds
+        source: null
+        confidence: blocked
+        note: TDirection.NeedInspect is a flag, not a QA duration.
+      - target: case_operations.dependency_type
+        source: sequential
+        confidence: medium
+        decision_required: Confirm all imported route rows are sequential by default.
+      - target: case_operations.predecessor_case_operation_id
+        source: previous accepted route row
+        confidence: medium
+      - target: case_operations.day_shift_only
+        source: null
+        confidence: blocked
+
+  production_batches:
+    source_grain: one Kitaron production work order
+    source_key: TRootCard.NUMBER
+    target_key: [production_batches.case_id, production_batches.batch_number]
+    fields:
+      - target: production_batches.batch_number
+        source: string(TRootCard.NUMBER)
+        projection: string(VQWorkPlanningForStationF4.RootID)
+        confidence: high
+      - target: production_batches.planned_quantity
+        source: TRootCard.ProductionAmount
+        projection: VQWorkPlanningForStationF4.ProductionAmount
+        confidence: high
+        transform: require_positive_integral_value_within_int32
+      - target: production_batches.status
+        source: [TRootCard.RootCardClosed, TRootCard.ReportingStarted]
+        confidence: blocked
+        decision_required: Preserve Meimad server-owned lifecycle; define import initialization separately.
+      - target: production_batches.route_revision
+        source: TRootCard.REV
+        confidence: low
+        decision_required: Target field is an integer route snapshot revision, not an item revision string.
+    allocations:
+      status: blocked
+      decision_required: >-
+        Confirm how TRootCard.OrderID, TSubOrder.RecordID, ProductionAmount, OrderAmount,
+        stock, and overproduction translate into explicit Meimad order/stock/scrap allocations.
+
+  batch_operations:
+    source_grain: one operation instance on one Kitaron production work order
+    source_key: [TSubRootCard.NUMBER, TSubRootCard.ActionNumber]
+    target_key: [batch_operations.production_batch_id, batch_operations.operation_number]
+    route_link: TSubRootCard.OriginalDirectionID -> TDirection.DirectionID -> case_operations
+    fields:
+      - target: batch_operations.operation_number
+        source: TSubRootCard.ActionNumber
+        projection: VQWorkPlanningForStationF4.ActionNumber
+        confidence: high
+        transform: require_positive_int
+      - target: batch_operations.route_position
+        source: ordered_row_number_within_NUMBER_by_auto
+        confidence: high
+      - target: batch_operations.name
+        source: coalesce(TSubRootCard.ActionDescription, TOperation.Operation)
+        projection: VQWorkPlanningForStationF4.ActionDescription
+        confidence: high
+      - target: batch_operations.required_machine_type
+        source: TStation.StationType
+        confidence: low
+        decision_required: Map work-center/station types to Meimad Machine Types.
+      - target: batch_operations.setup_seconds
+        source: coalesce(TSubRootCard.DirectionTimeP, TDirection.DirectionTime, TOperation.DirectionTime)
+        confidence: blocked
+        decision_required: Confirm units and override precedence.
+      - target: batch_operations.cycle_seconds
+        source: coalesce(TSubRootCard.TimeProductionP, TDirection.TimeProduction, TOperation.TimeProduction)
+        confidence: blocked
+        decision_required: Confirm units and cycle semantics.
+      - target: batch_operations.status
+        source: [TSubRootCard.Reported, TSubRootCard.InProduction, TSubRootCard.WOOperationStatus]
+        confidence: blocked
+        decision_required: Define exact lifecycle mapping without inventing actual timestamps.
+      - target: batch_operations.actual_start
+        source: TSubRootCard.FirstStartDate
+        alternate_source: TSubRootCard.StartDateReal
+        confidence: low
+        decision_required: Confirm authoritative actual-start field.
+      - target: batch_operations.actual_end
+        source: TSubRootCard.FirstFinishDate
+        confidence: low
+        decision_required: Confirm authoritative actual-finish field.
+
+  machine_assignments:
+    import_enabled: false
+    source_candidates: [TSubRootCard.StationID, VQWorkPlanningForStationF4.StationID]
+    reason: >-
+      Kitaron stations include work centers such as 3 AXIS, 5 AXIS, inspection, engineering,
+      and outside processing. Meimad Machines are individual physical resources. A manual
+      Station-to-Machine/Machine-Type mapping and explicit planner approval are required.
+
+active_projection_for_first_prototype:
+  object: KitaronData229.dbo.VQWorkPlanningForStationF4
+  filter: already represents the currently exposed production-planning rows
+  identity_columns:
+    item: DetailNumber
+    sales_order: OrderNumber
+    work_order: RootID
+    operation: ActionNumber
+    station: StationID
+  descriptive_columns:
+    item_name: DetailName
+    item_revision: REV
+    customer: CompanyName
+    operation_name: ActionDescription
+    station_name: Station
+  quantity_and_date_columns:
+    batch_quantity: ProductionAmount
+    order_quantity_candidate: OrdAmount
+    work_finish_date_candidate: SupplyDate
+  caution: >-
+    Use this projection only for a read-only prototype. Durable synchronization should
+    use stable canonical IDs and cross-reference rows, not descriptive text alone.
+
+manual_decisions_required:
+  - Confirm/grant the intended KitaronData2550OLAP.dbo.VProductionPlanning source.
+  - Choose domain-aligned Order/Batch ownership or the requested flat work-order-as-Order model.
+  - Decide whether sales-order line references include the Kitaron row number or are aggregated.
+  - Define customer selection for items used by more than one customer.
+  - Approve a working-folder generation/validation policy.
+  - Confirm setup/cycle units and override precedence.
+  - Approve Case route derivation and handling of work-order-specific route variants.
+  - Define Order, Batch, and Operation lifecycle/status mappings.
+  - Define explicit Batch allocation rules.
+  - Complete Kitaron Station to Meimad Machine Type mapping; keep Machine assignment manual.
+  - Define missing-source and source-deletion behavior; do not delete Meimad data by default.

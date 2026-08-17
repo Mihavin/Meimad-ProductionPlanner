@@ -32,7 +32,9 @@ internal sealed class DatabaseMigrator
         new SchemaV24MachineAssignmentPlanningModeMigration(),
         new SchemaV25LegacyWorkingPlanImportMigration(),
         new SchemaV26CriticalityExternalDelayCalendarMigration(),
-        new SchemaV27IncrementalCaseOrderImportReceiptsMigration()
+        new SchemaV27IncrementalCaseOrderImportReceiptsMigration(),
+        new SchemaV28KitaronConnectionMigration(),
+        new SchemaV29KitaronMappingMigration()
     ];
 
     private readonly SqliteDatabase database;

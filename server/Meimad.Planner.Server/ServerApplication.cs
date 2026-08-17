@@ -8,6 +8,7 @@ using Meimad.Planner.Server.Api.Deletion;
 using Meimad.Planner.Server.Api.Downtimes;
 using Meimad.Planner.Server.Api.EInk;
 using Meimad.Planner.Server.Api.JobPackages;
+using Meimad.Planner.Server.Api.Kitaron;
 using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Machines;
@@ -27,6 +28,7 @@ using Meimad.Planner.Server.Application.Deletion;
 using Meimad.Planner.Server.Application.Downtimes;
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.JobPackages;
+using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Application.LegacyImport;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Machines;
@@ -42,6 +44,7 @@ using Meimad.Planner.Server.Domain.Timeline;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
 
 namespace Meimad.Planner.Server;
@@ -87,6 +90,8 @@ public static class ServerApplication
         builder.Services.AddSingleton(timelineOptions);
         builder.Services.AddSingleton(legacyImportOptions);
         builder.Services.AddSingleton<SqliteDatabase>();
+        builder.Services.AddDataProtection()
+            .SetApplicationName("Meimad.Planner.Server");
         builder.Services.AddSingleton<DatabaseMigrator>();
         builder.Services.AddSingleton<SqliteBackupService>();
         builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();
@@ -136,6 +141,12 @@ public static class ServerApplication
         builder.Services.AddSingleton<OpenXmlLegacyWorkbookReader>();
         builder.Services.AddSingleton<ILegacyImportRepository, SqliteLegacyImportRepository>();
         builder.Services.AddSingleton<LegacyImportService>();
+        builder.Services.AddSingleton<IKitaronConnectionRepository, SqliteKitaronConnectionRepository>();
+        builder.Services.AddSingleton<IKitaronMappingRepository, SqliteKitaronMappingRepository>();
+        builder.Services.AddSingleton<IKitaronConnectionTester, SqlServerKitaronConnectionTester>();
+        builder.Services.AddSingleton<KitaronConnectionService>();
+        builder.Services.AddSingleton<KitaronMappingService>();
+        builder.Services.AddHostedService<KitaronConnectionMonitorService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
         builder.Services.AddSingleton<IMaterialReportEmailSender, SmtpMaterialReportEmailSender>();
         builder.Services.AddSingleton<WeeklyMaterialReportService>();
@@ -157,6 +168,17 @@ public static class ServerApplication
 
         application.UseMiddleware<EInkReadOnlyGuardMiddleware>();
 
+        application.Use(async (context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/kitaron-setup")
+                && !KitaronConnectionEndpoints.IsLocalRequest(context))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            await next(context);
+        });
+
         var tvDashboardRoot = Path.Combine(
             AppContext.BaseDirectory,
             "wwwroot",
@@ -175,6 +197,15 @@ public static class ServerApplication
             RequestPath = "/eink-simulator",
             FileProvider = new PhysicalFileProvider(eInkSimulatorRoot)
         });
+        var kitaronSetupRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            "wwwroot",
+            "kitaron-setup");
+        application.UseStaticFiles(new StaticFileOptions
+        {
+            RequestPath = "/kitaron-setup",
+            FileProvider = new PhysicalFileProvider(kitaronSetupRoot)
+        });
 
         application.MapGet("/health", () => Results.Ok(new
         {
@@ -189,6 +220,12 @@ public static class ServerApplication
         application.MapGet("/eink-simulator/", () => Results.File(
             Path.Combine(eInkSimulatorRoot, "index.html"),
             "text/html; charset=utf-8"));
+        application.MapGet("/kitaron-setup/", (HttpContext context) =>
+            KitaronConnectionEndpoints.IsLocalRequest(context)
+                ? Results.File(
+                    Path.Combine(kitaronSetupRoot, "index.html"),
+                    "text/html; charset=utf-8")
+                : Results.NotFound());
         application.MapCaseEndpoints();
         application.MapAdministrativeSetupEndpoints();
         application.MapEditModeEndpoints();
@@ -207,6 +244,7 @@ public static class ServerApplication
         application.MapEInkDeviceRegistrationEndpoints();
         application.MapJobPackageEndpoints();
         application.MapLegacyImportEndpoints();
+        application.MapKitaronConnectionEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();
         application.MapStructuredEventLogEndpoints();

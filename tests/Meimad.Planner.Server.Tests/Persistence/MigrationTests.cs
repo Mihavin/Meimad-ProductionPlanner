@@ -27,6 +27,7 @@ public sealed class MigrationTests
         "employee_calendar_exceptions",
         "israeli_holidays",
         "report_email_settings",
+        "kitaron_connection_settings",
         "edit_tokens",
         "edit_requests",
         "application_settings",
@@ -43,7 +44,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(27L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(28L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -113,6 +114,17 @@ public sealed class MigrationTests
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 27;";
         Assert.Equal("incremental_case_order_import_receipts", await migrationCommand.ExecuteScalarAsync());
 
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 28;";
+        Assert.Equal("kitaron_server_connection", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT server_host || ':' || server_port || '/' || database_name || '/' || view_schema || '.' || view_name
+            FROM kitaron_connection_settings WHERE id = 1;
+            """;
+        Assert.Equal(
+            "192.168.0.240:1433/KitaronData2550OLAP/dbo.VProductionPlanning",
+            await migrationCommand.ExecuteScalarAsync());
+
         migrationCommand.CommandText = """
             SELECT COUNT(*)
             FROM pragma_table_info('legacy_working_plan_imports')
@@ -161,7 +173,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(27L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(28L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -523,7 +535,8 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
+                DROP TABLE kitaron_connection_settings;
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -664,7 +677,8 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
+                DROP TABLE kitaron_connection_settings;
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -801,7 +815,8 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
+                DROP TABLE kitaron_connection_settings;
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
@@ -887,7 +902,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 28;";
+            command.CommandText = "PRAGMA user_version = 29;";
             await command.ExecuteNonQueryAsync();
         }
 
