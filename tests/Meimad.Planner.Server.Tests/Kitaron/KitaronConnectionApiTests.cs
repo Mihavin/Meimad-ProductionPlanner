@@ -24,10 +24,19 @@ public sealed class KitaronConnectionApiTests
         {
             using var page = await client.GetAsync("/kitaron-setup/");
             Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+            var pageText = await page.Content.ReadAsStringAsync();
             Assert.Contains(
-                "one-way read-only SQL Server connection",
-                await page.Content.ReadAsStringAsync(),
+                "finish the source-to-Meimad mapping draft",
+                pageText,
                 StringComparison.Ordinal);
+            Assert.Contains("id=\"mappingRows\"", pageText, StringComparison.Ordinal);
+            Assert.Contains("Domain aligned — recommended", pageText, StringComparison.Ordinal);
+            Assert.Contains("Import remains disabled", pageText, StringComparison.Ordinal);
+
+            using var script = await client.GetAsync("/kitaron-setup/app.js");
+            var scriptText = await script.Content.ReadAsStringAsync();
+            Assert.Contains("/api/v1/kitaron/mapping", scriptText, StringComparison.Ordinal);
+            Assert.DoesNotContain("/import", scriptText, StringComparison.OrdinalIgnoreCase);
 
             using var initial = await client.GetAsync("/api/v1/kitaron/connection");
             Assert.Equal(HttpStatusCode.OK, initial.StatusCode);
@@ -75,12 +84,102 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(secret, tester.Password);
             Assert.Equal("VProductionPlanning", tester.Settings?.ViewName);
 
+            using var mapping = await client.GetAsync("/api/v1/kitaron/mapping");
+            Assert.Equal(HttpStatusCode.OK, mapping.StatusCode);
+            using var mappingJson = JsonDocument.Parse(await mapping.Content.ReadAsStringAsync());
+            Assert.Equal("domain_aligned", mappingJson.RootElement.GetProperty("modelMode").GetString());
+            Assert.Equal("draft", mappingJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(22, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
+            Assert.Equal(3, mappingJson.RootElement.GetProperty("detectedColumns").GetArrayLength());
+
             using var after = await client.GetAsync("/api/v1/kitaron/connection");
             var afterText = await after.Content.ReadAsStringAsync();
             Assert.DoesNotContain(secret, afterText, StringComparison.Ordinal);
             using var afterJson = JsonDocument.Parse(afterText);
             Assert.Equal("succeeded", afterJson.RootElement.GetProperty("lastTestStatus").GetString());
             Assert.Equal(3, afterJson.RootElement.GetProperty("lastTestColumnCount").GetInt32());
+        });
+    }
+
+    [Fact]
+    public async Task Mapping_UI_persists_complete_optimistic_draft_but_does_not_enable_import()
+    {
+        await RunAsync(new CapturingTester(), async (application, client) =>
+        {
+            using var initial = await client.GetAsync("/api/v1/kitaron/mapping");
+            using var initialJson = JsonDocument.Parse(await initial.Content.ReadAsStringAsync());
+            var root = initialJson.RootElement;
+            var fields = root.GetProperty("fields").EnumerateArray()
+                .Select(field => new Dictionary<string, object?>
+                {
+                    ["targetEntity"] = field.GetProperty("targetEntity").GetString(),
+                    ["targetField"] = field.GetProperty("targetField").GetString(),
+                    ["enabled"] = field.GetProperty("enabled").GetBoolean(),
+                    ["sourceColumn"] = field.GetProperty("sourceColumn").ValueKind == JsonValueKind.Null
+                        ? null
+                        : field.GetProperty("sourceColumn").GetString(),
+                    ["confidence"] = field.GetProperty("confidence").GetString(),
+                    ["transform"] = field.GetProperty("transform").GetString(),
+                    ["notes"] = "Planner review pending"
+                })
+                .ToArray();
+            var version = root.GetProperty("version").GetInt32();
+
+            using var save = await client.PutAsJsonAsync(
+                "/api/v1/kitaron/mapping",
+                new
+                {
+                    modelMode = "domain_aligned",
+                    status = "draft",
+                    fields,
+                    notes = "Initial analyzed mapping; import stays disabled.",
+                    version
+                });
+            Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+            using var savedJson = JsonDocument.Parse(await save.Content.ReadAsStringAsync());
+            Assert.Equal("draft", savedJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(version + 1, savedJson.RootElement.GetProperty("version").GetInt32());
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    SELECT mapping_status || '/' || json_array_length(mappings_json)
+                    FROM kitaron_mapping_settings WHERE id = 1;
+                    """;
+                Assert.Equal("draft/22", await command.ExecuteScalarAsync());
+
+                command.CommandText = """
+                    SELECT COUNT(*) FROM sqlite_master
+                    WHERE type = 'table' AND name LIKE 'kitaron%import%';
+                    """;
+                Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+            }
+
+            using var blockedReady = await client.PutAsJsonAsync(
+                "/api/v1/kitaron/mapping",
+                new
+                {
+                    modelMode = "domain_aligned",
+                    status = "ready_for_implementation",
+                    fields,
+                    notes = "Still contains blocked timing decisions.",
+                    version = version + 1
+                });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, blockedReady.StatusCode);
+
+            using var stale = await client.PutAsJsonAsync(
+                "/api/v1/kitaron/mapping",
+                new
+                {
+                    modelMode = "domain_aligned",
+                    status = "draft",
+                    fields,
+                    notes = "stale",
+                    version = 99
+                });
+            Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
         });
     }
 

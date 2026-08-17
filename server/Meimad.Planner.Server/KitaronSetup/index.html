@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Meimad Server — Kitaron connection</title>
+  <title>Meimad Server — Kitaron connector</title>
   <link rel="stylesheet" href="/kitaron-setup/styles.css">
 </head>
 <body>
@@ -11,57 +11,133 @@
     <header>
       <div>
         <p class="eyebrow">MEIMAD PLANNER SERVER</p>
-        <h1>Kitaron connection</h1>
-        <p>Configure and verify the Server-owned, one-way read-only SQL Server connection.</p>
+        <h1>Kitaron connector</h1>
+        <p>Configure the Server-owned SQL connection and finish the source-to-Meimad mapping draft.</p>
       </div>
-      <span id="statusBadge" class="badge neutral">Loading</span>
+      <div class="header-badges">
+        <span id="statusBadge" class="badge neutral">Connection loading</span>
+        <span id="mappingBadge" class="badge neutral">Mapping loading</span>
+      </div>
     </header>
 
     <section class="notice">
-      <strong>Source safety:</strong> tests issue only <code>SELECT TOP (0)</code> against the configured view with
-      <code>ApplicationIntent=ReadOnly</code>. The password is encrypted by this Server and is never returned to this page.
-      Data mapping and import remain disabled until the Case/Order/Operation ownership rule is approved.
+      <strong>Read-only boundary:</strong> connection tests issue only <code>SELECT TOP (0)</code> with
+      <code>ApplicationIntent=ReadOnly</code>. Mapping is configuration only. This page cannot import rows,
+      create assignments, reorder a Machine backlog, or write anything to Kitaron.
     </section>
 
-    <form id="connectionForm">
-      <div class="grid">
-        <label>SQL Server host<input id="serverHost" required maxlength="255"></label>
-        <label>Port<input id="serverPort" required type="number" min="1" max="65535"></label>
-        <label>Database<input id="databaseName" required maxlength="128"></label>
-        <label>Schema<input id="viewSchema" required maxlength="128"></label>
-        <label>View<input id="viewName" required maxlength="128"></label>
-        <label>User name<input id="username" required maxlength="128" autocomplete="username"></label>
-        <label>Password
-          <input id="password" type="password" maxlength="512" autocomplete="new-password"
-                 placeholder="Leave blank to keep the stored password">
-          <span id="passwordState" class="hint"></span>
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <p class="step">STEP 1</p>
+          <h2>Connection and source object</h2>
+          <p class="hint">Save credentials on this Server, then test the exact database, schema, and view.</p>
+        </div>
+      </div>
+      <form id="connectionForm" class="embedded-form">
+        <div class="grid">
+          <label>SQL Server host<input id="serverHost" required maxlength="255"></label>
+          <label>Port<input id="serverPort" required type="number" min="1" max="65535"></label>
+          <label>Database<input id="databaseName" required maxlength="128"></label>
+          <label>Schema<input id="viewSchema" required maxlength="128"></label>
+          <label>View<input id="viewName" required maxlength="128"></label>
+          <label>User name<input id="username" required maxlength="128" autocomplete="username"></label>
+          <label>Password
+            <input id="password" type="password" maxlength="512" autocomplete="new-password"
+                   placeholder="Leave blank to keep the stored password">
+            <span id="passwordState" class="hint"></span>
+          </label>
+          <label>Check interval (seconds)
+            <input id="refreshIntervalSeconds" required type="number" min="30" max="86400">
+          </label>
+        </div>
+        <div class="checks">
+          <label><input id="enabled" type="checkbox"> Enable periodic read-only connection checks</label>
+          <label><input id="clearPassword" type="checkbox"> Remove stored password</label>
+        </div>
+        <div class="actions">
+          <button id="saveButton" type="submit">Save connection</button>
+          <button id="testButton" type="button" class="secondary">Test and detect columns</button>
+          <button id="reloadButton" type="button" class="quiet">Reload page data</button>
+        </div>
+      </form>
+
+      <div class="result compact" aria-live="polite">
+        <h3>Last connection test</h3>
+        <p id="testSummary">Not tested.</p>
+        <p id="testTime" class="hint"></p>
+        <div id="columnPanel" hidden>
+          <h3>Detected source columns</h3>
+          <div id="columns" class="columns"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="mappingSection">
+      <div class="section-heading">
+        <div>
+          <p class="step">STEP 2</p>
+          <h2>Mapping model</h2>
+          <p class="hint">Choose the business grain before completing individual fields.</p>
+        </div>
+      </div>
+      <div class="model-options">
+        <label class="model-option">
+          <input type="radio" name="modelMode" value="domain_aligned">
+          <span><strong>Domain aligned — recommended</strong><small>Sales lines → Orders, work orders → Production Batches, work-order operations → Batch Operations.</small></span>
         </label>
-        <label>Check interval (seconds)
-          <input id="refreshIntervalSeconds" required type="number" min="30" max="86400">
+        <label class="model-option">
+          <input type="radio" name="modelMode" value="flat_requested">
+          <span><strong>Flat requested model</strong><small>Work order → Order and work-order operation → reusable Case Operation. Use only after explicit approval.</small></span>
         </label>
       </div>
+      <label class="wide-label">Mapping status
+        <select id="mappingStatus">
+          <option value="draft">Draft — manual work remains</option>
+          <option value="ready_for_implementation">Ready for implementation review</option>
+        </select>
+      </label>
+    </section>
 
-      <div class="checks">
-        <label><input id="enabled" type="checkbox"> Enable periodic read-only connection checks</label>
-        <label><input id="clearPassword" type="checkbox"> Remove stored password</label>
+    <section class="card">
+      <div class="section-heading mapping-heading">
+        <div>
+          <p class="step">STEP 3</p>
+          <h2>Field mapping</h2>
+          <p class="hint">Required rows cannot be disabled. Optional uncertain rows may stay disabled or blocked in a draft.</p>
+        </div>
+        <div class="actions no-margin">
+          <button id="suggestButton" type="button" class="secondary">Auto-suggest detected columns</button>
+          <button id="exportButton" type="button" class="quiet">Export mapping JSON</button>
+        </div>
       </div>
 
+      <p id="mappingSummary" class="mapping-summary"></p>
+      <datalist id="sourceColumnChoices"></datalist>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Use</th><th>Meimad target</th><th>Source column</th><th>Confidence</th><th>Transform</th><th>Notes / decision</th>
+          </tr></thead>
+          <tbody id="mappingRows"></tbody>
+        </table>
+      </div>
+      <label class="wide-label">Overall mapping notes
+        <textarea id="mappingNotes" maxlength="4000" rows="4"
+                  placeholder="Record DBA confirmations, timing units, order-line identity, allocation policy, and unresolved decisions."></textarea>
+      </label>
       <div class="actions">
-        <button id="saveButton" type="submit">Save settings</button>
-        <button id="testButton" type="button" class="secondary">Test read-only connection</button>
-        <button id="reloadButton" type="button" class="quiet">Reload</button>
-      </div>
-    </form>
-
-    <section class="result" aria-live="polite">
-      <h2>Last connection test</h2>
-      <p id="testSummary">Not tested.</p>
-      <p id="testTime" class="hint"></p>
-      <div id="columnPanel" hidden>
-        <h3>Detected source columns</h3>
-        <div id="columns" class="columns"></div>
+        <button id="saveMappingButton" type="button">Save mapping draft</button>
+        <button id="reloadMappingButton" type="button" class="quiet">Discard changes and reload</button>
       </div>
     </section>
+
+    <section class="notice stop-notice">
+      <strong>Import remains disabled.</strong> Saving or marking a mapping ready does not read source rows and does not
+      change Cases, Orders, Batches, Operations, Machines, assignments, backlog, or Timeline data. Implementation needs
+      a separate reviewed task with preview/diff, external identities, atomic writes, and manual-planning safeguards.
+    </section>
+
     <p id="message" class="message" aria-live="assertive"></p>
   </main>
   <script src="/kitaron-setup/app.js"></script>
