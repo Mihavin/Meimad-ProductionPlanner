@@ -7,6 +7,11 @@ internal sealed record CreateProductionBatchCommand(
     int PlannedQuantity,
     IReadOnlyList<CreateBatchAllocationCommand>? Allocations);
 
+internal sealed record UpdateProductionBatchCommand(
+    string? BatchNumber,
+    int PlannedQuantity,
+    IReadOnlyList<CreateBatchAllocationCommand>? Allocations);
+
 internal sealed record CreateBatchAllocationCommand(
     string? AllocationType,
     string? OrderId,

@@ -21,6 +21,18 @@ internal sealed record CreateProductionBatchRequest(
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record UpdateProductionBatchRequest(
+    string? BatchNumber,
+    int PlannedQuantity,
+    IReadOnlyList<CreateBatchAllocationRequest>? Allocations)
+{
+    internal UpdateProductionBatchCommand ToCommand() => new(
+        BatchNumber,
+        PlannedQuantity,
+        Allocations?.Select(allocation => allocation.ToCommand()).ToArray());
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record CreateBatchAllocationRequest(
     string? AllocationType,
     string? OrderId,

@@ -493,7 +493,7 @@ Order PATCH accepts the existing partial fields and is allocation-safe. Reducing
 | `GET` | `/api/v1/batches` | Search/filter Production Batches. |
 | `POST` | `/api/v1/batches` | Create Batch, allocation, and route snapshot atomically. |
 | `GET` | `/api/v1/batches/{batchId}` | Read Batch, allocation, and operation summary. |
-| `PATCH` | `/api/v1/batches/{batchId}` | Change future approved Batch fields; status is Server-owned. |
+| `PATCH` | `/api/v1/batches/{batchId}` | Optimistically replace Batch Number, planned quantity, and complete balanced allocations; status/route/execution are Server-owned. |
 | `PUT` | `/api/v1/batches/{batchId}/allocations` | Replace the complete allocation atomically after balancing validation. |
 | `GET` | `/api/v1/batches/{batchId}/operations` | Read concrete Batch Operations. |
 
@@ -555,11 +555,13 @@ Implemented Batch representation:
 }
 ```
 
+Implemented Batch edit requires active Edit Mode plus exact `If-Match: "batch:{batchId}:v{version}"` and accepts a complete replacement of `batchNumber`, `plannedQuantity`, and `allocations`. It increments the Batch version, applies the same balance and same-Case Order validation as creation, and recomputes both removed and newly linked Orders. Instantiated Batch Operations, route/dependency snapshots, assignment positions, execution facts, derived status, and route revision are preserved.
+
 Creating a Batch and its route-derived Batch Operations is one immediate SQLite transaction. Failure creates neither the Batch nor partial allocations/operations. The create contract requires `status: "waiting"`; this is a fixed lifecycle assertion, not a user-selectable status, and any other value is rejected. Later status changes are Server-owned. Every Order allocation must reference an Order under the Batch Case. `plannedQuantity` must exactly equal the sum of `order`, `stock`, and `scrapAllowance` rows. A Batch must include Order demand or stock; scrap alone is rejected. Allocation quantities are positive integers, zero rows are omitted, an Order appears once, and at most one stock and one scrapAllowance row are accepted. These rules support one Order, a partial Order, multiple same-Case Orders, combined stock/scrap, and stock-only creation without making Planner authoritative for warehouse balance.
 
 Batch status tokens are exactly `waiting`, `in_production`, and `complete`. A zero-operation Batch stays `waiting`. For a non-empty Batch, all `not_started` operations mean `waiting`; any `in_progress`, `suspended`, or `completed` operation while another remains unfinished means `in_production`; all `completed` means `complete`. The Server recomputes the derived status in the same transaction as an operation execution transition and advances the Batch version only when the status token changes. Apart from the fixed `waiting` assertion on create, clients display status but never choose or update it.
 
-`PUT /allocations` remains Proposed and would replace the complete collection atomically after future cross-Batch lifecycle rules are approved. It must never update ERP stock.
+The implemented Batch `PATCH` replaces the complete allocation collection atomically. It never updates ERP stock.
 
 Implemented Batch Operation representation returned by `/batches/{batchId}/operations`:
 
@@ -630,7 +632,7 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `PATCH` | `/api/v1/machine-types/{machineTypeId}` | Optimistically update a Machine Type. |
 | `DELETE` | `/api/v1/machine-types/{machineTypeId}` | Delete an unreferenced Machine Type. |
 
-Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. Batch deletion requires no Machine Assignment or official package, then deletes only its allocations and Batch Operations. Machine deletion requires no assignment, downtime, device binding, official package, or Employee qualification reference. These endpoints never delete external folders, images, engineering files, or package bytes.
+Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. A separately confirmed Batch deletion is the exception to relationship blocking: it deletes the Batch-owned Machine Assignments, pause history, assignment overrides, package metadata/file records, allocations, and Batch Operations, compacts affected Machine backlogs, deletes the Batch, and recomputes affected Order lifecycles in one immediate transaction. Machine deletion still requires no assignment, downtime, device binding, official package, or Employee qualification reference. These endpoints never delete external folders, images, engineering files, or physical package bytes.
 
 An accepted assignment may produce warnings/conflicts; it must not cause silent rescheduling. Which structural errors reject versus which planning conflicts are accepted and reported is TBD.
 

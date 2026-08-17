@@ -181,7 +181,7 @@ Batch creation, safe Batch deletion, and Start/Suspend/Finish/Reset recompute al
 | `plannedQuantity` | Implemented | Positive total Batch quantity; exactly equals Order allocations + stock + scrap allowance. |
 | `routeRevision` | Present but currently `null` | No authoritative aggregate Case-route revision exists yet. |
 
-A Batch may fulfill one Order, part of an Order, multiple same-Case Orders, stock, or stock only, and may include scrap allowance. It cannot span Cases. Creation is atomic with allocation rows and Case Operation scalar/dependency snapshots. A new Batch is `waiting`. A zero-operation Batch remains `waiting`; a non-empty Batch is `complete` only when all its operations are completed; otherwise it is `in_production` once any operation is in progress, suspended, or completed. Each operation execution change recomputes status in the same transaction; the Batch status/version changes only when that derived token changes.
+A Batch may fulfill one Order, part of an Order, multiple same-Case Orders, stock, or stock only, and may include scrap allowance. It cannot span Cases. Creation is atomic with allocation rows and Case Operation scalar/dependency snapshots. Optimistic Batch edit replaces Batch Number, planned quantity, and the complete allocation collection while retaining the Batch ID and every instantiated Operation/route/execution/assignment fact; linked Orders are recomputed atomically. A confirmed Batch delete removes its owned planning/execution/package database graph, compacts affected Machine backlogs, and recomputes linked Orders. A new Batch is `waiting`. A zero-operation Batch remains `waiting`; a non-empty Batch is `complete` only when all its operations are completed; otherwise it is `in_production` once any operation is in progress, suspended, or completed. Each operation execution change recomputes status in the same transaction; the Batch status/version changes only when that derived token changes.
 
 ### 5.2 Batch Allocation
 
@@ -193,7 +193,7 @@ A Batch may fulfill one Order, part of an Order, multiple same-Case Orders, stoc
 | `orderId` | Implemented, conditional | Required only for `order`, forbidden otherwise, and must belong to the Batch Case. |
 | `quantity` | Implemented | Positive 32-bit integer; omit zero-valued rows. Unit remains TBD. |
 
-The implemented invariant is `plannedQuantity = sum(order allocations) + stock + scrapAllowance`. There must be at least one Order or stock row; scrap alone is invalid. Each Order appears at most once, with at most one stock row and one scrapAllowance row. Wide arithmetic prevents integer overflow from satisfying the equation accidentally. Allocation relative to an Order may be partial. Cross-Batch over-allocation, replacement/reallocation, completion, and cancellation behavior remain open.
+The implemented invariant is `plannedQuantity = sum(order allocations) + stock + scrapAllowance`. There must be at least one Order or stock row; scrap alone is invalid. Each Order appears at most once, with at most one stock row and one scrapAllowance row. Wide arithmetic prevents integer overflow from satisfying the equation accidentally. Allocation relative to an Order may be partial. Complete allocation replacement is implemented through the version-checked Batch PATCH; cross-Batch over-allocation, completion, and cancellation policy remain open.
 
 ## 6. Route and operation entities
 

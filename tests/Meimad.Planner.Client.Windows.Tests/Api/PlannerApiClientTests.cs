@@ -1460,6 +1460,30 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Batch_update_uses_patch_etag_edit_headers_and_balanced_allocations()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {"batchId":"batch-1","caseId":"case-1","batchNumber":"B-2","status":"waiting","plannedQuantity":7,"routeRevision":null,"allocations":[{"allocationId":"a-1","allocationType":"stock","orderId":null,"quantity":7}],"batchOperationCount":2,"version":2,"createdAt":"2026-08-11T00:00:00Z","updatedAt":"2026-08-12T00:00:00Z"}
+            """));
+        using var api = CreateClient(handler);
+
+        var updated = await api.UpdateBatchAsync(
+            "batch-1",
+            new ProductionBatchUpdate("B-2", 7, [new("stock", null, 7)]),
+            "\"batch:batch-1:v1\"",
+            "windows-01",
+            31);
+
+        Assert.Equal("B-2", updated.BatchNumber);
+        Assert.Equal(7, Assert.Single(updated.Allocations!).Quantity);
+        Assert.Equal(HttpMethod.Patch, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/batches/batch-1", handler.Requests[0].Path);
+        Assert.Equal("\"batch:batch-1:v1\"", handler.Requests[0].IfMatch);
+        Assert.Equal("31", handler.Requests[0].Generation);
+        Assert.Contains("\"plannedQuantity\":7", handler.Requests[0].Body);
+    }
+
+    [Fact]
     public async Task Machine_update_and_guarded_delete_commands_use_server_api()
     {
         var handler = new RecordingHandler(

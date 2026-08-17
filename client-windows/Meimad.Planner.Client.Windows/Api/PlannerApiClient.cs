@@ -107,6 +107,15 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ProductionBatch> UpdateBatchAsync(
+        string batchId,
+        ProductionBatchUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<byte[]?> GetCasePreviewAsync(
         string caseId,
         CancellationToken cancellationToken = default);
@@ -729,6 +738,22 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             EditGenerationHeader,
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
+    }
+
+    public async Task<ProductionBatch> UpdateBatchAsync(
+        string batchId,
+        ProductionBatchUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch, $"api/v1/batches/{Uri.EscapeDataString(batchId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
     }

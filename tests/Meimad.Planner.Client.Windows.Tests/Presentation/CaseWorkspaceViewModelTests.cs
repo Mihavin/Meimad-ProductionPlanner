@@ -212,6 +212,38 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task Editor_edits_existing_batch_with_etag_and_prefilled_allocations()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(24));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedBatch = viewModel.Batches.Single();
+
+        await viewModel.BeginEditBatchAsync();
+
+        Assert.True(viewModel.IsEditingBatch);
+        Assert.Equal("EDIT PRODUCTION BATCH", viewModel.BatchFormHeading);
+        Assert.Equal("B-1", viewModel.NewBatchNumber);
+        Assert.Equal("5", viewModel.NewBatchPlannedQuantity);
+        Assert.Equal("5", Assert.Single(viewModel.BatchOrderAllocations).AllocatedQuantity);
+
+        viewModel.NewBatchNumber = "B-1-EDITED";
+        viewModel.NewBatchPlannedQuantity = "7";
+        viewModel.BatchOrderAllocations.Single().AllocatedQuantity = "4";
+        viewModel.NewBatchStockQuantity = "3";
+        await viewModel.CreateBatchAsync();
+
+        Assert.NotNull(api.LastBatchUpdate);
+        Assert.Equal("B-1-EDITED", api.LastBatchUpdate!.BatchNumber);
+        Assert.Equal(7, api.LastBatchUpdate.PlannedQuantity);
+        Assert.Equal("\"batch:batch-1:v1\"", api.LastBatchEntityTag);
+        Assert.Equal(24, api.LastGeneration);
+        Assert.Equal("B-1-EDITED", viewModel.SelectedBatch?.BatchNumber);
+        Assert.False(viewModel.IsCreatingBatch);
+    }
+
+    [Fact]
     public async Task Order_edit_omits_unchanged_status_so_server_can_rederive_it_after_quantity_changes()
     {
         var api = new FakeApiClient(CreateCase());
@@ -445,6 +477,8 @@ public sealed class CaseWorkspaceViewModelTests
         internal string? LastOrderId { get; private set; }
         internal string? LastOrderEntityTag { get; private set; }
         internal ProductionBatchCreate? LastBatchCreate { get; private set; }
+        internal ProductionBatchUpdate? LastBatchUpdate { get; private set; }
+        internal string? LastBatchEntityTag { get; private set; }
         internal CaseOperationCreate? LastOperationCreate { get; private set; }
         internal CaseOperationUpdate? LastOperationUpdate { get; private set; }
         internal string? LastOperationEntityTag { get; private set; }
@@ -669,7 +703,8 @@ public sealed class CaseWorkspaceViewModelTests
             string caseId,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<ProductionBatch>>([
-                new("batch-1", caseId, "B-1", "waiting", 5, null, 1)
+                new("batch-1", caseId, "B-1", "waiting", 5, null, 1, 1,
+                    [new("allocation-1", "order", "order-1", 5)])
             ]);
 
         public Task<ProductionBatch> CreateBatchAsync(
@@ -689,6 +724,25 @@ public sealed class CaseWorkspaceViewModelTests
                 create.PlannedQuantity,
                 1,
                 2));
+        }
+
+        public Task<ProductionBatch> UpdateBatchAsync(
+            string batchId,
+            ProductionBatchUpdate update,
+            string entityTag,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastBatchUpdate = update;
+            LastBatchEntityTag = entityTag;
+            LastClientId = clientId;
+            LastGeneration = editGeneration;
+            return Task.FromResult(new ProductionBatch(
+                batchId, plannerCase.CaseId, update.BatchNumber, "waiting", update.PlannedQuantity,
+                null, 1, 2,
+                update.Allocations.Select((value, index) => new BatchAllocation(
+                    $"allocation-{index}", value.AllocationType, value.OrderId, value.Quantity)).ToArray()));
         }
 
         public Task<byte[]?> GetCasePreviewAsync(

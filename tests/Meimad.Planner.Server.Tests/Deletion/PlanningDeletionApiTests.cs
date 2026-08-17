@@ -36,6 +36,56 @@ public sealed class PlanningDeletionApiTests
     }
 
     [Fact]
+    public async Task Batch_delete_cascades_assignments_pauses_and_published_packages_and_compacts_backlog()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO operation_pause_events (
+                        id, batch_operation_id, reason_type, comment, paused_by,
+                        pause_started_at, status, created_at, updated_at)
+                    VALUES ('pause-delete', 'batch-op-busy', 'other', 'Paused', 'planner',
+                            '2026-08-11T08:00:00Z', 'active', '2026-08-11T08:00:00Z', '2026-08-11T08:00:00Z');
+                    INSERT INTO eink_package_revisions (
+                        id, batch_operation_id, revision, published_at, production_batch_id)
+                    VALUES ('package-delete', 'batch-op-busy', '1', '2026-08-11T08:00:00Z', 'batch-busy');
+                    INSERT INTO eink_package_files (
+                        id, package_revision_id, logical_path, storage_relative_path,
+                        media_type, byte_length, sha256, modified_at, display_order)
+                    VALUES ('file-delete', 'package-delete', 'job.txt', 'job.txt', 'text/plain', 0,
+                            '0000000000000000000000000000000000000000000000000000000000000000',
+                            '2026-08-11T08:00:00Z', 0);
+                    INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                    VALUES ('batch-after', 'case-busy', 'B-AFTER', 'waiting', 1);
+                    INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position, name, status)
+                    VALUES ('batch-op-after', 'batch-after', 'case-op-busy', 10, 0, 'Mill', 'not_started');
+                    INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                    VALUES ('assign-after', 'batch-op-after', 'machine-busy', 1);
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/v1/batches/batch-busy")).StatusCode);
+
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal(0L, await CountAsync(verify, "production_batches", "batch-busy"));
+            Assert.Equal(0L, await CountAsync(verify, "machine_assignments", "assign-1"));
+            Assert.Equal(0L, await CountAsync(verify, "operation_pause_events", "pause-delete"));
+            Assert.Equal(0L, await CountAsync(verify, "eink_package_revisions", "package-delete"));
+            Assert.Equal(0L, await CountAsync(verify, "eink_package_files", "file-delete"));
+            await using var position = verify.CreateCommand();
+            position.CommandText = "SELECT backlog_position FROM machine_assignments WHERE id = 'assign-after';";
+            Assert.Equal(0L, (long)(await position.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
     public async Task Operation_delete_compacts_route_and_dependency_blocks_delete()
     {
         await RunAsync(async (application, client) =>

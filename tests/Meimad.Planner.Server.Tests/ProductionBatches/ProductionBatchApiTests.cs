@@ -94,6 +94,57 @@ public sealed class ProductionBatchApiTests
     }
 
     [Fact]
+    public async Task Patch_updates_batch_and_allocations_without_recreating_route()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningDataAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            using var created = await client.PostAsJsonAsync("/api/v1/batches", StockBatchBody("B-EDIT", 5, 5));
+            created.EnsureSuccessStatusCode();
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var batchId = createdJson.RootElement.GetProperty("batchId").GetString()!;
+            var operationIdsBefore = await ReadOperationIdsAsync(client, batchId);
+
+            using var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/batches/{batchId}")
+            {
+                Content = JsonContent.Create(new
+                {
+                    batchNumber = "B-EDITED",
+                    plannedQuantity = 8,
+                    allocations = new[] { new { allocationType = "stock", orderId = (string?)null, quantity = 8 } }
+                })
+            };
+            request.Headers.TryAddWithoutValidation("If-Match", created.Headers.ETag!.ToString());
+            using var response = await client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal($"\"batch:{batchId}:v2\"", response.Headers.ETag!.ToString());
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("B-EDITED", document.RootElement.GetProperty("batchNumber").GetString());
+            Assert.Equal(8, document.RootElement.GetProperty("plannedQuantity").GetInt32());
+            Assert.Equal(2, document.RootElement.GetProperty("batchOperationCount").GetInt32());
+            Assert.Equal(operationIdsBefore, await ReadOperationIdsAsync(client, batchId));
+
+            using var stale = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/batches/{batchId}")
+            {
+                Content = JsonContent.Create(new { batchNumber = "STALE", plannedQuantity = 8, allocations = new[] { new { allocationType = "stock", orderId = (string?)null, quantity = 8 } } })
+            };
+            stale.Headers.TryAddWithoutValidation("If-Match", created.Headers.ETag!.ToString());
+            Assert.Equal(HttpStatusCode.PreconditionFailed, (await client.SendAsync(stale)).StatusCode);
+        });
+    }
+
+    private static async Task<string[]> ReadOperationIdsAsync(HttpClient client, string batchId)
+    {
+        using var response = await client.GetAsync($"/api/v1/batches/{batchId}/operations");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("items").EnumerateArray().Select(value => value.GetProperty("batchOperationId").GetString()!).ToArray();
+    }
+
+    [Fact]
     public async Task Adversarial_requests_reject_mismatch_cross_case_and_missing_edit_mode()
     {
         await RunWithServerAsync(async (application, client) =>

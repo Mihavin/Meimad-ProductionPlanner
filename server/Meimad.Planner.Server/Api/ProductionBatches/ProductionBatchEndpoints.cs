@@ -2,6 +2,7 @@ using System.Globalization;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.ProductionBatches;
 using Meimad.Planner.Server.Domain.ProductionBatches;
+using Microsoft.Extensions.Primitives;
 
 namespace Meimad.Planner.Server.Api.ProductionBatches;
 
@@ -14,9 +15,60 @@ internal static class ProductionBatchEndpoints
     {
         var batches = endpoints.MapGroup("/api/v1/batches");
         batches.MapPost(string.Empty, CreateAsync);
+        batches.MapPatch("/{batchId}", UpdateAsync);
         batches.MapGet(string.Empty, ListAsync);
         batches.MapGet("/{batchId}", GetByIdAsync);
         batches.MapGet("/{batchId}/operations", GetOperationsAsync);
+    }
+
+    private static async Task<IResult> UpdateAsync(
+        string batchId,
+        UpdateProductionBatchRequest request,
+        HttpContext httpContext,
+        ProductionBatchService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var editAuthority, out var accessError))
+        {
+            return accessError!;
+        }
+        if (!TryReadExpectedVersion(httpContext.Request.Headers.IfMatch, batchId, out var expectedVersion))
+        {
+            var missing = StringValues.IsNullOrEmpty(httpContext.Request.Headers.IfMatch);
+            return Error(
+                missing ? StatusCodes.Status428PreconditionRequired : StatusCodes.Status412PreconditionFailed,
+                missing ? "precondition_required" : "resource_version_stale",
+                "A matching Production Batch If-Match header is required.",
+                httpContext);
+        }
+
+        try
+        {
+            var updated = await service.UpdateAsync(
+                batchId, expectedVersion, request.ToCommand(), editAuthority!, cancellationToken);
+            SetEntityTag(httpContext.Response, updated);
+            return Results.Ok(ProductionBatchResponse.FromDomain(updated));
+        }
+        catch (ProductionBatchValidationException exception)
+        {
+            return ValidationError(exception, httpContext);
+        }
+        catch (ProductionBatchNotFoundException)
+        {
+            return NotFound(httpContext);
+        }
+        catch (ProductionBatchVersionConflictException)
+        {
+            return Error(StatusCodes.Status412PreconditionFailed, "resource_version_stale", "The Production Batch changed after it was read.", httpContext);
+        }
+        catch (ProductionBatchNumberConflictException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "batch_number_conflict", exception.Message, httpContext);
+        }
+        catch (EditModeMutationException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
     }
 
     private static async Task<IResult> ListAsync(
@@ -165,6 +217,19 @@ internal static class ProductionBatchEndpoints
     private static void SetEntityTag(HttpResponse response, ProductionBatch batch)
     {
         response.Headers.ETag = $"\"batch:{batch.BatchId}:v{batch.Version}\"";
+    }
+
+    private static bool TryReadExpectedVersion(StringValues ifMatch, string batchId, out int version)
+    {
+        version = 0;
+        if (ifMatch.Count != 1) return false;
+        var value = ifMatch[0];
+        var prefix = $"\"batch:{batchId}:v";
+        return value is not null
+            && value.StartsWith(prefix, StringComparison.Ordinal)
+            && value.EndsWith('"')
+            && int.TryParse(value.AsSpan(prefix.Length, value.Length - prefix.Length - 1), NumberStyles.None, CultureInfo.InvariantCulture, out version)
+            && version > 0;
     }
 
     private static IResult ValidationError(

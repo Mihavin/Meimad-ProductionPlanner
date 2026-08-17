@@ -179,7 +179,7 @@ The implemented `client-windows/` application uses WPF on .NET 10 and establishe
 - a Case Pool with Server-side search, customer, and derived-active filters;
 - Part Number/customer cards and unobstructed preview thumbnails fetched as bytes from the Server preview route, with text reserved for missing-preview/error state;
 - a Case Details form saved only by the active editor with Edit Mode generation and Case ETag;
-- editor-only Case Operation create/edit forms, optimistic Order create/edit, and explicitly allocated Production Batch creation forms;
+- editor-only Case Operation create/edit forms, optimistic Order create/edit, and explicitly allocated Production Batch create/edit forms; Batch editing preserves the instantiated route, while confirmed deletion cascades only through the selected Batch-owned database graph and compacts affected backlogs;
 - an Open Working Folder action whose path value originates in the Case API;
 - a snapshot-consistent Server projection for the unassigned Batch Operation pool and Machine columns;
 - drag/drop translation into exact assignment, reorder, cross-Machine move, and unassignment API commands;

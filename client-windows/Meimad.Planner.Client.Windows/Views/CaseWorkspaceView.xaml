@@ -461,6 +461,7 @@
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                     <Button Content="Delete Selected" Click="DeleteBatch_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Edit Selected" Command="{Binding BeginEditBatchCommand}" />
                                     <Button Content="Add Production Batch" Command="{Binding BeginCreateBatchCommand}" Margin="0"
                                             ToolTip="Requires at least one defined Case Operation; the Server never invents a route." />
                                 </StackPanel>
@@ -481,7 +482,7 @@
                                 </Border.Style>
                                 <ScrollViewer VerticalScrollBarVisibility="Visible">
                                     <StackPanel>
-                                        <TextBlock Text="NEW PRODUCTION BATCH" FontWeight="Bold" Margin="0,0,0,10" />
+                                        <TextBlock Text="{Binding BatchFormHeading}" FontWeight="Bold" Margin="0,0,0,10" />
                                         <UniformGrid Columns="2">
                                             <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Batch Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchNumber}"/></StackPanel>
                                             <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Planned Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchPlannedQuantity}"/></StackPanel>
@@ -500,10 +501,10 @@
                                         <TextBlock Text="The Server validates that planned quantity equals all allocations and instantiates Batch Operations from the current Case route."
                                                    TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
                                         <DockPanel>
-                                            <TextBlock Text="New Batch status: Waiting" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="Status and instantiated route remain Server-owned." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                                 <Button Content="Cancel" Command="{Binding CancelCreateBatchCommand}" />
-                                                <Button Content="Create Batch" Command="{Binding CreateBatchCommand}" Margin="0" />
+                                                <Button Content="{Binding BatchSaveButtonText}" Command="{Binding CreateBatchCommand}" Margin="0" />
                                             </StackPanel>
                                         </DockPanel>
                                     </StackPanel>

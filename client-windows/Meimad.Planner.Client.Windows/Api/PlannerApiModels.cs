@@ -811,7 +811,8 @@ internal sealed record ProductionBatch(
     int PlannedQuantity,
     int? RouteRevision,
     int BatchOperationCount,
-    int Version = 1)
+    int Version = 1,
+    IReadOnlyList<BatchAllocation>? Allocations = null)
 {
     public string StatusDisplay => Status switch
     {
@@ -822,10 +823,21 @@ internal sealed record ProductionBatch(
     };
 }
 
+internal sealed record BatchAllocation(
+    string AllocationId,
+    string AllocationType,
+    string? OrderId,
+    int Quantity);
+
 internal sealed record ProductionBatchCreate(
     string CaseId,
     string BatchNumber,
     string Status,
+    int PlannedQuantity,
+    IReadOnlyList<BatchAllocationCreate> Allocations);
+
+internal sealed record ProductionBatchUpdate(
+    string BatchNumber,
     int PlannedQuantity,
     IReadOnlyList<BatchAllocationCreate> Allocations);
 

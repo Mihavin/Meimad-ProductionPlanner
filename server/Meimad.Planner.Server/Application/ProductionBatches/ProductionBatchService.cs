@@ -62,6 +62,46 @@ internal sealed class ProductionBatchService
         CancellationToken cancellationToken = default) =>
         repository.GetByIdAsync(batchId, cancellationToken);
 
+    internal async Task<ProductionBatch> UpdateAsync(
+        string batchId,
+        int expectedVersion,
+        UpdateProductionBatchCommand command,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await repository.GetByIdAsync(batchId, cancellationToken)
+            ?? throw new ProductionBatchNotFoundException(batchId);
+        var values = ProductionBatchValidator.ValidateAndNormalize(new ProductionBatchValues(
+            current.CaseId,
+            command.BatchNumber,
+            ProductionBatchValidator.WaitingStatus,
+            command.PlannedQuantity,
+            command.Allocations?.Select(allocation => new BatchAllocationValue(
+                allocation.AllocationType,
+                allocation.OrderId,
+                allocation.Quantity)).ToArray()));
+        var now = timeProvider.GetUtcNow();
+        var allocations = values.Allocations.Select(allocation => new BatchAllocation(
+            Guid.NewGuid().ToString("N"),
+            batchId,
+            allocation.AllocationType,
+            allocation.OrderId,
+            allocation.Quantity,
+            1,
+            now,
+            now)).ToArray();
+        var candidate = current with
+        {
+            BatchNumber = values.BatchNumber,
+            PlannedQuantity = values.PlannedQuantity,
+            Allocations = allocations,
+            Version = expectedVersion + 1,
+            UpdatedAt = now
+        };
+        return await repository.UpdateAsync(candidate, expectedVersion, editAuthority, cancellationToken)
+            ?? throw new ProductionBatchVersionConflictException(batchId);
+    }
+
     internal Task<IReadOnlyList<ProductionBatch>> ListByCaseAsync(
         string caseId,
         CancellationToken cancellationToken = default) =>
@@ -95,4 +135,14 @@ internal sealed class ProductionBatchRouteRequiredException : Exception
         : base("Cannot generate Production Batch because this Case has no defined operations. Create operations first.")
     {
     }
+}
+
+internal sealed class ProductionBatchNotFoundException : Exception
+{
+    internal ProductionBatchNotFoundException(string batchId) : base($"Production Batch '{batchId}' was not found.") { }
+}
+
+internal sealed class ProductionBatchVersionConflictException : Exception
+{
+    internal ProductionBatchVersionConflictException(string batchId) : base($"Production Batch '{batchId}' changed after it was read.") { }
 }

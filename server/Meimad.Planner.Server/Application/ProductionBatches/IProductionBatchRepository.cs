@@ -10,6 +10,12 @@ internal interface IProductionBatchRepository
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
+    Task<ProductionBatch?> UpdateAsync(
+        ProductionBatch batch,
+        int expectedVersion,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
     Task<ProductionBatch?> GetByIdAsync(
         string batchId,
         CancellationToken cancellationToken);

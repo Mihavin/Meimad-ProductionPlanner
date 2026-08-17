@@ -125,6 +125,91 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         return batch with { Operations = operations };
     }
 
+    public async Task<ProductionBatch?> UpdateAsync(
+        ProductionBatch batch,
+        int expectedVersion,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+
+        if (!await ExistsAsync(
+                connection,
+                transaction,
+                "SELECT EXISTS(SELECT 1 FROM production_batches WHERE id = $id AND version = $version);",
+                "$id",
+                batch.BatchId,
+                cancellationToken,
+                ("$version", expectedVersion)))
+        {
+            return null;
+        }
+
+        if (await BatchNumberExistsAsync(
+                connection,
+                transaction,
+                batch.CaseId,
+                batch.BatchNumber,
+                cancellationToken,
+                batch.BatchId))
+        {
+            throw new ProductionBatchNumberConflictException(batch.CaseId, batch.BatchNumber);
+        }
+
+        var orderReferences = await ReadOrderReferencesAsync(
+            connection, transaction, batch.Allocations, cancellationToken);
+        ProductionBatchValidator.ValidateOrderCaseOwnership(batch.CaseId, orderReferences);
+        var affectedOrders = await SqliteOrderLifecycle.ReadCandidatesForBatchAsync(
+            connection, transaction, batch.BatchId, cancellationToken);
+
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE production_batches
+                SET batch_number = $batchNumber,
+                    planned_quantity = $plannedQuantity,
+                    version = version + 1,
+                    updated_at = $updatedAt
+                WHERE id = $id AND version = $expectedVersion;
+                """;
+            update.Parameters.AddWithValue("$batchNumber", batch.BatchNumber);
+            update.Parameters.AddWithValue("$plannedQuantity", batch.PlannedQuantity);
+            update.Parameters.AddWithValue("$updatedAt", FormatInstant(batch.UpdatedAt));
+            update.Parameters.AddWithValue("$id", batch.BatchId);
+            update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                return null;
+            }
+        }
+
+        await using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM batch_allocations WHERE production_batch_id = $id;";
+            delete.Parameters.AddWithValue("$id", batch.BatchId);
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var allocation in batch.Allocations)
+        {
+            await InsertAllocationAsync(connection, transaction, allocation, cancellationToken);
+        }
+
+        var newCandidates = await SqliteOrderLifecycle.ReadCandidatesForBatchAsync(
+            connection, transaction, batch.BatchId, cancellationToken);
+        await SqliteOrderLifecycle.RecomputeAsync(
+            connection,
+            transaction,
+            affectedOrders.Concat(newCandidates).ToArray(),
+            batch.UpdatedAt,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return batch;
+    }
+
     private static async Task<bool> CaseHasOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -498,7 +583,8 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         SqliteTransaction transaction,
         string caseId,
         string batchNumber,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? excludedBatchId = null)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -506,10 +592,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             SELECT EXISTS(
                 SELECT 1
                 FROM production_batches
-                WHERE case_id = $caseId AND batch_number = $batchNumber);
+                WHERE case_id = $caseId AND batch_number = $batchNumber
+                  AND ($excludedBatchId IS NULL OR id <> $excludedBatchId));
             """;
         command.Parameters.AddWithValue("$caseId", caseId);
         command.Parameters.AddWithValue("$batchNumber", batchNumber);
+        command.Parameters.AddWithValue("$excludedBatchId", excludedBatchId is null ? DBNull.Value : excludedBatchId);
         return Convert.ToInt32(
             await command.ExecuteScalarAsync(cancellationToken),
             CultureInfo.InvariantCulture) == 1;
@@ -521,12 +609,17 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         string sql,
         string parameterName,
         string parameterValue,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        params (string Name, object Value)[] extra)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = sql;
         command.Parameters.AddWithValue(parameterName, parameterValue);
+        foreach (var parameter in extra)
+        {
+            command.Parameters.AddWithValue(parameter.Name, parameter.Value);
+        }
         return Convert.ToInt32(
             await command.ExecuteScalarAsync(cancellationToken),
             CultureInfo.InvariantCulture) == 1;

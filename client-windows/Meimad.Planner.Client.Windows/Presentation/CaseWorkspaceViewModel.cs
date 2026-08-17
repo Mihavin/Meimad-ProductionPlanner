@@ -25,6 +25,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private bool isCreatingOrder;
     private bool isEditingOrder;
     private bool isCreatingBatch;
+    private bool isEditingBatch;
     private string? originalOrderStatus;
     private string? editingOrderId;
     private string? editingOrderEntityTag;
@@ -103,6 +104,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CancelCreateOrderCommand = new AsyncCommand(CancelCreateOrderAsync, () => IsOrderFormOpen && !IsBusy);
         CreateOrderCommand = new AsyncCommand(CreateOrderAsync, () => CanCreateOrder);
         BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanBeginChildCreate && Operations.Count > 0);
+        BeginEditBatchCommand = new AsyncCommand(BeginEditBatchAsync, () => CanBeginEditBatch);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
     }
@@ -168,6 +170,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public AsyncCommand BeginCreateBatchCommand { get; }
 
+    public AsyncCommand BeginEditBatchCommand { get; }
+
     public AsyncCommand CancelCreateBatchCommand { get; }
 
     public AsyncCommand CreateBatchCommand { get; }
@@ -206,6 +210,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 isCreatingOrder = false;
                 isEditingOrder = false;
                 isCreatingBatch = false;
+                isEditingBatch = false;
                 ResetOperationForm();
                 ResetOrderForm();
                 ResetBatchForm();
@@ -266,7 +271,18 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             }
         }
     }
-    public ProductionBatch? SelectedBatch { get => selectedBatch; set => SetField(ref selectedBatch, value); }
+    public ProductionBatch? SelectedBatch
+    {
+        get => selectedBatch;
+        set
+        {
+            if (SetField(ref selectedBatch, value))
+            {
+                OnPropertyChanged(nameof(CanBeginEditBatch));
+                BeginEditBatchCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
 
     public string FormHeading => IsCreating ? "NEW CASE" : "CASE DETAILS";
 
@@ -291,7 +307,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         ? "The Server enforces allocation-safe quantity and production-derived status rules."
         : "New Orders may be active or cancelled; production status is derived by the Server.";
 
-    public bool IsCreatingBatch => isCreatingBatch;
+    public bool IsCreatingBatch => isCreatingBatch || isEditingBatch;
+
+    public bool IsEditingBatch => isEditingBatch;
+
+    public string BatchFormHeading => isEditingBatch ? "EDIT PRODUCTION BATCH" : "NEW PRODUCTION BATCH";
+
+    public string BatchSaveButtonText => isEditingBatch ? "Save Batch" : "Create Batch";
 
     public bool IsCreatingOperation => isCreatingOperation || isEditingOperation;
 
@@ -314,6 +336,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CanBeginChildCreate && SelectedOrder is not null && !IsOrderFormOpen;
 
     public bool CanCreateBatch => IsCreatingBatch && CanBeginChildCreate;
+
+    public bool CanBeginEditBatch => CanBeginChildCreate && SelectedBatch is not null && !IsCreatingBatch;
 
     public bool CanCreateOperation => IsCreatingOperation && CanBeginChildCreate;
 
@@ -531,6 +555,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingOrder = false;
         isEditingOrder = false;
         isCreatingBatch = false;
+        isEditingBatch = false;
         ResetOrderForm();
         ResetBatchForm();
         isEditingOperation = false;
@@ -553,6 +578,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingOrder = false;
         isEditingOrder = false;
         isCreatingBatch = false;
+        isEditingBatch = false;
         ResetOrderForm();
         ResetBatchForm();
         isCreatingOperation = false;
@@ -739,6 +765,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingOperation = false;
         isEditingOperation = false;
         isCreatingBatch = false;
+        isEditingBatch = false;
         ResetOperationForm();
         ResetBatchForm();
         isCreatingOrder = true;
@@ -760,6 +787,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingOperation = false;
         isEditingOperation = false;
         isCreatingBatch = false;
+        isEditingBatch = false;
         ResetOperationForm();
         ResetBatchForm();
         isCreatingOrder = false;
@@ -903,6 +931,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isEditingOrder = false;
         ResetOperationForm();
         ResetOrderForm();
+        isEditingBatch = false;
         isCreatingBatch = true;
         ResetBatchForm();
         foreach (var order in Orders)
@@ -914,11 +943,44 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
+    internal Task BeginEditBatchAsync()
+    {
+        if (!CanBeginEditBatch || SelectedBatch is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        isCreatingOperation = false;
+        isEditingOperation = false;
+        isCreatingOrder = false;
+        isEditingOrder = false;
+        ResetOperationForm();
+        ResetOrderForm();
+        isCreatingBatch = false;
+        isEditingBatch = true;
+        ResetBatchForm();
+        NewBatchNumber = SelectedBatch.BatchNumber;
+        NewBatchPlannedQuantity = SelectedBatch.PlannedQuantity.ToString(CultureInfo.InvariantCulture);
+        var allocations = SelectedBatch.Allocations ?? [];
+        NewBatchStockQuantity = allocations.FirstOrDefault(value => value.AllocationType == "stock")?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        NewBatchScrapAllowance = allocations.FirstOrDefault(value => value.AllocationType == "scrapAllowance")?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        foreach (var order in Orders)
+        {
+            var row = new BatchOrderAllocationViewModel(order);
+            row.AllocatedQuantity = allocations.FirstOrDefault(value => value.AllocationType == "order" && value.OrderId == order.OrderId)?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            BatchOrderAllocations.Add(row);
+        }
+        StatusMessage = $"Editing Production Batch {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
+        RaiseStateProperties();
+        return Task.CompletedTask;
+    }
+
     internal Task CancelCreateBatchAsync()
     {
         isCreatingBatch = false;
+        isEditingBatch = false;
         ResetBatchForm();
-        StatusMessage = "New Production Batch entry cancelled.";
+        StatusMessage = "Production Batch edit cancelled.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -968,20 +1030,41 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         IsBusy = true;
         try
         {
-            var created = await apiClient.CreateBatchAsync(
-                new ProductionBatchCreate(
-                    SelectedCase.CaseId,
-                    NewBatchNumber,
-                    "waiting",
-                    plannedQuantity,
-                    allocations),
-                clientId,
-                editGeneration);
-            Batches.Add(created);
+            var editing = isEditingBatch;
+            var original = SelectedBatch;
+            var saved = editing && original is not null
+                ? await apiClient.UpdateBatchAsync(
+                    original.BatchId,
+                    new ProductionBatchUpdate(NewBatchNumber, plannedQuantity, allocations),
+                    $"\"batch:{original.BatchId}:v{original.Version}\"",
+                    clientId,
+                    editGeneration)
+                : await apiClient.CreateBatchAsync(
+                    new ProductionBatchCreate(
+                        SelectedCase.CaseId,
+                        NewBatchNumber,
+                        "waiting",
+                        plannedQuantity,
+                        allocations),
+                    clientId,
+                    editGeneration);
+            if (editing && original is not null)
+            {
+                var index = Batches.IndexOf(original);
+                if (index >= 0) Batches[index] = saved;
+                SelectedBatch = saved;
+            }
+            else
+            {
+                Batches.Add(saved);
+            }
             isCreatingBatch = false;
+            isEditingBatch = false;
             ResetBatchForm();
             await RefreshSelectedCaseSummaryAsync();
-            StatusMessage = $"Production Batch {created.BatchNumber} created with {created.BatchOperationCount} route operation{(created.BatchOperationCount == 1 ? string.Empty : "s")}.";
+            StatusMessage = editing
+                ? $"Production Batch {saved.BatchNumber} saved; its {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")} remain unchanged."
+                : $"Production Batch {saved.BatchNumber} created with {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")}.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -1425,6 +1508,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingOrder = false;
         isEditingOrder = false;
         isCreatingBatch = false;
+        isEditingBatch = false;
         selectedDetailsAreStale = false;
         entityTag = null;
         ResetOperationForm();
@@ -1517,6 +1601,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(OrderAuthorityText));
         OnPropertyChanged(nameof(OrderStatuses));
         OnPropertyChanged(nameof(IsCreatingBatch));
+        OnPropertyChanged(nameof(IsEditingBatch));
+        OnPropertyChanged(nameof(BatchFormHeading));
+        OnPropertyChanged(nameof(BatchSaveButtonText));
         OnPropertyChanged(nameof(IsCreatingOperation));
         OnPropertyChanged(nameof(IsEditingOperation));
         OnPropertyChanged(nameof(OperationFormHeading));
@@ -1525,6 +1612,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanCreateOrder));
         OnPropertyChanged(nameof(CanBeginEditOrder));
         OnPropertyChanged(nameof(CanCreateBatch));
+        OnPropertyChanged(nameof(CanBeginEditBatch));
         OnPropertyChanged(nameof(CanCreateOperation));
         OnPropertyChanged(nameof(CanBeginEditOperation));
         RaiseCommandStates();
@@ -1548,6 +1636,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CancelCreateOrderCommand.RaiseCanExecuteChanged();
         CreateOrderCommand.RaiseCanExecuteChanged();
         BeginCreateBatchCommand.RaiseCanExecuteChanged();
+        BeginEditBatchCommand.RaiseCanExecuteChanged();
         CancelCreateBatchCommand.RaiseCanExecuteChanged();
         CreateBatchCommand.RaiseCanExecuteChanged();
     }

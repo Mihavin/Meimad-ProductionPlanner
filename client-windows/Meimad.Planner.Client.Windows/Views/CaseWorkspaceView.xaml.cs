@@ -256,7 +256,7 @@ public partial class CaseWorkspaceView : UserControl
     private async void DeleteBatch_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
-            && Confirm("Delete the selected Production Batch and its unassigned Operations and allocations?"))
+            && Confirm("Delete the selected Production Batch and all of its assignments, Operation execution/pause history, allocations, and generated job-package records? This cannot be undone."))
             await viewModel.DeleteSelectedBatchAsync();
     }
 
