@@ -42,10 +42,12 @@ public partial class StepViewerControl : UserControl
     private StepPoint3 modelCenter;
     private double yaw = -35 * Math.PI / 180;
     private double pitch = 25 * Math.PI / 180;
-    private double zoom = 1;
+    private double cameraWidth = 1;
+    private bool hasAutoFitForCurrentModel;
+    private bool autoFitScheduled;
     private StepDisplayMode displayMode = StepDisplayMode.Shaded;
     private StepReferenceFrame? customReference;
-    private bool showBoundingBox = true;
+    private bool showBoundingBox;
     private bool isBuildingReference;
     private readonly List<int> referenceSelection = [];
     private bool isBuildingFaceReference;
@@ -64,9 +66,17 @@ public partial class StepViewerControl : UserControl
 
     public StepDisplayMode DisplayMode => displayMode;
 
+    public bool IsBoundingBoxVisible => showBoundingBox;
+
+    internal int FitInvocationCount { get; private set; }
+
+    internal double CameraWidth => cameraWidth;
+
     public bool IsSolidSurfaceVisible => SolidViewport.Visibility == Visibility.Visible;
 
     public int RenderedEdgeCount { get; private set; }
+
+    public int RenderedSurfaceTriangleCount { get; private set; }
 
     public string? LoadedPath { get; private set; }
 
@@ -219,7 +229,12 @@ public partial class StepViewerControl : UserControl
         LoadedPath = path;
         yaw = -35 * Math.PI / 180;
         pitch = 25 * Math.PI / 180;
-        zoom = 1;
+        cameraWidth = 1;
+        hasAutoFitForCurrentModel = false;
+        autoFitScheduled = false;
+        FitInvocationCount = 0;
+        displayMode = StepDisplayMode.Shaded;
+        showBoundingBox = false;
         ClearMeasurement();
         customReference = null;
         StatusText.Text = IsSolidModel
@@ -231,8 +246,7 @@ public partial class StepViewerControl : UserControl
         {
             UpdateSolidStatus();
         }
-        FitToWindow();
-        Dispatcher.BeginInvoke(FitToWindow, DispatcherPriority.Loaded);
+        AutoFitCurrentModelOnce();
         ModelStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -245,6 +259,12 @@ public partial class StepViewerControl : UserControl
         displayEdges.Clear();
         screenPoints = [];
         modelCenter = default;
+        cameraWidth = 1;
+        hasAutoFitForCurrentModel = false;
+        autoFitScheduled = false;
+        FitInvocationCount = 0;
+        displayMode = StepDisplayMode.Shaded;
+        showBoundingBox = false;
         LoadedPath = null;
         if (solidGeometryModel is not null)
         {
@@ -253,7 +273,9 @@ public partial class StepViewerControl : UserControl
         }
         ClearMeasurement();
         EdgeSurface.Clear();
+        SurfaceLayer.Clear();
         RenderedEdgeCount = 0;
+        RenderedSurfaceTriangleCount = 0;
         SolidViewport.Visibility = Visibility.Hidden;
         ModelCanvas.Children.Clear();
         StatusText.Text = "Open a STEP file to preview it.";
@@ -269,14 +291,59 @@ public partial class StepViewerControl : UserControl
             "right" => (Math.PI / 2, 0),
             _ => (-35 * Math.PI / 180, 25 * Math.PI / 180)
         };
-        zoom = 1;
         RenderModel();
     }
 
     public void FitToWindow()
     {
-        zoom = 1;
+        if (!HasModel || ViewerRoot.ActualWidth <= 1 || ViewerRoot.ActualHeight <= 1)
+        {
+            return;
+        }
+
+        cameraWidth = CalculateFitCameraWidth();
+        hasAutoFitForCurrentModel = true;
+        FitInvocationCount++;
         RenderModel();
+    }
+
+    private void AutoFitCurrentModelOnce()
+    {
+        if (hasAutoFitForCurrentModel || !HasModel)
+        {
+            return;
+        }
+
+        if (ViewerRoot.ActualWidth > 1 && ViewerRoot.ActualHeight > 1)
+        {
+            FitToWindow();
+            return;
+        }
+
+        if (autoFitScheduled)
+        {
+            return;
+        }
+
+        autoFitScheduled = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            autoFitScheduled = false;
+            AutoFitCurrentModelOnce();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private double CalculateFitCameraWidth()
+    {
+        var transformed = selectablePointIndices.Select(index => Transform(points[index])).ToArray();
+        var halfSpanX = Math.Max(0.0000005, transformed.Max(point => Math.Abs(point.X)));
+        var halfSpanY = Math.Max(0.0000005, transformed.Max(point => Math.Abs(point.Y)));
+        var availableWidth = Math.Max(1, ViewerRoot.ActualWidth - 40);
+        var availableHeight = Math.Max(1, ViewerRoot.ActualHeight - 70);
+        var pixelsPerModelUnit = Math.Min(
+            availableWidth / (2 * halfSpanX),
+            availableHeight / (2 * halfSpanY));
+        return Math.Max(0.000001, ViewerRoot.ActualWidth / pixelsPerModelUnit);
     }
 
     private void UpdateSolidStatus()
@@ -366,7 +433,9 @@ public partial class StepViewerControl : UserControl
     {
         ModelCanvas.Children.Clear();
         EdgeSurface.Clear();
+        SurfaceLayer.Clear();
         RenderedEdgeCount = 0;
+        RenderedSurfaceTriangleCount = 0;
         if (!HasModel || ViewerRoot.ActualWidth <= 1 || ViewerRoot.ActualHeight <= 1)
         {
             return;
@@ -374,21 +443,10 @@ public partial class StepViewerControl : UserControl
 
         var transformed = points.Select(Transform).ToArray();
         var projected = transformed.Select(point => new Point(point.X, point.Y)).ToArray();
-        var fittedGeometry = selectablePointIndices.Select(index => projected[index]).ToArray();
-        var minX = fittedGeometry.Min(point => point.X);
-        var maxX = fittedGeometry.Max(point => point.X);
-        var minY = fittedGeometry.Min(point => point.Y);
-        var maxY = fittedGeometry.Max(point => point.Y);
-        var spanX = Math.Max(0.000001, maxX - minX);
-        var spanY = Math.Max(0.000001, maxY - minY);
-        var availableWidth = Math.Max(1, ViewerRoot.ActualWidth - 40);
-        var availableHeight = Math.Max(1, ViewerRoot.ActualHeight - 70);
-        var scale = Math.Min(availableWidth / spanX, availableHeight / spanY) * zoom;
-        var centerX = (minX + maxX) / 2;
-        var centerY = (minY + maxY) / 2;
+        var scale = ViewerRoot.ActualWidth / Math.Max(0.000001, cameraWidth);
         Point Screen(Point point) => new(
-            ViewerRoot.ActualWidth / 2 + (point.X - centerX) * scale,
-            ViewerRoot.ActualHeight / 2 - (point.Y - centerY) * scale);
+            ViewerRoot.ActualWidth / 2 + point.X * scale,
+            ViewerRoot.ActualHeight / 2 - point.Y * scale);
         screenPoints = projected.Select(Screen).ToArray();
 
         if (triangles.Count > 0)
@@ -396,7 +454,31 @@ public partial class StepViewerControl : UserControl
             SolidViewport.Visibility = displayMode == StepDisplayMode.Wireframe
                 ? Visibility.Hidden
                 : Visibility.Visible;
-            UpdateSolidCamera(scale);
+            UpdateSolidCamera(cameraWidth);
+            if (displayMode != StepDisplayMode.Wireframe)
+            {
+                var renderedTriangles = triangles
+                    .Select((triangle, index) =>
+                    {
+                        var first = transformed[triangle.FirstIndex];
+                        var second = transformed[triangle.SecondIndex];
+                        var third = transformed[triangle.ThirdIndex];
+                        var normal = TriangleNormal(first, second, third);
+                        var light = Math.Clamp(0.58 + Math.Abs(normal.X * -0.3 + normal.Y * 0.45 + normal.Z * 0.84) * 0.42, 0, 1);
+                        return new StepScreenTriangle(
+                            screenPoints[triangle.FirstIndex],
+                            screenPoints[triangle.SecondIndex],
+                            screenPoints[triangle.ThirdIndex],
+                            (first.Z + second.Z + third.Z) / 3,
+                            (byte)Math.Clamp((int)Math.Round(light * 15), 0, 15),
+                            index);
+                    })
+                    .OrderBy(triangle => triangle.Depth)
+                    .ThenBy(triangle => triangle.SourceIndex)
+                    .ToArray();
+                SurfaceLayer.Draw(renderedTriangles);
+                RenderedSurfaceTriangleCount = renderedTriangles.Length;
+            }
             if (displayMode != StepDisplayMode.Shaded)
             {
                 var renderedEdges = displayEdges
@@ -617,9 +699,11 @@ public partial class StepViewerControl : UserControl
 
     private StepPoint3 TriangleNormal(StepTriangle3 triangle)
     {
-        var first = points[triangle.FirstIndex];
-        var second = points[triangle.SecondIndex];
-        var third = points[triangle.ThirdIndex];
+        return TriangleNormal(points[triangle.FirstIndex], points[triangle.SecondIndex], points[triangle.ThirdIndex]);
+    }
+
+    private static StepPoint3 TriangleNormal(StepPoint3 first, StepPoint3 second, StepPoint3 third)
+    {
         var ux = second.X - first.X;
         var uy = second.Y - first.Y;
         var uz = second.Z - first.Z;
@@ -666,7 +750,7 @@ public partial class StepViewerControl : UserControl
         SolidScene.Children.Add(solidGeometryModel);
     }
 
-    private void UpdateSolidCamera(double scale)
+    private void UpdateSolidCamera(double width)
     {
         var sinYaw = Math.Sin(yaw);
         var cosYaw = Math.Cos(yaw);
@@ -688,7 +772,7 @@ public partial class StepViewerControl : UserControl
             modelCenter.Z + depth.Z * distance);
         SolidCamera.LookDirection = -depth * distance;
         SolidCamera.UpDirection = up;
-        SolidCamera.Width = Math.Max(0.000001, ViewerRoot.ActualWidth / scale);
+        SolidCamera.Width = Math.Max(0.000001, width);
         SolidCamera.NearPlaneDistance = Math.Max(0.0001, distance - extent * 2);
         SolidCamera.FarPlaneDistance = Math.Max(SolidCamera.NearPlaneDistance + 1, distance + extent * 2);
     }
@@ -761,11 +845,48 @@ public partial class StepViewerControl : UserControl
         {
             return;
         }
-        zoom = Math.Clamp(zoom * (e.Delta > 0 ? 1.12 : 0.89), 0.2, 8);
+        cameraWidth = Math.Clamp(
+            cameraWidth * (e.Delta > 0 ? 1 / 1.12 : 1 / 0.89),
+            0.000001,
+            1_000_000_000);
+        RenderModel();
+        e.Handled = true;
+    }
+
+    private void Viewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!hasAutoFitForCurrentModel)
+        {
+            AutoFitCurrentModelOnce();
+            return;
+        }
+
         RenderModel();
     }
 
-    private void Viewer_SizeChanged(object sender, SizeChangedEventArgs e) => RenderModel();
+    internal void RotateForTest(double yawDelta, double pitchDelta)
+    {
+        yaw += yawDelta;
+        pitch = Math.Clamp(pitch + pitchDelta, -Math.PI / 2, Math.PI / 2);
+        RenderModel();
+    }
+
+    internal Point EdgeProjectionForTest(int pointIndex) => screenPoints[pointIndex];
+
+    internal Point SolidCameraProjectionForTest(int pointIndex)
+    {
+        var point = new Point3D(points[pointIndex].X, points[pointIndex].Y, points[pointIndex].Z);
+        var target = SolidCamera.Position + SolidCamera.LookDirection;
+        var relative = point - target;
+        var up = SolidCamera.UpDirection;
+        up.Normalize();
+        var right = Vector3D.CrossProduct(SolidCamera.LookDirection, up);
+        right.Normalize();
+        var scale = ViewerRoot.ActualWidth / SolidCamera.Width;
+        return new Point(
+            ViewerRoot.ActualWidth / 2 + Vector3D.DotProduct(relative, right) * scale,
+            ViewerRoot.ActualHeight / 2 - Vector3D.DotProduct(relative, up) * scale);
+    }
 
     private void SelectMeasurementPoint(Point pointer)
     {
@@ -1150,6 +1271,57 @@ public sealed class StepEdgeDrawingHost : FrameworkElement
     }
 }
 
+public sealed class StepSurfaceDrawingHost : FrameworkElement
+{
+    private readonly DrawingVisual visual = new();
+    private static readonly SolidColorBrush[] Brushes = Enumerable.Range(0, 16)
+        .Select(index =>
+        {
+            var factor = 0.58 + index / 15d * 0.42;
+            var brush = new SolidColorBrush(Color.FromRgb(
+                (byte)Math.Round(45 * factor),
+                (byte)Math.Round(136 * factor),
+                (byte)Math.Round(196 * factor)));
+            brush.Freeze();
+            return brush;
+        })
+        .ToArray();
+
+    public StepSurfaceDrawingHost()
+    {
+        AddVisualChild(visual);
+        AddLogicalChild(visual);
+    }
+
+    protected override int VisualChildrenCount => 1;
+
+    protected override Visual GetVisualChild(int index) => index == 0
+        ? visual
+        : throw new ArgumentOutOfRangeException(nameof(index));
+
+    internal void Clear()
+    {
+        using var context = visual.RenderOpen();
+    }
+
+    internal void Draw(IReadOnlyList<StepScreenTriangle> triangles)
+    {
+        using var context = visual.RenderOpen();
+        foreach (var triangle in triangles)
+        {
+            var geometry = new StreamGeometry();
+            using (var geometryContext = geometry.Open())
+            {
+                geometryContext.BeginFigure(triangle.First, true, true);
+                geometryContext.LineTo(triangle.Second, true, false);
+                geometryContext.LineTo(triangle.Third, true, false);
+            }
+            geometry.Freeze();
+            context.DrawGeometry(Brushes[triangle.Shade], null, geometry);
+        }
+    }
+}
+
 internal sealed class StepDisplayEdgeBuilder(int firstPointIndex, int secondPointIndex)
 {
     public int FirstPointIndex { get; } = firstPointIndex;
@@ -1164,6 +1336,14 @@ internal sealed record StepDisplayEdge(
     int[] TriangleIndices);
 
 internal readonly record struct StepScreenEdge(Point Start, Point End);
+
+internal readonly record struct StepScreenTriangle(
+    Point First,
+    Point Second,
+    Point Third,
+    double Depth,
+    byte Shade,
+    int SourceIndex);
 
 internal readonly record struct StepVertexKey(long X, long Y, long Z);
 

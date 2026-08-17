@@ -183,6 +183,9 @@ public sealed class LegacyImportApiTests
         {
             await SeedPlanningAsync(application.Services);
             AddEditHeaders(client);
+            var batchesBefore = await ScalarAsync(application.Services, "SELECT COUNT(*) FROM production_batches;");
+            var operationsBefore = await ScalarAsync(application.Services, "SELECT COUNT(*) FROM batch_operations;");
+            var assignmentsBefore = await ScalarAsync(application.Services, "SELECT COUNT(*) FROM machine_assignments;");
             using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders(
                 partNumber: "PN-GENERIC",
                 orderNumber: "ORD-GENERIC"));
@@ -195,6 +198,9 @@ public sealed class LegacyImportApiTests
                 "SELECT COUNT(*) FROM cases WHERE part_number = 'PN-GENERIC';"));
             Assert.Equal(1, await ScalarAsync(application.Services,
                 "SELECT COUNT(*) FROM orders WHERE order_reference = 'ORD-GENERIC' AND quantity = 50;"));
+            Assert.Equal(batchesBefore, await ScalarAsync(application.Services, "SELECT COUNT(*) FROM production_batches;"));
+            Assert.Equal(operationsBefore, await ScalarAsync(application.Services, "SELECT COUNT(*) FROM batch_operations;"));
+            Assert.Equal(assignmentsBefore, await ScalarAsync(application.Services, "SELECT COUNT(*) FROM machine_assignments;"));
 
             using var replayResponse = await client.PostAsJsonAsync(
                 "/api/v1/imports/legacy-working-plan/commit",
@@ -206,6 +212,92 @@ public sealed class LegacyImportApiTests
                 "SELECT COUNT(*) FROM cases WHERE part_number = 'PN-GENERIC';"));
             Assert.Equal(1, await ScalarAsync(application.Services,
                 "SELECT COUNT(*) FROM orders WHERE order_reference = 'ORD-GENERIC';"));
+        });
+    }
+
+    [Fact]
+    public async Task Case_order_only_import_can_resume_same_workbook_with_a_new_audited_selection()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            AddEditHeaders(client);
+            var workbook = LegacyWorkbookFixture.CreateOrderDrivenImport();
+            using var firstPreview = await PreviewAsync(client, workbook);
+            var first = new
+            {
+                schemaVersion = 1,
+                importToken = firstPreview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = firstPreview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = (string?)null,
+                openOrdersSheet = "Orders",
+                columnMappings = Array.Empty<object>(),
+                machineMappings = Array.Empty<object>(),
+                openOrderSelections = new object[]
+                {
+                    new
+                    {
+                        rowKey = "Orders!2",
+                        action = "create_case",
+                        newCase = new
+                        {
+                            partNumber = "PN-X",
+                            name = "Part X",
+                            workingFolderPath = Path.Combine(Path.GetTempPath(), "PN-X")
+                        },
+                        order = new { orderNumber = "ORD-1", quantity = 16, workFinishDate = "2026-09-10" }
+                    },
+                    new { rowKey = "Orders!4", action = "skip" }
+                },
+                planningSelections = Array.Empty<object>()
+            };
+            using var firstResponse = await client.PostAsJsonAsync(
+                "/api/v1/imports/legacy-working-plan/commit", first);
+            var firstJson = await firstResponse.Content.ReadAsStringAsync();
+            Assert.True(firstResponse.StatusCode == HttpStatusCode.OK, firstJson);
+            using var firstReceipt = JsonDocument.Parse(firstJson);
+            var caseId = firstReceipt.RootElement.GetProperty("created").GetProperty("caseIds")[0].GetString();
+
+            using var secondPreview = await PreviewAsync(client, workbook);
+            var second = new
+            {
+                schemaVersion = 1,
+                importToken = secondPreview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = secondPreview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = (string?)null,
+                openOrdersSheet = "Orders",
+                columnMappings = Array.Empty<object>(),
+                machineMappings = Array.Empty<object>(),
+                openOrderSelections = new object[]
+                {
+                    new { rowKey = "Orders!2", action = "skip" },
+                    new
+                    {
+                        rowKey = "Orders!4",
+                        action = "create_order",
+                        existingCaseId = caseId,
+                        order = new { orderNumber = "ORD-2", quantity = 5, workFinishDate = "2026-11-01" }
+                    }
+                },
+                planningSelections = Array.Empty<object>()
+            };
+            using var secondResponse = await client.PostAsJsonAsync(
+                "/api/v1/imports/legacy-working-plan/commit", second);
+            var secondJson = await secondResponse.Content.ReadAsStringAsync();
+            Assert.True(secondResponse.StatusCode == HttpStatusCode.OK, secondJson);
+            Assert.Equal(2, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE case_id = '" + caseId + "';"));
+            Assert.Equal(2, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM legacy_working_plan_imports WHERE workbook_sha256 = '"
+                + secondPreview.RootElement.GetProperty("workbookSha256").GetString() + "';"));
+
+            using var replayResponse = await client.PostAsJsonAsync(
+                "/api/v1/imports/legacy-working-plan/commit", second);
+            Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+            using var replay = JsonDocument.Parse(await replayResponse.Content.ReadAsStringAsync());
+            Assert.True(replay.RootElement.GetProperty("replayed").GetBoolean());
+            Assert.Equal(2, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE case_id = '" + caseId + "';"));
         });
     }
 

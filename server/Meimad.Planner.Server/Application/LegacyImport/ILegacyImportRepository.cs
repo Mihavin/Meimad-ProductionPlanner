@@ -9,6 +9,7 @@ internal interface ILegacyImportRepository
     Task<LegacyImportCommitResponse?> TryReplayAsync(
         string workbookSha256,
         string requestSha256,
+        bool allowAdditionalCaseOrderReceipt,
         EditAuthority editAuthority,
         DateTimeOffset now,
         CancellationToken cancellationToken);

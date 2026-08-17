@@ -97,6 +97,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         };
         PreviewCommand = new AsyncCommand(PreviewAsync, CanPreview);
         PreviewDefinedImportCommand = new AsyncCommand(PreviewDefinedImportAsync, CanPreview);
+        ImportCasesAndOrdersCommand = new AsyncCommand(ImportCasesAndOrdersAsync,
+            () => CanImportCasesAndOrders);
         CommitCommand = new AsyncCommand(CommitAsync, () => CanCommitNow);
         SkipRowCommand = new AsyncCommand<LegacyImportRowViewModel>(SkipRowAsync, CanSkipRow);
         SkipAllUnresolvedCommand = new AsyncCommand(SkipAllUnresolvedAsync,
@@ -189,6 +191,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     public AsyncCommand PreviewDefinedImportCommand { get; }
 
+    public AsyncCommand ImportCasesAndOrdersCommand { get; }
+
     public AsyncCommand CommitCommand { get; }
 
     public AsyncCommand<LegacyImportRowViewModel> SkipRowCommand { get; }
@@ -216,6 +220,74 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     public AsyncCommand ShowBatchesStageCommand { get; }
 
     public AsyncCommand ShowAssignmentsStageCommand { get; }
+
+    public string FixedMappingSummary => FixedCaseOrderExcelMapping.Summary;
+
+    public IReadOnlyList<LegacyImportRowViewModel> SimpleCaseOrderRows => Rows
+        .Where(row => row.Kind == "open_orders")
+        .ToArray();
+
+    public bool CanImportCasesAndOrders
+    {
+        get
+        {
+            if (apiClient is null || !IsEditor || IsBusy || preview is null
+                || preview.ExpiresAt <= DateTimeOffset.UtcNow
+                || HasPendingPreviewCorrections
+                || SimpleCaseOrderRows.Count == 0
+                || SimpleCaseOrderRows.Any(row => !row.HasExplicitDecision || !row.IsResolved)
+                || HasGlobalServerBlockers())
+            {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    public string CaseOrderImportAvailabilityText
+    {
+        get
+        {
+            if (apiClient is null)
+                return "Import is disabled because the Server is not connected.";
+            if (!IsEditor)
+                return "Import is disabled because Edit Mode is not held. Acquire Edit Mode, then preview again.";
+            if (IsBusy)
+                return "Import is disabled while the preview or import request is running.";
+            if (preview is null)
+                return "Import is disabled until the workbook and worksheet have been previewed.";
+            if (preview.ExpiresAt <= DateTimeOffset.UtcNow)
+                return "Import is disabled because the preview expired. Select Preview data again.";
+            if (HasPendingPreviewCorrections)
+                return "Import is disabled because the workbook or worksheet selection changed. Select Preview data again.";
+            if (SimpleCaseOrderRows.Count == 0)
+                return "Import is disabled because the selected worksheet contains no active Case/Order rows.";
+
+            var blocker = Issues.FirstOrDefault(issue => !issue.RowNumber.HasValue
+                && IsBlockingSeverity(issue.Severity)
+                && IsIssueIncludedInSelectedOutcome(issue));
+            if (blocker is not null)
+                return $"Import is disabled by Server validation: {blocker.Message}";
+
+            var unresolved = SimpleCaseOrderRows
+                .Where(row => !row.HasExplicitDecision || !row.IsResolved)
+                .ToArray();
+            if (unresolved.Length > 0)
+            {
+                var first = unresolved[0];
+                return $"Import is disabled because {unresolved.Length} row(s) are unresolved. "
+                    + $"First: Excel row {first.RowNumber} — {first.Message}";
+            }
+
+            return SimpleCaseOrderRows.Any(row => row.IsMutation)
+                ? "Ready. Import will create or match only the previewed Cases and Orders."
+                : "Ready. All valid Cases and Orders already exist; no duplicate records will be created.";
+        }
+    }
+
+    public string SimpleCaseOrderPreviewSummary => BuildSimpleCaseOrderSummary(
+        completed: false);
 
     public IReadOnlyList<LegacyImportChoice> PatternScopeChoices { get; } =
     [
@@ -726,12 +798,104 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     internal async Task PreviewDefinedImportAsync()
     {
         await PreviewAsync();
-        if (preview is not null
-            && !HasPendingPreviewCorrections
-            && string.IsNullOrWhiteSpace(ErrorMessage))
+        if (preview is null
+            || HasPendingPreviewCorrections
+            || !string.IsNullOrWhiteSpace(ErrorMessage))
         {
-            await PrepareAutomaticallyAsync();
+            return;
         }
+
+        // Re-preview the chosen worksheet with the temporary fixed Case/Order
+        // contract. Passing an authoritative list prevents Batch/planning columns
+        // from re-entering the commit envelope through automatic detection.
+        IsBusy = true;
+        try
+        {
+            await using var workbook = openWorkbook(SelectedFilePath);
+            var result = await apiClient!.PreviewLegacyWorkingPlanAsync(
+                workbook,
+                Path.GetFileName(SelectedFilePath),
+                planningSheet: null,
+                openOrdersSheet: NullIfBlank(ImportSheetName),
+                FixedCaseOrderExcelMapping.Columns);
+            ApplyPreview(result);
+            PrepareCasesAndOrdersOnly();
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            ErrorMessage = FriendlyMessage(exception);
+            Summary = "The fixed Case/Order preview failed. No data was written.";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void PrepareCasesAndOrdersOnly()
+    {
+        isPreparingAutomatically = true;
+        try
+        {
+            importOrders = true;
+            importPoolBatches = false;
+            importMachineAssignments = false;
+            hasExplicitOutcomeSelection = true;
+            OnPropertyChanged(nameof(ImportOrders));
+            OnPropertyChanged(nameof(ImportPoolBatches));
+            OnPropertyChanged(nameof(ImportMachineAssignments));
+            foreach (var row in Rows)
+            {
+                row.NotifyOutcomeSelectionChanged();
+            }
+
+            PrepareCasesAndOrdersAutomatically();
+            foreach (var unresolved in SimpleCaseOrderRows.Where(row => !row.IsResolved))
+            {
+                unresolved.SkipUnresolvedForSimpleImport();
+            }
+            automaticPrepared = true;
+            // Invalid/existing rows are explicit reported skips in this temporary
+            // tool; they must not force thousands of per-row confirmations.
+            confirmAutomaticSkips = true;
+            wizardStep = 4;
+            selectedWizardRow = SimpleCaseOrderRows.FirstOrDefault();
+            Summary = BuildSimpleCaseOrderSummary(completed: false);
+        }
+        finally
+        {
+            isPreparingAutomatically = false;
+        }
+
+        OnPropertyChanged(nameof(AutomaticPrepared));
+        OnPropertyChanged(nameof(ConfirmAutomaticSkips));
+        OnPropertyChanged(nameof(WizardStep));
+        OnPropertyChanged(nameof(SelectedWizardRow));
+        RaiseState();
+    }
+
+    internal async Task ImportCasesAndOrdersAsync()
+    {
+        if (!CanImportCasesAndOrders)
+        {
+            return;
+        }
+
+        if (SimpleCaseOrderRows.Any(row => row.IsMutation))
+        {
+            await CommitPreparedAsync();
+            if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                return;
+            }
+
+            ResultSummary = BuildSimpleCaseOrderSummary(completed: true);
+            return;
+        }
+
+        ResultSummary = BuildSimpleCaseOrderSummary(completed: true);
+        Summary = "Import completed. Every valid Case and Order already exists; no duplicate data was created.";
+        RaiseState();
     }
 
     internal async Task CommitAsync()
@@ -740,6 +904,12 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         {
             return;
         }
+
+        await CommitPreparedAsync();
+    }
+
+    private async Task CommitPreparedAsync()
+    {
 
         IsBusy = true;
         ErrorMessage = string.Empty;
@@ -989,7 +1159,14 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
                 continue;
             }
 
-            var representative = rows.FirstOrDefault(row => !row.HasExplicitDecision);
+            foreach (var invalid in rows.Where(row => !row.HasExplicitDecision
+                         && !row.CanCreateSimpleCaseAndOrder))
+            {
+                invalid.PrepareOpenOrderAutomatically();
+            }
+
+            var representative = rows.FirstOrDefault(row => !row.HasExplicitDecision
+                && row.CanCreateSimpleCaseAndOrder);
             if (representative is null) continue;
             var folder = Path.Combine(
                 workbookDirectory,
@@ -1147,6 +1324,35 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             + $"and {unchanged.AssignmentIds.Count} assignment(s). {selectedSkips} selected source row(s) skipped; "
             + $"{receipt.PoolBatchOperationIds?.Count ?? 0} Operation(s) left in Pool; "
             + $"{receipt.MachineBacklogs.Count} Machine backlog(s) affected.";
+    }
+
+    private string BuildSimpleCaseOrderSummary(bool completed)
+    {
+        var rows = SimpleCaseOrderRows;
+        if (rows.Count == 0)
+        {
+            return preview is null
+                ? "Choose an Excel workbook and preview the fixed mapping."
+                : "No active Order rows were found on the selected worksheet.";
+        }
+
+        var casesCreated = rows.Count(row => row.Decision == "create_case");
+        var casesMatched = rows
+            .Where(row => row.CaseCandidates.Count == 1)
+            .Select(row => row.SourcePartNumber?.Trim() ?? string.Empty)
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        var ordersCreated = rows.Count(row => row.Decision == "create_order"
+            || row.Decision == "create_case" && row.IncludeOrderWithNewCase);
+        var ordersMatched = rows.Count(row => row.OrderCandidates.Count > 0);
+        var skipped = rows.Count(row => row.IsSkipped);
+        var errors = rows.Count(row => row.IsSkipped && row.OrderCandidates.Count == 0);
+        var prefix = completed ? "Import completed" : "Preview ready";
+        return $"{prefix}. Cases created: {casesCreated}; Cases matched existing: {casesMatched}; "
+            + $"Orders created: {ordersCreated}; Orders matched existing: {ordersMatched}; "
+            + $"Rows skipped: {skipped}; Rows with errors: {errors}. "
+            + "No Batches, Operations, Machines, assignments, backlog, or Timeline data are included.";
     }
 
     internal bool IsIncludedInSelectedOutcome(LegacyImportRowViewModel row) => row.Kind switch
@@ -1330,6 +1536,9 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(AutomaticReadyRows));
         OnPropertyChanged(nameof(AutomaticSkippedRows));
         OnPropertyChanged(nameof(AutomaticAttentionRows));
+        OnPropertyChanged(nameof(SimpleCaseOrderRows));
+        OnPropertyChanged(nameof(SimpleCaseOrderPreviewSummary));
+        OnPropertyChanged(nameof(CanImportCasesAndOrders));
     }
 
     internal void RowOrMappingChanged()
@@ -1397,10 +1606,15 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasPendingPreviewCorrections));
         PreviewCommand.RaiseCanExecuteChanged();
         PreviewDefinedImportCommand.RaiseCanExecuteChanged();
+        ImportCasesAndOrdersCommand.RaiseCanExecuteChanged();
         CommitCommand.RaiseCanExecuteChanged();
         SkipRowCommand.RaiseCanExecuteChanged();
         SkipAllUnresolvedCommand.RaiseCanExecuteChanged();
         PrepareAutomaticallyCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(SimpleCaseOrderRows));
+        OnPropertyChanged(nameof(SimpleCaseOrderPreviewSummary));
+        OnPropertyChanged(nameof(CanImportCasesAndOrders));
+        OnPropertyChanged(nameof(CaseOrderImportAvailabilityText));
         RaiseWizardState();
     }
 
@@ -2230,6 +2444,11 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         AutomaticReason = "Prepared automatically under the one exact existing Case match.";
     }
 
+    internal bool CanCreateSimpleCaseAndOrder => !HasAutomaticBlockingIssue()
+        && HasCompleteOrderInput
+        && !string.IsNullOrWhiteSpace(NewCasePartNumber)
+        && !string.IsNullOrWhiteSpace(NewCaseName);
+
     internal void SelectExistingCaseAndPrepareOrder(LegacyImportCaseCandidate candidate)
     {
         SelectedCaseCandidate = CaseCandidates.FirstOrDefault(item =>
@@ -2374,6 +2593,19 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         SkipReason = reason;
         Decision = "skip";
         AutomaticReason = reason;
+    }
+
+    internal void SkipUnresolvedForSimpleImport()
+    {
+        if (IsResolved)
+        {
+            return;
+        }
+
+        var reason = HasUnresolvedBlockingIssue
+            ? "Skipped automatically because the Server reported invalid or incomplete Case/Order source data."
+            : "Skipped automatically because the row could not be resolved safely as one Case and Order action.";
+        SkipAutomatically(reason);
     }
 
     private bool HasAutomaticBlockingIssue() => issues.Any(issue =>

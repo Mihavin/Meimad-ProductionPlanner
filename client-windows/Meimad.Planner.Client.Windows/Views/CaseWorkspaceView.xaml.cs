@@ -64,6 +64,8 @@ public partial class CaseWorkspaceView : UserControl
         try
         {
             StepViewer.LoadStep(dialog.FileName);
+            StepDisplayModeCombo.SelectedIndex = 0;
+            StepBoundingBoxToggle.IsChecked = false;
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException
@@ -136,12 +138,28 @@ public partial class CaseWorkspaceView : UserControl
             _ => StepDisplayMode.Shaded
         });
     }
+
+    private void StepBoundingBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (StepViewer is not null)
+        {
+            StepViewer.ShowBoundingBox(StepBoundingBoxToggle.IsChecked == true);
+        }
+    }
     private void StepMeasureDistance_Click(object sender, RoutedEventArgs e) => StepViewer.BeginDistanceMeasurement();
     private void StepClearMeasurement_Click(object sender, RoutedEventArgs e) => StepViewer.ClearMeasurement();
-    private void StepReferencePoints_Click(object sender, RoutedEventArgs e) => StepViewer.BeginCustomReferenceByPoints();
+    private void StepReferencePoints_Click(object sender, RoutedEventArgs e)
+    {
+        StepBoundingBoxToggle.IsChecked = true;
+        StepViewer.BeginCustomReferenceByPoints();
+    }
     private void StepReferenceFace_Click(object sender, RoutedEventArgs e)
     {
-        try { StepViewer.BeginCustomReferenceByFaceAndEdge(); }
+        try
+        {
+            StepBoundingBoxToggle.IsChecked = true;
+            StepViewer.BeginCustomReferenceByFaceAndEdge();
+        }
         catch (InvalidOperationException exception) { MessageBox.Show(exception.Message, "STEP reference", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
     private void StepReferenceClear_Click(object sender, RoutedEventArgs e) => StepViewer.ClearCustomReference();
@@ -152,7 +170,9 @@ public partial class CaseWorkspaceView : UserControl
     private void UpdateStepReferenceState()
     {
         var box = StepViewer.CurrentBoundingBox;
-        StepBoundingBoxText.Text = box is null
+        StepBoundingBoxText.Text = !StepViewer.IsBoundingBoxVisible
+            ? "Bounding box hidden. Enable Show bounding box to display it."
+            : box is null
             ? "Open a STEP model to calculate its bounding box."
             : $"{(box.UsesCustomReference ? "Custom" : "Model XYZ")}\nX {box.X:0.####}   Y {box.Y:0.####}   Z {box.Z:0.####}";
         StepMeasurementText.Text = StepViewer.MeasurementText;
@@ -163,6 +183,11 @@ public partial class CaseWorkspaceView : UserControl
         SnapshotStepButton.IsEnabled = StepViewer.HasModel
             && DataContext is CaseWorkspaceViewModel { CanEditForm: true };
         StepDisplayModeCombo.IsEnabled = StepViewer.IsSolidModel;
+        StepBoundingBoxToggle.IsEnabled = StepViewer.HasModel;
+        if (!StepViewer.HasModel)
+        {
+            StepBoundingBoxToggle.IsChecked = false;
+        }
         StepDisplayModeCombo.ToolTip = StepViewer.IsSolidModel
             ? "Choose shaded faces, shaded faces with visible edges, or wireframe."
             : "Display modes become available after the STEP file is loaded as a tessellated solid.";

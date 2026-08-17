@@ -13,29 +13,22 @@ public sealed class LegacyExcelImportViewTests
     }
 
     [Fact]
-    public void Setup_import_tab_shows_one_sheet_preview_and_four_fixed_stages()
+    public void Setup_import_tab_shows_one_sheet_fixed_case_order_preview_and_import()
     {
         var xaml = File.ReadAllText(FindSetupView());
 
-        Assert.Contains("Text=\"Excel Planning Import\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("There is no column-mapping wizard in this workflow.", xaml, StringComparison.Ordinal);
-        Assert.Contains("Cases A/O/F/D, Orders B/L/E/N, and Batches P/H", xaml, StringComparison.Ordinal);
-        Assert.Contains("Planned quantity is calculated from the related Orders.", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Excel Case + Order Import\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Simple fixed-mapping Case and Order import", xaml, StringComparison.Ordinal);
+        Assert.Contains("LegacyImport.FixedMappingSummary", xaml, StringComparison.Ordinal);
         Assert.Contains("LegacyImport.ImportSheetName", xaml, StringComparison.Ordinal);
         Assert.Contains("LegacyImport.PreviewDefinedImportCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"Preview data\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("ItemsSource=\"{Binding LegacyImport.CurrentStageRows}\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Header=\"Proposed result\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Import reviewed data\"", xaml, StringComparison.Ordinal);
-
-        Assert.Contains("Content=\"1  Cases\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Content=\"2  Related Orders\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Content=\"3  Batches in Pool\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Content=\"4  Assign to Machine\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("ShowCasesStageCommand", xaml, StringComparison.Ordinal);
-        Assert.Contains("ShowOrdersStageCommand", xaml, StringComparison.Ordinal);
-        Assert.Contains("ShowBatchesStageCommand", xaml, StringComparison.Ordinal);
-        Assert.Contains("ShowAssignmentsStageCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding LegacyImport.SimpleCaseOrderRows}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Header=\"Case / Order result\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Import Cases and Orders\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("LegacyImport.ImportCasesAndOrdersCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("LegacyImport.CaseOrderImportAvailabilityText", xaml, StringComparison.Ordinal);
+        Assert.Contains("never creates Batches, Operations, Machine assignments", xaml, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -48,8 +41,8 @@ public sealed class LegacyExcelImportViewTests
             xaml,
             StringComparison.Ordinal);
         Assert.Contains("<Border Grid.Row=\"6\" Visibility=\"Collapsed\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("The predefined mapping is used automatically", xaml, StringComparison.Ordinal);
-        Assert.Contains("Only the final Import button writes data.", xaml, StringComparison.Ordinal);
+        Assert.Contains("Fixed mapping", xaml, StringComparison.Ordinal);
+        Assert.Contains("Import is the only write action.", xaml, StringComparison.Ordinal);
     }
 
     private static string FindSetupView()

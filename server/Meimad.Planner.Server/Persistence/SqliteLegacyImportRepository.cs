@@ -37,6 +37,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
     public async Task<LegacyImportCommitResponse?> TryReplayAsync(
         string workbookSha256,
         string requestSha256,
+        bool allowAdditionalCaseOrderReceipt,
         EditAuthority editAuthority,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -53,19 +54,20 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             connection,
             transaction,
             workbookSha256,
+            requestSha256,
             cancellationToken);
-        if (existing is null)
+        if (existing is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return ToReplayResponse(existing.ResponseJson);
+        }
+        if (allowAdditionalCaseOrderReceipt
+            || !await HasWorkbookReceiptAsync(connection, transaction, workbookSha256, cancellationToken))
         {
             await transaction.CommitAsync(cancellationToken);
             return null;
         }
-        if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
-        {
-            throw new LegacyWorkbookAlreadyImportedException(workbookSha256);
-        }
-
-        await transaction.CommitAsync(cancellationToken);
-        return ToReplayResponse(existing.ResponseJson);
+        throw new LegacyWorkbookAlreadyImportedException(workbookSha256);
     }
 
     public async Task<LegacyImportCommitResponse> CommitAsync(
@@ -88,16 +90,21 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             connection,
             transaction,
             request.WorkbookSha256!,
+            requestSha256,
             cancellationToken);
         if (existing is not null)
         {
-            if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
-            {
-                throw new LegacyWorkbookAlreadyImportedException(request.WorkbookSha256!);
-            }
-
             await transaction.CommitAsync(cancellationToken);
             return ToReplayResponse(existing.ResponseJson);
+        }
+        if (!IsCaseOrderOnlyPass(request)
+            && await HasWorkbookReceiptAsync(
+                connection,
+                transaction,
+                request.WorkbookSha256!,
+                cancellationToken))
+        {
+            throw new LegacyWorkbookAlreadyImportedException(request.WorkbookSha256!);
         }
 
         var issues = new List<LegacyImportIssue>();
@@ -1044,15 +1051,44 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         SqliteConnection connection,
         SqliteTransaction transaction,
         string workbookSha256,
+        string requestSha256,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT approved_request_sha256, response_json FROM legacy_working_plan_imports WHERE workbook_sha256 = $hash;";
+        command.CommandText = """
+            SELECT approved_request_sha256, response_json
+            FROM legacy_working_plan_imports
+            WHERE workbook_sha256 = $hash AND approved_request_sha256 = $requestHash;
+            """;
         command.Parameters.AddWithValue("$hash", workbookSha256);
+        command.Parameters.AddWithValue("$requestHash", requestSha256);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? new StoredReceipt(reader.GetString(0), reader.GetString(1)) : null;
     }
+
+    private static async Task<bool> HasWorkbookReceiptAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string workbookSha256,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM legacy_working_plan_imports WHERE workbook_sha256 = $hash);";
+        command.Parameters.AddWithValue("$hash", workbookSha256);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 1;
+    }
+
+    private static bool IsCaseOrderOnlyPass(LegacyImportCommitRequest request) =>
+        string.IsNullOrWhiteSpace(request.PlanningSheet)
+        && !string.IsNullOrWhiteSpace(request.OpenOrdersSheet)
+        && (request.PlanningSelections?.Count ?? 0) == 0
+        && (request.MachineMappings?.Count ?? 0) == 0
+        && (request.OpenOrderSelections ?? []).Any(selection => selection.Action is "create_case" or "create_order")
+        && (request.OpenOrderSelections ?? []).All(selection => selection.Action is "create_case" or "create_order" or "skip")
+        && (request.ColumnMappings ?? []).All(mapping =>
+            string.Equals(mapping.Scope, "open_orders", StringComparison.Ordinal));
 
     private static async Task InsertReceiptAsync(
         SqliteConnection connection,

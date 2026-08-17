@@ -154,9 +154,7 @@
 
         <TabControl x:Name="WorkspaceTabs" Grid.Row="2" Margin="12,8,12,6">
             <TabItem Header="Cases">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
-                </ScrollViewer>
+                <views:CaseWorkspaceView DataContext="{Binding CaseWorkspace}" Margin="5" />
             </TabItem>
             <TabItem ToolTip="Open the Machine Planning Board and unassigned operation Pool">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource PlanningBoardButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Planning Board" VerticalAlignment="Center" /></StackPanel></TabItem.Header>

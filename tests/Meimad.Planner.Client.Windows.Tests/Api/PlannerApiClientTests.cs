@@ -1137,6 +1137,90 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Fixed_case_order_import_excludes_every_planning_and_machine_mutation()
+    {
+        const string previewJson = """
+            {"schemaVersion":1,"importToken":"fixed-token","workbookSha256":"fixed-hash","expiresAt":"2026-08-20T10:00:00Z",
+             "workbook":{"fileName":"working-plan.xlsx","sheets":[{"name":"Sheet1","rowCount":4,"columnCount":15}]},
+             "suggestions":{"planningSheet":null,"openOrdersSheet":"Sheet1","planningColumns":[],"openOrderColumns":[
+               {"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},
+               {"field":"orderNumber","column":"B","header":"Order","confidence":1},
+               {"field":"customer","column":"D","header":"Customer","confidence":1},
+               {"field":"deliveryDate","column":"E","header":"Finish","confidence":1},
+               {"field":"revision","column":"F","header":"REV","confidence":1},
+               {"field":"orderedQuantity","column":"L","header":"Quantity","confidence":1},
+               {"field":"productionInstruction","column":"N","header":"Active","confidence":1},
+               {"field":"itemName","column":"O","header":"Name","confidence":1}]},
+             "machineSections":[],"rows":[],
+             "openOrderRows":[
+               {"rowKey":"Sheet1!2","sheetName":"Sheet1","rowNumber":2,"sourceOrder":1,
+                "values":{"partNumber":"PN-1","orderNumber":"ORD-1","customer":"Customer","deliveryDate":"2026-09-10","revision":"A","orderedQuantity":5,"itemName":"Part One","productionInstruction":"Y"},
+                "provenance":[],"candidates":{"cases":[],"orders":[]}},
+               {"rowKey":"Sheet1!3","sheetName":"Sheet1","rowNumber":3,"sourceOrder":2,
+                "values":{"partNumber":"PN-2","orderNumber":"ORD-2","deliveryDate":"2026-09-11","orderedQuantity":3,"itemName":"Part Two","productionInstruction":"Y"},
+                "provenance":[],"candidates":{"cases":[{"caseId":"case-2","partNumber":"PN-2","name":"Part Two","revision":null,"customer":null,"reason":"part_number_exact"}],"orders":[{"orderId":"order-2","orderNumber":"ORD-2","quantity":3,"workFinishDate":"2026-09-11","reason":"order_number_and_case_exact"}]}},
+               {"rowKey":"Sheet1!4","sheetName":"Sheet1","rowNumber":4,"sourceOrder":3,
+                "values":{"partNumber":"PN-3","orderNumber":"ORD-3","deliveryDate":"2026-09-12","orderedQuantity":null,"itemName":"Part Three","productionInstruction":"Y"},
+                "provenance":[],"candidates":{"cases":[],"orders":[]}}],
+             "issues":[{"severity":"blocking","code":"quantity_required","message":"Quantity must be positive.","sheetName":"Sheet1","rowNumber":4,"field":"orderedQuantity","scope":"open_orders"}]}
+            """;
+        const string receiptJson = """
+            {"schemaVersion":1,"workbookSha256":"fixed-hash","commitId":"fixed-commit","replayed":false,
+             "created":{"caseIds":["case-1"],"orderIds":["order-1"],"batchIds":[],"assignmentIds":[]},
+             "unchanged":{"caseIds":["case-2"],"orderIds":["order-2"],"batchIds":[],"assignmentIds":[]},
+             "machineBacklogs":[]}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, previewJson),
+            Json(HttpStatusCode.OK, previewJson),
+            Json(HttpStatusCode.OK, receiptJson));
+        using var api = CreateClient(handler);
+        var viewModel = new LegacyExcelImportViewModel(
+            _ => new MemoryStream([0x50, 0x4B]), _ => true);
+        viewModel.AttachSession(api, "windows-1", new EditModeStatus(
+            ClientEditState.Editor, 9, null, null, DateTimeOffset.UtcNow, 30));
+        viewModel.SetWorkbookSelection("working-plan.xlsx");
+
+        await viewModel.PreviewDefinedImportAsync();
+
+        var fixedPreview = handler.Requests[1].Body;
+        Assert.Contains("\"field\":\"partNumber\",\"column\":\"A\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"orderNumber\",\"column\":\"B\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"customer\",\"column\":\"D\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"deliveryDate\",\"column\":\"E\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"revision\",\"column\":\"F\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"orderedQuantity\",\"column\":\"L\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"productionInstruction\",\"column\":\"N\"", fixedPreview, StringComparison.Ordinal);
+        Assert.Contains("\"field\":\"itemName\",\"column\":\"O\"", fixedPreview, StringComparison.Ordinal);
+        Assert.DoesNotContain("batchNumber", fixedPreview, StringComparison.Ordinal);
+        Assert.True(viewModel.ImportOrders);
+        Assert.False(viewModel.ImportPoolBatches);
+        Assert.False(viewModel.ImportMachineAssignments);
+        Assert.Empty(viewModel.MachineMappings);
+        Assert.Equal(3, viewModel.SimpleCaseOrderRows.Count);
+        Assert.Equal("create_case", viewModel.SimpleCaseOrderRows[0].Decision);
+        Assert.True(viewModel.SimpleCaseOrderRows[1].IsSkipped);
+        Assert.True(viewModel.SimpleCaseOrderRows[2].IsSkipped);
+        viewModel.ConfirmAutomaticSkips = false;
+        Assert.False(viewModel.CanCommit);
+        Assert.True(viewModel.CanImportCasesAndOrders);
+        Assert.StartsWith("Ready.", viewModel.CaseOrderImportAvailabilityText, StringComparison.Ordinal);
+
+        await viewModel.ImportCasesAndOrdersAsync();
+
+        var commit = handler.Requests[2].Body;
+        Assert.Contains("\"planningSheet\":null", commit, StringComparison.Ordinal);
+        Assert.Contains("\"machineMappings\":[]", commit, StringComparison.Ordinal);
+        Assert.Contains("\"planningSelections\":[]", commit, StringComparison.Ordinal);
+        Assert.Contains("\"action\":\"create_case\"", commit, StringComparison.Ordinal);
+        Assert.DoesNotContain("create_batch", commit, StringComparison.Ordinal);
+        Assert.DoesNotContain("machineId", commit, StringComparison.Ordinal);
+        Assert.Contains("Cases created: 1", viewModel.ResultSummary, StringComparison.Ordinal);
+        Assert.Contains("Orders matched existing: 1", viewModel.ResultSummary, StringComparison.Ordinal);
+        Assert.Contains("Rows with errors: 1", viewModel.ResultSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Machine_downtime_client_uses_list_create_edit_and_restore_routes_with_authority()
     {
         const string downtime = """

@@ -516,7 +516,7 @@
             </TabItem>
 
             <TabItem ToolTip="Import planning data from an Excel workbook">
-                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ImportButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Excel Planning Import" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ImportButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Excel Case + Order Import" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8" FlowDirection="LeftToRight">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -530,23 +530,16 @@
 
                     <Border Grid.Row="0" Style="{StaticResource SetupSection}">
                         <StackPanel>
-                            <TextBlock Text="Import a working plan in four clear stages" FontSize="18" FontWeight="Bold" />
-                            <TextBlock Text="Choose the Excel file and worksheet, then preview the predefined Cases, Orders, Batches, and Machine assignments. There is no column-mapping wizard in this workflow." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock Text="Simple fixed-mapping Case and Order import" FontSize="18" FontWeight="Bold" />
+                            <TextBlock Text="Choose the Excel file and worksheet, preview the rows, then import. Valid rows create or match Cases by Part Number and create or match their Orders. Invalid rows are skipped with an explanation." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Row="2" Style="{StaticResource SetupSection}" Background="#F3F8FF" BorderBrush="#8BB8F8">
                         <StackPanel>
-                            <TextBlock Text="Guided import stages" FontSize="17" FontWeight="Bold" Foreground="#174A7E" />
-                            <TextBlock Text="Complete each stage in order. These buttons only change the review focus; all approved changes are committed once, atomically, after Step 4." Foreground="#365B7D" TextWrapping="Wrap" Margin="0,4,0,10" />
-                            <WrapPanel>
-                                <Button Content="1  Cases" Command="{Binding LegacyImport.ShowCasesStageCommand}" ToolTip="Step 1: review each Part Number, match it to an existing Case or create a Case in the Case Pool." ToolTipService.ShowDuration="12000" Margin="0,0,8,6" />
-                                <Button Content="2  Related Orders" Command="{Binding LegacyImport.ShowOrdersStageCommand}" ToolTip="Step 2: find the related Case and create only the approved missing Orders." ToolTipService.ShowDuration="12000" Margin="0,0,8,6" />
-                                <Button Content="3  Batches in Pool" Command="{Binding LegacyImport.ShowBatchesStageCommand}" ToolTip="Step 3: create a full-route Batch in the unassigned Pool. The Case must already have a complete route." ToolTipService.ShowDuration="12000" Margin="0,0,8,6" />
-                                <Button Content="4  Assign to Machine" Command="{Binding LegacyImport.ShowAssignmentsStageCommand}" ToolTip="Step 4: choose a compatible Machine for the selected Batch Operation. Unassigned work remains in Pool." ToolTipService.ShowDuration="12000" Margin="0,0,8,6" />
-                            </WrapPanel>
-                            <TextBlock Text="{Binding LegacyImport.CurrentImportStageTitle}" FontWeight="SemiBold" Margin="0,8,0,0" />
-                            <TextBlock Text="{Binding LegacyImport.CurrentImportStageDescription}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,0" />
+                            <TextBlock Text="Fixed mapping" FontSize="17" FontWeight="Bold" Foreground="#174A7E" />
+                            <TextBlock Text="{Binding LegacyImport.FixedMappingSummary}" Foreground="#365B7D" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock Text="Part Number is the Case key. Order uniqueness is Case + Order Number. Existing records are matched and are not silently overwritten." FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,7,0,0" />
                         </StackPanel>
                     </Border>
 
@@ -555,7 +548,7 @@
                         <Border Grid.Row="0" Style="{StaticResource SetupSection}">
                             <StackPanel>
                                 <TextBlock Text="Workbook and worksheet" FontSize="16" FontWeight="Bold" />
-                                <TextBlock Text="The predefined mapping is used automatically: Cases A/O/F/D, Orders B/L/E/N, and Batches P/H. Planned quantity is calculated from the related Orders." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                                <TextBlock Text="Select the worksheet containing columns A, B, D, E, F, L, N, and O. Preview is read-only; Import is the only write action." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,10" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="220" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Style="{StaticResource SetupField}"><TextBlock Text="Excel workbook" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding LegacyImport.SelectedFilePath}" IsReadOnly="True" ToolTip="The source workbook is read-only." /></StackPanel>
@@ -566,23 +559,21 @@
                                 <ProgressBar IsIndeterminate="True" Height="4" Margin="0,2,0,0"><ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding LegacyImport.IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar>
                                 <TextBlock Text="{Binding LegacyImport.ErrorMessage}" Foreground="#B42318" TextWrapping="Wrap" Margin="0,5,0,0" />
                                 <TextBlock Text="{Binding LegacyImport.PreviewSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
-                                <TextBlock Text="{Binding LegacyImport.AutomaticImportSummary}" Foreground="#174A7E" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,5,0,0" />
                             </StackPanel>
                         </Border>
-                        <DataGrid Grid.Row="2" ItemsSource="{Binding LegacyImport.CurrentStageRows}" SelectedItem="{Binding LegacyImport.SelectedWizardRow, Mode=TwoWay}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" EnableRowVirtualization="True">
+                        <DataGrid Grid.Row="2" ItemsSource="{Binding LegacyImport.SimpleCaseOrderRows}" SelectedItem="{Binding LegacyImport.SelectedWizardRow, Mode=TwoWay}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column" EnableRowVirtualization="True">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Excel row" Binding="{Binding RowNumber}" Width="75" />
                                 <DataGridTextColumn Header="Source data" Binding="{Binding SourceSummary}" Width="2.5*" />
-                                <DataGridTextColumn Header="Proposed result" Binding="{Binding DecisionDisplayName}" Width="1.5*" />
+                                <DataGridTextColumn Header="Case / Order result" Binding="{Binding DecisionDisplayName}" Width="1.5*" />
                                 <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100" />
                                 <DataGridTextColumn Header="Explanation" Binding="{Binding AutomaticReason}" Width="2*" />
                             </DataGrid.Columns>
                         </DataGrid>
                         <Border Grid.Row="4" Style="{StaticResource SetupSection}">
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel><TextBlock Text="{Binding LegacyImport.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.ResultSummary}" Foreground="#20744A" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="Only the final Import button writes data. The Server validates all four stages atomically." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
-                                <Button Grid.Column="1" Content="Skip unresolved" Command="{Binding LegacyImport.SkipAllUnresolvedCommand}" Margin="8,0,0,0" />
-                                <Button Grid.Column="2" Content="Import reviewed data" Command="{Binding LegacyImport.CommitCommand}" IsEnabled="{Binding LegacyImport.CanCommitNow}" Margin="8,0,0,0" />
+                                <StackPanel><TextBlock Text="{Binding LegacyImport.SimpleCaseOrderPreviewSummary}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding LegacyImport.CaseOrderImportAvailabilityText}" Foreground="#8A4B08" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" /><TextBlock Text="{Binding LegacyImport.ResultSummary}" Foreground="#20744A" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="Import writes only Cases and Orders in one Server transaction. It never creates Batches, Operations, Machine assignments, backlog entries, or Timeline data." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <Button Grid.Column="2" Content="Import Cases and Orders" Command="{Binding LegacyImport.ImportCasesAndOrdersCommand}" IsEnabled="{Binding LegacyImport.CanImportCasesAndOrders}" Margin="8,0,0,0" />
                             </Grid>
                         </Border>
                     </Grid>

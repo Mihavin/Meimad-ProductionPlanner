@@ -43,7 +43,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(26L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(27L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -110,6 +110,8 @@ public sealed class MigrationTests
         Assert.Equal("machine_assignment_planning_mode", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 25;";
         Assert.Equal("legacy_working_plan_import_receipts", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 27;";
+        Assert.Equal("incremental_case_order_import_receipts", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*)
@@ -159,7 +161,55 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(26L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(27L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Incremental_import_receipt_migration_preserves_v25_receipt_and_allows_distinct_request_hash()
+    {
+        await using var fixture = TemporaryDatabase.CreateUnmigrated();
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.CommandText = """
+                CREATE TABLE legacy_working_plan_imports (
+                    id TEXT PRIMARY KEY,
+                    workbook_sha256 TEXT NOT NULL UNIQUE,
+                    approved_request_sha256 TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    committed_by_client_id TEXT NOT NULL,
+                    committed_by_user_id TEXT NOT NULL,
+                    committed_at TEXT NOT NULL);
+                CREATE INDEX ix_legacy_working_plan_imports_committed_at
+                    ON legacy_working_plan_imports (committed_at);
+                INSERT INTO legacy_working_plan_imports VALUES (
+                    'receipt-1',
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                    '{}', 'client-1', 'user-1', '2026-08-16T10:00:00Z');
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        await using (var transaction = connection.BeginTransaction())
+        {
+            await new SchemaV27IncrementalCaseOrderImportReceiptsMigration().ApplyAsync(
+                connection, transaction, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        await using var assertion = connection.CreateCommand();
+        assertion.CommandText = "SELECT COUNT(*) FROM legacy_working_plan_imports WHERE id = 'receipt-1';";
+        Assert.Equal(1L, (long)(await assertion.ExecuteScalarAsync())!);
+        assertion.CommandText = """
+            INSERT INTO legacy_working_plan_imports VALUES (
+                'receipt-2',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                '{}', 'client-1', 'user-1', '2026-08-16T11:00:00Z');
+            SELECT COUNT(*) FROM legacy_working_plan_imports;
+            """;
+        Assert.Equal(2L, (long)(await assertion.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -473,7 +523,7 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26);
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -614,7 +664,7 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26);
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -751,7 +801,7 @@ public sealed class MigrationTests
                 ALTER TABLE batch_operations DROP COLUMN actual_start;
                 ALTER TABLE machine_assignments DROP COLUMN planning_mode;
                 DROP TABLE legacy_working_plan_imports;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26);
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
@@ -837,7 +887,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 27;";
+            command.CommandText = "PRAGMA user_version = 28;";
             await command.ExecuteNonQueryAsync();
         }
 

@@ -102,7 +102,29 @@ public sealed class StepViewerControlTests
                 Assert.Equal(model.Triangles.Count, viewer.TriangleCount);
                 Assert.Equal(StepDisplayMode.Shaded, viewer.DisplayMode);
                 Assert.True(viewer.IsSolidSurfaceVisible);
+                Assert.Equal(model.Triangles.Count, viewer.RenderedSurfaceTriangleCount);
                 Assert.Equal(0, viewer.RenderedEdgeCount);
+                Assert.False(viewer.IsBoundingBoxVisible);
+                Assert.Equal(1, viewer.FitInvocationCount);
+
+                var fittedWidth = viewer.CameraWidth;
+                viewer.RotateForTest(0.4, -0.2);
+                Assert.Equal(fittedWidth, viewer.CameraWidth, 10);
+                Assert.Equal(1, viewer.FitInvocationCount);
+                for (var pointIndex = 0; pointIndex < model.Points.Count; pointIndex++)
+                {
+                    var edgePoint = viewer.EdgeProjectionForTest(pointIndex);
+                    var solidPoint = viewer.SolidCameraProjectionForTest(pointIndex);
+                    Assert.Equal(solidPoint.X, edgePoint.X, 6);
+                    Assert.Equal(solidPoint.Y, edgePoint.Y, 6);
+                }
+
+                viewer.ShowBoundingBox(true);
+                Assert.True(viewer.IsBoundingBoxVisible);
+                viewer.ShowBoundingBox(false);
+                Assert.False(viewer.IsBoundingBoxVisible);
+                viewer.FitToWindow();
+                Assert.Equal(2, viewer.FitInvocationCount);
 
                 viewer.SetDisplayMode(StepDisplayMode.VisibleEdges);
                 Assert.True(viewer.IsSolidSurfaceVisible);
@@ -112,11 +134,13 @@ public sealed class StepViewerControlTests
 
                 viewer.SetDisplayMode(StepDisplayMode.Wireframe);
                 Assert.False(viewer.IsSolidSurfaceVisible);
+                Assert.Equal(0, viewer.RenderedSurfaceTriangleCount);
                 Assert.True(viewer.RenderedEdgeCount > visibleEdgeCount);
                 viewer.SaveSnapshot(wireframePath);
 
                 viewer.SetDisplayMode(StepDisplayMode.Shaded);
                 Assert.True(viewer.IsSolidSurfaceVisible);
+                Assert.Equal(model.Triangles.Count, viewer.RenderedSurfaceTriangleCount);
                 Assert.Equal(0, viewer.RenderedEdgeCount);
                 viewer.SaveSnapshot(snapshotPath);
             }

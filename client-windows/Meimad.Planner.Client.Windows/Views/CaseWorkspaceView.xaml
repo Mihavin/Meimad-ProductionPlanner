@@ -65,11 +65,13 @@
                     </StackPanel>
                 </StackPanel>
 
-                <ListBox Grid.Row="2"
+                <ListBox x:Name="CasePoolList" Grid.Row="2"
                          ItemsSource="{Binding Cases}"
                          SelectedItem="{Binding SelectedCase}"
                          BorderBrush="#D8DDE3"
                          HorizontalContentAlignment="Stretch"
+                         ScrollViewer.VerticalScrollBarVisibility="Visible"
+                         ScrollViewer.CanContentScroll="True"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
@@ -147,7 +149,11 @@
 
                 <TabControl Grid.Row="1">
                     <TabItem Header="Case form">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14">
+                        <ScrollViewer x:Name="CaseEditScroll"
+                                      VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      PanningMode="VerticalOnly"
+                                      Padding="14">
                             <StackPanel>
                                 <Border Height="120" Background="#EEF1F4" BorderBrush="#D4D9DE" BorderThickness="1" Margin="0,0,0,10">
                                     <Grid>
@@ -219,7 +225,9 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem Header="STEP Viewer" ToolTip="Open a local .stp or .step model and create a Case preview image">
-                        <Grid Margin="8">
+                        <ScrollViewer x:Name="StepTabScroll" VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
+                        <Grid Margin="8" MinHeight="600">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
@@ -244,6 +252,10 @@
                                         <ComboBoxItem Content="Visible edges" Tag="visibleEdges" />
                                         <ComboBoxItem Content="Wireframe" Tag="wireframe" />
                                     </ComboBox>
+                                    <CheckBox x:Name="StepBoundingBoxToggle" Content="Show bounding box"
+                                              IsChecked="False" IsEnabled="False" VerticalAlignment="Center" Margin="10,0,0,0"
+                                              Checked="StepBoundingBox_Changed" Unchecked="StepBoundingBox_Changed"
+                                              ToolTip="Show the model-coordinate bounding box only when requested" />
                                 </StackPanel>
                             </DockPanel>
                             <Grid Grid.Row="1">
@@ -282,11 +294,14 @@
                                 </Border>
                             </Grid>
                             <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
-                                       Text="The part fits the window on open and rotates around its own center. Drag to rotate and use the mouse wheel to zoom. Snapshot saves a PNG and places its path in the Case picture field; press Save Case to commit that change." />
+                                       Text="The shaded part fits once when opened and then keeps its camera scale while rotating. Drag to rotate, use the mouse wheel to zoom, and select Fit to reset the camera framing. Edges and the bounding box are optional. Snapshot saves a PNG and places its path in the Case picture field; press Save Case to commit that change." />
                         </Grid>
+                        </ScrollViewer>
                     </TabItem>
                     <TabItem ToolTip="View and manage the Case route Operations">
                         <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OperationsButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Operations" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                        <ScrollViewer x:Name="OperationsTabScroll" VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -352,7 +367,7 @@
                                     </DockPanel>
                                 </StackPanel>
                             </Border>
-                            <DataGrid Grid.Row="2" ItemsSource="{Binding Operations}" SelectedItem="{Binding SelectedOperation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Operations}" SelectedItem="{Binding SelectedOperation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="220" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Visible">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Route" Binding="{Binding RouteDisplayPosition}" Width="55" />
                                     <DataGridTextColumn Header="#" Binding="{Binding OperationNumber}" Width="55" />
@@ -364,9 +379,12 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
+                        </ScrollViewer>
                     </TabItem>
                     <TabItem ToolTip="View and manage Orders for this Case">
                         <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OrdersButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Orders" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                        <ScrollViewer x:Name="OrdersTabScroll" VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -418,7 +436,8 @@
                             </Border>
                             <DataGrid Grid.Row="2" ItemsSource="{Binding Orders}" SelectedItem="{Binding SelectedOrder}"
                                       IsEnabled="{Binding IsOrderListEnabled}"
-                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                      MinHeight="220" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Visible">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Order" Binding="{Binding OrderNumber}" Width="*" />
                                     <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90" />
@@ -428,8 +447,11 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
+                        </ScrollViewer>
                     </TabItem>
                     <TabItem Header="Batches">
+                        <ScrollViewer x:Name="BatchesTabScroll" VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -457,7 +479,7 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ScrollViewer VerticalScrollBarVisibility="Visible">
                                     <StackPanel>
                                         <TextBlock Text="NEW PRODUCTION BATCH" FontWeight="Bold" Margin="0,0,0,10" />
                                         <UniformGrid Columns="2">
@@ -487,7 +509,7 @@
                                     </StackPanel>
                                 </ScrollViewer>
                             </Border>
-                            <DataGrid Grid.Row="2" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="220" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Visible">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Batch" Binding="{Binding BatchNumber}" Width="*" />
                                     <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="120" />
@@ -497,6 +519,7 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
+                        </ScrollViewer>
                     </TabItem>
                 </TabControl>
             </Grid>

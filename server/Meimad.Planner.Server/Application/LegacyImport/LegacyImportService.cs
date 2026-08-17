@@ -173,9 +173,11 @@ internal sealed partial class LegacyImportService
 
         var now = timeProvider.GetUtcNow();
         var requestSha256 = HashApprovedPayload(request);
+        var allowAdditionalCaseOrderReceipt = IsCaseOrderOnlyPass(request);
         var durableReplay = await repository.TryReplayAsync(
             request.WorkbookSha256,
             requestSha256,
+            allowAdditionalCaseOrderReceipt,
             editAuthority,
             now,
             cancellationToken);
@@ -221,6 +223,19 @@ internal sealed partial class LegacyImportService
             requestSha256,
             editAuthority,
             cancellationToken);
+    }
+
+    private static bool IsCaseOrderOnlyPass(LegacyImportCommitRequest request)
+    {
+        var selections = request.OpenOrderSelections ?? [];
+        return string.IsNullOrWhiteSpace(request.PlanningSheet)
+            && !string.IsNullOrWhiteSpace(request.OpenOrdersSheet)
+            && (request.PlanningSelections?.Count ?? 0) == 0
+            && (request.MachineMappings?.Count ?? 0) == 0
+            && selections.Any(selection => selection.Action is "create_case" or "create_order")
+            && selections.All(selection => selection.Action is "create_case" or "create_order" or "skip")
+            && (request.ColumnMappings ?? []).All(mapping =>
+                string.Equals(mapping.Scope, "open_orders", StringComparison.Ordinal));
     }
 
     private static bool HasCompleteRequiredMappings(LegacyImportCommitRequest request)

@@ -24,6 +24,7 @@
                 </ModelVisual3D.Content>
             </ModelVisual3D>
         </Viewport3D>
+        <local:StepSurfaceDrawingHost x:Name="SurfaceLayer" IsHitTestVisible="False" />
         <local:StepEdgeDrawingHost x:Name="EdgeSurface" IsHitTestVisible="False" />
         <Canvas x:Name="ModelCanvas" IsHitTestVisible="False" />
         <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10"
