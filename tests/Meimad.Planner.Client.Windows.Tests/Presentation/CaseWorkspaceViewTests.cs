@@ -3,6 +3,21 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class CaseWorkspaceViewTests
 {
     [Fact]
+    public void Case_pool_exposes_server_owned_sort_options()
+    {
+        var caseView = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "client-windows",
+            "Meimad.Planner.Client.Windows",
+            "Views",
+            "CaseWorkspaceView.xaml"));
+
+        Assert.Contains("Sort Cases by", caseView, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding CaseSortOptions}\"", caseView, StringComparison.Ordinal);
+        Assert.Contains("SelectedItem=\"{Binding CaseSort}\"", caseView, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Case_pool_owns_an_explicit_vertical_scrollbar_without_an_outer_page_scroller()
     {
         var repositoryRoot = FindRepositoryRoot();

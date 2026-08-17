@@ -1342,7 +1342,11 @@ public sealed class PlannerApiClientTests
             new HttpResponseMessage(HttpStatusCode.NotFound));
         using var api = CreateClient(handler);
 
-        var cases = await api.ListCasesAsync(new CaseQuery("PN / 1", "Acme & Co", true));
+        var cases = await api.ListCasesAsync(new CaseQuery(
+            "PN / 1",
+            "Acme & Co",
+            true,
+            "closestOrderDeliveryDate"));
         var resource = await api.GetCaseAsync("case-1");
         await api.ListCaseOperationsAsync("case-1");
         await api.ListOrdersAsync("case-1");
@@ -1354,7 +1358,7 @@ public sealed class PlannerApiClientTests
         Assert.Equal("\"case:case-1:v3\"", resource.EntityTag);
         Assert.Null(preview);
         Assert.Equal(
-            "/api/v1/cases?search=PN%20%2F%201&customer=Acme%20%26%20Co&isActive=true",
+            "/api/v1/cases?search=PN%20%2F%201&customer=Acme%20%26%20Co&isActive=true&sort=closestOrderDeliveryDate",
             handler.Requests[0].Path);
         Assert.Equal("/api/v1/cases/case-1/operations", handler.Requests[2].Path);
         Assert.Equal("/api/v1/orders?caseId=case-1", handler.Requests[3].Path);

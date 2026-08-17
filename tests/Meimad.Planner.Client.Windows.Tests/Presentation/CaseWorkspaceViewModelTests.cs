@@ -15,6 +15,7 @@ public sealed class CaseWorkspaceViewModelTests
         viewModel.SearchText = "PN";
         viewModel.CustomerFilter = "Acme";
         viewModel.ActiveFilter = "Active";
+        viewModel.CaseSort = "Closest Order delivery date";
 
         await viewModel.EnsureLoadedAsync();
 
@@ -34,7 +35,8 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.Contains(string.Empty, viewModel.OperationMachineTypeOptions);
         Assert.Single(viewModel.OperationMachineTypeOptions, value =>
             string.Equals(value, "mill", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(new CaseQuery("PN", "Acme", true), api.LastQuery);
+        Assert.Equal(new CaseQuery("PN", "Acme", true, "closestOrderDeliveryDate"), api.LastQuery);
+        Assert.Contains("Customer name", viewModel.CaseSortOptions);
         Assert.Equal(2, api.PreviewReads); // pool thumbnail and selected Case detail
         Assert.False(viewModel.IsFormReadOnly);
 

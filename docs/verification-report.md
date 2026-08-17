@@ -6,7 +6,7 @@ The task-list stabilization adds focused coverage for no-route Batch rejection, 
 - **Current change review date:** 2026-08-17
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
-- **Verdict:** The current combined Release evidence is 553 tests (362 Server and 191 Windows Client), with no failures or skips. Batch edit/delete coverage now includes optimistic allocation replacement with an unchanged instantiated route and confirmed owner-cascade deletion across assignments, pause history, package records, backlog compaction, and linked-Order recomputation. The active Windows Excel workflow still uses the authoritative Case/Order-only mapping and submits no Batch, Operation, Machine, assignment, backlog, Timeline, or planning data. Prior compatibility and planning coverage remains green. Windows operator sign-off on a backup/rehearsed production commit and the remaining physical/operational checks remains pending.
+- **Verdict:** The current combined Release evidence is 555 tests (363 Server and 192 Windows Client), with no failures or skips. Case Pool coverage includes Server-owned ordering by Part Number, closest active/in-production Order Work Finish Date, and Customer name, including deterministic null-last behavior and invalid-token rejection. Batch edit/delete coverage includes optimistic allocation replacement with an unchanged instantiated route and confirmed owner-cascade deletion across assignments, pause history, package records, backlog compaction, and linked-Order recomputation. The active Windows Excel workflow still uses the authoritative Case/Order-only mapping and submits no Batch, Operation, Machine, assignment, backlog, Timeline, or planning data. Prior compatibility and planning coverage remains green. Windows operator sign-off on a backup/rehearsed production commit and the remaining physical/operational checks remains pending.
 
 Installer build evidence on 2026-08-15: `installer\build-installers.ps1` published self-contained `win-x64` payloads and produced both MSI packages with WiX 5.0.2 at zero build warnings/errors. A non-installing administrative extraction verified 641 client files, including `runtimes\win-x64\native\TKernel.dll`, and 363 Server files. Windows Installer table inspection verified the automatic `Meimad Planner Server` ServiceInstall entry and install-start/stop/remove ServiceControl entry. This proves package construction and payload shape, not elevated install/uninstall, upgrade preservation, service recovery, code signing, or production-host acceptance.
 
@@ -48,9 +48,9 @@ Current schema-v25 combined Release result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 362 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 191 | 0 | 0 |
-| **Total** | **553** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 363 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 192 | 0 | 0 |
+| **Total** | **555** | **0** | **0** |
 
 Current import regressions cover the exact authoritative A/B/D/E/F/L/N/O multipart mapping, Case creation by Part Number, Order creation under the matching/new Case, existing Order no-change handling, invalid-row skip reporting, an executable final Import command, and a commit body with null planning sheet plus empty Machine/planning selections. Server integration additionally proves Case/Order replay idempotency and unchanged Production Batch, Batch Operation, and Machine Assignment counts. Broader legacy endpoint compatibility tests remain green, but those capabilities are bypassed by the visible Windows tool. Automated tests do not establish production data acceptance; a backup/rehearsed commit and count reconciliation remain pending.
 

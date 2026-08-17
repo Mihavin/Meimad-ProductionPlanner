@@ -19,6 +19,7 @@ internal interface ICaseRepository
         string? search,
         string? customer,
         bool? isActive,
+        CaseSortOrder sortOrder,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<CaseOperationDetails>> ListOperationsAsync(
@@ -44,6 +45,13 @@ internal interface ICaseRepository
         int expectedVersion,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
+}
+
+internal enum CaseSortOrder
+{
+    PartNumber,
+    ClosestOrderDeliveryDate,
+    CustomerName
 }
 
 internal sealed record NewCaseOperation(

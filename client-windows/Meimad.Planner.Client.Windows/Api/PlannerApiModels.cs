@@ -61,7 +61,7 @@ internal sealed record PlannerCase(
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
-internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive);
+internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive, string? Sort = null);
 
 internal sealed record CaseUpdate(
     string PartNumber,

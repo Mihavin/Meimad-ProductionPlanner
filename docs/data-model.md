@@ -145,6 +145,8 @@ Derived `isActive` is not stored or editable. It is true when the Case has at le
 
 A Case may be created and persisted with no Orders or Operations. The Case service trims text, rejects missing Part Number/Name/Working Folder, requires absolute filesystem paths, and deliberately does not call the filesystem to prove a path exists. Original engineering files and external folders are never written by Case create/update. Legacy physical Case timing columns are retained for migration compatibility but are no longer mutation inputs or the source of the read projection.
 
+Case Pool closest-delivery ordering derives `MIN(orders.work_finish_date)` over the Case's `active` and `in_production` Orders at query time. It is not a stored Case planning date; a Case without current Order demand sorts after dated Cases.
+
 ### 4.2 Order
 
 | Logical field | Requirement status | Notes |

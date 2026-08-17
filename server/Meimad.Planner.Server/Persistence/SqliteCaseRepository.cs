@@ -149,6 +149,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         string? search,
         string? customer,
         bool? isActive,
+        CaseSortOrder sortOrder,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -164,7 +165,11 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                             SELECT 1 FROM production_batches
                             WHERE production_batches.case_id = cases.id
                               AND production_batches.status IN (
-                                  'planned', 'waiting', 'in_production')) AS is_active
+                                  'planned', 'waiting', 'in_production')) AS is_active,
+                       (SELECT MIN(orders.work_finish_date)
+                          FROM orders
+                         WHERE orders.case_id = cases.id
+                           AND orders.status IN ('active', 'in_production')) AS closest_order_delivery_date
                 FROM cases
             )
             SELECT *
@@ -176,7 +181,13 @@ internal sealed class SqliteCaseRepository : ICaseRepository
               AND ($customer IS NULL
                    OR instr(lower(coalesce(customer, '')), lower($customer)) > 0)
               AND ($isActive IS NULL OR is_active = $isActive)
-            ORDER BY part_number COLLATE NOCASE, id;
+            ORDER BY
+                CASE WHEN $sort = 'closestOrderDeliveryDate' AND closest_order_delivery_date IS NULL THEN 1 ELSE 0 END,
+                CASE WHEN $sort = 'closestOrderDeliveryDate' THEN closest_order_delivery_date END,
+                CASE WHEN $sort = 'customerName' AND (customer IS NULL OR trim(customer) = '') THEN 1 ELSE 0 END,
+                CASE WHEN $sort = 'customerName' THEN customer END COLLATE NOCASE,
+                part_number COLLATE NOCASE,
+                id;
             """;
         command.Parameters.AddWithValue(
             "$search",
@@ -187,6 +198,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         command.Parameters.AddWithValue(
             "$isActive",
             isActive.HasValue ? isActive.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$sort", sortOrder switch
+        {
+            CaseSortOrder.ClosestOrderDeliveryDate => "closestOrderDeliveryDate",
+            CaseSortOrder.CustomerName => "customerName",
+            _ => "partNumber"
+        });
 
         var items = new List<PlannerCase>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

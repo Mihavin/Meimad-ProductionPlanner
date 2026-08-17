@@ -38,6 +38,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string searchText = string.Empty;
     private string customerFilter = string.Empty;
     private string activeFilter = "All";
+    private string caseSort = "Part Number";
     private string statusMessage = "Connect to the Server to load Cases.";
     private BitmapImage? detailPreview;
     private string partNumber = string.Empty;
@@ -130,6 +131,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<BatchOrderAllocationViewModel> BatchOrderAllocations { get; } = [];
 
     public IReadOnlyList<string> ActiveFilters { get; } = ["All", "Active", "Inactive"];
+
+    public IReadOnlyList<string> CaseSortOptions { get; } = ["Part Number", "Closest Order delivery date", "Customer name"];
 
     public IReadOnlyList<string> OrderStatuses => isEditingOrder
         ? ["active", "in_production", "complete", "cancelled"]
@@ -270,6 +273,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 BeginEditOrderCommand.RaiseCanExecuteChanged();
             }
         }
+    }
+
+    public string CaseSort
+    {
+        get => caseSort;
+        set => SetField(ref caseSort, value);
     }
     public ProductionBatch? SelectedBatch
     {
@@ -482,7 +491,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 "Inactive" => false,
                 _ => (bool?)null
             };
-            var cases = await apiClient.ListCasesAsync(new CaseQuery(SearchText, CustomerFilter, active));
+            var sort = CaseSort switch
+            {
+                "Closest Order delivery date" => "closestOrderDeliveryDate",
+                "Customer name" => "customerName",
+                _ => "partNumber"
+            };
+            var cases = await apiClient.ListCasesAsync(new CaseQuery(SearchText, CustomerFilter, active, sort));
             var selectedId = SelectedCase?.CaseId;
             Cases.Clear();
             foreach (var plannerCase in cases)
@@ -1105,6 +1120,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         SearchText = string.Empty;
         CustomerFilter = string.Empty;
         ActiveFilter = "All";
+        CaseSort = "Part Number";
         await LoadCasesAsync();
     }
 

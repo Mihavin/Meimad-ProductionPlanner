@@ -153,6 +153,45 @@ public sealed class CaseApiTests
         });
     }
 
+    [Fact]
+    public async Task Case_pool_sorts_by_closest_active_order_delivery_or_customer_name()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCaseSortRowsAsync(application.Services);
+
+            using var deliveryResponse = await client.GetAsync(
+                "/api/v1/cases?sort=closestOrderDeliveryDate");
+            Assert.Equal(HttpStatusCode.OK, deliveryResponse.StatusCode);
+            using var deliveryDocument = JsonDocument.Parse(
+                await deliveryResponse.Content.ReadAsStringAsync());
+            Assert.Equal(
+                ["PN-SORT-A", "PN-SORT-Z", "PN-SORT-NONE"],
+                deliveryDocument.RootElement.GetProperty("items").EnumerateArray()
+                    .Select(item => item.GetProperty("partNumber").GetString()!)
+                    .ToArray());
+
+            using var customerResponse = await client.GetAsync(
+                "/api/v1/cases?sort=customerName");
+            Assert.Equal(HttpStatusCode.OK, customerResponse.StatusCode);
+            using var customerDocument = JsonDocument.Parse(
+                await customerResponse.Content.ReadAsStringAsync());
+            Assert.Equal(
+                ["PN-SORT-A", "PN-SORT-Z", "PN-SORT-NONE"],
+                customerDocument.RootElement.GetProperty("items").EnumerateArray()
+                    .Select(item => item.GetProperty("partNumber").GetString()!)
+                    .ToArray());
+
+            using var invalidResponse = await client.GetAsync("/api/v1/cases?sort=delivery");
+            Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+            using var invalidDocument = JsonDocument.Parse(
+                await invalidResponse.Content.ReadAsStringAsync());
+            Assert.Equal(
+                "invalid_case_sort",
+                invalidDocument.RootElement.GetProperty("error").GetProperty("code").GetString());
+        });
+    }
+
     private static object ValidCreateBody() => new
     {
         partNumber = "PN-API-100",
@@ -199,6 +238,24 @@ public sealed class CaseApiTests
                 1, '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
             """;
         command.Parameters.AddWithValue("$caseId", caseId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task SeedCaseSortRowsAsync(IServiceProvider services)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO cases (id, part_number, name, customer, working_folder_path) VALUES
+                ('case-sort-z', 'PN-SORT-Z', 'Zulu part', 'Zulu Customer', 'C:\Cases\SortZ'),
+                ('case-sort-a', 'PN-SORT-A', 'Alpha part', 'alpha customer', 'C:\Cases\SortA'),
+                ('case-sort-none', 'PN-SORT-NONE', 'No delivery', NULL, 'C:\Cases\SortNone');
+            INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status) VALUES
+                ('order-sort-z', 'case-sort-z', 'SO-Z', 1, '2026-08-20', 'active'),
+                ('order-sort-a', 'case-sort-a', 'SO-A', 1, '2026-08-18', 'in_production'),
+                ('order-sort-cancelled', 'case-sort-none', 'SO-X', 1, '2026-08-01', 'cancelled');
+            """;
         await command.ExecuteNonQueryAsync();
     }
 

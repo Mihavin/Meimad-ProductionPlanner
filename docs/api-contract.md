@@ -302,7 +302,7 @@ Case Operation edits do not mutate an existing Production Batch because schema v
 
 **Implemented now:** Case collection GET, POST, GET-by-ID, PATCH, nested operation GET/POST/PATCH, and preview GET. GET-by-ID and collection results include derived `isActive`, based on `active`/`in_production` Order demand or a `waiting`/`in_production` Production Batch. Operation reorder remains Proposed.
 
-The implemented `GET /cases` accepts optional `search`, `customer`, and `isActive` parameters, returns matching records ordered by Part Number, and currently returns `nextCursor: null`. `search` performs case-insensitive substring matching across Part Number, Name, and Customer; `customer` performs case-insensitive Customer substring matching. Customer Reference, status, cursor, and limit filtering remain Proposed.
+The implemented `GET /cases` accepts optional `search`, `customer`, and `isActive` parameters plus `sort=partNumber|closestOrderDeliveryDate|customerName`, and currently returns `nextCursor: null`. The default is Part Number. Closest delivery sorts by the earliest `active`/`in_production` Order Work Finish Date ascending and puts Cases without current Order demand last. Customer sorting is case-insensitive and puts blank Customers last. Both alternatives use Part Number and Case ID as deterministic tie-breakers. An unknown sort token returns `400 invalid_case_sort`. `search` performs case-insensitive substring matching across Part Number, Name, and Customer; `customer` performs case-insensitive Customer substring matching. Customer Reference, status, cursor, and limit filtering remain Proposed.
 
 Implemented Case create request:
 

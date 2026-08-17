@@ -29,13 +29,40 @@ internal static class CaseEndpoints
         string? search,
         string? customer,
         bool? isActive,
+        string? sort,
+        HttpContext httpContext,
         CaseService service,
         CancellationToken cancellationToken)
     {
-        var items = await service.ListAsync(search, customer, isActive, cancellationToken);
+        if (!TryParseSort(sort, out var sortOrder))
+        {
+            return Error(StatusCodes.Status400BadRequest, "invalid_case_sort", "sort must be partNumber, closestOrderDeliveryDate, or customerName.", httpContext);
+        }
+        var items = await service.ListAsync(search, customer, isActive, sortOrder, cancellationToken);
         return Results.Ok(new CaseListResponse(
             items.Select(CaseResponse.FromDomain).ToArray(),
             null));
+    }
+
+    private static bool TryParseSort(string? value, out CaseSortOrder sortOrder)
+    {
+        switch (value)
+        {
+            case null:
+            case "":
+            case "partNumber":
+                sortOrder = CaseSortOrder.PartNumber;
+                return true;
+            case "closestOrderDeliveryDate":
+                sortOrder = CaseSortOrder.ClosestOrderDeliveryDate;
+                return true;
+            case "customerName":
+                sortOrder = CaseSortOrder.CustomerName;
+                return true;
+            default:
+                sortOrder = CaseSortOrder.PartNumber;
+                return false;
+        }
     }
 
     private static async Task<IResult> CreateAsync(

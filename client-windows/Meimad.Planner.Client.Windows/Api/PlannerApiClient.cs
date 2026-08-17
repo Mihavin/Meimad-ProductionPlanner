@@ -574,6 +574,7 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         {
             parameters.Add($"isActive={query.IsActive.Value.ToString().ToLowerInvariant()}");
         }
+        AddQueryParameter(parameters, "sort", query.Sort);
 
         var path = "api/v1/cases" + (parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters));
         using var response = await httpClient.GetAsync(path, cancellationToken);

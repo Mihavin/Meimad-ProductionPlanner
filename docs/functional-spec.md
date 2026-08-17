@@ -199,6 +199,7 @@ The STEP shaded and visible-edge modes also draw the same camera-projected, dept
 ### 9.1 Board view information hierarchy
 
 - The Case Pool keeps an explicit vertical scrollbar inside its fixed left column; scrolling a long Case list does not move the selected Case detail workspace.
+- The Case Pool can order the same Server-owned result set by Part Number, Customer name, or the closest Work Finish Date among active/in-production Orders. Missing Customers and Cases without current Order demand sort last.
 - The Case edit form has an independent, always-visible vertical scrollbar so all fields and Save/Cancel controls remain reachable at compact window heights.
 - STEP Viewer, Operations, Orders, and Batches each have an independent always-visible vertical scrollbar; the STEP canvas consumes the mouse wheel for model zoom without also scrolling its containing tab.
 - Server connectivity, current View/Edit Mode, current editor, and Edit Mode action.
