@@ -144,9 +144,13 @@ public static class ServerApplication
         builder.Services.AddSingleton<IKitaronConnectionRepository, SqliteKitaronConnectionRepository>();
         builder.Services.AddSingleton<IKitaronMappingRepository, SqliteKitaronMappingRepository>();
         builder.Services.AddSingleton<IKitaronConnectionTester, SqlServerKitaronConnectionTester>();
+        builder.Services.AddSingleton<IKitaronSourceReader, SqlServerKitaronSourceReader>();
+        builder.Services.AddSingleton<IKitaronSyncRepository, SqliteKitaronSyncRepository>();
         builder.Services.AddSingleton<KitaronConnectionService>();
         builder.Services.AddSingleton<KitaronMappingService>();
+        builder.Services.AddSingleton<KitaronSyncService>();
         builder.Services.AddHostedService<KitaronConnectionMonitorService>();
+        builder.Services.AddHostedService<KitaronSyncHostedService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
         builder.Services.AddSingleton<IMaterialReportEmailSender, SmtpMaterialReportEmailSender>();
         builder.Services.AddSingleton<WeeklyMaterialReportService>();

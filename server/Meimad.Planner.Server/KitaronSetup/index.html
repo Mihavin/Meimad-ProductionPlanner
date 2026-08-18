@@ -17,13 +17,14 @@
       <div class="header-badges">
         <span id="statusBadge" class="badge neutral">Connection loading</span>
         <span id="mappingBadge" class="badge neutral">Mapping loading</span>
+        <span id="syncBadge" class="badge neutral">Sync loading</span>
       </div>
     </header>
 
     <section class="notice">
-      <strong>Read-only boundary:</strong> connection tests issue only <code>SELECT TOP (0)</code> with
-      <code>ApplicationIntent=ReadOnly</code>. Mapping is configuration only. This page cannot import rows,
-      create assignments, reorder a Machine backlog, or write anything to Kitaron.
+      <strong>One-way boundary:</strong> Kitaron is always opened with <code>ApplicationIntent=ReadOnly</code>.
+      Synchronization may create or update linked Cases, Orders, and reusable Case Operations in Meimad only.
+      It never writes to Kitaron, creates Production Batches or assignments, or reorders a Machine backlog.
     </section>
 
     <section class="card">
@@ -94,7 +95,7 @@
       <label class="wide-label">Mapping status
         <select id="mappingStatus">
           <option value="draft">Draft — manual work remains</option>
-          <option value="ready_for_implementation">Ready for implementation review</option>
+          <option value="ready_for_implementation">Ready for synchronization</option>
         </select>
       </label>
     </section>
@@ -132,10 +133,30 @@
       </div>
     </section>
 
+    <section class="card" id="syncSection">
+      <div class="section-heading">
+        <div>
+          <p class="step">STEP 4</p>
+          <h2>One-way Server synchronization</h2>
+          <p class="hint">Runs periodically at the configured interval after the mapping is saved as Ready. You can also run it now.</p>
+        </div>
+        <button id="syncNowButton" type="button">Synchronize now</button>
+      </div>
+      <div class="sync-grid">
+        <div><strong>Last result</strong><span id="syncMessage">Never run.</span></div>
+        <div><strong>Source rows</strong><span id="syncRows">0</span></div>
+        <div><strong>Cases</strong><span id="syncCases">0 created / 0 updated / 0 matched</span></div>
+        <div><strong>Orders</strong><span id="syncOrders">0 created / 0 updated / 0 matched</span></div>
+        <div><strong>Case Operations</strong><span id="syncOperations">0 created / 0 updated / 0 matched</span></div>
+        <div><strong>Warnings</strong><span id="syncWarnings">0</span></div>
+      </div>
+      <p id="syncTime" class="hint"></p>
+    </section>
+
     <section class="notice stop-notice">
-      <strong>Import remains disabled.</strong> Saving or marking a mapping ready does not read source rows and does not
-      change Cases, Orders, Batches, Operations, Machines, assignments, backlog, or Timeline data. Implementation needs
-      a separate reviewed task with preview/diff, external identities, atomic writes, and manual-planning safeguards.
+      <strong>Planning remains manual.</strong> Synchronization never creates Production Batches, Batch Operations,
+      Machine assignments, backlog entries, or Timeline positions. Existing manually created records that are matched
+      by business key are linked but are not overwritten by later Kitaron refreshes.
     </section>
 
     <p id="message" class="message" aria-live="assertive"></p>

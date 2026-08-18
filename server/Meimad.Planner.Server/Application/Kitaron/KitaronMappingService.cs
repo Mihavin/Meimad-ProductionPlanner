@@ -16,7 +16,7 @@ internal sealed partial class KitaronMappingService(
         [
             "direct", "trim", "trim_or_null", "positive_integer", "positive_int",
             "date_only", "ordered_position", "manual_lookup", "generated_working_folder",
-            "seconds", "hours_to_seconds_pending", "unmapped"
+            "seconds", "minutes_to_seconds", "hours_to_seconds", "hours_to_seconds_pending", "unmapped"
         ],
         StringComparer.Ordinal);
 
@@ -121,7 +121,8 @@ internal sealed partial class KitaronMappingService(
                 throw new KitaronMappingValidationException(
                     "enabled", $"{catalog.TargetEntity}.{catalog.TargetField} is required in {modelMode} mode.");
             }
-            if (field.Enabled && source is null && transform != "generated_working_folder")
+            if (field.Enabled && source is null
+                && transform is not ("generated_working_folder" or "ordered_position"))
             {
                 throw new KitaronMappingValidationException(
                     "sourceColumn", $"{catalog.TargetEntity}.{catalog.TargetField} needs a source column or a generated transform.");
@@ -133,7 +134,8 @@ internal sealed partial class KitaronMappingService(
                     throw new KitaronMappingValidationException(
                         "confidence", $"{catalog.TargetEntity}.{catalog.TargetField} is still blocked.");
                 }
-                if (source is not null && detectedNames.Count > 0 && !detectedNames.Contains(source))
+                if (source is not null && !StringComparer.OrdinalIgnoreCase.Equals(source, "auto")
+                    && detectedNames.Count > 0 && !detectedNames.Contains(source))
                 {
                     throw new KitaronMappingValidationException(
                         "sourceColumn", $"Source column {source} was not found by the last successful connection test.");

@@ -12,6 +12,39 @@ internal static class KitaronConnectionEndpoints
         endpoints.MapPost("/api/v1/kitaron/connection/test", TestAsync);
         endpoints.MapGet("/api/v1/kitaron/mapping", GetMappingAsync);
         endpoints.MapPut("/api/v1/kitaron/mapping", UpdateMappingAsync);
+        endpoints.MapGet("/api/v1/kitaron/sync", GetSyncAsync);
+        endpoints.MapPost("/api/v1/kitaron/sync", RunSyncAsync);
+    }
+
+    private static async Task<IResult> GetSyncAsync(
+        HttpContext context,
+        KitaronSyncService service,
+        CancellationToken cancellationToken)
+    {
+        if (!IsLocalRequest(context))
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status403Forbidden,
+                "kitaron_setup_local_only", "Kitaron synchronization can be managed only from the Server computer.", context);
+        }
+        return Results.Ok(await service.GetStatusAsync(cancellationToken));
+    }
+
+    private static async Task<IResult> RunSyncAsync(
+        HttpContext context,
+        KitaronSyncService service,
+        CancellationToken cancellationToken)
+    {
+        if (!IsLocalRequest(context))
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status403Forbidden,
+                "kitaron_setup_local_only", "Kitaron synchronization can be managed only from the Server computer.", context);
+        }
+        try { return Results.Ok(await service.RunAsync(cancellationToken)); }
+        catch (KitaronSyncBlockedException exception)
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status409Conflict,
+                "kitaron_sync_blocked", exception.Message, context);
+        }
     }
 
     internal static bool IsLocalRequest(HttpContext context)

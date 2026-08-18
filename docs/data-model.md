@@ -1,6 +1,6 @@
 # Data Model
 
-- **Status:** Logical model plus SQLite schema version 28; Case/Order/Batch/Machine/Machine-Type/Calendar/assignment/Edit Mode/E-Ink package-generation/read slices, immutable Batch dependency snapshots, assignment-owned planning modes, idempotent legacy-working-plan import receipts, encrypted Server-local Kitaron connection settings, derived Batch and Order lifecycles, cross-type assignment audit, employee-efficiency reporting, structured planning-event export, and isolated administrative Setup records are implemented
+- **Status:** Logical model plus SQLite schema version 30; implemented Kitaron state includes encrypted connection settings, reviewed mapping, one-way sync status, and ownership-aware source links
 - **Authority:** Server-owned SQLite in MVP
 
 This document separates source-required concepts from proposed implementation fields. Logical names use English `camelCase`; implemented SQL names are recorded separately and do not freeze future API JSON.
@@ -462,6 +462,10 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 
 Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL Server host/port, database, schema/view, username, refresh interval, enable flag, optimistic version, and last read-only connection-test status. The password is stored only as an ASP.NET Data Protection ciphertext bound to the Server application; API responses expose only `passwordConfigured`. No Kitaron source rows or source database credentials are stored as plaintext, and this schema does not yet add source identity/import rows.
+
+Schema v29 adds singleton `kitaron_mapping_settings` with the selected model, Draft/Ready status, complete field selections, detected source columns, notes, version, and timestamps.
+
+Schema v30 adds singleton `kitaron_sync_state` and `kitaron_sync_links`. State stores current/last status, bounded message, timestamps, row and create/update/match/warning counts, mapping version, and optimistic version. Each link is uniquely identified by `(source_entity, source_key)`, points to one Planner Case, Order, or Case Operation, records whether the connector created that target, stores a source hash, and retains first/last-seen timestamps. Connector-owned targets may refresh mapped fields; records merely matched to pre-existing manual targets are never overwritten. Links do not mirror-delete missing source rows. No Kitaron row payload, plaintext credential, Batch, allocation, assignment, backlog, or calculated date is stored by this schema.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.

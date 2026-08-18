@@ -1,0 +1,213 @@
+{
+  "mappingVersion": 1,
+  "exportedAt": "2026-08-18T00:45:56.404Z",
+  "modelMode": "flat_requested",
+  "status": "ready_for_implementation",
+  "source": {
+    "database": "KitaronData229",
+    "schema": "dbo",
+    "view": "VQWorkPlanningForStationF4"
+  },
+  "fields": [
+    {
+      "targetEntity": "cases",
+      "targetField": "part_number",
+      "enabled": true,
+      "sourceColumn": "DetailNumber",
+      "confidence": "high",
+      "transform": "trim",
+      "notes": null
+    },
+    {
+      "targetEntity": "cases",
+      "targetField": "name",
+      "enabled": true,
+      "sourceColumn": "DetailName",
+      "confidence": "high",
+      "transform": "trim",
+      "notes": null
+    },
+    {
+      "targetEntity": "cases",
+      "targetField": "revision",
+      "enabled": true,
+      "sourceColumn": "REV",
+      "confidence": "high",
+      "transform": "trim_or_null",
+      "notes": null
+    },
+    {
+      "targetEntity": "cases",
+      "targetField": "customer",
+      "enabled": true,
+      "sourceColumn": "CompanyName",
+      "confidence": "medium",
+      "transform": "trim_or_null",
+      "notes": null
+    },
+    {
+      "targetEntity": "cases",
+      "targetField": "working_folder_path",
+      "enabled": true,
+      "sourceColumn": null,
+      "confidence": "medium",
+      "transform": "generated_working_folder",
+      "notes": null
+    },
+    {
+      "targetEntity": "orders",
+      "targetField": "order_reference",
+      "enabled": true,
+      "sourceColumn": "OrderNumber",
+      "confidence": "medium",
+      "transform": "trim",
+      "notes": null
+    },
+    {
+      "targetEntity": "orders",
+      "targetField": "quantity",
+      "enabled": true,
+      "sourceColumn": "OrdAmount",
+      "confidence": "medium",
+      "transform": "positive_integer",
+      "notes": null
+    },
+    {
+      "targetEntity": "orders",
+      "targetField": "work_finish_date",
+      "enabled": true,
+      "sourceColumn": "SupplyDate",
+      "confidence": "medium",
+      "transform": "date_only",
+      "notes": null
+    },
+    {
+      "targetEntity": "case_operations",
+      "targetField": "operation_number",
+      "enabled": true,
+      "sourceColumn": "ActionNumber",
+      "confidence": "medium",
+      "transform": "positive_int",
+      "notes": null
+    },
+    {
+      "targetEntity": "case_operations",
+      "targetField": "route_position",
+      "enabled": true,
+      "sourceColumn": "auto",
+      "confidence": "medium",
+      "transform": "ordered_position",
+      "notes": null
+    },
+    {
+      "targetEntity": "case_operations",
+      "targetField": "name",
+      "enabled": true,
+      "sourceColumn": "ActionDescription",
+      "confidence": "high",
+      "transform": "trim",
+      "notes": null
+    },
+    {
+      "targetEntity": "case_operations",
+      "targetField": "required_machine_type",
+      "enabled": false,
+      "sourceColumn": "Station",
+      "confidence": "low",
+      "transform": "manual_lookup",
+      "notes": null
+    },
+    {
+      "targetEntity": "case_operations",
+      "targetField": "setup_seconds",
+      "enabled": false,
+      "sourceColumn": "DirectionTimeP",
+      "confidence": "low",
+      "transform": "hours_to_seconds_pending",
+      "notes": null
+    },
+    {
+      "targetEntity": "case_operations",
+      "targetField": "cycle_seconds",
+      "enabled": false,
+      "sourceColumn": "TimeProductionP",
+      "confidence": "low",
+      "transform": "hours_to_seconds_pending",
+      "notes": null
+    },
+    {
+      "targetEntity": "production_batches",
+      "targetField": "batch_number",
+      "enabled": true,
+      "sourceColumn": "RootID",
+      "confidence": "high",
+      "transform": "trim",
+      "notes": null
+    },
+    {
+      "targetEntity": "production_batches",
+      "targetField": "planned_quantity",
+      "enabled": true,
+      "sourceColumn": "ProductionAmount",
+      "confidence": "high",
+      "transform": "positive_integer",
+      "notes": null
+    },
+    {
+      "targetEntity": "batch_operations",
+      "targetField": "operation_number",
+      "enabled": true,
+      "sourceColumn": "ActionNumber",
+      "confidence": "high",
+      "transform": "positive_int",
+      "notes": null
+    },
+    {
+      "targetEntity": "batch_operations",
+      "targetField": "route_position",
+      "enabled": true,
+      "sourceColumn": "auto",
+      "confidence": "high",
+      "transform": "ordered_position",
+      "notes": null
+    },
+    {
+      "targetEntity": "batch_operations",
+      "targetField": "name",
+      "enabled": true,
+      "sourceColumn": "ActionDescription",
+      "confidence": "high",
+      "transform": "trim",
+      "notes": null
+    },
+    {
+      "targetEntity": "batch_operations",
+      "targetField": "required_machine_type",
+      "enabled": false,
+      "sourceColumn": "Station",
+      "confidence": "low",
+      "transform": "manual_lookup",
+      "notes": null
+    },
+    {
+      "targetEntity": "batch_operations",
+      "targetField": "setup_seconds",
+      "enabled": false,
+      "sourceColumn": "DirectionTimeP",
+      "confidence": "low",
+      "transform": "hours_to_seconds_pending",
+      "notes": null
+    },
+    {
+      "targetEntity": "batch_operations",
+      "targetField": "cycle_seconds",
+      "enabled": false,
+      "sourceColumn": "TimeProductionP",
+      "confidence": "low",
+      "transform": "hours_to_seconds_pending",
+      "notes": null
+    }
+  ],
+  "notes": null,
+  "importEnabled": false
+}

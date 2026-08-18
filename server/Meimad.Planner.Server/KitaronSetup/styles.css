@@ -60,6 +60,9 @@ tr.inactive-mode { display:none; }
 .mapping-notes { min-width:260px; }
 .required-mark { color:#9d231b; font-weight:700; }
 .message { min-height:24px; margin:14px 2px; color:#9d231b; font-weight:600; }
+.sync-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.sync-grid div { display:flex; flex-direction:column; gap:5px; padding:12px; border:1px solid #d6dee6; background:#f7f9fb; }
+.sync-grid span { color:#33475b; line-height:1.4; }
 code { font-family:Consolas,monospace; }
-@media (max-width:1050px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .model-options { grid-template-columns:1fr; } }
+@media (max-width:1050px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .model-options { grid-template-columns:1fr; } .sync-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:680px) { .grid { grid-template-columns:1fr; } header,.section-heading { flex-direction:column; } .header-badges { justify-content:flex-start; } }

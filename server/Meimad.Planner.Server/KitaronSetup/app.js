@@ -5,6 +5,7 @@ const ids = ["serverHost", "serverPort", "databaseName", "viewSchema", "viewName
 const elements = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
 const statusBadge = document.getElementById("statusBadge");
 const mappingBadge = document.getElementById("mappingBadge");
+const syncBadge = document.getElementById("syncBadge");
 const message = document.getElementById("message");
 const testSummary = document.getElementById("testSummary");
 const testTime = document.getElementById("testTime");
@@ -24,7 +25,7 @@ let detectedColumns = [];
 const confidenceOptions = ["high", "medium", "low", "blocked"];
 const transformOptions = ["direct", "trim", "trim_or_null", "positive_integer", "positive_int",
   "date_only", "ordered_position", "manual_lookup", "generated_working_folder", "seconds",
-  "hours_to_seconds_pending", "unmapped"];
+  "minutes_to_seconds", "hours_to_seconds", "hours_to_seconds_pending", "unmapped"];
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -198,9 +199,11 @@ function updateMappingSummary() {
   const active = current.filter((_, index) => mappingFields[index].modelModes.includes(mode));
   const enabled = active.filter(field => field.enabled);
   const blocked = enabled.filter(field => field.confidence === "blocked").length;
-  const missing = enabled.filter(field => !field.sourceColumn && field.transform !== "generated_working_folder").length;
+  const missing = enabled.filter(field => !field.sourceColumn
+    && field.transform !== "generated_working_folder" && field.transform !== "ordered_position").length;
   const detected = new Set(detectedColumns.map(column => column.name.toLowerCase()));
-  const unknown = detected.size === 0 ? 0 : enabled.filter(field => field.sourceColumn && !detected.has(field.sourceColumn.toLowerCase())).length;
+  const unknown = detected.size === 0 ? 0 : enabled.filter(field => field.sourceColumn
+    && field.sourceColumn.toLowerCase() !== "auto" && !detected.has(field.sourceColumn.toLowerCase())).length;
   mappingSummary.textContent = `${mode.replaceAll("_", " ")}: ${enabled.length} enabled field(s), ${missing} missing source, ${blocked} blocked, ${unknown} not found in the last detected column set. ${detectedColumns.length} source column(s) are available.`;
 }
 
@@ -233,6 +236,22 @@ function showMapping(value) {
   renderMappings();
 }
 
+function showSync(value) {
+  const succeeded = value.status === "succeeded";
+  const failed = value.status === "failed" || value.status === "blocked";
+  syncBadge.textContent = `Sync: ${value.status.replaceAll("_", " ")}`;
+  syncBadge.className = `badge ${succeeded ? "success" : failed ? "failed" : "neutral"}`;
+  document.getElementById("syncMessage").textContent = value.message || "Never run.";
+  document.getElementById("syncRows").textContent = value.sourceRows;
+  document.getElementById("syncCases").textContent = `${value.casesCreated} created / ${value.casesUpdated} updated / ${value.casesMatched} matched`;
+  document.getElementById("syncOrders").textContent = `${value.ordersCreated} created / ${value.ordersUpdated} updated / ${value.ordersMatched} matched`;
+  document.getElementById("syncOperations").textContent = `${value.operationsCreated} created / ${value.operationsUpdated} updated / ${value.operationsMatched} matched`;
+  document.getElementById("syncWarnings").textContent = value.warningCount;
+  document.getElementById("syncTime").textContent = value.lastCompletedAt
+    ? `Completed ${new Date(value.lastCompletedAt).toLocaleString()} using mapping version ${value.mappingVersion}.`
+    : value.lastStartedAt ? `Started ${new Date(value.lastStartedAt).toLocaleString()}.` : "";
+}
+
 async function loadConnection() {
   showSettings(await request("/api/v1/kitaron/connection"));
 }
@@ -241,10 +260,14 @@ async function loadMapping() {
   showMapping(await request("/api/v1/kitaron/mapping"));
 }
 
+async function loadSync() {
+  showSync(await request("/api/v1/kitaron/sync"));
+}
+
 async function load() {
   setBusy(true);
   message.textContent = "";
-  try { await Promise.all([loadConnection(), loadMapping()]); }
+  try { await Promise.all([loadConnection(), loadMapping(), loadSync()]); }
   catch (error) { showMessage(error.message); }
   finally { setBusy(false); }
 }
@@ -333,7 +356,9 @@ document.getElementById("saveMappingButton").addEventListener("click", async () 
       })
     });
     showMapping(value);
-    showMessage("Mapping draft saved on the Server. Import remains disabled.", true);
+    showMessage(value.status === "ready_for_implementation"
+      ? "Mapping saved as Ready. Periodic one-way synchronization is enabled by the connection interval."
+      : "Mapping draft saved on the Server. Synchronization remains blocked until it is Ready.", true);
   } catch (error) { showMessage(error.message); }
   finally { setBusy(false); }
 });
@@ -351,7 +376,7 @@ document.getElementById("exportButton").addEventListener("click", () => {
     },
     fields: collectFields(),
     notes: mappingNotes.value.trim() || null,
-    importEnabled: false
+    syncEnabled: mappingStatus.value === "ready_for_implementation"
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
@@ -367,6 +392,19 @@ document.getElementById("reloadMappingButton").addEventListener("click", async (
   try { await loadMapping(); showMessage("Saved mapping reloaded.", true); }
   catch (error) { showMessage(error.message); }
   finally { setBusy(false); }
+});
+
+document.getElementById("syncNowButton").addEventListener("click", async () => {
+  setBusy(true);
+  showMessage("Running one-way Kitaron synchronization...");
+  try {
+    const value = await request("/api/v1/kitaron/sync", { method: "POST" });
+    showSync(value);
+    showMessage(value.message || "Synchronization completed.", value.status === "succeeded");
+  } catch (error) {
+    await loadSync().catch(() => {});
+    showMessage(error.message);
+  } finally { setBusy(false); }
 });
 
 load();

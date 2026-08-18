@@ -31,12 +31,13 @@ public sealed class KitaronConnectionApiTests
                 StringComparison.Ordinal);
             Assert.Contains("id=\"mappingRows\"", pageText, StringComparison.Ordinal);
             Assert.Contains("Domain aligned — recommended", pageText, StringComparison.Ordinal);
-            Assert.Contains("Import remains disabled", pageText, StringComparison.Ordinal);
+            Assert.Contains("One-way Server synchronization", pageText, StringComparison.Ordinal);
+            Assert.Contains("Synchronize now", pageText, StringComparison.Ordinal);
 
             using var script = await client.GetAsync("/kitaron-setup/app.js");
             var scriptText = await script.Content.ReadAsStringAsync();
             Assert.Contains("/api/v1/kitaron/mapping", scriptText, StringComparison.Ordinal);
-            Assert.DoesNotContain("/import", scriptText, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("/api/v1/kitaron/sync", scriptText, StringComparison.Ordinal);
 
             using var initial = await client.GetAsync("/api/v1/kitaron/connection");
             Assert.Equal(HttpStatusCode.OK, initial.StatusCode);
@@ -255,9 +256,94 @@ public sealed class KitaronConnectionApiTests
         Assert.DoesNotContain("DELETE", query, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Source_sync_query_is_read_only_and_quotes_only_selected_columns()
+    {
+        var query = SqlServerKitaronSourceReader.BuildQuery(
+            "dbo", "VQWorkPlanningForStationF4", ["DetailNumber", "OrderNumber"]);
+        Assert.Equal("SELECT [DetailNumber], [OrderNumber] FROM [dbo].[VQWorkPlanningForStationF4];", query);
+        Assert.DoesNotContain("INSERT", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DELETE", query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Ready_mapping_synchronizes_cases_orders_and_operations_idempotently_without_planning_data()
+    {
+        var reader = new CapturingSourceReader();
+        await RunAsync(new CompleteTester(), async (application, client) =>
+        {
+            using var saveConnection = await client.PutAsJsonAsync("/api/v1/kitaron/connection", new
+            {
+                serverHost = "192.168.0.240", serverPort = 1433, databaseName = "KitaronData229",
+                viewSchema = "dbo", viewName = "VQWorkPlanningForStationF4", username = "kit",
+                password = "sync-secret", clearPassword = false, enabled = true,
+                refreshIntervalSeconds = 3600, version = 1
+            });
+            Assert.Equal(HttpStatusCode.OK, saveConnection.StatusCode);
+            using var testConnection = await client.PostAsync("/api/v1/kitaron/connection/test", null);
+            Assert.Equal(HttpStatusCode.OK, testConnection.StatusCode);
+
+            using var mappingResponse = await client.GetAsync("/api/v1/kitaron/mapping");
+            using var mappingJson = JsonDocument.Parse(await mappingResponse.Content.ReadAsStringAsync());
+            var mapping = mappingJson.RootElement;
+            var fields = mapping.GetProperty("fields").EnumerateArray().Select(field => new
+            {
+                targetEntity = field.GetProperty("targetEntity").GetString(),
+                targetField = field.GetProperty("targetField").GetString(),
+                enabled = field.GetProperty("required").GetBoolean()
+                    || field.GetProperty("confidence").GetString() is not ("blocked" or "low"),
+                sourceColumn = field.GetProperty("targetField").GetString() == "route_position"
+                    ? "ActionNumber"
+                    : field.GetProperty("sourceColumn").ValueKind == JsonValueKind.Null
+                        ? null : field.GetProperty("sourceColumn").GetString(),
+                confidence = field.GetProperty("confidence").GetString() is "blocked" ? "low" : field.GetProperty("confidence").GetString(),
+                transform = field.GetProperty("transform").GetString(),
+                notes = (string?)null
+            }).ToArray();
+            using var ready = await client.PutAsJsonAsync("/api/v1/kitaron/mapping", new
+            {
+                modelMode = "domain_aligned", status = "ready_for_implementation", fields,
+                notes = "Automated sync integration test.", version = mapping.GetProperty("version").GetInt32()
+            });
+            Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+
+            using var first = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+            using var firstJson = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+            Assert.Equal("succeeded", firstJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(1, firstJson.RootElement.GetProperty("casesCreated").GetInt32());
+            Assert.Equal(1, firstJson.RootElement.GetProperty("ordersCreated").GetInt32());
+            Assert.Equal(2, firstJson.RootElement.GetProperty("operationsCreated").GetInt32());
+
+            using var second = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var secondJson = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+            Assert.Equal(0, secondJson.RootElement.GetProperty("casesCreated").GetInt32());
+            Assert.Equal(1, secondJson.RootElement.GetProperty("casesMatched").GetInt32());
+            Assert.Equal(1, secondJson.RootElement.GetProperty("ordersMatched").GetInt32());
+            Assert.Equal(2, secondJson.RootElement.GetProperty("operationsMatched").GetInt32());
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT (SELECT COUNT(*) FROM cases), (SELECT COUNT(*) FROM orders),
+                    (SELECT COUNT(*) FROM case_operations), (SELECT COUNT(*) FROM production_batches),
+                    (SELECT COUNT(*) FROM machine_assignments), (SELECT COUNT(*) FROM kitaron_sync_links);
+                """;
+            await using var counts = await command.ExecuteReaderAsync();
+            Assert.True(await counts.ReadAsync());
+            Assert.Equal(1, counts.GetInt32(0)); Assert.Equal(1, counts.GetInt32(1));
+            Assert.Equal(2, counts.GetInt32(2)); Assert.Equal(0, counts.GetInt32(3));
+            Assert.Equal(0, counts.GetInt32(4)); Assert.Equal(4, counts.GetInt32(5));
+        }, reader);
+        Assert.Equal(2, reader.ReadCount);
+    }
+
     private static async Task RunAsync(
         IKitaronConnectionTester tester,
-        Func<WebApplication, HttpClient, Task> test)
+        Func<WebApplication, HttpClient, Task> test,
+        IKitaronSourceReader? sourceReader = null)
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "MeimadPlanner.Kitaron.Tests", Guid.NewGuid().ToString("N"));
@@ -275,6 +361,11 @@ public sealed class KitaronConnectionApiTests
                 {
                     services.RemoveAll<IKitaronConnectionTester>();
                     services.AddSingleton(tester);
+                    if (sourceReader is not null)
+                    {
+                        services.RemoveAll<IKitaronSourceReader>();
+                        services.AddSingleton(sourceReader);
+                    }
                     services.RemoveAll<IDataProtectionProvider>();
                     services.AddSingleton<IDataProtectionProvider>(
                         new EphemeralDataProtectionProvider());
@@ -293,6 +384,44 @@ public sealed class KitaronConnectionApiTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private sealed class CompleteTester : IKitaronConnectionTester
+    {
+        public Task<IReadOnlyList<KitaronSourceColumn>> TestAsync(
+            StoredKitaronConnectionSettings settings, string password, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<KitaronSourceColumn>>([
+                new("DetailNumber", "nvarchar"), new("DetailName", "nvarchar"), new("REV", "nvarchar"),
+                new("CompanyName", "nvarchar"), new("OrderNumber", "nvarchar"), new("OrdAmount", "int"),
+                new("SupplyDate", "date"), new("ActionNumber", "int"), new("ActionDescription", "nvarchar"),
+                new("Station", "nvarchar"), new("DirectionTimeP", "decimal"), new("TimeProductionP", "decimal"),
+                new("RootID", "nvarchar"), new("ProductionAmount", "int")]);
+    }
+
+    private sealed class CapturingSourceReader : IKitaronSourceReader
+    {
+        internal int ReadCount { get; private set; }
+        public Task<IReadOnlyList<KitaronSourceRow>> ReadAsync(
+            StoredKitaronConnectionSettings settings, string password, IReadOnlyList<string> columns,
+            CancellationToken cancellationToken)
+        {
+            ReadCount++;
+            Assert.Equal("sync-secret", password);
+            Assert.Contains("DetailNumber", columns);
+            return Task.FromResult<IReadOnlyList<KitaronSourceRow>>([
+                Row(10, "Cut", 1), Row(20, "Finish", 2)
+            ]);
+        }
+
+        private static KitaronSourceRow Row(int operation, string name, int position) => new(
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["DetailNumber"] = "PART-100", ["DetailName"] = "Test Part", ["REV"] = "A",
+                ["CompanyName"] = "Customer", ["OrderNumber"] = "SO-100", ["OrdAmount"] = 12,
+                ["SupplyDate"] = new DateTime(2026, 9, 1), ["ActionNumber"] = operation,
+                ["ActionDescription"] = name, ["Station"] = "MILL", ["RootID"] = "WO-100",
+                ["ProductionAmount"] = 12
+            });
     }
 
     private sealed class CapturingTester : IKitaronConnectionTester
