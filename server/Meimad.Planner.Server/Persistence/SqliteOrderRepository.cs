@@ -123,6 +123,24 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
 
+        await using (var derivedGuard = connection.CreateCommand())
+        {
+            derivedGuard.Transaction = transaction;
+            derivedGuard.CommandText = """
+                SELECT quantity, status,
+                       EXISTS(SELECT 1 FROM batch_allocations
+                              WHERE allocation_type='derived_order'
+                                AND instr(derived_order_key, 'derived:' || orders.id || ':')=1)
+                FROM orders WHERE id=$id;
+                """;
+            derivedGuard.Parameters.AddWithValue("$id", order.OrderId);
+            await using var reader = await derivedGuard.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken) && reader.GetBoolean(2)
+                && (reader.GetInt32(0) != order.Quantity
+                    || order.Status == OrderStatus.Cancelled && reader.GetString(1) != "cancelled"))
+                throw new OrderDerivedAllocationLockedException(order.OrderId);
+        }
+
         var productionFacts = await SqliteOrderLifecycle.ReadFactsAsync(
             connection, transaction, order.OrderId, order.Quantity, cancellationToken);
         if (productionFacts.AllocatedQuantity > order.Quantity)

@@ -353,6 +353,11 @@ internal sealed class SqliteKitaronSyncRepository(
     {
         if (parentCaseId == childCaseId)
             throw new KitaronSyncDataException($"Kitaron component {item.SourceKey} contains itself.");
+        if (await ScalarIntAsync(connection, transaction,
+                "SELECT COUNT(*) FROM case_operations WHERE case_id=$caseId;",
+                "$caseId", parentCaseId, cancellationToken) > 0)
+            throw new KitaronSyncDataException(
+                $"Kitaron parent Case {item.ParentCaseSourceKey} still has direct Operations. Remove or migrate that route before activating its Components.");
 
         var link = await ReadLinkAsync(connection, transaction, "case_component", item.SourceKey, cancellationToken);
         if (link is null)

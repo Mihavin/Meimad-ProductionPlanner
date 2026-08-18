@@ -241,7 +241,8 @@ internal static class DerivedOrderKeys
     internal static string Create(string orderId, string childCaseId, IEnumerable<string> componentIds)
     {
         var source = $"{orderId}|{childCaseId}|{string.Join('|', componentIds)}";
-        return $"derived:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant()}";
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
+        return $"derived:{orderId}:{digest}";
     }
 }
 

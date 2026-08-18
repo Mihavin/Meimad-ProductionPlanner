@@ -133,6 +133,12 @@ internal sealed class OrderQuantityBelowAllocatedException : Exception
     }
 }
 
+internal sealed class OrderDerivedAllocationLockedException : Exception
+{
+    internal OrderDerivedAllocationLockedException(string orderId)
+        : base($"Order '{orderId}' quantity or cancellation cannot change while child Batches consume its derived demand.") { }
+}
+
 internal sealed class OrderDerivedStatusException : Exception
 {
     internal OrderDerivedStatusException(string orderId, OrderStatus expected)

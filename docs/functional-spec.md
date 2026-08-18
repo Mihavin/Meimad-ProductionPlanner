@@ -77,6 +77,9 @@ Authentication, authorization roles, and audit requirements for people are not d
 - A Case is not an Order and has no production quantity by itself.
 - A Case contains Part Number, Name, Revision, Customer, Customer Reference, optional Preview path, Case Working Folder path, material type/specification, raw-material form/dimensions, notes, and a route of Case Operations. Its current setup and cycle totals are read-only derived summaries of that route.
 - A Case may exist without any Orders.
+- All Cases share one pool. Active component edges derive the roles standalone, parent, child, or both; role does not move a Case into another list.
+- A parent owns its Case form, Components, and direct Orders. It has no direct Case Operations; the Windows workspace replaces its Operations tab with Components.
+- A child shows parent-derived Orders read-only. Each projection multiplies source Order quantity across its component path and can be consumed by an explicitly allocated Production Batch owned by the child Case.
 - The Case Working Folder is external. The database stores path strings only and no file bytes; an unavailable external path does not invalidate an existing Case. Original engineering files must never be modified.
 - Generated previews or cache files may be placed only under `_MeimadPlanner` within the Case folder.
 - Each Case Operation owns its current working setup and cycle values. The Case summary adds all operation setup values and all operation cycle-per-part values separately, treating a missing operation value as zero; an empty route therefore exposes zero for both totals. These sums are descriptive route totals, not authoritative elapsed Timeline duration. Parallel-capable and Locked-simultaneous timing continues to follow dependency semantics rather than a simple sum.

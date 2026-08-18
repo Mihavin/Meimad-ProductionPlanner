@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Meimad.Planner.Server.Tests.Reports;
 
@@ -107,6 +108,10 @@ public sealed class WeeklyMaterialReportApiTests
                 webHost.UseTestServer();
                 webHost.ConfigureServices(services =>
                 {
+                    var scheduler = services.FirstOrDefault(descriptor =>
+                        descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType == typeof(WeeklyMaterialReportScheduler));
+                    if (scheduler is not null) services.Remove(scheduler);
                     services.RemoveAll<TimeProvider>();
                     services.AddSingleton(timeProvider);
                     services.RemoveAll<IMaterialReportEmailSender>();

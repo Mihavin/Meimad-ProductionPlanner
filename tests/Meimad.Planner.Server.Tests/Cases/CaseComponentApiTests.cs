@@ -12,6 +12,81 @@ namespace Meimad.Planner.Server.Tests.Cases;
 public sealed class CaseComponentApiTests
 {
     [Fact]
+    public async Task Unified_pool_projects_child_orders_and_creates_child_batch_without_duplicate_order()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "component-test-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+
+            using var route = await client.PostAsJsonAsync("/api/v1/cases/case-b/operations", new
+            {
+                operationNumber = 10, name = "Machine child", dependencyType = "INDEPENDENT"
+            });
+            Assert.Equal(HttpStatusCode.Created, route.StatusCode);
+            using var component = await client.PostAsJsonAsync("/api/v1/cases/case-a/components", new
+            {
+                childCaseId = "case-b", quantityPerParent = 2
+            });
+            Assert.Equal(HttpStatusCode.Created, component.StatusCode);
+
+            using var search = await client.GetAsync("/api/v1/cases?search=PN");
+            using (var json = JsonDocument.Parse(await search.Content.ReadAsStringAsync()))
+            {
+                var items = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+                Assert.Contains(items, item => item.GetProperty("partNumber").GetString() == "PN-A"
+                    && item.GetProperty("isParent").GetBoolean());
+                Assert.Contains(items, item => item.GetProperty("partNumber").GetString() == "PN-B"
+                    && item.GetProperty("isChild").GetBoolean());
+            }
+
+            using var forbidden = await client.PostAsJsonAsync("/api/v1/cases/case-a/operations", new
+            {
+                operationNumber = 10, name = "Illegal parent route", dependencyType = "INDEPENDENT"
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, forbidden.StatusCode);
+
+            string derivedKey;
+            using var derived = await client.GetAsync("/api/v1/cases/case-b/derived-orders");
+            using (var json = JsonDocument.Parse(await derived.Content.ReadAsStringAsync()))
+            {
+                var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+                derivedKey = item.GetProperty("derivedOrderKey").GetString()!;
+                Assert.Equal("SO-A", item.GetProperty("sourceOrderNumber").GetString());
+                Assert.Equal(20, item.GetProperty("derivedQuantity").GetDouble());
+                Assert.Equal(20, item.GetProperty("remainingQuantity").GetDouble());
+            }
+
+            using var directChildOrders = await client.GetAsync("/api/v1/orders?caseId=case-b");
+            using (var json = JsonDocument.Parse(await directChildOrders.Content.ReadAsStringAsync()))
+                Assert.Empty(json.RootElement.GetProperty("items").EnumerateArray());
+
+            using var batch = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId = "case-b", batchNumber = "B-CHILD-1", status = "waiting", plannedQuantity = 20,
+                allocations = new[] { new { allocationType = "derivedOrder", orderId = (string?)null, quantity = 20, derivedOrderKey = derivedKey } }
+            });
+            Assert.Equal(HttpStatusCode.Created, batch.StatusCode);
+            using (var json = JsonDocument.Parse(await batch.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal("case-b", json.RootElement.GetProperty("caseId").GetString());
+                var allocation = Assert.Single(json.RootElement.GetProperty("allocations").EnumerateArray());
+                Assert.Equal("derivedOrder", allocation.GetProperty("allocationType").GetString());
+                Assert.Equal(derivedKey, allocation.GetProperty("derivedOrderKey").GetString());
+            }
+
+            using var after = await client.GetAsync("/api/v1/cases/case-b/derived-orders");
+            using (var json = JsonDocument.Parse(await after.Content.ReadAsStringAsync()))
+                Assert.Equal(0, Assert.Single(json.RootElement.GetProperty("items").EnumerateArray())
+                    .GetProperty("remainingQuantity").GetDouble());
+
+            using var deleteSource = await client.DeleteAsync("/api/v1/orders/order-a");
+            Assert.Equal(HttpStatusCode.Conflict, deleteSource.StatusCode);
+        });
+    }
+
+    [Fact]
     public async Task Components_prevent_cycles_explode_demand_and_never_create_child_orders()
     {
         await RunAsync(async (application, client) =>

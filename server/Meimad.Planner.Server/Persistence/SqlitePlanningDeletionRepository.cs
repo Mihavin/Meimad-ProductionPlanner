@@ -48,6 +48,9 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         {
             if (!await ExistsAsync(c, t, "orders", id, token)) return false;
             await BlockIfAnyAsync(c, t, "batch_allocations", "order_id", id, "The Order is allocated to a Production Batch.", token);
+            await BlockBySqlAsync(c, t,
+                "SELECT EXISTS(SELECT 1 FROM batch_allocations WHERE allocation_type='derived_order' AND instr(derived_order_key, 'derived:' || $id || ':')=1);",
+                id, "The Order supplies derived demand to a child Production Batch.", token);
             return await DeleteRowAsync(c, t, "orders", id, token);
         }, token);
 

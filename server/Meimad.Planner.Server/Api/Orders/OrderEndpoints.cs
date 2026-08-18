@@ -192,6 +192,10 @@ internal static class OrderEndpoints
                 exception.Message,
                 httpContext);
         }
+        catch (OrderDerivedAllocationLockedException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "derived_order_allocated", exception.Message, httpContext);
+        }
         catch (OrderDerivedStatusException exception)
         {
             return Error(
