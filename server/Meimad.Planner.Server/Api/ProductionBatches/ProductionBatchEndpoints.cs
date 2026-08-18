@@ -142,6 +142,10 @@ internal static class ProductionBatchEndpoints
                 exception.Message,
                 httpContext);
         }
+        catch (ProductionBatchChildCaseRequiredException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "child_case_required", exception.Message, httpContext);
+        }
         catch (EditModeMutationException exception)
         {
             return Error(

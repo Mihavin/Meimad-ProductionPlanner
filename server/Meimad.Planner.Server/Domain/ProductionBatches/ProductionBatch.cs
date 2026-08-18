@@ -21,7 +21,8 @@ internal sealed record BatchAllocation(
     int Quantity,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? DerivedOrderKey = null);
 
 internal sealed record BatchOperation(
     string BatchOperationId,

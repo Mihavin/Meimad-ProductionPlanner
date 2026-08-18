@@ -254,3 +254,9 @@ internal sealed class CaseOperationVersionConflictException : Exception
     {
     }
 }
+
+internal sealed class CaseParentOperationsNotAllowedException : Exception
+{
+    internal CaseParentOperationsNotAllowedException()
+        : base("Parent Cases use Components and cannot have direct Operations.") { }
+}

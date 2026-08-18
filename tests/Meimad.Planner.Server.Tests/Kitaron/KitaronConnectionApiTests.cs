@@ -268,6 +268,20 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
+    public void Canonical_order_query_reads_cancelled_rows_without_mutating_kitaron()
+    {
+        var query = SqlServerKitaronSourceReader.BuildOrderQuery(
+            "dbo", "VQWorkPlanningForStationF4");
+
+        Assert.Contains("so.StopProduction", query, StringComparison.Ordinal);
+        Assert.Contains("WHERE StopProduction = 1", query, StringComparison.Ordinal);
+        Assert.Contains("so.RecordID", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DELETE", query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Ready_mapping_synchronizes_cases_orders_and_operations_idempotently_without_planning_data()
     {
         var reader = new CapturingSourceReader();
@@ -312,17 +326,30 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(HttpStatusCode.OK, first.StatusCode);
             using var firstJson = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
             Assert.Equal("succeeded", firstJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal(1, firstJson.RootElement.GetProperty("casesCreated").GetInt32());
+            Assert.Equal(2, firstJson.RootElement.GetProperty("casesCreated").GetInt32());
             Assert.Equal(1, firstJson.RootElement.GetProperty("ordersCreated").GetInt32());
-            Assert.Equal(2, firstJson.RootElement.GetProperty("operationsCreated").GetInt32());
+            Assert.Equal(0, firstJson.RootElement.GetProperty("operationsCreated").GetInt32());
+            Assert.Equal(1, firstJson.RootElement.GetProperty("componentsCreated").GetInt32());
 
             using var second = await client.PostAsync("/api/v1/kitaron/sync", null);
             using var secondJson = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
             Assert.Equal(0, secondJson.RootElement.GetProperty("casesCreated").GetInt32());
-            Assert.Equal(1, secondJson.RootElement.GetProperty("casesMatched").GetInt32());
+            Assert.Equal(2, secondJson.RootElement.GetProperty("casesMatched").GetInt32());
             Assert.Equal(1, secondJson.RootElement.GetProperty("ordersMatched").GetInt32());
-            Assert.Equal(2, secondJson.RootElement.GetProperty("operationsMatched").GetInt32());
+            Assert.Equal(0, secondJson.RootElement.GetProperty("operationsMatched").GetInt32());
             Assert.Equal(0, secondJson.RootElement.GetProperty("operationsUpdated").GetInt32());
+            Assert.Equal(1, secondJson.RootElement.GetProperty("componentsMatched").GetInt32());
+
+            reader.StopProduction = true;
+            using var cancelled = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var cancelledJson = JsonDocument.Parse(await cancelled.Content.ReadAsStringAsync());
+            Assert.Equal("succeeded", cancelledJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(1, cancelledJson.RootElement.GetProperty("ordersUpdated").GetInt32());
+
+            reader.IncludeComponent = false;
+            using var removedComponent = await client.PostAsync("/api/v1/kitaron/sync", null);
+            using var removedComponentJson = JsonDocument.Parse(await removedComponent.Content.ReadAsStringAsync());
+            Assert.Equal(1, removedComponentJson.RootElement.GetProperty("componentsUpdated").GetInt32());
 
             var database = application.Services.GetRequiredService<SqliteDatabase>();
             await using var connection = await database.OpenConnectionAsync();
@@ -330,15 +357,18 @@ public sealed class KitaronConnectionApiTests
             command.CommandText = """
                 SELECT (SELECT COUNT(*) FROM cases), (SELECT COUNT(*) FROM orders),
                     (SELECT COUNT(*) FROM case_operations), (SELECT COUNT(*) FROM production_batches),
-                    (SELECT COUNT(*) FROM machine_assignments), (SELECT COUNT(*) FROM kitaron_sync_links);
+                    (SELECT COUNT(*) FROM machine_assignments), (SELECT COUNT(*) FROM kitaron_sync_links),
+                    (SELECT COUNT(*) FROM case_components WHERE is_active=1),
+                    (SELECT status FROM orders LIMIT 1);
                 """;
             await using var counts = await command.ExecuteReaderAsync();
             Assert.True(await counts.ReadAsync());
-            Assert.Equal(1, counts.GetInt32(0)); Assert.Equal(1, counts.GetInt32(1));
+            Assert.Equal(2, counts.GetInt32(0)); Assert.Equal(1, counts.GetInt32(1));
             Assert.Equal(2, counts.GetInt32(2)); Assert.Equal(0, counts.GetInt32(3));
-            Assert.Equal(0, counts.GetInt32(4)); Assert.Equal(4, counts.GetInt32(5));
+            Assert.Equal(0, counts.GetInt32(4)); Assert.Equal(6, counts.GetInt32(5));
+            Assert.Equal(0, counts.GetInt32(6)); Assert.Equal("cancelled", counts.GetString(7));
         }, reader);
-        Assert.Equal(2, reader.ReadCount);
+        Assert.Equal(4, reader.ReadCount);
     }
 
     private static async Task RunAsync(
@@ -396,13 +426,15 @@ public sealed class KitaronConnectionApiTests
                 new("CompanyName", "nvarchar"), new("OrderNumber", "nvarchar"), new("OrdAmount", "int"),
                 new("SupplyDate", "date"), new("ActionNumber", "int"), new("ActionDescription", "nvarchar"),
                 new("Station", "nvarchar"), new("DirectionTimeP", "decimal"), new("TimeProductionP", "decimal"),
-                new("RootID", "nvarchar"), new("ProductionAmount", "int")]);
+                new("RootID", "nvarchar"), new("ProductionAmount", "int"), new("RecordID", "int")]);
     }
 
     private sealed class CapturingSourceReader : IKitaronSourceReader
     {
         internal int ReadCount { get; private set; }
-        public Task<IReadOnlyList<KitaronSourceRow>> ReadAsync(
+        internal bool StopProduction { get; set; }
+        internal bool IncludeComponent { get; set; } = true;
+        public Task<KitaronSourceSnapshot> ReadAsync(
             StoredKitaronConnectionSettings settings, string password, IReadOnlyList<string> columns,
             CancellationToken cancellationToken)
         {
@@ -414,7 +446,17 @@ public sealed class KitaronConnectionApiTests
                 Row(10, "Alternate description", 1), Row(20, "Finish", 2)
             ];
             if (ReadCount % 2 == 0) Array.Reverse(rows);
-            return Task.FromResult<IReadOnlyList<KitaronSourceRow>>(rows);
+            IReadOnlyList<KitaronSourceComponent> components = IncludeComponent
+                ? [new KitaronSourceComponent(
+                    "100:200", "PART-100", "Test Part", "A",
+                    "SUB-200", "Sub Case", "B", 2.5, 0)]
+                : [];
+            return Task.FromResult(new KitaronSourceSnapshot(
+                rows,
+                [new KitaronSourceOrder(
+                    "9001", "PART-100", "Test Part", "A", "SO-100", 12,
+                    new DateTime(2026, 9, 1), StopProduction)],
+                components));
         }
 
         private static KitaronSourceRow Row(int operation, string name, int position) => new(

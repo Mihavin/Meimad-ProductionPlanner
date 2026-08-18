@@ -64,6 +64,12 @@ internal sealed class KitaronSyncService
                     throw new KitaronSyncBlockedException("Run a successful read-only connection test first.");
                 if (string.IsNullOrWhiteSpace(connection.ProtectedPassword))
                     throw new KitaronSyncBlockedException("No Kitaron password is configured.");
+                if (!mapping.DetectedColumns.Any(column =>
+                        StringComparer.OrdinalIgnoreCase.Equals(column.Name, "RecordID")))
+                {
+                    throw new KitaronSyncBlockedException(
+                        "The configured planning view must expose RecordID for canonical Kitaron order synchronization.");
+                }
 
                 string password;
                 try { password = passwordProtector.Unprotect(connection.ProtectedPassword); }
@@ -85,8 +91,8 @@ internal sealed class KitaronSyncService
                     .Select(field => field.SourceColumn!)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-                var rows = await sourceReader.ReadAsync(connection, password, columns, cancellationToken);
-                var plan = BuildPlan(rows, active, mapping.Version);
+                var snapshot = await sourceReader.ReadAsync(connection, password, columns, cancellationToken);
+                var plan = BuildPlan(snapshot, active, mapping.Version);
                 return await syncRepository.ApplyAsync(plan, timeProvider.GetUtcNow(), cancellationToken);
             }
             catch (KitaronSyncBlockedException exception)
@@ -105,7 +111,7 @@ internal sealed class KitaronSyncService
     }
 
     private KitaronSyncPlan BuildPlan(
-        IReadOnlyList<KitaronSourceRow> rows,
+        KitaronSourceSnapshot snapshot,
         IReadOnlyList<KitaronMappingField> fields,
         int mappingVersion)
     {
@@ -116,8 +122,8 @@ internal sealed class KitaronSyncService
             ?? throw new KitaronSyncBlockedException($"The ready mapping is missing {entity}.{field}.");
 
         var warnings = new List<string>();
-        var parsed = new List<ParsedRow>(rows.Count);
-        foreach (var row in rows)
+        var parsed = new List<ParsedRow>(snapshot.WorkRows.Count);
+        foreach (var row in snapshot.WorkRows)
         {
             var part = Text(row, Field("cases", "part_number"));
             if (part is null) { AddWarning(warnings, "A source row without a Part Number was skipped."); continue; }
@@ -137,8 +143,37 @@ internal sealed class KitaronSyncService
                 OptionalSeconds(row, byTarget, "case_operations.cycle_seconds")));
         }
 
+        var reachableParts = parsed.Select(row => row.Part)
+            .Concat(snapshot.Orders.Select(order => order.PartNumber))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var componentsByParent = snapshot.Components
+            .GroupBy(item => item.ParentPartNumber, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+        var selectedComponents = new List<KitaronSourceComponent>();
+        var pendingParts = new Queue<string>(reachableParts);
+        var expandedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (pendingParts.TryDequeue(out var parentPart))
+        {
+            if (!expandedParts.Add(parentPart) || !componentsByParent.TryGetValue(parentPart, out var children))
+                continue;
+            foreach (var component in children)
+            {
+                selectedComponents.Add(component);
+                if (reachableParts.Add(component.ChildPartNumber)) pendingParts.Enqueue(component.ChildPartNumber);
+            }
+        }
+
+        var caseCandidates = parsed.Select(row => new CaseCandidate(
+                row.Part, row.Name, row.Revision, row.Customer))
+            .Concat(snapshot.Orders.Select(order => new CaseCandidate(
+                order.PartNumber, order.Name, order.Revision, null)))
+            .Concat(selectedComponents.SelectMany(component => new[]
+            {
+                new CaseCandidate(component.ParentPartNumber, component.ParentName, component.ParentRevision, null),
+                new CaseCandidate(component.ChildPartNumber, component.ChildName, component.ChildRevision, null)
+            }));
         Directory.CreateDirectory(workingFolderRoot);
-        var cases = parsed.GroupBy(row => row.Part, StringComparer.OrdinalIgnoreCase)
+        var cases = caseCandidates.GroupBy(row => row.Part, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
                 var name = ChooseText(group.Select(item => item.Name)) ?? group.Key;
@@ -149,25 +184,48 @@ internal sealed class KitaronSyncService
                     Hash(group.Key, name, revision, customer, folder));
             }).OrderBy(item => item.PartNumber, StringComparer.OrdinalIgnoreCase).ToArray();
 
-        var orders = parsed.Where(row => row.OrderNumber is not null)
-            .GroupBy(row => $"{row.Part}\u001f{row.OrderNumber}", StringComparer.OrdinalIgnoreCase)
+        var orders = snapshot.Orders
+            .GroupBy(row => row.SourceKey, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
-                var valid = group.Where(row => row.Quantity > 0 && row.WorkFinishDate is not null).ToArray();
+                var valid = group.Where(row => row.Quantity is > 0
+                    && row.WorkFinishDate is not null
+                    && double.IsFinite(row.Quantity.Value)
+                    && row.Quantity.Value <= int.MaxValue
+                    && Math.Truncate(row.Quantity.Value) == row.Quantity.Value).ToArray();
                 if (valid.Length == 0)
                 {
                     AddWarning(warnings, $"Order {group.First().OrderNumber} was skipped because quantity or finish date is invalid.");
                     return null;
                 }
                 var first = valid[0];
-                var quantity = valid.Max(row => row.Quantity!.Value);
-                var date = valid.Min(row => row.WorkFinishDate!.Value);
-                return new KitaronSyncOrder(group.Key, first.Part, first.OrderNumber!, quantity, date,
-                    Hash(group.Key, quantity, date));
+                var quantity = (int)valid.Max(row => row.Quantity!.Value);
+                var date = DateOnly.FromDateTime(valid.Min(row => row.WorkFinishDate!.Value));
+                var status = valid.Any(row => row.StopProduction) ? "cancelled" : "active";
+                return new KitaronSyncOrder(group.Key, first.PartNumber, first.OrderNumber, quantity, date, status,
+                    Hash(group.Key, quantity, date, status));
             }).Where(item => item is not null).Cast<KitaronSyncOrder>()
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
-        var rawOperations = parsed.Where(row => row.OperationNumber > 0)
+        var components = selectedComponents
+            .Where(item => item.QuantityPerParent > 0 && double.IsFinite(item.QuantityPerParent))
+            .GroupBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(item => item.SortOrder).First())
+            .Select(item => new KitaronSyncComponent(
+                item.SourceKey, item.ParentPartNumber, item.ChildPartNumber,
+                item.QuantityPerParent, item.SortOrder,
+                Hash(item.SourceKey, item.ParentPartNumber, item.ChildPartNumber,
+                    item.QuantityPerParent, item.SortOrder)))
+            .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var parentParts = selectedComponents.Select(component => component.ParentPartNumber)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var parentPart in parsed.Where(row => row.OperationNumber > 0)
+                     .Select(row => row.Part).Where(parentParts.Contains)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+            AddWarning(warnings, $"{parentPart} is a parent Case; its direct Kitaron Operations were skipped.");
+        var rawOperations = parsed.Where(row => row.OperationNumber > 0 && !parentParts.Contains(row.Part))
             .GroupBy(row => $"{row.Part}\u001f{row.OperationNumber}", StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
@@ -188,7 +246,11 @@ internal sealed class KitaronSyncService
                     Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds))))
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
-        return new KitaronSyncPlan(rows.Count, cases, orders, operations, warnings, mappingVersion);
+        return new KitaronSyncPlan(
+            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count,
+            cases, orders, operations, components,
+            snapshot.Components.Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
+            warnings, mappingVersion);
     }
 
     private static string? OptionalText(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields,
@@ -298,6 +360,8 @@ internal sealed class KitaronSyncService
     private sealed record ParsedRow(string Part, string Name, string? Revision, string? Customer,
         string? OrderNumber, int? Quantity, DateOnly? WorkFinishDate, int? OperationNumber,
         int? RoutePosition, string? OperationName, string? RequiredMachineType, int? SetupSeconds, int? CycleSeconds);
+
+    private sealed record CaseCandidate(string Part, string Name, string? Revision, string? Customer);
 
     private sealed record RawOperation(string SourceKey, string CaseSourceKey, int OperationNumber,
         int SourcePosition, string Name, string? RequiredMachineType, int? SetupSeconds, int? CycleSeconds);

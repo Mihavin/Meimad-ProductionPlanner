@@ -36,12 +36,14 @@ internal sealed record UpdateProductionBatchRequest(
 internal sealed record CreateBatchAllocationRequest(
     string? AllocationType,
     string? OrderId,
-    int Quantity)
+    int Quantity,
+    string? DerivedOrderKey = null)
 {
     internal CreateBatchAllocationCommand ToCommand() => new(
         AllocationType,
         OrderId,
-        Quantity);
+        Quantity,
+        DerivedOrderKey);
 }
 
 internal sealed record ProductionBatchResponse(
@@ -79,13 +81,15 @@ internal sealed record BatchAllocationResponse(
     string AllocationId,
     string AllocationType,
     string? OrderId,
-    int Quantity)
+    int Quantity,
+    string? DerivedOrderKey)
 {
     internal static BatchAllocationResponse FromDomain(BatchAllocation allocation) => new(
         allocation.AllocationId,
         allocation.AllocationType.ToContractToken(),
         allocation.OrderId,
-        allocation.Quantity);
+        allocation.Quantity,
+        allocation.DerivedOrderKey);
 }
 
 internal sealed record BatchOperationResponse(

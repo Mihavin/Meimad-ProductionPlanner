@@ -398,6 +398,8 @@ internal sealed record CaseResponse(
     int? CurrentCycleTimePerPartSeconds,
     string? Notes,
     bool IsActive,
+    bool IsParent,
+    bool IsChild,
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
@@ -419,6 +421,8 @@ internal sealed record CaseResponse(
         plannerCase.CurrentCycleTimePerPartSeconds,
         plannerCase.Notes,
         plannerCase.IsActive,
+        plannerCase.IsParent,
+        plannerCase.IsChild,
         plannerCase.Version,
         plannerCase.CreatedAt,
         plannerCase.UpdatedAt);
@@ -485,6 +489,50 @@ internal sealed record CaseOperationResponse(
 
 internal sealed record CaseOperationListResponse(
     IReadOnlyList<CaseOperationResponse> Items,
+    string? NextCursor);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record CreateCaseComponentRequest(
+    string? ChildCaseId,
+    double QuantityPerParent,
+    int SortOrder = 0,
+    string? Notes = null);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record UpdateCaseComponentRequest(
+    double QuantityPerParent,
+    int SortOrder,
+    string? Notes,
+    bool IsActive);
+
+internal sealed record CaseComponentResponse(
+    string CaseComponentId,
+    string ParentCaseId,
+    string ParentPartNumber,
+    string ParentCaseName,
+    string ChildCaseId,
+    string ChildPartNumber,
+    string ChildCaseName,
+    double QuantityPerParent,
+    int SortOrder,
+    string? Notes,
+    bool IsActive,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    internal static CaseComponentResponse FromApplication(CaseComponentDetails item) => new(
+        item.CaseComponentId, item.ParentCaseId, item.ParentPartNumber, item.ParentCaseName,
+        item.ChildCaseId, item.ChildPartNumber, item.ChildCaseName, item.QuantityPerParent,
+        item.SortOrder, item.Notes, item.IsActive, item.Version, item.CreatedAt, item.UpdatedAt);
+}
+
+internal sealed record CaseComponentListResponse(
+    IReadOnlyList<CaseComponentResponse> Items,
+    string? NextCursor);
+
+internal sealed record DerivedCaseOrderListResponse(
+    IReadOnlyList<DerivedCaseOrder> Items,
     string? NextCursor);
 
 internal sealed record CaseRequestIssue(string Field, string Code, string Message);

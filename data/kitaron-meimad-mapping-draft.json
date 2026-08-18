@@ -1,12 +1,16 @@
 {
-  "mappingVersion": 1,
-  "exportedAt": "2026-08-18T00:45:56.404Z",
+  "mappingVersion": 2,
+  "exportedAt": "2026-08-18T12:00:00.000Z",
   "modelMode": "flat_requested",
   "status": "ready_for_implementation",
   "source": {
     "database": "KitaronData229",
     "schema": "dbo",
     "view": "VQWorkPlanningForStationF4"
+  },
+  "canonicalSources": {
+    "orders": "dbo.TSubOrder joined to dbo.TOrder and dbo.TDetails by planning-view RecordID; StopProduction=1 is cancelled",
+    "caseComponents": "direct root-child dbo.TTreeNodes Detail relationships; DirectQtyInParent with AmountInHead ratio fallback"
   },
   "fields": [
     {
@@ -208,6 +212,6 @@
       "notes": null
     }
   ],
-  "notes": null,
-  "importEnabled": false
+  "notes": "Case Components are imported only for BOM graphs reachable from imported work/order Cases. Sub-cases receive no automatic Orders or Batches.",
+  "importEnabled": true
 }

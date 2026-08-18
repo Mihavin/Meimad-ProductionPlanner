@@ -25,6 +25,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         production_batch_id,
         allocation_type,
         order_id,
+        derived_order_key,
         quantity,
         version,
         created_at,
@@ -334,10 +335,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO batch_allocations (
-                id, production_batch_id, allocation_type, order_id, quantity,
+                id, production_batch_id, allocation_type, order_id, derived_order_key, quantity,
                 version, created_at, updated_at)
             VALUES (
-                $id, $batchId, $allocationType, $orderId, $quantity,
+                $id, $batchId, $allocationType, $orderId, $derivedOrderKey, $quantity,
                 $version, $createdAt, $updatedAt);
             """;
         command.Parameters.AddWithValue("$id", allocation.AllocationId);
@@ -348,6 +349,9 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         command.Parameters.AddWithValue(
             "$orderId",
             allocation.OrderId is null ? DBNull.Value : allocation.OrderId);
+        command.Parameters.AddWithValue(
+            "$derivedOrderKey",
+            allocation.DerivedOrderKey is null ? DBNull.Value : allocation.DerivedOrderKey);
         command.Parameters.AddWithValue("$quantity", allocation.Quantity);
         command.Parameters.AddWithValue("$version", allocation.Version);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(allocation.CreatedAt));
@@ -682,10 +686,11 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             reader.GetString(1),
             type,
             GetNullableString(reader, 3),
-            reader.GetInt32(4),
             reader.GetInt32(5),
-            ParseInstant(reader.GetString(6)),
-            ParseInstant(reader.GetString(7)));
+            reader.GetInt32(6),
+            ParseInstant(reader.GetString(7)),
+            ParseInstant(reader.GetString(8)),
+            GetNullableString(reader, 4));
     }
 
     private static BatchOperation ReadOperation(SqliteDataReader reader) => new(

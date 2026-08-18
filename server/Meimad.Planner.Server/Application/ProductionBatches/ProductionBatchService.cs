@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Domain.ProductionBatches;
 
 namespace Meimad.Planner.Server.Application.ProductionBatches;
@@ -7,13 +8,16 @@ internal sealed class ProductionBatchService
 {
     private readonly IProductionBatchRepository repository;
     private readonly TimeProvider timeProvider;
+    private readonly DerivedCaseOrderService? derivedOrderService;
 
     public ProductionBatchService(
         IProductionBatchRepository repository,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        DerivedCaseOrderService? derivedOrderService = null)
     {
         this.repository = repository;
         this.timeProvider = timeProvider;
+        this.derivedOrderService = derivedOrderService;
     }
 
     internal async Task<ProductionBatch> CreateAsync(
@@ -29,7 +33,9 @@ internal sealed class ProductionBatchService
             command.Allocations?.Select(allocation => new BatchAllocationValue(
                 allocation.AllocationType,
                 allocation.OrderId,
-                allocation.Quantity)).ToArray()));
+                allocation.Quantity,
+                allocation.DerivedOrderKey)).ToArray()));
+        await ValidateDerivedAllocationsAsync(values.CaseId, values.Allocations, null, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var batchId = Guid.NewGuid().ToString("N");
         var allocations = values.Allocations.Select(allocation => new BatchAllocation(
@@ -40,7 +46,8 @@ internal sealed class ProductionBatchService
             allocation.Quantity,
             1,
             now,
-            now)).ToArray();
+            now,
+            allocation.DerivedOrderKey)).ToArray();
         var batch = new ProductionBatch(
             batchId,
             values.CaseId,
@@ -79,7 +86,9 @@ internal sealed class ProductionBatchService
             command.Allocations?.Select(allocation => new BatchAllocationValue(
                 allocation.AllocationType,
                 allocation.OrderId,
-                allocation.Quantity)).ToArray()));
+                allocation.Quantity,
+                allocation.DerivedOrderKey)).ToArray()));
+        await ValidateDerivedAllocationsAsync(current.CaseId, values.Allocations, current, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var allocations = values.Allocations.Select(allocation => new BatchAllocation(
             Guid.NewGuid().ToString("N"),
@@ -89,7 +98,8 @@ internal sealed class ProductionBatchService
             allocation.Quantity,
             1,
             now,
-            now)).ToArray();
+            now,
+            allocation.DerivedOrderKey)).ToArray();
         var candidate = current with
         {
             BatchNumber = values.BatchNumber,
@@ -111,6 +121,41 @@ internal sealed class ProductionBatchService
         string batchId,
         CancellationToken cancellationToken = default) =>
         repository.ListOperationsAsync(batchId, cancellationToken);
+
+    private async Task ValidateDerivedAllocationsAsync(
+        string caseId, IReadOnlyList<ValidatedBatchAllocationValue> allocations,
+        ProductionBatch? current, CancellationToken cancellationToken)
+    {
+        var requested = allocations.Where(item => item.AllocationType == BatchAllocationType.DerivedOrder).ToArray();
+        if (requested.Length == 0) return;
+        if (derivedOrderService is null)
+            throw new InvalidOperationException("Derived Order validation service is not configured.");
+        var rows = (await derivedOrderService.ListAsync(caseId, cancellationToken))
+            .ToDictionary(item => item.DerivedOrderKey, StringComparer.Ordinal);
+        var prior = current?.Allocations
+            .Where(item => item.AllocationType == BatchAllocationType.DerivedOrder && item.DerivedOrderKey is not null)
+            .GroupBy(item => item.DerivedOrderKey!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Sum(item => item.Quantity), StringComparer.Ordinal)
+            ?? new Dictionary<string, int>(StringComparer.Ordinal);
+        var issues = new List<ProductionBatchValidationIssue>();
+        foreach (var allocation in requested)
+        {
+            if (!rows.TryGetValue(allocation.DerivedOrderKey!, out var row))
+            {
+                issues.Add(new("allocations.derivedOrderKey", "invalid_reference",
+                    "The derived Order does not belong to this child Case."));
+                continue;
+            }
+            if (StringComparer.Ordinal.Equals(row.Status, "cancelled"))
+                issues.Add(new("allocations.derivedOrderKey", "cancelled_order",
+                    $"Cancelled source Order '{row.SourceOrderNumber}' cannot be allocated."));
+            prior.TryGetValue(row.DerivedOrderKey, out var priorQuantity);
+            if (allocation.Quantity > row.RemainingQuantity + priorQuantity + 0.0000001)
+                issues.Add(new("allocations.quantity", "derived_order_overallocated",
+                    $"Allocation exceeds the remaining derived demand for Order '{row.SourceOrderNumber}'."));
+        }
+        if (issues.Count > 0) throw new ProductionBatchValidationException(issues);
+    }
 }
 
 internal sealed class ProductionBatchCaseNotFoundException : Exception
@@ -135,6 +180,12 @@ internal sealed class ProductionBatchRouteRequiredException : Exception
         : base("Cannot generate Production Batch because this Case has no defined operations. Create operations first.")
     {
     }
+}
+
+internal sealed class ProductionBatchChildCaseRequiredException : Exception
+{
+    internal ProductionBatchChildCaseRequiredException()
+        : base("Production Batches belong to child Cases in the component pool.") { }
 }
 
 internal sealed class ProductionBatchNotFoundException : Exception

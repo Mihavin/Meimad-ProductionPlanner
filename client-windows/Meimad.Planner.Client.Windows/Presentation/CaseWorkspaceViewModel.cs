@@ -34,6 +34,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private CaseOperation? selectedOperation;
     private PlannerOrder? selectedOrder;
     private ProductionBatch? selectedBatch;
+    private CaseComponent? selectedComponent;
+    private CasePoolItemViewModel? selectedComponentCase;
     private string? entityTag;
     private string searchText = string.Empty;
     private string customerFilter = string.Empty;
@@ -85,6 +87,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string newBatchPlannedQuantity = string.Empty;
     private string newBatchStockQuantity = string.Empty;
     private string newBatchScrapAllowance = string.Empty;
+    private string componentQuantityPerParent = "1";
+    private string componentNotes = string.Empty;
+    private string componentDemandQuantity = "1";
+    private bool isParentCase;
+    private bool isChildCase;
 
     internal CaseWorkspaceViewModel(IWorkingFolderLauncher folderLauncher)
     {
@@ -96,18 +103,24 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CancelCreateCommand = new AsyncCommand(CancelCreateAsync, () => IsCreating && !IsBusy);
         RefreshDetailsCommand = new AsyncCommand(LoadSelectedCaseSafeAsync, () => SelectedCase is not null && !IsBusy);
         OpenWorkingFolderCommand = new AsyncCommand(OpenWorkingFolderAsync, () => CanOpenWorkingFolder);
-        BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanBeginChildCreate);
+        BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanManageOperations);
         BeginEditOperationCommand = new AsyncCommand(BeginEditOperationAsync, () => CanBeginEditOperation);
         CancelCreateOperationCommand = new AsyncCommand(CancelCreateOperationAsync, () => IsCreatingOperation && !IsBusy);
         CreateOperationCommand = new AsyncCommand(CreateOperationAsync, () => CanCreateOperation);
-        BeginCreateOrderCommand = new AsyncCommand(BeginCreateOrderAsync, () => CanBeginChildCreate);
+        BeginCreateOrderCommand = new AsyncCommand(BeginCreateOrderAsync, () => CanManageDirectOrders);
         BeginEditOrderCommand = new AsyncCommand(BeginEditOrderAsync, () => CanBeginEditOrder);
         CancelCreateOrderCommand = new AsyncCommand(CancelCreateOrderAsync, () => IsOrderFormOpen && !IsBusy);
         CreateOrderCommand = new AsyncCommand(CreateOrderAsync, () => CanCreateOrder);
-        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanBeginChildCreate && Operations.Count > 0);
+        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanManageBatches && Operations.Count > 0);
         BeginEditBatchCommand = new AsyncCommand(BeginEditBatchAsync, () => CanBeginEditBatch);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
+        SaveComponentCommand = new AsyncCommand(SaveComponentAsync,
+            () => CanBeginChildCreate && (SelectedComponent is not null || SelectedComponentCase is not null));
+        RemoveComponentCommand = new AsyncCommand(RemoveComponentAsync,
+            () => CanBeginChildCreate && SelectedComponent is not null);
+        PreviewComponentDemandCommand = new AsyncCommand(PreviewComponentDemandAsync,
+            () => SelectedCase is not null && apiClient is not null && !IsBusy);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -124,7 +137,17 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public ObservableCollection<PlannerOrder> Orders { get; } = [];
 
+    public ObservableCollection<DerivedCaseOrder> DerivedOrders { get; } = [];
+
     public ObservableCollection<ProductionBatch> Batches { get; } = [];
+
+    public ObservableCollection<CaseComponent> Components { get; } = [];
+
+    public ObservableCollection<CaseComponent> WhereUsed { get; } = [];
+
+    public ObservableCollection<ComponentDemandRow> ComponentDemand { get; } = [];
+
+    public ObservableCollection<CasePoolItemViewModel> ComponentCaseOptions { get; } = [];
 
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
@@ -178,6 +201,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand CancelCreateBatchCommand { get; }
 
     public AsyncCommand CreateBatchCommand { get; }
+
+    public AsyncCommand SaveComponentCommand { get; }
+
+    public AsyncCommand RemoveComponentCommand { get; }
+
+    public AsyncCommand PreviewComponentDemandCommand { get; }
 
     public string SearchText
     {
@@ -293,6 +322,48 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
+    public CaseComponent? SelectedComponent
+    {
+        get => selectedComponent;
+        set
+        {
+            if (SetField(ref selectedComponent, value))
+            {
+                if (value is not null)
+                {
+                    SelectedComponentCase = ComponentCaseOptions.FirstOrDefault(item => item.CaseId == value.ChildCaseId);
+                    ComponentQuantityPerParent = value.QuantityPerParent.ToString(CultureInfo.InvariantCulture);
+                    ComponentNotes = value.Notes ?? string.Empty;
+                }
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public CasePoolItemViewModel? SelectedComponentCase
+    {
+        get => selectedComponentCase;
+        set { if (SetField(ref selectedComponentCase, value)) RaiseCommandStates(); }
+    }
+
+    public string ComponentQuantityPerParent
+    {
+        get => componentQuantityPerParent;
+        set => SetField(ref componentQuantityPerParent, value);
+    }
+
+    public string ComponentNotes
+    {
+        get => componentNotes;
+        set => SetField(ref componentNotes, value);
+    }
+
+    public string ComponentDemandQuantity
+    {
+        get => componentDemandQuantity;
+        set => SetField(ref componentDemandQuantity, value);
+    }
+
     public string FormHeading => IsCreating ? "NEW CASE" : "CASE DETAILS";
 
     public string SaveButtonText => IsCreating ? "Create Case" : "Save Case";
@@ -339,19 +410,29 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public bool CanBeginChildCreate =>
         isEditor && apiClient is not null && SelectedCase is not null && !IsCreating && !IsBusy;
 
-    public bool CanCreateOrder => IsCreatingOrder && CanBeginChildCreate;
+    public bool IsParentCase => isParentCase;
+
+    public bool IsChildCase => isChildCase;
+
+    public bool CanManageOperations => CanBeginChildCreate && !IsParentCase;
+
+    public bool CanManageDirectOrders => CanBeginChildCreate && (!IsChildCase || IsParentCase);
+
+    public bool CanManageBatches => CanBeginChildCreate && !IsParentCase;
+
+    public bool CanCreateOrder => IsCreatingOrder && CanManageDirectOrders;
 
     public bool CanBeginEditOrder =>
-        CanBeginChildCreate && SelectedOrder is not null && !IsOrderFormOpen;
+        CanManageDirectOrders && SelectedOrder is not null && !IsOrderFormOpen;
 
-    public bool CanCreateBatch => IsCreatingBatch && CanBeginChildCreate;
+    public bool CanCreateBatch => IsCreatingBatch && CanManageBatches;
 
-    public bool CanBeginEditBatch => CanBeginChildCreate && SelectedBatch is not null && !IsCreatingBatch;
+    public bool CanBeginEditBatch => CanManageBatches && SelectedBatch is not null && !IsCreatingBatch;
 
-    public bool CanCreateOperation => IsCreatingOperation && CanBeginChildCreate;
+    public bool CanCreateOperation => IsCreatingOperation && CanManageOperations;
 
     public bool CanBeginEditOperation =>
-        CanBeginChildCreate && SelectedOperation is not null && !IsCreatingOperation;
+        CanManageOperations && SelectedOperation is not null && !IsCreatingOperation;
 
     public string StatusMessage
     {
@@ -930,12 +1011,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     internal Task BeginCreateBatchAsync()
     {
-        if (CanBeginChildCreate && Operations.Count == 0)
+        if (CanManageBatches && Operations.Count == 0)
         {
             StatusMessage = "Cannot generate Production Batch because this Case has no defined operations. Create operations first.";
             return Task.CompletedTask;
         }
-        if (!CanBeginChildCreate)
+        if (!CanManageBatches)
         {
             return Task.CompletedTask;
         }
@@ -949,11 +1030,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isEditingBatch = false;
         isCreatingBatch = true;
         ResetBatchForm();
-        foreach (var order in Orders)
-        {
-            BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
-        }
-        StatusMessage = "Allocate the Batch explicitly to selected Orders, stock, and optional scrap allowance.";
+        if (IsChildCase)
+            foreach (var order in DerivedOrders.Where(order => order.Status != "cancelled" && order.RemainingQuantity > 0))
+                BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
+        else
+            foreach (var order in Orders)
+                BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
+        StatusMessage = "Allocate the child Batch to read-only parent-derived demand, stock, and optional scrap allowance.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -979,12 +1062,22 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var allocations = SelectedBatch.Allocations ?? [];
         NewBatchStockQuantity = allocations.FirstOrDefault(value => value.AllocationType == "stock")?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         NewBatchScrapAllowance = allocations.FirstOrDefault(value => value.AllocationType == "scrapAllowance")?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        foreach (var order in Orders)
+        if (IsChildCase)
         {
-            var row = new BatchOrderAllocationViewModel(order);
-            row.AllocatedQuantity = allocations.FirstOrDefault(value => value.AllocationType == "order" && value.OrderId == order.OrderId)?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            BatchOrderAllocations.Add(row);
+            foreach (var order in DerivedOrders)
+            {
+                var row = new BatchOrderAllocationViewModel(order);
+                row.AllocatedQuantity = allocations.FirstOrDefault(value => value.AllocationType == "derivedOrder" && value.DerivedOrderKey == order.DerivedOrderKey)?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                BatchOrderAllocations.Add(row);
+            }
         }
+        else
+            foreach (var order in Orders)
+            {
+                var row = new BatchOrderAllocationViewModel(order);
+                row.AllocatedQuantity = allocations.FirstOrDefault(value => value.AllocationType == "order" && value.OrderId == order.OrderId)?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                BatchOrderAllocations.Add(row);
+            }
         StatusMessage = $"Editing Production Batch {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
         RaiseStateProperties();
         return Task.CompletedTask;
@@ -1022,7 +1115,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
             if (quantity > 0)
             {
-                allocations.Add(new BatchAllocationCreate("order", row.OrderId, quantity));
+                allocations.Add(row.DerivedOrderKey is null
+                    ? new BatchAllocationCreate("order", row.OrderId, quantity)
+                    : new BatchAllocationCreate("derivedOrder", null, quantity, row.DerivedOrderKey));
             }
         }
 
@@ -1136,6 +1231,87 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task SaveComponentAsync()
+    {
+        if (apiClient is null || SelectedCase is null || !isEditor) return;
+        if (!double.TryParse(ComponentQuantityPerParent, NumberStyles.Float, CultureInfo.InvariantCulture, out var quantity)
+            || !double.IsFinite(quantity) || quantity <= 0)
+        {
+            StatusMessage = "Quantity per parent must be a number greater than zero.";
+            return;
+        }
+        IsBusy = true;
+        try
+        {
+            CaseComponent saved;
+            if (SelectedComponent is null)
+            {
+                if (SelectedComponentCase is null) return;
+                saved = await apiClient.CreateCaseComponentAsync(
+                    SelectedCase.CaseId,
+                    new CaseComponentCreate(SelectedComponentCase.CaseId, quantity, Components.Count, NullIfBlank(ComponentNotes)),
+                    clientId, editGeneration);
+                Components.Add(saved);
+            }
+            else
+            {
+                saved = await apiClient.UpdateCaseComponentAsync(
+                    SelectedCase.CaseId, SelectedComponent.CaseComponentId,
+                    new CaseComponentUpdate(quantity, SelectedComponent.SortOrder, NullIfBlank(ComponentNotes), true),
+                    SelectedComponent.EntityTag, clientId, editGeneration);
+                var index = Components.IndexOf(SelectedComponent);
+                if (index >= 0) Components[index] = saved;
+            }
+            SelectedComponent = saved;
+            Replace(WhereUsed, await apiClient.ListCaseWhereUsedAsync(SelectedCase.CaseId));
+            StatusMessage = $"Component {saved.ChildPartNumber} saved.";
+        }
+        catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
+        finally { IsBusy = false; }
+    }
+
+    private async Task RemoveComponentAsync()
+    {
+        if (apiClient is null || SelectedCase is null || SelectedComponent is null || !isEditor) return;
+        IsBusy = true;
+        try
+        {
+            var removed = SelectedComponent;
+            await apiClient.DeactivateCaseComponentAsync(
+                SelectedCase.CaseId, removed.CaseComponentId, removed.EntityTag,
+                clientId, editGeneration);
+            var refreshed = await apiClient.ListCaseComponentsAsync(SelectedCase.CaseId);
+            Replace(Components, refreshed);
+            SelectedComponent = null;
+            SelectedComponentCase = null;
+            ComponentQuantityPerParent = "1";
+            ComponentNotes = string.Empty;
+            StatusMessage = $"Component {removed.ChildPartNumber} was deactivated; its Case remains available.";
+        }
+        catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
+        finally { IsBusy = false; }
+    }
+
+    private async Task PreviewComponentDemandAsync()
+    {
+        if (apiClient is null || SelectedCase is null) return;
+        if (!double.TryParse(ComponentDemandQuantity, NumberStyles.Float, CultureInfo.InvariantCulture, out var quantity)
+            || !double.IsFinite(quantity) || quantity <= 0)
+        {
+            StatusMessage = "Demand quantity must be a number greater than zero.";
+            return;
+        }
+        IsBusy = true;
+        try
+        {
+            var preview = await apiClient.PreviewCaseComponentDemandAsync(SelectedCase.CaseId, quantity);
+            Replace(ComponentDemand, preview.Items);
+            StatusMessage = $"Component demand preview for {preview.OrderQuantity:G} × {preview.PartNumber}.";
+        }
+        catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
+        finally { IsBusy = false; }
+    }
+
     private async Task LoadSelectedCaseAsync()
     {
         if (apiClient is null || SelectedCase is null || IsBusy)
@@ -1150,7 +1326,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             var caseTask = apiClient.GetCaseAsync(caseId);
             var operationsTask = apiClient.ListCaseOperationsAsync(caseId);
             var ordersTask = apiClient.ListOrdersAsync(caseId);
+            var derivedOrdersTask = apiClient.ListDerivedCaseOrdersAsync(caseId);
             var batchesTask = apiClient.ListBatchesAsync(caseId);
+            var componentsTask = apiClient.ListCaseComponentsAsync(caseId);
+            var whereUsedTask = apiClient.ListCaseWhereUsedAsync(caseId);
             var machinesTask = apiClient.ListMachinesAsync();
             var machineTypesTask = apiClient.ListMachineTypesAsync();
             var calendarsTask = apiClient.ListWorkingCalendarsAsync();
@@ -1159,7 +1338,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 caseTask,
                 operationsTask,
                 ordersTask,
+                derivedOrdersTask,
                 batchesTask,
+                componentsTask,
+                whereUsedTask,
                 machinesTask,
                 machineTypesTask,
                 calendarsTask,
@@ -1178,7 +1360,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ApplyMachineTypeOptions(await machinesTask, await machineTypesTask);
             Replace(WorkingCalendars, await calendarsTask);
             Replace(Orders, await ordersTask);
+            Replace(DerivedOrders, await derivedOrdersTask);
             Replace(Batches, await batchesTask);
+            Replace(Components, await componentsTask);
+            Replace(WhereUsed, await whereUsedTask);
+            Replace(ComponentCaseOptions, Cases.Where(item => item.CaseId != caseId).ToArray());
+            SelectedComponent = null;
+            SelectedComponentCase = null;
+            ComponentDemand.Clear();
             DetailPreview = ToBitmap(await previewTask);
             selectedDetailsAreStale = false;
             StatusMessage = $"Case {resource.Value.PartNumber} loaded from the Server.";
@@ -1368,6 +1557,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CurrentCycleTimePerPart = DurationText.Format(plannerCase.CurrentCycleTimePerPartSeconds ?? 0);
         Notes = plannerCase.Notes ?? string.Empty;
         ActiveStateText = plannerCase.IsActive ? "Active" : "Inactive";
+        isParentCase = plannerCase.IsParent;
+        isChildCase = plannerCase.IsChild;
+        RaiseStateProperties();
     }
 
     private async Task RefreshSelectedCaseSummaryAsync()
@@ -1541,6 +1733,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OperationReferenceOptions.Clear();
         Orders.Clear();
         Batches.Clear();
+        Components.Clear();
+        WhereUsed.Clear();
+        ComponentDemand.Clear();
+        ComponentCaseOptions.Clear();
         RecalculateCurrentTimeTotals();
         ApplyCase(new PlannerCase(
             string.Empty, string.Empty, string.Empty, null, null, null, null, string.Empty,
@@ -1625,6 +1821,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(OperationFormHeading));
         OnPropertyChanged(nameof(OperationSaveButtonText));
         OnPropertyChanged(nameof(CanBeginChildCreate));
+        OnPropertyChanged(nameof(IsParentCase));
+        OnPropertyChanged(nameof(IsChildCase));
+        OnPropertyChanged(nameof(CanManageOperations));
+        OnPropertyChanged(nameof(CanManageDirectOrders));
+        OnPropertyChanged(nameof(CanManageBatches));
         OnPropertyChanged(nameof(CanCreateOrder));
         OnPropertyChanged(nameof(CanBeginEditOrder));
         OnPropertyChanged(nameof(CanCreateBatch));
@@ -1655,6 +1856,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditBatchCommand.RaiseCanExecuteChanged();
         CancelCreateBatchCommand.RaiseCanExecuteChanged();
         CreateBatchCommand.RaiseCanExecuteChanged();
+        SaveComponentCommand.RaiseCanExecuteChanged();
+        RemoveComponentCommand.RaiseCanExecuteChanged();
+        PreviewComponentDemandCommand.RaiseCanExecuteChanged();
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
@@ -1685,13 +1889,24 @@ internal sealed class BatchOrderAllocationViewModel : INotifyPropertyChanged
         Status = order.Status;
     }
 
+    internal BatchOrderAllocationViewModel(DerivedCaseOrder order)
+    {
+        OrderId = order.SourceOrderId;
+        DerivedOrderKey = order.DerivedOrderKey;
+        OrderNumber = $"{order.SourceOrderNumber} ({order.SourceParentPartNumber})";
+        DemandQuantity = order.RemainingQuantity;
+        Status = order.Status;
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public string OrderId { get; }
 
+    public string? DerivedOrderKey { get; }
+
     public string OrderNumber { get; }
 
-    public int DemandQuantity { get; }
+    public double DemandQuantity { get; }
 
     public string Status { get; }
 

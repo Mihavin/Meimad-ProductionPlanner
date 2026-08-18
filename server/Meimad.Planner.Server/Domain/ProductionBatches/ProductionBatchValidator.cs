@@ -41,14 +41,14 @@ internal static class ProductionBatchValidator
         {
             var productionPurposeQuantity = allocations
                 .Where(allocation => allocation.AllocationType is
-                    BatchAllocationType.Order or BatchAllocationType.Stock)
+                    BatchAllocationType.Order or BatchAllocationType.DerivedOrder or BatchAllocationType.Stock)
                 .Sum(allocation => (long)allocation.Quantity);
             if (productionPurposeQuantity <= 0)
             {
                 issues.Add(new ProductionBatchValidationIssue(
                     "allocations",
                     "production_purpose_required",
-                    "A batch must serve at least one Order or include stock quantity; scrap alone is invalid."));
+                    "A batch must serve at least one direct or derived Order, or include stock quantity; scrap alone is invalid."));
             }
 
             var allocatedTotal = allocations.Sum(allocation => (long)allocation.Quantity);
@@ -125,6 +125,7 @@ internal static class ProductionBatchValidator
 
         var validated = new List<ValidatedBatchAllocationValue>(allocations.Count);
         var orderIds = new HashSet<string>(StringComparer.Ordinal);
+        var derivedKeys = new HashSet<string>(StringComparer.Ordinal);
         var seenStock = false;
         var seenScrap = false;
 
@@ -139,7 +140,7 @@ internal static class ProductionBatchValidator
                 issues.Add(new ProductionBatchValidationIssue(
                     $"{field}.allocationType",
                     "invalid_allocation_type",
-                    "allocationType must be order, stock, or scrapAllowance."));
+                    "allocationType must be order, derivedOrder, stock, or scrapAllowance."));
                 continue;
             }
 
@@ -152,6 +153,7 @@ internal static class ProductionBatchValidator
             }
 
             var orderId = Normalize(allocation.OrderId);
+            var derivedOrderKey = Normalize(allocation.DerivedOrderKey);
             if (type == BatchAllocationType.Order)
             {
                 if (orderId is null)
@@ -177,6 +179,22 @@ internal static class ProductionBatchValidator
                     "orderId is allowed only for an Order allocation."));
             }
 
+            if (type == BatchAllocationType.DerivedOrder)
+            {
+                if (derivedOrderKey is null)
+                    issues.Add(new ProductionBatchValidationIssue(
+                        $"{field}.derivedOrderKey", "required",
+                        "derivedOrderKey is required for a derivedOrder allocation."));
+                else if (!derivedKeys.Add(derivedOrderKey))
+                    issues.Add(new ProductionBatchValidationIssue(
+                        $"{field}.derivedOrderKey", "duplicate_derived_order_allocation",
+                        "Each derived Order may appear only once in a Batch allocation set."));
+            }
+            else if (derivedOrderKey is not null)
+                issues.Add(new ProductionBatchValidationIssue(
+                    $"{field}.derivedOrderKey", "forbidden",
+                    "derivedOrderKey is allowed only for a derivedOrder allocation."));
+
             if (type == BatchAllocationType.Stock && seenStock)
             {
                 issues.Add(new ProductionBatchValidationIssue(
@@ -195,7 +213,7 @@ internal static class ProductionBatchValidator
 
             seenStock |= type == BatchAllocationType.Stock;
             seenScrap |= type == BatchAllocationType.ScrapAllowance;
-            validated.Add(new ValidatedBatchAllocationValue(type, orderId, allocation.Quantity));
+            validated.Add(new ValidatedBatchAllocationValue(type, orderId, allocation.Quantity, derivedOrderKey));
         }
 
         return validated;
@@ -242,7 +260,8 @@ internal sealed record ProductionBatchValues(
 internal sealed record BatchAllocationValue(
     string? AllocationType,
     string? OrderId,
-    int Quantity);
+    int Quantity,
+    string? DerivedOrderKey = null);
 
 internal sealed record ValidatedProductionBatchValues(
     string CaseId,
@@ -254,7 +273,8 @@ internal sealed record ValidatedProductionBatchValues(
 internal sealed record ValidatedBatchAllocationValue(
     BatchAllocationType AllocationType,
     string? OrderId,
-    int Quantity);
+    int Quantity,
+    string? DerivedOrderKey = null);
 
 internal sealed record OrderAllocationReference(
     string OrderId,

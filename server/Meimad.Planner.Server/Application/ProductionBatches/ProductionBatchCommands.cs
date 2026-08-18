@@ -15,4 +15,5 @@ internal sealed record UpdateProductionBatchCommand(
 internal sealed record CreateBatchAllocationCommand(
     string? AllocationType,
     string? OrderId,
-    int Quantity);
+    int Quantity,
+    string? DerivedOrderKey = null);

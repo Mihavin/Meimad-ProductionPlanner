@@ -1,5 +1,6 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.Orders;
 using Meimad.Planner.Server.Domain.Orders;
 using Microsoft.Extensions.Primitives;
@@ -17,6 +18,7 @@ internal static class OrderEndpoints
         orders.MapPost(string.Empty, CreateAsync);
         orders.MapGet(string.Empty, ListAsync);
         orders.MapGet("/{orderId}", GetByIdAsync);
+        orders.MapGet("/{orderId}/component-demand", PreviewComponentDemandAsync);
         orders.MapPatch("/{orderId}", UpdateAsync);
     }
 
@@ -107,6 +109,17 @@ internal static class OrderEndpoints
 
         SetEntityTag(httpContext.Response, order);
         return Results.Ok(OrderResponse.FromDomain(order));
+    }
+
+    private static async Task<IResult> PreviewComponentDemandAsync(
+        string orderId, HttpContext httpContext, OrderService orderService,
+        CaseComponentService componentService, CancellationToken cancellationToken)
+    {
+        var order = await orderService.GetByIdAsync(orderId, cancellationToken);
+        if (order is null)
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Order was not found.", httpContext);
+        return Results.Ok(await componentService.PreviewDemandAsync(
+            order.CaseId, order.Quantity, cancellationToken));
     }
 
     private static async Task<IResult> UpdateAsync(

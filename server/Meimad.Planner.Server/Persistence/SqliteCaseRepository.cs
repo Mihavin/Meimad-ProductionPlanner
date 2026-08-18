@@ -133,7 +133,11 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                         FROM production_batches
                         WHERE production_batches.case_id = cases.id
                           AND production_batches.status IN (
-                              'planned', 'waiting', 'in_production')) AS is_active
+                              'planned', 'waiting', 'in_production')) AS is_active,
+                   EXISTS(SELECT 1 FROM case_components
+                          WHERE parent_case_id=cases.id AND is_active=1) AS is_parent,
+                   EXISTS(SELECT 1 FROM case_components
+                          WHERE child_case_id=cases.id AND is_active=1) AS is_child
             FROM cases
             WHERE id = $id;
             """;
@@ -166,6 +170,10 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                             WHERE production_batches.case_id = cases.id
                               AND production_batches.status IN (
                                   'planned', 'waiting', 'in_production')) AS is_active,
+                       EXISTS(SELECT 1 FROM case_components
+                              WHERE parent_case_id=cases.id AND is_active=1) AS is_parent,
+                       EXISTS(SELECT 1 FROM case_components
+                              WHERE child_case_id=cases.id AND is_active=1) AS is_child,
                        (SELECT MIN(orders.work_finish_date)
                           FROM orders
                          WHERE orders.case_id = cases.id
@@ -287,6 +295,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             return null;
         }
 
+        if (await CaseIsParentAsync(connection, transaction, operation.CaseId, cancellationToken))
+            throw new CaseParentOperationsNotAllowedException();
+
         var current = await ReadOperationsAsync(
             connection,
             transaction,
@@ -396,6 +407,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             transaction,
             editAuthority,
             cancellationToken);
+
+        if (await CaseIsParentAsync(connection, transaction, caseId, cancellationToken))
+            throw new CaseParentOperationsNotAllowedException();
 
         var currentOperations = await ReadOperationsAsync(
             connection,
@@ -658,6 +672,17 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 1;
     }
 
+    private static async Task<bool> CaseIsParentAsync(
+        SqliteConnection connection, SqliteTransaction transaction,
+        string caseId, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM case_components WHERE parent_case_id=$caseId AND is_active=1);";
+        command.Parameters.AddWithValue("$caseId", caseId);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 1;
+    }
+
     private static async Task<IReadOnlyList<CaseOperationDetails>> ReadOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -780,7 +805,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         includeActiveProjection && reader.GetBoolean(18),
         reader.GetInt32(15),
         ParseInstant(reader.GetString(16)),
-        ParseInstant(reader.GetString(17)));
+        ParseInstant(reader.GetString(17)),
+        includeActiveProjection && reader.GetBoolean(19),
+        includeActiveProjection && reader.GetBoolean(20));
 
     private static void AddNullableText(SqliteCommand command, string name, string? value)
     {

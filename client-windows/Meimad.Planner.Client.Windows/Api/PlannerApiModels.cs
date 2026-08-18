@@ -57,7 +57,9 @@ internal sealed record PlannerCase(
     bool IsActive,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool IsParent = false,
+    bool IsChild = false);
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
@@ -756,6 +758,73 @@ internal sealed record CaseOperationCreate(
     string? ExternalDelayCalendarId = null,
     bool RespectMasterCalendar = true);
 
+internal sealed record CaseComponent(
+    string CaseComponentId,
+    string ParentCaseId,
+    string ParentPartNumber,
+    string ParentCaseName,
+    string ChildCaseId,
+    string ChildPartNumber,
+    string ChildCaseName,
+    double QuantityPerParent,
+    int SortOrder,
+    string? Notes,
+    bool IsActive,
+    int Version = 1)
+{
+    public string EntityTag => $"\"case-component:{CaseComponentId}:v{Version}\"";
+}
+
+internal sealed record CaseComponentCreate(
+    string ChildCaseId,
+    double QuantityPerParent,
+    int SortOrder,
+    string? Notes);
+
+internal sealed record CaseComponentUpdate(
+    double QuantityPerParent,
+    int SortOrder,
+    string? Notes,
+    bool IsActive);
+
+internal sealed record ComponentDemandPreview(
+    string CaseId,
+    string PartNumber,
+    double OrderQuantity,
+    IReadOnlyList<ComponentDemandRow> Items);
+
+internal sealed record ComponentDemandRow(
+    string ParentCaseId,
+    string ChildCaseId,
+    string ChildPartNumber,
+    double QuantityPerParent,
+    IReadOnlyList<double> MultiplierPath,
+    double TotalRequiredQuantity,
+    int Level,
+    IReadOnlyList<string> Path)
+{
+    public string PathDisplay => string.Join(" → ", Path);
+}
+
+internal sealed record DerivedCaseOrder(
+    string DerivedOrderKey,
+    string ChildCaseId,
+    string SourceOrderId,
+    string SourceOrderNumber,
+    string SourceParentCaseId,
+    string SourceParentPartNumber,
+    double QuantityPerParent,
+    double DerivedQuantity,
+    double AllocatedQuantity,
+    double RemainingQuantity,
+    string WorkFinishDate,
+    string Status,
+    int Level,
+    IReadOnlyList<string> Path)
+{
+    public string PathDisplay => string.Join(" -> ", Path);
+}
+
 internal sealed record CaseOperationUpdate(
     int OperationNumber,
     string Name,
@@ -827,7 +896,8 @@ internal sealed record BatchAllocation(
     string AllocationId,
     string AllocationType,
     string? OrderId,
-    int Quantity);
+    int Quantity,
+    string? DerivedOrderKey = null);
 
 internal sealed record ProductionBatchCreate(
     string CaseId,
@@ -844,7 +914,8 @@ internal sealed record ProductionBatchUpdate(
 internal sealed record BatchAllocationCreate(
     string AllocationType,
     string? OrderId,
-    int Quantity);
+    int Quantity,
+    string? DerivedOrderKey = null);
 
 internal sealed record PlanningBoardSnapshot(
     DateTimeOffset ReadAt,

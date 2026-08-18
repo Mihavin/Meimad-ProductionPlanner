@@ -1,6 +1,6 @@
 # Data Model
 
-- **Status:** Logical model plus SQLite schema version 30; implemented Kitaron state includes encrypted connection settings, reviewed mapping, one-way sync status, and ownership-aware source links
+- **Status:** Logical model plus SQLite schema version 31; implemented Kitaron state includes encrypted connection settings, reviewed mapping, one-way sync status, ownership-aware source links, and Case Component/BOM storage
 - **Authority:** Server-owned SQLite in MVP
 
 This document separates source-required concepts from proposed implementation fields. Logical names use English `camelCase`; implemented SQL names are recorded separately and do not freeze future API JSON.
@@ -62,6 +62,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Entity | SQLite table | Key relationships / constraints in v1 |
 |---|---|---|
 | Case | `cases` | Root part master; stores an external Working Folder path. |
+| Case Component | `case_components` | Parent Case to child Case BOM edge; positive quantity per parent, stable sort order, active flag, restrictive Case foreign keys, and unique parent/child pair. |
 | Order | `orders` | Required Case; positive quantity. |
 | Case Operation | `case_operations` | Required Case; unique route position/operation number per Case; optional self-referenced predecessor. |
 | Production Batch | `production_batches` | Required Case; positive planned quantity. |
@@ -465,7 +466,7 @@ Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL S
 
 Schema v29 adds singleton `kitaron_mapping_settings` with the selected model, Draft/Ready status, complete field selections, detected source columns, notes, version, and timestamps.
 
-Schema v30 adds singleton `kitaron_sync_state` and `kitaron_sync_links`. State stores current/last status, bounded message, timestamps, row and create/update/match/warning counts, mapping version, and optimistic version. Each link is uniquely identified by `(source_entity, source_key)`, points to one Planner Case, Order, or Case Operation, records whether the connector created that target, stores a source hash, and retains first/last-seen timestamps. Connector-owned targets may refresh mapped fields; records merely matched to pre-existing manual targets are never overwritten. Links do not mirror-delete missing source rows. No Kitaron row payload, plaintext credential, Batch, allocation, assignment, backlog, or calculated date is stored by this schema.
+Schema v30 adds singleton `kitaron_sync_state` and `kitaron_sync_links`. Schema v31 adds `case_components`, extends source links to Case Components, and adds component create/update/match counters. A Case remains the only part master and may be a parent, child, both, or neither. Each active relationship stores a positive real `quantity_per_parent`; self-reference and duplicate parent/child pairs are constrained, while application writes also reject indirect cycles. Connector-owned missing BOM edges are deactivated rather than deleted, and removing an edge never deletes either Case. Each Kitaron link is uniquely identified by `(source_entity, source_key)`, records target ownership and a source hash, and retains first/last-seen timestamps. No Kitaron row payload, plaintext credential, Batch, allocation, assignment, backlog, or calculated date is stored.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.

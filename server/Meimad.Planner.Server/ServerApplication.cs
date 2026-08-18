@@ -111,8 +111,11 @@ public static class ServerApplication
         builder.Services.AddHostedService<EditModeTimeoutService>();
         builder.Services.AddSingleton<ICaseRepository, SqliteCaseRepository>();
         builder.Services.AddSingleton<CaseService>();
+        builder.Services.AddSingleton<ICaseComponentRepository, SqliteCaseComponentRepository>();
+        builder.Services.AddSingleton<CaseComponentService>();
         builder.Services.AddSingleton<IOrderRepository, SqliteOrderRepository>();
         builder.Services.AddSingleton<OrderService>();
+        builder.Services.AddSingleton<DerivedCaseOrderService>();
         builder.Services.AddSingleton<IProductionBatchRepository, SqliteProductionBatchRepository>();
         builder.Services.AddSingleton<ProductionBatchService>();
         builder.Services.AddSingleton<IMachineRepository, SqliteMachineRepository>();

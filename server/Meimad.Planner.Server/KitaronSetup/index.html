@@ -23,7 +23,8 @@
 
     <section class="notice">
       <strong>One-way boundary:</strong> Kitaron is always opened with <code>ApplicationIntent=ReadOnly</code>.
-      Synchronization may create or update linked Cases, Orders, and reusable Case Operations in Meimad only.
+      Synchronization may create or update linked Cases, Orders, reusable Case Operations, and Case Components in Meimad only.
+      Kitaron StopProduction orders become cancelled; component Cases never receive automatic Orders or Batches.
       It never writes to Kitaron, creates Production Batches or assignments, or reorders a Machine backlog.
     </section>
 
@@ -148,6 +149,7 @@
         <div><strong>Cases</strong><span id="syncCases">0 created / 0 updated / 0 matched</span></div>
         <div><strong>Orders</strong><span id="syncOrders">0 created / 0 updated / 0 matched</span></div>
         <div><strong>Case Operations</strong><span id="syncOperations">0 created / 0 updated / 0 matched</span></div>
+        <div><strong>Case Components</strong><span id="syncComponents">0 created / 0 updated / 0 matched</span></div>
         <div><strong>Warnings</strong><span id="syncWarnings">0</span></div>
       </div>
       <p id="syncTime" class="hint"></p>

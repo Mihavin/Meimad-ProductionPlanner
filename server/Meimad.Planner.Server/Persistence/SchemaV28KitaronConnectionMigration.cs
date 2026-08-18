@@ -42,8 +42,8 @@ internal sealed class SchemaV28KitaronConnectionMigration : IDatabaseMigration
                 id, server_host, server_port, database_name, view_schema,
                 view_name, username, enabled, refresh_interval_seconds)
             VALUES (
-                1, '192.168.0.240', 1433, 'KitaronData2550OLAP', 'dbo',
-                'VProductionPlanning', 'kit', 0, 300);
+                1, '192.168.0.240', 1433, 'KitaronData229', 'dbo',
+                'VQWorkPlanningForStationF4', 'kit', 0, 300);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

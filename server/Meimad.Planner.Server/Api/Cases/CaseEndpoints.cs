@@ -21,6 +21,13 @@ internal static class CaseEndpoints
         cases.MapGet("/{caseId}/operations", ListOperationsAsync);
         cases.MapPost("/{caseId}/operations", CreateOperationAsync);
         cases.MapPatch("/{caseId}/operations/{operationId}", UpdateOperationAsync);
+        cases.MapGet("/{caseId}/components", ListComponentsAsync);
+        cases.MapGet("/{caseId}/where-used", ListWhereUsedAsync);
+        cases.MapGet("/{caseId}/component-demand", PreviewComponentDemandAsync);
+        cases.MapGet("/{caseId}/derived-orders", ListDerivedOrdersAsync);
+        cases.MapPost("/{caseId}/components", CreateComponentAsync);
+        cases.MapPatch("/{caseId}/components/{componentId}", UpdateComponentAsync);
+        cases.MapDelete("/{caseId}/components/{componentId}", DeactivateComponentAsync);
         cases.MapGet("/{caseId}/preview", GetPreviewAsync);
         cases.MapPatch("/{caseId}", UpdateAsync);
     }
@@ -192,10 +199,153 @@ internal static class CaseEndpoints
                 "The requested Case was not found.",
                 httpContext);
         }
+        catch (CaseParentOperationsNotAllowedException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "parent_operations_forbidden", exception.Message, httpContext);
+        }
         catch (EditModeMutationException exception)
         {
             return EditModeError(exception, httpContext);
         }
+    }
+
+    private static async Task<IResult> ListComponentsAsync(
+        string caseId, HttpContext httpContext, CaseService caseService,
+        CaseComponentService componentService, CancellationToken cancellationToken)
+    {
+        if (await caseService.GetByIdAsync(caseId, cancellationToken) is null)
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Case was not found.", httpContext);
+        var items = await componentService.ListComponentsAsync(caseId, cancellationToken);
+        return Results.Ok(new CaseComponentListResponse(
+            items.Select(CaseComponentResponse.FromApplication).ToArray(), null));
+    }
+
+    private static async Task<IResult> ListWhereUsedAsync(
+        string caseId, HttpContext httpContext, CaseService caseService,
+        CaseComponentService componentService, CancellationToken cancellationToken)
+    {
+        if (await caseService.GetByIdAsync(caseId, cancellationToken) is null)
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Case was not found.", httpContext);
+        var items = await componentService.ListWhereUsedAsync(caseId, cancellationToken);
+        return Results.Ok(new CaseComponentListResponse(
+            items.Select(CaseComponentResponse.FromApplication).ToArray(), null));
+    }
+
+    private static async Task<IResult> PreviewComponentDemandAsync(
+        string caseId, double quantity, HttpContext httpContext,
+        CaseComponentService service, CancellationToken cancellationToken)
+    {
+        try { return Results.Ok(await service.PreviewDemandAsync(caseId, quantity, cancellationToken)); }
+        catch (CaseComponentValidationException exception) { return ComponentValidationError(exception, httpContext); }
+        catch (CaseComponentNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Case was not found.", httpContext);
+        }
+    }
+
+    private static async Task<IResult> ListDerivedOrdersAsync(
+        string caseId, HttpContext httpContext, DerivedCaseOrderService service,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var items = await service.ListAsync(caseId, cancellationToken);
+            return Results.Ok(new DerivedCaseOrderListResponse(items, null));
+        }
+        catch (CaseComponentNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Case was not found.", httpContext);
+        }
+    }
+
+    private static async Task<IResult> CreateComponentAsync(
+        string caseId, CreateCaseComponentRequest request, HttpContext httpContext,
+        CaseComponentService service, CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var authority, out var accessError)) return accessError!;
+        try
+        {
+            var created = await service.CreateAsync(
+                caseId, request.ChildCaseId ?? string.Empty, request.QuantityPerParent,
+                request.SortOrder, request.Notes, authority!, cancellationToken);
+            SetEntityTag(httpContext.Response, created);
+            return Results.Created(
+                $"/api/v1/cases/{caseId}/components/{created.CaseComponentId}",
+                CaseComponentResponse.FromApplication(created));
+        }
+        catch (CaseComponentValidationException exception) { return ComponentValidationError(exception, httpContext); }
+        catch (CaseComponentCycleException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "component_cycle", exception.Message, httpContext);
+        }
+        catch (CaseComponentDuplicateException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "component_duplicate", exception.Message, httpContext);
+        }
+        catch (CaseParentOperationsNotAllowedException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "parent_operations_forbidden", exception.Message, httpContext);
+        }
+        catch (CaseComponentNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The parent or child Case was not found.", httpContext);
+        }
+        catch (EditModeMutationException exception) { return EditModeError(exception, httpContext); }
+    }
+
+    private static async Task<IResult> UpdateComponentAsync(
+        string caseId, string componentId, UpdateCaseComponentRequest request, HttpContext httpContext,
+        CaseComponentService service, CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var authority, out var accessError)) return accessError!;
+        if (!TryReadExpectedVersion(
+                httpContext.Request.Headers.IfMatch, "case-component", componentId, out var expectedVersion))
+        {
+            var missing = StringValues.IsNullOrEmpty(httpContext.Request.Headers.IfMatch);
+            return Error(missing ? StatusCodes.Status428PreconditionRequired : StatusCodes.Status412PreconditionFailed,
+                missing ? "precondition_required" : "resource_version_stale",
+                "A matching Case Component If-Match header is required.", httpContext);
+        }
+        try
+        {
+            var updated = await service.UpdateAsync(
+                caseId, componentId, request.QuantityPerParent, request.SortOrder,
+                request.Notes, request.IsActive, expectedVersion, authority!, cancellationToken);
+            SetEntityTag(httpContext.Response, updated);
+            return Results.Ok(CaseComponentResponse.FromApplication(updated));
+        }
+        catch (CaseComponentValidationException exception) { return ComponentValidationError(exception, httpContext); }
+        catch (CaseComponentCycleException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "component_cycle", exception.Message, httpContext);
+        }
+        catch (CaseParentOperationsNotAllowedException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "parent_operations_forbidden", exception.Message, httpContext);
+        }
+        catch (CaseComponentNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Case Component was not found.", httpContext);
+        }
+        catch (CaseComponentVersionConflictException)
+        {
+            return Error(StatusCodes.Status412PreconditionFailed, "resource_version_stale", "The Case Component changed after it was read.", httpContext);
+        }
+        catch (EditModeMutationException exception) { return EditModeError(exception, httpContext); }
+    }
+
+    private static async Task<IResult> DeactivateComponentAsync(
+        string caseId, string componentId, HttpContext httpContext,
+        CaseComponentService service, ICaseComponentRepository repository,
+        CancellationToken cancellationToken)
+    {
+        var current = await repository.GetAsync(componentId, cancellationToken);
+        if (current is null || !StringComparer.Ordinal.Equals(current.ParentCaseId, caseId))
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Case Component was not found.", httpContext);
+        return await UpdateComponentAsync(
+            caseId, componentId,
+            new UpdateCaseComponentRequest(current.QuantityPerParent, current.SortOrder, current.Notes, false),
+            httpContext, service, cancellationToken);
     }
 
     private static async Task<IResult> UpdateOperationAsync(
@@ -280,6 +430,10 @@ internal static class CaseEndpoints
                 "resource_version_stale",
                 "The Case Operation changed after it was read.",
                 httpContext);
+        }
+        catch (CaseParentOperationsNotAllowedException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, "parent_operations_forbidden", exception.Message, httpContext);
         }
         catch (EditModeMutationException exception)
         {
@@ -470,6 +624,25 @@ internal static class CaseEndpoints
         response.Headers.ETag =
             $"\"case-operation:{operation.CaseOperationId}:v{operation.Version}\"";
     }
+
+    private static void SetEntityTag(HttpResponse response, CaseComponentDetails component)
+    {
+        response.Headers.ETag =
+            $"\"case-component:{component.CaseComponentId}:v{component.Version}\"";
+    }
+
+    private static IResult ComponentValidationError(
+        CaseComponentValidationException exception, HttpContext httpContext) =>
+        Results.Json(new
+        {
+            error = new
+            {
+                code = "validation_failed",
+                message = "Case Component validation failed.",
+                correlationId = httpContext.TraceIdentifier,
+                details = new[] { new { field = exception.Field, code = "invalid_value", message = exception.Message } }
+            }
+        }, statusCode: StatusCodes.Status422UnprocessableEntity);
 
     private static IResult ValidationError(
         CaseValidationException exception,

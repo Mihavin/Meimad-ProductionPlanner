@@ -379,6 +379,35 @@ internal interface IPlannerApiClient : IDisposable
         DateTimeOffset to,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<CaseComponent>> ListCaseComponentsAsync(
+        string caseId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<CaseComponent>>([]);
+
+    Task<IReadOnlyList<CaseComponent>> ListCaseWhereUsedAsync(
+        string caseId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<CaseComponent>>([]);
+
+    Task<CaseComponent> CreateCaseComponentAsync(
+        string caseId, CaseComponentCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<CaseComponent> UpdateCaseComponentAsync(
+        string caseId, string componentId, CaseComponentUpdate update, string entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeactivateCaseComponentAsync(
+        string caseId, string componentId, string entityTag, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<ComponentDemandPreview> PreviewCaseComponentDemandAsync(
+        string caseId, double quantity, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<DerivedCaseOrder>> ListDerivedCaseOrdersAsync(
+        string caseId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<DerivedCaseOrder>>([]);
+
     /// <summary>
     /// Allows deterministic Timeline requests in diagnostics and tests. Normal
     /// interactive refreshes omit <paramref name="asOf"/> and use Server time.
@@ -677,6 +706,71 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<CaseOperation>(response, cancellationToken);
     }
+
+    public async Task<IReadOnlyList<CaseComponent>> ListCaseComponentsAsync(
+        string caseId, CancellationToken cancellationToken = default) =>
+        await ReadListAsync<CaseComponent>(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/components", cancellationToken);
+
+    public async Task<IReadOnlyList<CaseComponent>> ListCaseWhereUsedAsync(
+        string caseId, CancellationToken cancellationToken = default) =>
+        await ReadListAsync<CaseComponent>(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/where-used", cancellationToken);
+
+    public async Task<CaseComponent> CreateCaseComponentAsync(
+        string caseId, CaseComponentCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/components", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CaseComponent>(response, cancellationToken);
+    }
+
+    public async Task<CaseComponent> UpdateCaseComponentAsync(
+        string caseId, string componentId, CaseComponentUpdate update, string entityTag,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/components/{Uri.EscapeDataString(componentId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CaseComponent>(response, cancellationToken);
+    }
+
+    public async Task DeactivateCaseComponentAsync(
+        string caseId, string componentId, string entityTag, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/components/{Uri.EscapeDataString(componentId)}", clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        _ = await ReadSuccessAsync<CaseComponent>(response, cancellationToken);
+    }
+
+    public async Task<ComponentDemandPreview> PreviewCaseComponentDemandAsync(
+        string caseId, double quantity, CancellationToken cancellationToken = default)
+    {
+        var value = quantity.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/component-demand?quantity={Uri.EscapeDataString(value)}",
+            cancellationToken);
+        return await ReadSuccessAsync<ComponentDemandPreview>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<DerivedCaseOrder>> ListDerivedCaseOrdersAsync(
+        string caseId, CancellationToken cancellationToken = default) =>
+        await ReadListAsync<DerivedCaseOrder>(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/derived-orders", cancellationToken);
 
     public async Task<IReadOnlyList<PlannerOrder>> ListOrdersAsync(
         string caseId,

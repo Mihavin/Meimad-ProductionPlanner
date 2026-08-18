@@ -2,9 +2,35 @@ namespace Meimad.Planner.Server.Application.Kitaron;
 
 internal sealed record KitaronSourceRow(IReadOnlyDictionary<string, object?> Values);
 
+internal sealed record KitaronSourceOrder(
+    string SourceKey,
+    string PartNumber,
+    string Name,
+    string? Revision,
+    string OrderNumber,
+    double? Quantity,
+    DateTime? WorkFinishDate,
+    bool StopProduction);
+
+internal sealed record KitaronSourceComponent(
+    string SourceKey,
+    string ParentPartNumber,
+    string ParentName,
+    string? ParentRevision,
+    string ChildPartNumber,
+    string ChildName,
+    string? ChildRevision,
+    double QuantityPerParent,
+    int SortOrder);
+
+internal sealed record KitaronSourceSnapshot(
+    IReadOnlyList<KitaronSourceRow> WorkRows,
+    IReadOnlyList<KitaronSourceOrder> Orders,
+    IReadOnlyList<KitaronSourceComponent> Components);
+
 internal interface IKitaronSourceReader
 {
-    Task<IReadOnlyList<KitaronSourceRow>> ReadAsync(
+    Task<KitaronSourceSnapshot> ReadAsync(
         StoredKitaronConnectionSettings settings,
         string password,
         IReadOnlyList<string> columns,
@@ -26,6 +52,15 @@ internal sealed record KitaronSyncOrder(
     string OrderNumber,
     int Quantity,
     DateOnly WorkFinishDate,
+    string Status,
+    string SourceHash);
+
+internal sealed record KitaronSyncComponent(
+    string SourceKey,
+    string ParentCaseSourceKey,
+    string ChildCaseSourceKey,
+    double QuantityPerParent,
+    int SortOrder,
     string SourceHash);
 
 internal sealed record KitaronSyncOperation(
@@ -44,6 +79,8 @@ internal sealed record KitaronSyncPlan(
     IReadOnlyList<KitaronSyncCase> Cases,
     IReadOnlyList<KitaronSyncOrder> Orders,
     IReadOnlyList<KitaronSyncOperation> Operations,
+    IReadOnlyList<KitaronSyncComponent> Components,
+    IReadOnlySet<string> KnownComponentSourceKeys,
     IReadOnlyList<string> Warnings,
     int MappingVersion);
 
@@ -62,6 +99,9 @@ internal sealed record KitaronSyncStatus(
     int OperationsCreated,
     int OperationsUpdated,
     int OperationsMatched,
+    int ComponentsCreated,
+    int ComponentsUpdated,
+    int ComponentsMatched,
     int WarningCount,
     int? MappingVersion,
     int Version);

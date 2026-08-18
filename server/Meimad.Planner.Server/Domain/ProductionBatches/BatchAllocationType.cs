@@ -3,6 +3,7 @@ namespace Meimad.Planner.Server.Domain.ProductionBatches;
 internal enum BatchAllocationType
 {
     Order,
+    DerivedOrder,
     Stock,
     ScrapAllowance
 }
@@ -10,12 +11,14 @@ internal enum BatchAllocationType
 internal static class BatchAllocationTypes
 {
     internal const string OrderToken = "order";
+    internal const string DerivedOrderToken = "derivedOrder";
     internal const string StockToken = "stock";
     internal const string ScrapAllowanceToken = "scrapAllowance";
 
     internal static string ToContractToken(this BatchAllocationType type) => type switch
     {
         BatchAllocationType.Order => OrderToken,
+        BatchAllocationType.DerivedOrder => DerivedOrderToken,
         BatchAllocationType.Stock => StockToken,
         BatchAllocationType.ScrapAllowance => ScrapAllowanceToken,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown allocation type.")
@@ -24,6 +27,7 @@ internal static class BatchAllocationTypes
     internal static string ToStorageToken(this BatchAllocationType type) => type switch
     {
         BatchAllocationType.Order => OrderToken,
+        BatchAllocationType.DerivedOrder => "derived_order",
         BatchAllocationType.Stock => StockToken,
         BatchAllocationType.ScrapAllowance => "scrap_allowance",
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown allocation type.")
@@ -35,6 +39,9 @@ internal static class BatchAllocationTypes
         {
             case OrderToken:
                 type = BatchAllocationType.Order;
+                return true;
+            case DerivedOrderToken:
+                type = BatchAllocationType.DerivedOrder;
                 return true;
             case StockToken:
                 type = BatchAllocationType.Stock;
@@ -50,6 +57,11 @@ internal static class BatchAllocationTypes
 
     internal static bool TryParseStorageToken(string? value, out BatchAllocationType type)
     {
+        if (value == "derived_order")
+        {
+            type = BatchAllocationType.DerivedOrder;
+            return true;
+        }
         if (value == "scrap_allowance")
         {
             type = BatchAllocationType.ScrapAllowance;

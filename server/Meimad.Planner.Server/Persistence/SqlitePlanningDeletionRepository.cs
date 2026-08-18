@@ -23,6 +23,23 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             await BlockIfAnyAsync(c, t, "orders", "case_id", id, "Delete the Case's Orders first.", token);
             await BlockIfAnyAsync(c, t, "production_batches", "case_id", id, "Delete the Case's Production Batches first.", token);
             await BlockIfAnyAsync(c, t, "case_operations", "case_id", id, "Delete the Case's Operations first.", token);
+            await BlockBySqlAsync(c, t,
+                "SELECT EXISTS(SELECT 1 FROM case_components WHERE is_active=1 AND (parent_case_id=$id OR child_case_id=$id));",
+                id, "Deactivate the Case's active component relationships first.", token);
+            await using (var removeComponents = c.CreateCommand())
+            {
+                removeComponents.Transaction = t;
+                removeComponents.CommandText = """
+                    DELETE FROM kitaron_sync_links
+                    WHERE source_entity='case_component' AND target_id IN (
+                        SELECT id FROM case_components
+                        WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id));
+                    DELETE FROM case_components
+                    WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id);
+                    """;
+                removeComponents.Parameters.AddWithValue("$id", id);
+                await removeComponents.ExecuteNonQueryAsync(token);
+            }
             return await DeleteRowAsync(c, t, "cases", id, token);
         }, token);
 

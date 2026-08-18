@@ -306,6 +306,12 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem ToolTip="View and manage the Case route Operations">
+                        <TabItem.Style>
+                            <Style TargetType="TabItem">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers><DataTrigger Binding="{Binding IsParentCase}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+                            </Style>
+                        </TabItem.Style>
                         <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OperationsButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Operations" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <ScrollViewer x:Name="OperationsTabScroll" VerticalScrollBarVisibility="Visible"
                                       HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
@@ -388,6 +394,68 @@
                         </Grid>
                         </ScrollViewer>
                     </TabItem>
+                    <TabItem Header="Components" ToolTip="Case components, where-used relationships, and derived demand">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="18">
+                                <TextBlock Text="Components / Sub-Cases" FontSize="20" FontWeight="SemiBold" />
+                                <TextBlock Text="Quantity is required per one parent Case. Imported child Cases do not receive automatic Orders or Batches."
+                                           Foreground="#667085" Margin="0,4,0,12" TextWrapping="Wrap" />
+                                <DataGrid ItemsSource="{Binding Components}" SelectedItem="{Binding SelectedComponent}"
+                                          AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="150">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Child Part Number" Binding="{Binding ChildPartNumber}" Width="180" />
+                                        <DataGridTextColumn Header="Child Case Name" Binding="{Binding ChildCaseName}" Width="*" />
+                                        <DataGridTextColumn Header="Qty / Parent" Binding="{Binding QuantityPerParent}" Width="110" />
+                                        <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="180" />
+                                        <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="70" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <Grid Margin="0,12,0,18">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" /><ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="2*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox Grid.Column="0" ItemsSource="{Binding ComponentCaseOptions}"
+                                              SelectedItem="{Binding SelectedComponentCase}" DisplayMemberPath="PartNumber"
+                                              IsEnabled="{Binding CanEditForm}" ToolTip="Select an existing Case as the child component" />
+                                    <TextBox Grid.Column="1" Margin="8,0,0,0" Text="{Binding ComponentQuantityPerParent, UpdateSourceTrigger=PropertyChanged}"
+                                             IsReadOnly="{Binding IsFormReadOnly}" ToolTip="Quantity per one parent" />
+                                    <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding ComponentNotes, UpdateSourceTrigger=PropertyChanged}"
+                                             IsReadOnly="{Binding IsFormReadOnly}" ToolTip="Optional relationship notes" />
+                                    <Button Grid.Column="3" Margin="8,0,0,0" Content="Add / Save" Command="{Binding SaveComponentCommand}" />
+                                    <Button Grid.Column="4" Margin="8,0,0,0" Content="Deactivate" Command="{Binding RemoveComponentCommand}" />
+                                </Grid>
+
+                                <TextBlock Text="Where Used" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                <DataGrid ItemsSource="{Binding WhereUsed}" AutoGenerateColumns="False" IsReadOnly="True"
+                                          CanUserAddRows="False" MinHeight="110">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Parent Part Number" Binding="{Binding ParentPartNumber}" Width="180" />
+                                        <DataGridTextColumn Header="Parent Case Name" Binding="{Binding ParentCaseName}" Width="*" />
+                                        <DataGridTextColumn Header="Qty / Parent" Binding="{Binding QuantityPerParent}" Width="110" />
+                                        <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="70" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+
+                                <TextBlock Text="Component Demand Preview" FontSize="18" FontWeight="SemiBold" Margin="0,18,0,8" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="Parent quantity" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBox Width="100" Text="{Binding ComponentDemandQuantity, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Margin="8,0,0,0" Content="Show demand" Command="{Binding PreviewComponentDemandCommand}" />
+                                </StackPanel>
+                                <DataGrid ItemsSource="{Binding ComponentDemand}" AutoGenerateColumns="False" IsReadOnly="True"
+                                          CanUserAddRows="False" MinHeight="130">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="65" />
+                                        <DataGridTextColumn Header="Child Part Number" Binding="{Binding ChildPartNumber}" Width="180" />
+                                        <DataGridTextColumn Header="Qty / Parent" Binding="{Binding QuantityPerParent}" Width="110" />
+                                        <DataGridTextColumn Header="Total Required" Binding="{Binding TotalRequiredQuantity}" Width="120" />
+                                        <DataGridTextColumn Header="Path" Binding="{Binding PathDisplay}" Width="*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
                     <TabItem ToolTip="View and manage Orders for this Case">
                         <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OrdersButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Orders" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <ScrollViewer x:Name="OrdersTabScroll" VerticalScrollBarVisibility="Visible"
@@ -397,9 +465,10 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" IsEnabled="{Binding CanManageDirectOrders}">
                                     <Button Content="Delete Selected" Click="DeleteOrder_Click" IsEnabled="{Binding CanDelete}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditOrderCommand}" />
                                     <Button Command="{Binding BeginCreateOrderCommand}" Style="{StaticResource TemplateIconButton}"
@@ -453,10 +522,34 @@
                                     <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="2*" />
                                 </DataGrid.Columns>
                             </DataGrid>
+                            <StackPanel Grid.Row="3" Margin="0,16,0,0">
+                                <TextBlock Text="Parent-derived Orders (read-only)" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="These are projections of parent demand through component quantity. Create child Production Batches from the remaining quantity; no duplicate Order is created."
+                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8" />
+                                <DataGrid ItemsSource="{Binding DerivedOrders}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="120">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Parent Order" Binding="{Binding SourceOrderNumber}" Width="140" />
+                                        <DataGridTextColumn Header="Parent Part" Binding="{Binding SourceParentPartNumber}" Width="130" />
+                                        <DataGridTextColumn Header="Multiplier" Binding="{Binding QuantityPerParent}" Width="90" />
+                                        <DataGridTextColumn Header="Derived" Binding="{Binding DerivedQuantity}" Width="90" />
+                                        <DataGridTextColumn Header="Allocated" Binding="{Binding AllocatedQuantity}" Width="90" />
+                                        <DataGridTextColumn Header="Remaining" Binding="{Binding RemainingQuantity}" Width="90" />
+                                        <DataGridTextColumn Header="Finish" Binding="{Binding WorkFinishDate}" Width="105" />
+                                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100" />
+                                        <DataGridTextColumn Header="Path" Binding="{Binding PathDisplay}" Width="*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </StackPanel>
                         </Grid>
                         </ScrollViewer>
                     </TabItem>
                     <TabItem Header="Batches">
+                        <TabItem.Style>
+                            <Style TargetType="TabItem">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers><DataTrigger Binding="{Binding IsChildCase}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                            </Style>
+                        </TabItem.Style>
                         <ScrollViewer x:Name="BatchesTabScroll" VerticalScrollBarVisibility="Visible"
                                       HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8">
@@ -472,7 +565,7 @@
                                     <Button Content="Add Production Batch" Command="{Binding BeginCreateBatchCommand}" Margin="0"
                                             ToolTip="Requires at least one defined Case Operation; the Server never invents a route." />
                                 </StackPanel>
-                                <TextBlock Text="Production launches with explicit Order, stock, and scrap allocations."
+                                <TextBlock Text="Child production launches with explicit parent-derived demand, stock, and scrap allocations."
                                            Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                             </DockPanel>
                             <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"

@@ -19,4 +19,6 @@ internal sealed record PlannerCase(
     bool IsActive,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool IsParent = false,
+    bool IsChild = false);
