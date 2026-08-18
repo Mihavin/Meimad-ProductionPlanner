@@ -141,12 +141,12 @@ internal sealed class KitaronSyncService
         var cases = parsed.GroupBy(row => row.Part, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
-                var first = group.First();
+                var name = ChooseText(group.Select(item => item.Name)) ?? group.Key;
                 var revision = Consistent(group.Select(item => item.Revision), group.Key, "revision", warnings);
                 var customer = Consistent(group.Select(item => item.Customer), group.Key, "customer", warnings);
                 var folder = Path.Combine(workingFolderRoot, SafeFolder(group.Key));
-                return new KitaronSyncCase(group.Key, group.Key, first.Name, revision, customer, folder,
-                    Hash(group.Key, first.Name, revision, customer, folder));
+                return new KitaronSyncCase(group.Key, group.Key, name, revision, customer, folder,
+                    Hash(group.Key, name, revision, customer, folder));
             }).OrderBy(item => item.PartNumber, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var orders = parsed.Where(row => row.OrderNumber is not null)
@@ -172,11 +172,13 @@ internal sealed class KitaronSyncService
             .Select(group =>
             {
                 var first = group.First();
-                return new RawOperation(group.Key, first.Part, first.OperationNumber!.Value,
-                    first.RoutePosition ?? first.OperationNumber.Value, first.OperationName ?? $"Operation {first.OperationNumber}",
+                var operationNumber = first.OperationNumber!.Value;
+                return new RawOperation(group.Key, first.Part, operationNumber,
+                    group.Min(item => item.RoutePosition ?? operationNumber),
+                    ChooseText(group.Select(item => item.OperationName)) ?? $"Operation {operationNumber}",
                     Consistent(group.Select(item => item.RequiredMachineType), group.Key, "Machine Type", warnings),
-                    group.Select(item => item.SetupSeconds).FirstOrDefault(value => value.HasValue),
-                    group.Select(item => item.CycleSeconds).FirstOrDefault(value => value.HasValue));
+                    ChooseInt(group.Select(item => item.SetupSeconds)),
+                    ChooseInt(group.Select(item => item.CycleSeconds)));
             }).ToArray();
         var operations = rawOperations.GroupBy(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase)
             .SelectMany(group => group.OrderBy(item => item.SourcePosition).ThenBy(item => item.OperationNumber)
@@ -248,10 +250,29 @@ internal sealed class KitaronSyncService
 
     private static string? Consistent(IEnumerable<string?> values, string key, string field, ICollection<string> warnings)
     {
-        var distinct = values.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (distinct.Length > 1) AddWarning(warnings, $"{key} has multiple {field} values; the first value was retained.");
-        return distinct.FirstOrDefault();
+        var distinct = values.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (distinct.Length > 1) AddWarning(warnings, $"{key} has multiple {field} values; a deterministic most-frequent value was retained.");
+        return ChooseText(values);
     }
+
+    private static string? ChooseText(IEnumerable<string?> values) => values
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Select(value => value!.Trim())
+        .GroupBy(value => value, StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(group => group.Count())
+        .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.Key)
+        .FirstOrDefault();
+
+    private static int? ChooseInt(IEnumerable<int?> values) => values
+        .Where(value => value.HasValue)
+        .Select(value => value!.Value)
+        .GroupBy(value => value)
+        .OrderByDescending(group => group.Count())
+        .ThenBy(group => group.Key)
+        .Select(group => (int?)group.Key)
+        .FirstOrDefault();
 
     private static void AddWarning(ICollection<string> warnings, string message)
     {

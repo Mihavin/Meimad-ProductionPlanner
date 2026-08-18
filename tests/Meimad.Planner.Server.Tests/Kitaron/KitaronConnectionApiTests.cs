@@ -322,6 +322,7 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(1, secondJson.RootElement.GetProperty("casesMatched").GetInt32());
             Assert.Equal(1, secondJson.RootElement.GetProperty("ordersMatched").GetInt32());
             Assert.Equal(2, secondJson.RootElement.GetProperty("operationsMatched").GetInt32());
+            Assert.Equal(0, secondJson.RootElement.GetProperty("operationsUpdated").GetInt32());
 
             var database = application.Services.GetRequiredService<SqliteDatabase>();
             await using var connection = await database.OpenConnectionAsync();
@@ -408,9 +409,12 @@ public sealed class KitaronConnectionApiTests
             ReadCount++;
             Assert.Equal("sync-secret", password);
             Assert.Contains("DetailNumber", columns);
-            return Task.FromResult<IReadOnlyList<KitaronSourceRow>>([
-                Row(10, "Cut", 1), Row(20, "Finish", 2)
-            ]);
+            KitaronSourceRow[] rows = [
+                Row(10, "Cut", 1), Row(10, "Cut", 1),
+                Row(10, "Alternate description", 1), Row(20, "Finish", 2)
+            ];
+            if (ReadCount % 2 == 0) Array.Reverse(rows);
+            return Task.FromResult<IReadOnlyList<KitaronSourceRow>>(rows);
         }
 
         private static KitaronSourceRow Row(int operation, string name, int position) => new(
