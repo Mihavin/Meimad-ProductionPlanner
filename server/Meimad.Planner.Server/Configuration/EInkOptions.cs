@@ -39,10 +39,7 @@ public sealed class EInkOptions
     {
         var configured = configuration.GetSection(SectionName).Get<EInkOptions>()
             ?? new EInkOptions();
-        var root = Path.IsPathRooted(configured.PackageRoot)
-            ? configured.PackageRoot
-            : Path.Combine(contentRootPath, configured.PackageRoot);
-        root = Path.GetFullPath(root);
+        var root = ServerStoragePathResolver.Resolve(configured.PackageRoot, contentRootPath);
         if (IsNetworkPath(root))
         {
             throw new InvalidOperationException("EInk:PackageRoot must be server-local, not a UNC path.");

@@ -127,6 +127,31 @@ public sealed class ServerApplicationTests
     }
 
     [Fact]
+    public void Installed_server_resolves_relative_mutable_paths_below_program_data()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        const string programFiles = @"C:\Program Files";
+        const string programFilesX86 = @"C:\Program Files (x86)";
+        const string programData = @"C:\ProgramData";
+        var installedRoot = ServerStoragePathResolver.InstalledStorageRoot(
+            @"C:\Program Files\Meimad Production Planner Server",
+            programFiles,
+            programFilesX86,
+            programData);
+
+        Assert.Equal(@"C:\ProgramData\MeimadPlanner\Server", installedRoot);
+        Assert.Null(ServerStoragePathResolver.InstalledStorageRoot(
+            @"C:\VisualCodeWork\Meimad-ProductionPlanner\server",
+            programFiles,
+            programFilesX86,
+            programData));
+    }
+
+    [Fact]
     public void Configuration_rejects_invalid_backup_retention()
     {
         var exception = Assert.Throws<InvalidOperationException>(() => ServerApplication.Build(

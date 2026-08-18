@@ -481,10 +481,10 @@ public partial class StepViewerControl : UserControl
             }
             if (displayMode != StepDisplayMode.Shaded)
             {
-                var renderedEdges = displayEdges
-                    .Where(edge => displayMode == StepDisplayMode.Wireframe || IsVisibleFeatureEdge(edge))
-                    .Select(edge => new StepScreenEdge(screenPoints[edge.FirstPointIndex], screenPoints[edge.SecondPointIndex]))
-                    .ToArray();
+                var renderedEdges = displayMode == StepDisplayMode.Wireframe
+                    ? displayEdges.Select(edge => new StepScreenEdge(
+                        screenPoints[edge.FirstPointIndex], screenPoints[edge.SecondPointIndex])).ToArray()
+                    : BuildVisibleEdgeSegments(transformed);
                 EdgeSurface.Draw(renderedEdges, displayMode);
                 RenderedEdgeCount = renderedEdges.Length;
             }
@@ -678,6 +678,58 @@ public partial class StepViewerControl : UserControl
                && Math.Abs(secondFacing) > 0.000001
                && Math.Sign(firstFacing) != Math.Sign(secondFacing);
     }
+
+    private StepScreenEdge[] BuildVisibleEdgeSegments(IReadOnlyList<StepPoint3> transformed)
+    {
+        var depthBuffer = StepDepthBuffer.Build(
+            ViewerRoot.ActualWidth,
+            ViewerRoot.ActualHeight,
+            screenPoints,
+            transformed,
+            triangles);
+        var result = new List<StepScreenEdge>();
+        foreach (var edge in displayEdges.Where(IsVisibleFeatureEdge))
+        {
+            var start = screenPoints[edge.FirstPointIndex];
+            var end = screenPoints[edge.SecondPointIndex];
+            var startDepth = transformed[edge.FirstPointIndex].Z;
+            var endDepth = transformed[edge.SecondPointIndex].Z;
+            var bufferStart = depthBuffer.ToBuffer(start);
+            var bufferEnd = depthBuffer.ToBuffer(end);
+            var length = (bufferEnd - bufferStart).Length;
+            var steps = Math.Clamp((int)Math.Ceiling(length * 1.5), 1, 8192);
+            int? visibleStart = null;
+            for (var interval = 0; interval < steps; interval++)
+            {
+                var midpoint = (interval + 0.5) / steps;
+                var sample = new Point(
+                    start.X + (end.X - start.X) * midpoint,
+                    start.Y + (end.Y - start.Y) * midpoint);
+                var sampleDepth = startDepth + (endDepth - startDepth) * midpoint;
+                var visible = depthBuffer.IsVisible(sample, sampleDepth);
+                if (visible && visibleStart is null)
+                {
+                    visibleStart = interval;
+                }
+                if ((!visible || interval == steps - 1) && visibleStart is not null)
+                {
+                    var exclusiveEnd = visible && interval == steps - 1 ? interval + 1 : interval;
+                    if (exclusiveEnd > visibleStart.Value)
+                    {
+                        result.Add(new StepScreenEdge(
+                            Interpolate(start, end, visibleStart.Value / (double)steps),
+                            Interpolate(start, end, exclusiveEnd / (double)steps)));
+                    }
+                    visibleStart = null;
+                }
+            }
+        }
+        return result.ToArray();
+    }
+
+    private static Point Interpolate(Point start, Point end, double value) => new(
+        start.X + (end.X - start.X) * value,
+        start.Y + (end.Y - start.Y) * value);
 
     private bool IsFrontFacing(StepTriangle3 triangle)
     {
@@ -1336,6 +1388,194 @@ internal sealed record StepDisplayEdge(
     int[] TriangleIndices);
 
 internal readonly record struct StepScreenEdge(Point Start, Point End);
+
+internal sealed class StepDepthBuffer
+{
+    private const int MaximumDimension = 2048;
+    private const double BarycentricTolerance = 0.000000001;
+    private readonly double[] depths;
+    private readonly int[] owners;
+    private readonly List<StepDepthPlane> planes = [];
+    private readonly double scaleX;
+    private readonly double scaleY;
+    private readonly double depthTolerance;
+
+    private StepDepthBuffer(
+        int width,
+        int height,
+        double scaleX,
+        double scaleY,
+        double depthTolerance)
+    {
+        Width = width;
+        Height = height;
+        this.scaleX = scaleX;
+        this.scaleY = scaleY;
+        this.depthTolerance = depthTolerance;
+        depths = new double[width * height];
+        Array.Fill(depths, double.NegativeInfinity);
+        owners = new int[width * height];
+        Array.Fill(owners, -1);
+    }
+
+    private int Width { get; }
+    private int Height { get; }
+
+    internal static StepDepthBuffer Build(
+        double viewportWidth,
+        double viewportHeight,
+        IReadOnlyList<Point> screenPoints,
+        IReadOnlyList<StepPoint3> transformedPoints,
+        IReadOnlyList<StepTriangle3> triangles)
+    {
+        var safeWidth = Math.Max(1, viewportWidth);
+        var safeHeight = Math.Max(1, viewportHeight);
+        var width = Math.Clamp((int)Math.Ceiling(safeWidth), 1, MaximumDimension);
+        var height = Math.Clamp((int)Math.Ceiling(safeHeight), 1, MaximumDimension);
+        var minimumDepth = transformedPoints.Count == 0 ? 0 : transformedPoints.Min(point => point.Z);
+        var maximumDepth = transformedPoints.Count == 0 ? 0 : transformedPoints.Max(point => point.Z);
+        var depthSpan = Math.Abs(maximumDepth - minimumDepth);
+        var buffer = new StepDepthBuffer(
+            width,
+            height,
+            width / safeWidth,
+            height / safeHeight,
+            Math.Max(0.00000001, depthSpan * 0.0000001));
+
+        for (var triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+        {
+            var triangle = triangles[triangleIndex];
+            buffer.Rasterize(
+                screenPoints[triangle.FirstIndex],
+                screenPoints[triangle.SecondIndex],
+                screenPoints[triangle.ThirdIndex],
+                transformedPoints[triangle.FirstIndex].Z,
+                transformedPoints[triangle.SecondIndex].Z,
+                transformedPoints[triangle.ThirdIndex].Z);
+        }
+
+        return buffer;
+    }
+
+    internal Point ToBuffer(Point point) => new(point.X * scaleX, point.Y * scaleY);
+
+    internal bool IsVisible(Point point, double depth)
+    {
+        var bufferPoint = ToBuffer(point);
+        var centerX = (int)Math.Floor(bufferPoint.X);
+        var centerY = (int)Math.Floor(bufferPoint.Y);
+        if (centerX < 0 || centerX >= Width || centerY < 0 || centerY >= Height)
+        {
+            return true;
+        }
+
+        var owner = owners[centerY * Width + centerX];
+        var frontDepth = owner < 0
+            ? double.NegativeInfinity
+            : planes[owner].DepthAt(bufferPoint);
+        if (owner < 0)
+        {
+            for (var y = Math.Max(0, centerY - 1); y <= Math.Min(Height - 1, centerY + 1); y++)
+            {
+                for (var x = Math.Max(0, centerX - 1); x <= Math.Min(Width - 1, centerX + 1); x++)
+                {
+                    owner = owners[y * Width + x];
+                    if (owner >= 0)
+                    {
+                        frontDepth = Math.Max(frontDepth, planes[owner].DepthAt(bufferPoint));
+                    }
+                }
+            }
+        }
+
+        return double.IsNegativeInfinity(frontDepth) || depth >= frontDepth - depthTolerance;
+    }
+
+    private void Rasterize(
+        Point first,
+        Point second,
+        Point third,
+        double firstDepth,
+        double secondDepth,
+        double thirdDepth)
+    {
+        first = ToBuffer(first);
+        second = ToBuffer(second);
+        third = ToBuffer(third);
+        var area = Cross(second - first, third - first);
+        if (Math.Abs(area) <= BarycentricTolerance)
+        {
+            return;
+        }
+
+        var planeIndex = planes.Count;
+        planes.Add(StepDepthPlane.Create(
+            first,
+            second,
+            third,
+            firstDepth,
+            secondDepth,
+            thirdDepth,
+            area));
+
+        var minX = Math.Max(0, (int)Math.Floor(Math.Min(first.X, Math.Min(second.X, third.X))));
+        var maxX = Math.Min(Width - 1, (int)Math.Ceiling(Math.Max(first.X, Math.Max(second.X, third.X))));
+        var minY = Math.Max(0, (int)Math.Floor(Math.Min(first.Y, Math.Min(second.Y, third.Y))));
+        var maxY = Math.Min(Height - 1, (int)Math.Ceiling(Math.Max(first.Y, Math.Max(second.Y, third.Y))));
+        for (var y = minY; y <= maxY; y++)
+        {
+            for (var x = minX; x <= maxX; x++)
+            {
+                var sample = new Point(x + 0.5, y + 0.5);
+                var firstWeight = Cross(second - sample, third - sample) / area;
+                var secondWeight = Cross(third - sample, first - sample) / area;
+                var thirdWeight = 1 - firstWeight - secondWeight;
+                if (firstWeight < -BarycentricTolerance
+                    || secondWeight < -BarycentricTolerance
+                    || thirdWeight < -BarycentricTolerance)
+                {
+                    continue;
+                }
+
+                var depth = firstWeight * firstDepth
+                            + secondWeight * secondDepth
+                            + thirdWeight * thirdDepth;
+                var index = y * Width + x;
+                if (depth > depths[index])
+                {
+                    depths[index] = depth;
+                    owners[index] = planeIndex;
+                }
+            }
+        }
+    }
+
+    private static double Cross(Vector first, Vector second) => first.X * second.Y - first.Y * second.X;
+}
+
+internal readonly record struct StepDepthPlane(double DepthX, double DepthY, double Constant)
+{
+    internal static StepDepthPlane Create(
+        Point first,
+        Point second,
+        Point third,
+        double firstDepth,
+        double secondDepth,
+        double thirdDepth,
+        double area)
+    {
+        var depthX = ((secondDepth - firstDepth) * (third.Y - first.Y)
+                      - (thirdDepth - firstDepth) * (second.Y - first.Y)) / area;
+        var depthY = ((second.X - first.X) * (thirdDepth - firstDepth)
+                      - (third.X - first.X) * (secondDepth - firstDepth)) / area;
+        return new StepDepthPlane(
+            depthX,
+            depthY,
+            firstDepth - depthX * first.X - depthY * first.Y);
+    }
+
+    internal double DepthAt(Point point) => DepthX * point.X + DepthY * point.Y + Constant;
+}
 
 internal readonly record struct StepScreenTriangle(
     Point First,

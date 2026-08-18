@@ -25,9 +25,7 @@ internal sealed class BackupOptions
         var folder = string.IsNullOrWhiteSpace(configuredFolder)
             ? DefaultRelativeFolder
             : configuredFolder.Trim();
-        var fullFolder = Path.IsPathFullyQualified(folder)
-            ? Path.GetFullPath(folder)
-            : Path.GetFullPath(Path.Combine(contentRootPath, folder));
+        var fullFolder = ServerStoragePathResolver.Resolve(folder, contentRootPath);
 
         if (PathsEqual(fullFolder, activeDatabasePath))
         {

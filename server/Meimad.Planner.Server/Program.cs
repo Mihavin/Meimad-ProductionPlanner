@@ -14,14 +14,16 @@ public static class Program
         }
         catch (Exception exception)
         {
-            if (application is not null)
+            try
             {
-                application.Logger.LogCritical(exception, "Meimad Planner Server terminated unexpectedly.");
+                application?.Logger.LogCritical(exception, "Meimad Planner Server terminated unexpectedly.");
             }
-            else
+            catch (Exception loggingException) when (loggingException is not OperationCanceledException)
             {
-                Console.Error.WriteLine($"Meimad Planner Server failed to start: {exception.Message}");
+                // The Windows Event Log provider can already be disposed after host startup fails.
             }
+
+            Console.Error.WriteLine($"Meimad Planner Server failed to start: {exception}");
 
             return 1;
         }

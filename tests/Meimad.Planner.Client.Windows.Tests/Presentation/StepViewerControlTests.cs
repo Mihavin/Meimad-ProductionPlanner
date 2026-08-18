@@ -163,6 +163,53 @@ public sealed class StepViewerControlTests
     }
 
     [Fact]
+    public void Visible_edges_omit_a_rear_contour_hidden_by_a_front_face()
+    {
+        var model = new StepModelData(
+            [
+                new(-10, -10, 10), new(10, -10, 10), new(10, 10, 10), new(-10, 10, 10),
+                new(-5, -5, 0), new(5, -5, 0), new(5, 5, 0), new(-5, 5, 0)
+            ],
+            [],
+            [
+                new(0, 1, 2), new(0, 2, 3),
+                new(4, 5, 6), new(4, 6, 7)
+            ],
+            [0, 1, 2, 3, 4, 5, 6, 7]);
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var viewer = new StepViewerControl { Width = 600, Height = 400 };
+                viewer.Measure(new Size(600, 400));
+                viewer.Arrange(new Rect(0, 0, 600, 400));
+                viewer.UpdateLayout();
+                viewer.LoadModel(model, "occluded-contour.step");
+                viewer.SetView("front");
+                viewer.FitToWindow();
+
+                viewer.SetDisplayMode(StepDisplayMode.VisibleEdges);
+                Assert.True(viewer.IsSolidSurfaceVisible);
+                Assert.Equal(4, viewer.RenderedEdgeCount);
+
+                viewer.SetDisplayMode(StepDisplayMode.Wireframe);
+                Assert.False(viewer.IsSolidSurfaceVisible);
+                Assert.Equal(10, viewer.RenderedEdgeCount);
+            }
+            catch (Exception exception)
+            {
+                error = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        Assert.Null(error);
+    }
+
+    [Fact]
     public void Bounding_box_supports_model_and_custom_point_references_without_changing_geometry()
     {
         var model = new StepModelData(

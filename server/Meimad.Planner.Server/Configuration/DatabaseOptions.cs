@@ -21,9 +21,7 @@ internal sealed class DatabaseOptions
             ? DefaultRelativePath
             : configuredPath.Trim();
 
-        var fullPath = System.IO.Path.IsPathFullyQualified(path)
-            ? System.IO.Path.GetFullPath(path)
-            : System.IO.Path.GetFullPath(System.IO.Path.Combine(contentRootPath, path));
+        var fullPath = ServerStoragePathResolver.Resolve(path, contentRootPath);
 
         if (IsNetworkPath(fullPath))
         {
