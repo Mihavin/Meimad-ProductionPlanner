@@ -168,8 +168,21 @@ $clientProject = Join-Path $repositoryRoot "client-windows\Meimad.Planner.Client
 $serverProject = Join-Path $repositoryRoot "server\Meimad.Planner.Server\Meimad.Planner.Server.csproj"
 $clientInstaller = Join-Path $installerRoot "client\Meimad.Planner.Client.Windows.Installer.wixproj"
 $serverInstaller = Join-Path $installerRoot "server\Meimad.Planner.Server.Installer.wixproj"
+$clientPackage = Join-Path $installerRoot "client\Package.wxs"
+$serverPackage = Join-Path $installerRoot "server\Package.wxs"
 $clientPayloadAuthoring = Join-Path $installerRoot "obj\generated\ClientPayload.wxs"
 $serverPayloadAuthoring = Join-Path $installerRoot "obj\generated\ServerPayload.wxs"
+
+$clientApplicationVersion = ([xml](Get-Content -LiteralPath $clientProject -Raw)).Project.PropertyGroup.Version
+$serverApplicationVersion = ([xml](Get-Content -LiteralPath $serverProject -Raw)).Project.PropertyGroup.Version
+$clientPackageVersion = ([xml](Get-Content -LiteralPath $clientPackage -Raw)).Wix.Package.Version
+$serverPackageVersion = ([xml](Get-Content -LiteralPath $serverPackage -Raw)).Wix.Package.Version
+$versions = @($clientApplicationVersion, $serverApplicationVersion, $clientPackageVersion, $serverPackageVersion)
+if (@($versions | Sort-Object -Unique).Count -ne 1) {
+    throw "Client, Server, and MSI versions must match. Found: $($versions -join ', ')."
+}
+
+Write-Host "Building Meimad Production Planner version $clientPackageVersion..."
 
 Write-Host "Publishing self-contained Windows client..."
 Invoke-DotNet -Arguments @(

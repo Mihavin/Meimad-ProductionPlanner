@@ -1,5 +1,7 @@
 # Windows installers
 
+Current package version: `0.1.3`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
+
 The repository builds two independent 64-bit Windows Installer packages:
 
 - `Meimad-Planner-Client-Setup.msi` installs the Windows desktop client and a Start Menu shortcut.
@@ -12,6 +14,8 @@ Build both packages from the repository root:
 ```
 
 The resulting packages are written to `installer\artifacts`. The script publishes self-contained `win-x64` application payloads first, so the target computer does not need a separately installed .NET runtime.
+
+Both packages are machine-wide installers and require Administrator elevation. Double-click the MSI and accept the Windows UAC prompt, or launch it from an elevated terminal. A non-elevated silent (`/qn`) install cannot display a UAC prompt and fails with Windows Installer error 1730.
 
 Verify both package payloads without installing either application:
 

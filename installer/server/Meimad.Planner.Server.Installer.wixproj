@@ -8,7 +8,7 @@
     <GeneratedPayloadFile Condition="'$(GeneratedPayloadFile)' == ''">$(MSBuildThisFileDirectory)..\obj\generated\ServerPayload.wxs</GeneratedPayloadFile>
     <ServerExecutableDir Condition="'$(ServerExecutableDir)' == ''">$(MSBuildThisFileDirectory)..\obj\publish\server</ServerExecutableDir>
     <DefineConstants>ServerExecutableDir=$(ServerExecutableDir)</DefineConstants>
-    <!-- ICE61 is expected because AllowSameVersionUpgrades intentionally supports refreshed 0.1.2 builds. -->
+    <!-- ICE61 is expected because AllowSameVersionUpgrades permits emergency same-version rebuilds. -->
     <SuppressIces>ICE60;ICE61</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
