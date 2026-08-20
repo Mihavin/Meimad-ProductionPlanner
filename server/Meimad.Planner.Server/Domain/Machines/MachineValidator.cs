@@ -7,6 +7,7 @@ internal static partial class MachineValidator
     private const int ShortTextMaximum = 200;
     private const int CapabilityMaximum = 100;
     private const int CapabilityCountMaximum = 100;
+    private const int PostprocessorCountMaximum = 100;
     private const int PathMaximum = 4096;
 
     internal static ValidatedMachineValues ValidateAndNormalize(MachineValues values)
@@ -27,6 +28,37 @@ internal static partial class MachineValidator
             issues);
         var picturePath = OptionalPath(values.PicturePath, "picturePath", issues);
         var capabilities = NormalizeCapabilities(values.Capabilities, issues);
+        var executionMode = Normalize(values.ExecutionMode)?.ToUpperInvariant()
+            ?? MachineExecutionModes.Manual;
+        if (executionMode is not null && !MachineExecutionModes.IsSupported(executionMode))
+        {
+            issues.Add(new MachineValidationIssue(
+                "executionMode",
+                "invalid_execution_mode",
+                "executionMode must be exactly 'CNC_GCODE' or 'MANUAL'."));
+        }
+        var supportedPostprocessorIds = NormalizeIdentifiers(
+            values.SupportedPostprocessorIds,
+            "supportedPostprocessorIds",
+            PostprocessorCountMaximum,
+            issues);
+        ValidatePositive(values.UsableToolPositions, "usableToolPositions", issues);
+        ValidatePositiveFinite(
+            values.RapidRateMillimetersPerMinute,
+            "rapidRateMillimetersPerMinute",
+            allowZero: false,
+            issues);
+        ValidatePositiveFinite(
+            values.ToolChangeTimeSeconds,
+            "toolChangeTimeSeconds",
+            allowZero: true,
+            issues);
+        var machineTimeFactor = values.MachineTimeFactor ?? 1.0;
+        ValidatePositiveFinite(
+            machineTimeFactor,
+            "machineTimeFactor",
+            allowZero: false,
+            issues);
         if (!values.IsActive.HasValue)
         {
             issues.Add(new MachineValidationIssue(
@@ -58,7 +90,104 @@ internal static partial class MachineValidator
             values.IsActive!.Value,
             values.DisplayEnabled!.Value,
             picturePath,
-            Normalize(values.MachineTypeId));
+            Normalize(values.MachineTypeId),
+            executionMode!,
+            supportedPostprocessorIds,
+            values.UsableToolPositions,
+            values.RapidRateMillimetersPerMinute,
+            values.ToolChangeTimeSeconds,
+            machineTimeFactor);
+    }
+
+    private static IReadOnlyList<string> NormalizeIdentifiers(
+        IReadOnlyList<string?>? values,
+        string field,
+        int maximumCount,
+        ICollection<MachineValidationIssue> issues)
+    {
+        if (values is null)
+        {
+            return [];
+        }
+
+        if (values.Count > maximumCount)
+        {
+            issues.Add(new MachineValidationIssue(
+                field,
+                "too_many",
+                $"{field} may contain at most {maximumCount} entries."));
+        }
+
+        var normalized = new List<string>(values.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < values.Count; index++)
+        {
+            var value = Normalize(values[index]);
+            if (value is null)
+            {
+                issues.Add(new MachineValidationIssue(
+                    $"{field}[{index}]",
+                    "required",
+                    $"{field} entries cannot be blank."));
+                continue;
+            }
+
+            if (value.Length > ShortTextMaximum)
+            {
+                issues.Add(new MachineValidationIssue(
+                    $"{field}[{index}]",
+                    "too_long",
+                    $"{field} entries may contain at most {ShortTextMaximum} characters."));
+            }
+
+            if (!seen.Add(value))
+            {
+                issues.Add(new MachineValidationIssue(
+                    $"{field}[{index}]",
+                    "duplicate_postprocessor",
+                    "Supported Postprocessors must be unique."));
+            }
+
+            normalized.Add(value);
+        }
+
+        return normalized;
+    }
+
+    private static void ValidatePositive(
+        int? value,
+        string field,
+        ICollection<MachineValidationIssue> issues)
+    {
+        if (value.HasValue && value.Value <= 0)
+        {
+            issues.Add(new MachineValidationIssue(
+                field,
+                "positive_required",
+                $"{field} must be greater than zero when supplied."));
+        }
+    }
+
+    private static void ValidatePositiveFinite(
+        double? value,
+        string field,
+        bool allowZero,
+        ICollection<MachineValidationIssue> issues)
+    {
+        if (!value.HasValue)
+        {
+            return;
+        }
+
+        if (!double.IsFinite(value.Value) || value.Value < 0 || (!allowZero && value.Value == 0))
+        {
+            issues.Add(new MachineValidationIssue(
+                field,
+                allowZero ? "non_negative_required" : "positive_required",
+                allowZero
+                    ? $"{field} must be zero or greater."
+                    : $"{field} must be greater than zero."));
+        }
     }
 
     private static IReadOnlyList<string> NormalizeCapabilities(
@@ -215,6 +344,20 @@ internal static class MachineCompatibility
             || (machine.MachineTypeCapabilities?.Contains(
                     required,
                     StringComparer.OrdinalIgnoreCase) ?? false);
+    }
+}
+
+internal static class MachinePostprocessorCompatibility
+{
+    internal static bool RequiresReleasedGCode(Machine machine) =>
+        string.Equals(machine.ExecutionMode, MachineExecutionModes.CncGCode, StringComparison.Ordinal);
+
+    internal static bool Supports(Machine machine, string? postprocessorId)
+    {
+        var id = postprocessorId?.Trim();
+        return machine.IsActive
+            && !string.IsNullOrEmpty(id)
+            && (machine.SupportedPostprocessorIds?.Contains(id, StringComparer.Ordinal) ?? false);
     }
 }
 

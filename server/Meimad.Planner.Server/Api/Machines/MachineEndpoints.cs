@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Machines;
+using Meimad.Planner.Server.Application.Postprocessors;
 using Meimad.Planner.Server.Domain.Machines;
 using Microsoft.Extensions.Primitives;
 
@@ -219,6 +220,11 @@ internal static class MachineEndpoints
             MachineTypeReferenceNotFoundException => PlanningHttpSupport.Error(
                 StatusCodes.Status422UnprocessableEntity,
                 "invalid_machine_type",
+                exception.Message,
+                httpContext),
+            PostprocessorReferenceNotFoundException => PlanningHttpSupport.Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "invalid_postprocessor",
                 exception.Message,
                 httpContext),
             MachineNumberConflictException => PlanningHttpSupport.Error(

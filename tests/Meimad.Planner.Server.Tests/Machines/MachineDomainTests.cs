@@ -81,6 +81,62 @@ public sealed class MachineDomainTests
         Assert.False(MachineCompatibility.IsCompatible(machine with { IsActive = false }, "milling"));
     }
 
+    [Fact]
+    public void Manual_machine_does_not_require_a_postprocessor()
+    {
+        var machine = Machine("manual", null, []) with
+        {
+            ExecutionMode = MachineExecutionModes.Manual,
+            SupportedPostprocessorIds = []
+        };
+
+        Assert.False(MachinePostprocessorCompatibility.RequiresReleasedGCode(machine));
+    }
+
+    [Fact]
+    public void Cnc_machine_supports_only_explicitly_mapped_postprocessors()
+    {
+        var machine = Machine("milling", "fourAxis", []) with
+        {
+            ExecutionMode = MachineExecutionModes.CncGCode,
+            SupportedPostprocessorIds = ["post-doosan-3x", "post-doosan-4x"]
+        };
+
+        Assert.True(MachinePostprocessorCompatibility.RequiresReleasedGCode(machine));
+        Assert.True(MachinePostprocessorCompatibility.Supports(machine, "post-doosan-3x"));
+        Assert.True(MachinePostprocessorCompatibility.Supports(machine, "post-doosan-4x"));
+        Assert.False(MachinePostprocessorCompatibility.Supports(machine, "post-haas-umc"));
+    }
+
+    [Fact]
+    public void Execution_capacity_and_timing_values_are_validated_with_neutral_factor_default()
+    {
+        var valid = MachineValidator.ValidateAndNormalize(new MachineValues(
+            "M-11", "CNC", "milling", null, [], "calendar-1", true, true,
+            ExecutionMode: MachineExecutionModes.CncGCode,
+            SupportedPostprocessorIds: ["post-1"],
+            UsableToolPositions: 30,
+            RapidRateMillimetersPerMinute: 24_000,
+            ToolChangeTimeSeconds: 0));
+
+        Assert.Equal(1.0, valid.MachineTimeFactor);
+        Assert.Equal(30, valid.UsableToolPositions);
+
+        var invalid = Assert.Throws<MachineValidationException>(() =>
+            MachineValidator.ValidateAndNormalize(new MachineValues(
+                "M-12", "Invalid", "milling", null, [], "calendar-1", true, true,
+                ExecutionMode: MachineExecutionModes.CncGCode,
+                UsableToolPositions: 0,
+                RapidRateMillimetersPerMinute: -1,
+                ToolChangeTimeSeconds: -1,
+                MachineTimeFactor: 0)));
+
+        Assert.Contains(invalid.Issues, issue => issue.Field == "usableToolPositions");
+        Assert.Contains(invalid.Issues, issue => issue.Field == "rapidRateMillimetersPerMinute");
+        Assert.Contains(invalid.Issues, issue => issue.Field == "toolChangeTimeSeconds");
+        Assert.Contains(invalid.Issues, issue => issue.Field == "machineTimeFactor");
+    }
+
     private static Machine Machine(
         string processType,
         string? axisType,

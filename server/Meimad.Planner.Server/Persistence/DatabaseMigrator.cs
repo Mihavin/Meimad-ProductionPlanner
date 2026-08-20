@@ -38,7 +38,8 @@ internal sealed class DatabaseMigrator
         new SchemaV30KitaronSyncMigration(),
         new SchemaV31CaseComponentsMigration(),
         new SchemaV32UnifiedCasePoolMigration(),
-        new SchemaV33SynchronizeNotStartedBatchOperationTimesMigration()
+        new SchemaV33SynchronizeNotStartedBatchOperationTimesMigration(),
+        new SchemaV34MachineExecutionAndPostprocessorsMigration()
     ];
 
     private readonly SqliteDatabase database;

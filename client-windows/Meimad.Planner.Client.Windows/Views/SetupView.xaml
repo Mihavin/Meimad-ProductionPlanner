@@ -259,7 +259,23 @@
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working calendar" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineWorkingCalendars}" SelectedItem="{Binding SelectedMachineCalendar}" DisplayMemberPath="Name"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capabilities (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineCapabilitiesText}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Picture path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachinePicturePath}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Execution mode" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineExecutionModes}" SelectedItem="{Binding MachineExecutionMode}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Usable tool positions" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineUsableToolPositions}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Rapid rate (mm/min)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineRapidRateMillimetersPerMinute}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Tool-change time (seconds)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineToolChangeTimeSeconds}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine time factor" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineTimeFactor}"/></StackPanel>
                                 </UniformGrid>
+                                <StackPanel Style="{StaticResource SetupField}">
+                                    <TextBlock Text="Supported postprocessors" Style="{StaticResource SetupFieldLabel}"/>
+                                    <ItemsControl ItemsSource="{Binding MachinePostprocessors}">
+                                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate><CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsSelected}" Margin="0,2,18,4"/></DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="CNC_GCODE readiness accepts only released G-code from one of these explicitly selected postprocessors. MANUAL disables only the G-code requirement."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,12">
                                     <CheckBox Content="Active" IsChecked="{Binding MachineIsActive}" Margin="0,0,18,0" />
                                     <CheckBox Content="Show on displays" IsChecked="{Binding MachineDisplayEnabled}" />
@@ -400,6 +416,37 @@
                             </StackPanel>
                             <TextBlock Text="A Machine Type that is assigned to a Machine cannot be deleted until it is reassigned."
                                        Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem ToolTip="Manage G-code postprocessors">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource MachinesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Postprocessors" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewPostprocessorCommand}" Margin="8,0,0,0"/>
+                                <TextBlock Text="POSTPROCESSORS" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding Postprocessors}" SelectedItem="{Binding SelectedPostprocessor}" DisplayMemberPath="DisplayName"/>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <StackPanel IsEnabled="{Binding IsEditor}">
+                            <TextBlock Text="{Binding PostprocessorFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding PostprocessorName}"/></StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Description" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding PostprocessorDescription}" AcceptsReturn="True" MinHeight="70"/></StackPanel>
+                            <CheckBox Content="Active" IsChecked="{Binding PostprocessorIsActive}" Margin="0,2,0,12"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Save postprocessor" Command="{Binding SavePostprocessorCommand}"/>
+                                <Button Content="Delete postprocessor" Command="{Binding DeletePostprocessorCommand}" Margin="0"/>
+                            </StackPanel>
+                            <TextBlock Text="Names describe configuration only; compatibility is configured explicitly on each Machine. A mapped postprocessor cannot be deleted or deactivated."
+                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                         </StackPanel>
                     </Border>
                 </Grid>

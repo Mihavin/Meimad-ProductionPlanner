@@ -251,6 +251,38 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<IReadOnlyList<PlannerPostprocessor>> ListPostprocessorsAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerPostprocessor>>([]);
+
+    Task<PostprocessorResource> GetPostprocessorAsync(
+        string postprocessorId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<PlannerPostprocessor> CreatePostprocessorAsync(
+        PostprocessorCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<PostprocessorResource> UpdatePostprocessorAsync(
+        string postprocessorId,
+        PostprocessorUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeletePostprocessorAsync(
+        string postprocessorId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerResource>>([]);
@@ -1226,6 +1258,71 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         CancellationToken cancellationToken = default) =>
         DeleteAsync(
             $"api/v1/machine-types/{Uri.EscapeDataString(machineTypeId)}",
+            clientId,
+            editGeneration,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<PlannerPostprocessor>> ListPostprocessorsAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<PlannerPostprocessor>("api/v1/postprocessors", cancellationToken);
+
+    public async Task<PostprocessorResource> GetPostprocessorAsync(
+        string postprocessorId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/postprocessors/{Uri.EscapeDataString(postprocessorId)}",
+            cancellationToken);
+        return new PostprocessorResource(
+            await ReadSuccessAsync<PlannerPostprocessor>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public async Task<PlannerPostprocessor> CreatePostprocessorAsync(
+        PostprocessorCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/postprocessors", clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerPostprocessor>(response, cancellationToken);
+    }
+
+    public async Task<PostprocessorResource> UpdatePostprocessorAsync(
+        string postprocessorId,
+        PostprocessorUpdate update,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/postprocessors/{Uri.EscapeDataString(postprocessorId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return new PostprocessorResource(
+            await ReadSuccessAsync<PlannerPostprocessor>(response, cancellationToken),
+            RequiredEntityTag(response));
+    }
+
+    public Task DeletePostprocessorAsync(
+        string postprocessorId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        DeleteAsync(
+            $"api/v1/postprocessors/{Uri.EscapeDataString(postprocessorId)}",
             clientId,
             editGeneration,
             cancellationToken);

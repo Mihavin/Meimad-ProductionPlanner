@@ -23,6 +23,8 @@ public sealed class MigrationTests
         "downtimes",
         "working_calendars",
         "machine_types",
+        "postprocessors",
+        "machine_supported_postprocessors",
         "setup_calendar_settings",
         "employee_resources",
         "employee_calendar_exceptions",
@@ -47,7 +49,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(33L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(34L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -128,6 +130,19 @@ public sealed class MigrationTests
         Assert.Equal("case_components_and_kitaron_bom_sync", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 33;";
         Assert.Equal("synchronize_not_started_batch_operation_times", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 34;";
+        Assert.Equal("machine_execution_and_postprocessors", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*)
+            FROM pragma_table_info('machines')
+            WHERE (name = 'execution_mode' AND "notnull" = 1 AND dflt_value = '''MANUAL''')
+               OR (name = 'usable_tool_positions' AND "notnull" = 0)
+               OR (name = 'rapid_rate_mm_per_min' AND "notnull" = 0)
+               OR (name = 'tool_change_time_seconds' AND "notnull" = 0)
+               OR (name = 'machine_time_factor' AND "notnull" = 1 AND dflt_value = '1.0');
+            """;
+        Assert.Equal(5L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         migrationCommand.CommandText = """
             SELECT server_host || ':' || server_port || '/' || database_name || '/' || view_schema || '.' || view_name
@@ -191,7 +206,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(33L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(34L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -532,6 +547,13 @@ public sealed class MigrationTests
                 DROP TABLE employee_calendar_exceptions;
                 DROP TABLE employee_resources;
                 DROP TABLE setup_calendar_settings;
+                DROP TABLE machine_supported_postprocessors;
+                DROP TABLE postprocessors;
+                ALTER TABLE machines DROP COLUMN machine_time_factor;
+                ALTER TABLE machines DROP COLUMN tool_change_time_seconds;
+                ALTER TABLE machines DROP COLUMN rapid_rate_mm_per_min;
+                ALTER TABLE machines DROP COLUMN usable_tool_positions;
+                ALTER TABLE machines DROP COLUMN execution_mode;
                 DROP INDEX ix_machines_machine_type_id;
                 ALTER TABLE machines DROP COLUMN machine_type_id;
                 DROP TABLE machine_types;
@@ -558,7 +580,7 @@ public sealed class MigrationTests
                 DROP TABLE kitaron_sync_state;
                 DROP TABLE kitaron_mapping_settings;
                 DROP TABLE kitaron_connection_settings;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33);
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -677,6 +699,13 @@ public sealed class MigrationTests
                 DROP TABLE employee_calendar_exceptions;
                 DROP TABLE employee_resources;
                 DROP TABLE setup_calendar_settings;
+                DROP TABLE machine_supported_postprocessors;
+                DROP TABLE postprocessors;
+                ALTER TABLE machines DROP COLUMN machine_time_factor;
+                ALTER TABLE machines DROP COLUMN tool_change_time_seconds;
+                ALTER TABLE machines DROP COLUMN rapid_rate_mm_per_min;
+                ALTER TABLE machines DROP COLUMN usable_tool_positions;
+                ALTER TABLE machines DROP COLUMN execution_mode;
                 DROP INDEX ix_machines_machine_type_id;
                 ALTER TABLE machines DROP COLUMN machine_type_id;
                 DROP TABLE machine_types;
@@ -704,7 +733,7 @@ public sealed class MigrationTests
                 DROP TABLE kitaron_sync_state;
                 DROP TABLE kitaron_mapping_settings;
                 DROP TABLE kitaron_connection_settings;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33);
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -823,6 +852,13 @@ public sealed class MigrationTests
                 DROP TABLE employee_calendar_exceptions;
                 DROP TABLE employee_resources;
                 DROP TABLE setup_calendar_settings;
+                DROP TABLE machine_supported_postprocessors;
+                DROP TABLE postprocessors;
+                ALTER TABLE machines DROP COLUMN machine_time_factor;
+                ALTER TABLE machines DROP COLUMN tool_change_time_seconds;
+                ALTER TABLE machines DROP COLUMN rapid_rate_mm_per_min;
+                ALTER TABLE machines DROP COLUMN usable_tool_positions;
+                ALTER TABLE machines DROP COLUMN execution_mode;
                 DROP INDEX ix_machines_machine_type_id;
                 ALTER TABLE machines DROP COLUMN machine_type_id;
                 DROP TABLE machine_types;
@@ -846,7 +882,7 @@ public sealed class MigrationTests
                 DROP TABLE kitaron_sync_state;
                 DROP TABLE kitaron_mapping_settings;
                 DROP TABLE kitaron_connection_settings;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33);
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
@@ -932,7 +968,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 34;";
+            command.CommandText = "PRAGMA user_version = 35;";
             await command.ExecuteNonQueryAsync();
         }
 

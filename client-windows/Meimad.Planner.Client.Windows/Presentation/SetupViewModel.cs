@@ -66,6 +66,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool machineIsActive = true;
     private bool machineDisplayEnabled = true;
     private bool machineRespectMasterCalendar = true;
+    private string machineExecutionMode = "MANUAL";
+    private string machineUsableToolPositions = string.Empty;
+    private string machineRapidRateMillimetersPerMinute = string.Empty;
+    private string machineToolChangeTimeSeconds = string.Empty;
+    private string machineTimeFactor = "1";
     private MachineDowntime? selectedDowntime;
     private string? editingDowntimeId;
     private PlannerMachine? selectedDowntimeMachine;
@@ -80,6 +85,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string? editingMachineTypeId;
     private string machineTypeName = string.Empty;
     private string machineTypeCapabilitiesText = string.Empty;
+    private PlannerPostprocessor? selectedPostprocessor;
+    private string? editingPostprocessorId;
+    private string postprocessorName = string.Empty;
+    private string postprocessorDescription = string.Empty;
+    private bool postprocessorIsActive = true;
     private PlannerResource? selectedResource;
     private string? editingResourceId;
     private string resourceEmployeeNumber = string.Empty;
@@ -165,6 +175,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveMachineTypeCommand = new AsyncCommand(SaveMachineTypeAsync, CanSaveMachineType);
         DeleteMachineTypeCommand = new AsyncCommand(DeleteSelectedMachineTypeAsync, CanDeleteMachineType);
 
+        NewPostprocessorCommand = new AsyncCommand(BeginNewPostprocessorAsync, CanManage);
+        SavePostprocessorCommand = new AsyncCommand(SavePostprocessorAsync, CanSavePostprocessor);
+        DeletePostprocessorCommand = new AsyncCommand(DeleteSelectedPostprocessorAsync, CanDeletePostprocessor);
+
         NewResourceCommand = new AsyncCommand(BeginNewResourceAsync, CanManage);
         EditSelectedResourceCommand = new AsyncCommand(EditSelectedResourceAsync, CanEditSelectedResource);
         SaveResourceCommand = new AsyncCommand(SaveResourceAsync, CanSaveResource);
@@ -210,6 +224,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public ObservableCollection<MachineDowntime> Downtimes { get; } = [];
 
     public ObservableCollection<PlannerMachineType> MachineTypes { get; } = [];
+    public ObservableCollection<PlannerPostprocessor> Postprocessors { get; } = [];
+    public ObservableCollection<MachinePostprocessorOption> MachinePostprocessors { get; } = [];
 
     public ObservableCollection<PlannerResource> Resources { get; } = [];
     public ObservableCollection<ResourceMachineSkillOption> ResourceMachineSkills { get; } = [];
@@ -218,6 +234,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public ObservableCollection<IsraeliHoliday> IsraeliHolidays { get; } = [];
 
     public IReadOnlyList<string> CalendarTimeZones { get; } = ["Asia/Jerusalem", "UTC"];
+    public IReadOnlyList<string> MachineExecutionModes { get; } = ["MANUAL", "CNC_GCODE"];
 
     public AsyncCommand ConnectCommand { get; }
     public AsyncCommand SaveConnectionCommand { get; }
@@ -241,6 +258,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand NewMachineTypeCommand { get; }
     public AsyncCommand SaveMachineTypeCommand { get; }
     public AsyncCommand DeleteMachineTypeCommand { get; }
+    public AsyncCommand NewPostprocessorCommand { get; }
+    public AsyncCommand SavePostprocessorCommand { get; }
+    public AsyncCommand DeletePostprocessorCommand { get; }
     public AsyncCommand NewResourceCommand { get; }
     public AsyncCommand EditSelectedResourceCommand { get; }
     public AsyncCommand SaveResourceCommand { get; }
@@ -396,6 +416,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public bool MachineIsActive { get => machineIsActive; set => SetField(ref machineIsActive, value); }
     public bool MachineRespectMasterCalendar { get => machineRespectMasterCalendar; set => SetField(ref machineRespectMasterCalendar, value); }
     public bool MachineDisplayEnabled { get => machineDisplayEnabled; set => SetField(ref machineDisplayEnabled, value); }
+    public string MachineExecutionMode { get => machineExecutionMode; set => SetField(ref machineExecutionMode, value); }
+    public string MachineUsableToolPositions { get => machineUsableToolPositions; set => SetField(ref machineUsableToolPositions, value); }
+    public string MachineRapidRateMillimetersPerMinute { get => machineRapidRateMillimetersPerMinute; set => SetField(ref machineRapidRateMillimetersPerMinute, value); }
+    public string MachineToolChangeTimeSeconds { get => machineToolChangeTimeSeconds; set => SetField(ref machineToolChangeTimeSeconds, value); }
+    public string MachineTimeFactor { get => machineTimeFactor; set => SetField(ref machineTimeFactor, value); }
     public string MachineFormHeading => editingMachineId is null ? "New machine" : "Edit machine";
 
     public MachineDowntime? SelectedDowntime
@@ -438,6 +463,25 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string MachineTypeName { get => machineTypeName; set => SetField(ref machineTypeName, value); }
     public string MachineTypeCapabilitiesText { get => machineTypeCapabilitiesText; set => SetField(ref machineTypeCapabilitiesText, value); }
     public string MachineTypeFormHeading => editingMachineTypeId is null ? "New machine type" : "Edit machine type";
+
+    public PlannerPostprocessor? SelectedPostprocessor
+    {
+        get => selectedPostprocessor;
+        set
+        {
+            if (SetField(ref selectedPostprocessor, value) && value is not null)
+            {
+                PopulatePostprocessorForm(value);
+            }
+
+            RaiseCommandStates();
+        }
+    }
+
+    public string PostprocessorName { get => postprocessorName; set => SetField(ref postprocessorName, value); }
+    public string PostprocessorDescription { get => postprocessorDescription; set => SetField(ref postprocessorDescription, value); }
+    public bool PostprocessorIsActive { get => postprocessorIsActive; set => SetField(ref postprocessorIsActive, value); }
+    public string PostprocessorFormHeading => editingPostprocessorId is null ? "New postprocessor" : "Edit postprocessor";
 
     public PlannerResource? SelectedResource
     {
@@ -585,6 +629,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         var machineId = SelectedMachine?.MachineId;
         var downtimeId = SelectedDowntime?.DowntimeId;
         var machineTypeId = SelectedMachineType?.MachineTypeId;
+        var postprocessorId = SelectedPostprocessor?.PostprocessorId;
         var resourceId = SelectedResource?.ResourceId;
         var israeliHolidayId = SelectedIsraeliHoliday?.IsraeliHolidayId;
         IsBusy = true;
@@ -594,12 +639,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var machinesTask = apiClient.ListMachinesAsync();
             var downtimesTask = apiClient.ListDowntimesAsync();
             var machineTypesTask = apiClient.ListMachineTypesAsync();
+            var postprocessorsTask = apiClient.ListPostprocessorsAsync();
             var setupCalendarTask = apiClient.GetSetupCalendarAsync();
             var masterCalendarTask = apiClient.GetMasterCalendarAsync();
             var resourcesTask = apiClient.ListResourcesAsync();
             var holidaysTask = apiClient.ListIsraeliHolidaysAsync();
             var reportSettingsTask = apiClient.GetReportEmailSettingsAsync();
-            await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, setupCalendarTask, masterCalendarTask,
+            await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, postprocessorsTask, setupCalendarTask, masterCalendarTask,
                 resourcesTask, holidaysTask, reportSettingsTask);
 
             Replace(WorkingCalendars, await calendarsTask);
@@ -612,6 +658,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             RebuildResourceMachineSkills([]);
             Replace(Downtimes, await downtimesTask);
             Replace(MachineTypes, await machineTypesTask);
+            Replace(Postprocessors, await postprocessorsTask);
             Replace(Resources, await resourcesTask);
             Replace(IsraeliHolidays, await holidaysTask);
             var setup = await setupCalendarTask;
@@ -625,6 +672,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
                 ?? Downtimes.FirstOrDefault();
             SelectedMachineType = MachineTypes.FirstOrDefault(value => value.MachineTypeId == machineTypeId)
                 ?? MachineTypes.FirstOrDefault();
+            SelectedPostprocessor = Postprocessors.FirstOrDefault(value => value.PostprocessorId == postprocessorId)
+                ?? Postprocessors.FirstOrDefault();
             SelectedResource = Resources.FirstOrDefault(value => value.ResourceId == resourceId)
                 ?? Resources.FirstOrDefault();
             SelectedIsraeliHoliday = IsraeliHolidays.FirstOrDefault(value => value.IsraeliHolidayId == israeliHolidayId)
@@ -819,6 +868,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineIsActive = true;
         MachineDisplayEnabled = true;
         MachineRespectMasterCalendar = true;
+        MachineExecutionMode = "MANUAL";
+        MachineUsableToolPositions = string.Empty;
+        MachineRapidRateMillimetersPerMinute = string.Empty;
+        MachineToolChangeTimeSeconds = string.Empty;
+        MachineTimeFactor = "1";
+        RebuildMachinePostprocessors([]);
         OnPropertyChanged(nameof(MachineFormHeading));
         StatusMessage = "Enter the Machine master data.";
         RaiseCommandStates();
@@ -836,7 +891,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             return;
         }
 
-        var values = CreateMachineValues(MachineIsActive);
+        if (!TryCreateMachineValues(MachineIsActive, out var values))
+        {
+            StatusMessage = "Use positive capacity and rapid-rate values, non-negative tool-change seconds, and a Machine time factor greater than zero.";
+            return;
+        }
         var savedId = editingMachineId;
         var succeeded = false;
         IsBusy = true;
@@ -844,12 +903,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         {
             if (savedId is null)
             {
-                savedId = (await apiClient!.CreateMachineAsync(values, clientId, editGeneration)).MachineId;
+                savedId = (await apiClient!.CreateMachineAsync(values!, clientId, editGeneration)).MachineId;
             }
             else
             {
                 await apiClient!.UpdateMachineAsync(
-                    savedId, values, MachineEntityTag(SelectedMachine!), clientId, editGeneration);
+                    savedId, values!, MachineEntityTag(SelectedMachine!), clientId, editGeneration);
             }
 
             succeeded = true;
@@ -878,10 +937,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         if (!CanDeactivateMachine()) return;
         var machine = SelectedMachine!;
         PopulateMachineForm(machine);
+        if (!TryCreateMachineValues(false, out var values)) return;
         if (await TryMutationAsync(async () =>
             {
                 await apiClient!.UpdateMachineAsync(
-                    machine.MachineId, CreateMachineValues(false), MachineEntityTag(machine),
+                    machine.MachineId, values!, MachineEntityTag(machine),
                     clientId, editGeneration);
             }))
         {
@@ -1093,6 +1153,82 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         {
             await RefreshAsync();
             StatusMessage = $"Machine Type {deleting.Name} deleted.";
+            ConfigurationChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    internal Task BeginNewPostprocessorAsync()
+    {
+        editingPostprocessorId = null;
+        selectedPostprocessor = null;
+        OnPropertyChanged(nameof(SelectedPostprocessor));
+        PostprocessorName = string.Empty;
+        PostprocessorDescription = string.Empty;
+        PostprocessorIsActive = true;
+        OnPropertyChanged(nameof(PostprocessorFormHeading));
+        StatusMessage = "Enter the postprocessor configuration.";
+        RaiseCommandStates();
+        return Task.CompletedTask;
+    }
+
+    internal async Task SavePostprocessorAsync()
+    {
+        if (!CanSavePostprocessor()) return;
+        if (string.IsNullOrWhiteSpace(PostprocessorName))
+        {
+            StatusMessage = "Postprocessor name is required.";
+            return;
+        }
+
+        var savedId = editingPostprocessorId;
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            if (savedId is null)
+            {
+                savedId = (await apiClient!.CreatePostprocessorAsync(
+                    new PostprocessorCreate(PostprocessorName.Trim(), NullIfBlank(PostprocessorDescription), PostprocessorIsActive),
+                    clientId, editGeneration)).PostprocessorId;
+            }
+            else
+            {
+                await apiClient!.UpdatePostprocessorAsync(
+                    savedId,
+                    new PostprocessorUpdate(PostprocessorName.Trim(), NullIfBlank(PostprocessorDescription), PostprocessorIsActive),
+                    PostprocessorEntityTag(SelectedPostprocessor!), clientId, editGeneration);
+            }
+
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (succeeded)
+        {
+            SelectedPostprocessor = null;
+            await RefreshAsync();
+            SelectedPostprocessor = Postprocessors.FirstOrDefault(value => value.PostprocessorId == savedId);
+            StatusMessage = "Postprocessor saved by the Server.";
+            ConfigurationChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    internal async Task DeleteSelectedPostprocessorAsync()
+    {
+        if (!CanDeletePostprocessor()) return;
+        var deleting = SelectedPostprocessor!;
+        if (await TryDeleteAsync(() => apiClient!.DeletePostprocessorAsync(
+                deleting.PostprocessorId, clientId, editGeneration)))
+        {
+            await RefreshAsync();
+            StatusMessage = $"Postprocessor {deleting.Name} deleted.";
             ConfigurationChanged?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -1496,6 +1632,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineIsActive = value.IsActive;
         MachineDisplayEnabled = value.DisplayEnabled;
         MachineRespectMasterCalendar = value.RespectMasterCalendar;
+        MachineExecutionMode = value.ExecutionMode;
+        MachineUsableToolPositions = value.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        MachineRapidRateMillimetersPerMinute = value.RapidRateMillimetersPerMinute?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        MachineToolChangeTimeSeconds = value.ToolChangeTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        MachineTimeFactor = value.MachineTimeFactor.ToString(CultureInfo.InvariantCulture);
+        RebuildMachinePostprocessors(value.SupportedPostprocessorIds ?? []);
         OnPropertyChanged(nameof(MachineFormHeading));
     }
 
@@ -1519,6 +1661,16 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineTypeName = value.Name;
         MachineTypeCapabilitiesText = string.Join(", ", value.Capabilities);
         OnPropertyChanged(nameof(MachineTypeFormHeading));
+    }
+
+    private void PopulatePostprocessorForm(PlannerPostprocessor value)
+    {
+        editingPostprocessorId = value.PostprocessorId;
+        PostprocessorName = value.Name;
+        PostprocessorDescription = value.Description ?? string.Empty;
+        PostprocessorIsActive = value.IsActive;
+        OnPropertyChanged(nameof(PostprocessorFormHeading));
+        RaiseCommandStates();
     }
 
     private void PopulateResourceForm(PlannerResource value)
@@ -1590,18 +1742,51 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
     }
 
-    private MachineCreate CreateMachineValues(bool active) => new(
-        MachineNumber,
-        MachineName,
-        SelectedMachineTypeForMachine?.Name ?? MachineProcessType,
-        NullIfBlank(MachineAxisType),
-        ParseTokens(MachineCapabilitiesText),
-        SelectedMachineCalendar!.WorkingCalendarId,
-        active,
-        MachineDisplayEnabled,
-        NullIfBlank(MachinePicturePath),
-        SelectedMachineTypeForMachine?.MachineTypeId,
-        MachineRespectMasterCalendar);
+    private bool TryCreateMachineValues(bool active, out MachineCreate? value)
+    {
+        value = null;
+        if (!TryParseOptionalPositiveInt(MachineUsableToolPositions, out var usableTools)
+            || !TryParseOptionalPositiveDouble(
+                MachineRapidRateMillimetersPerMinute,
+                allowZero: false,
+                out var rapidRate)
+            || !TryParseOptionalPositiveDouble(
+                MachineToolChangeTimeSeconds,
+                allowZero: true,
+                out var toolChangeSeconds)
+            || !double.TryParse(
+                MachineTimeFactor,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var timeFactor)
+            || !double.IsFinite(timeFactor)
+            || timeFactor <= 0)
+        {
+            return false;
+        }
+
+        value = new MachineCreate(
+            MachineNumber,
+            MachineName,
+            SelectedMachineTypeForMachine?.Name ?? MachineProcessType,
+            NullIfBlank(MachineAxisType),
+            ParseTokens(MachineCapabilitiesText),
+            SelectedMachineCalendar!.WorkingCalendarId,
+            active,
+            MachineDisplayEnabled,
+            NullIfBlank(MachinePicturePath),
+            SelectedMachineTypeForMachine?.MachineTypeId,
+            MachineRespectMasterCalendar,
+            MachineExecutionMode,
+            MachinePostprocessors.Where(option => option.IsSelected)
+                .Select(option => option.PostprocessorId)
+                .ToArray(),
+            usableTools,
+            rapidRate,
+            toolChangeSeconds,
+            timeFactor);
+        return true;
+    }
 
     private IReadOnlyList<string> SelectedWorkdays()
     {
@@ -1736,6 +1921,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         && SelectedDowntime is { DowntimeType: "breakdown", Status: "active" };
     private bool CanSaveMachineType() => CanManage();
     private bool CanDeleteMachineType() => CanManage() && SelectedMachineType is not null;
+    private bool CanSavePostprocessor() => CanManage();
+    private bool CanDeletePostprocessor() => CanManage() && SelectedPostprocessor is not null;
     private bool CanEditSelectedResource() => CanManage() && SelectedResource is not null;
     private bool CanSaveResource() => CanManage();
     private bool CanDeleteResource() => CanManage() && SelectedResource is not null;
@@ -1768,6 +1955,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         NewMachineTypeCommand.RaiseCanExecuteChanged();
         SaveMachineTypeCommand.RaiseCanExecuteChanged();
         DeleteMachineTypeCommand.RaiseCanExecuteChanged();
+        NewPostprocessorCommand.RaiseCanExecuteChanged();
+        SavePostprocessorCommand.RaiseCanExecuteChanged();
+        DeletePostprocessorCommand.RaiseCanExecuteChanged();
         NewResourceCommand.RaiseCanExecuteChanged();
         EditSelectedResourceCommand.RaiseCanExecuteChanged();
         SaveResourceCommand.RaiseCanExecuteChanged();
@@ -1792,6 +1982,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceMachineSkills.Clear();
         Downtimes.Clear();
         MachineTypes.Clear();
+        Postprocessors.Clear();
+        MachinePostprocessors.Clear();
         Resources.Clear();
         ResourceExceptions.Clear();
         IsraeliHolidays.Clear();
@@ -1801,6 +1993,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         selectedMachine = null;
         selectedDowntime = null;
         selectedMachineType = null;
+        selectedPostprocessor = null;
         selectedResource = null;
         selectedResourceException = null;
         selectedIsraeliHoliday = null;
@@ -1808,6 +2001,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         editingMachineId = null;
         editingDowntimeId = null;
         editingMachineTypeId = null;
+        editingPostprocessorId = null;
         editingResourceId = null;
         editingResourceExceptionId = null;
         editingIsraeliHolidayId = null;
@@ -1818,6 +2012,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedMachine));
         OnPropertyChanged(nameof(SelectedDowntime));
         OnPropertyChanged(nameof(SelectedMachineType));
+        OnPropertyChanged(nameof(SelectedPostprocessor));
         OnPropertyChanged(nameof(SelectedResource));
         OnPropertyChanged(nameof(SelectedResourceException));
         OnPropertyChanged(nameof(SelectedIsraeliHoliday));
@@ -1838,6 +2033,22 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     private static string MachineTypeEntityTag(PlannerMachineType value) =>
         $"\"machine-type:{value.MachineTypeId}:v{value.Version}\"";
+
+    private static string PostprocessorEntityTag(PlannerPostprocessor value) =>
+        $"\"postprocessor:{value.PostprocessorId}:v{value.Version}\"";
+
+    private void RebuildMachinePostprocessors(IReadOnlyList<string> selectedIds)
+    {
+        var selected = selectedIds.ToHashSet(StringComparer.Ordinal);
+        MachinePostprocessors.Clear();
+        foreach (var postprocessor in Postprocessors.Where(value => value.IsActive))
+        {
+            MachinePostprocessors.Add(new MachinePostprocessorOption(
+                postprocessor.PostprocessorId,
+                postprocessor.Name,
+                selected.Contains(postprocessor.PostprocessorId)));
+        }
+    }
 
     private static string ResourceEntityTag(PlannerResource value) =>
         $"\"resource:{value.ResourceId}:v{value.Version}\"";
@@ -1872,6 +2083,39 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
+
+    private static bool TryParseOptionalPositiveInt(string value, out int? result)
+    {
+        result = null;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+            || parsed <= 0)
+        {
+            return false;
+        }
+
+        result = parsed;
+        return true;
+    }
+
+    private static bool TryParseOptionalPositiveDouble(
+        string value,
+        bool allowZero,
+        out double? result)
+    {
+        result = null;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !double.IsFinite(parsed)
+            || parsed < 0
+            || (!allowZero && parsed == 0))
+        {
+            return false;
+        }
+
+        result = parsed;
+        return true;
+    }
 
     private static string? NullIfBlank(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -1937,6 +2181,33 @@ internal sealed class ResourceMachineSkillOption : INotifyPropertyChanged
     }
 
     public string MachineId { get; }
+    public string DisplayName { get; }
+    public bool IsSelected
+    {
+        get => isSelected;
+        set
+        {
+            if (isSelected == value) return;
+            isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+internal sealed class MachinePostprocessorOption : INotifyPropertyChanged
+{
+    private bool isSelected;
+
+    internal MachinePostprocessorOption(string postprocessorId, string displayName, bool isSelected)
+    {
+        PostprocessorId = postprocessorId;
+        DisplayName = displayName;
+        this.isSelected = isSelected;
+    }
+
+    public string PostprocessorId { get; }
     public string DisplayName { get; }
     public bool IsSelected
     {

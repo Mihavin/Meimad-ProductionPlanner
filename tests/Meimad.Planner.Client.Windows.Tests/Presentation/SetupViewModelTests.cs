@@ -94,12 +94,24 @@ public sealed class SetupViewModelTests
         viewModel.SelectedMachineCalendar = viewModel.WorkingCalendars.Single();
         viewModel.MachineAxisType = "5-axis";
         viewModel.MachineCapabilitiesText = "probe, high-speed";
+        viewModel.MachineExecutionMode = "CNC_GCODE";
+        viewModel.MachineUsableToolPositions = "30";
+        viewModel.MachineRapidRateMillimetersPerMinute = "24000";
+        viewModel.MachineToolChangeTimeSeconds = "4.5";
+        viewModel.MachineTimeFactor = "1.15";
+        Assert.Single(viewModel.MachinePostprocessors).IsSelected = true;
 
         await viewModel.SaveMachineAsync();
 
         Assert.NotNull(api.LastMachineCreate);
         Assert.Equal("type-mill", api.LastMachineCreate!.MachineTypeId);
         Assert.Equal("5-axis milling", api.LastMachineCreate.ProcessType);
+        Assert.Equal("CNC_GCODE", api.LastMachineCreate.ExecutionMode);
+        Assert.Equal(["post-default"], api.LastMachineCreate.SupportedPostprocessorIds);
+        Assert.Equal(30, api.LastMachineCreate.UsableToolPositions);
+        Assert.Equal(24000, api.LastMachineCreate.RapidRateMillimetersPerMinute);
+        Assert.Equal(4.5, api.LastMachineCreate.ToolChangeTimeSeconds);
+        Assert.Equal(1.15, api.LastMachineCreate.MachineTimeFactor);
         var machine = Assert.Single(viewModel.Machines);
         Assert.Equal("M07 — Haas VF-5", machine.DisplayName);
         viewModel.SelectedMachine = machine;
@@ -289,6 +301,34 @@ public sealed class SetupViewModelTests
     }
 
     [Fact]
+    public async Task Editor_can_create_update_and_delete_postprocessor()
+    {
+        var api = new FakeApiClient();
+        var viewModel = CreateViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(13));
+        await viewModel.EnsureLoadedAsync();
+        await viewModel.BeginNewPostprocessorAsync();
+        viewModel.PostprocessorName = "Haas UMC";
+        viewModel.PostprocessorDescription = "Released UMC programs";
+
+        await viewModel.SavePostprocessorAsync();
+
+        Assert.Equal("Haas UMC", api.LastPostprocessorCreate?.Name);
+        var created = viewModel.Postprocessors.Single(value => value.Name == "Haas UMC");
+        viewModel.SelectedPostprocessor = created;
+        viewModel.PostprocessorDescription = "Updated description";
+        await viewModel.SavePostprocessorAsync();
+
+        Assert.Equal("Updated description", api.LastPostprocessorUpdate?.Description);
+        Assert.Equal($"\"postprocessor:{created.PostprocessorId}:v1\"", api.LastPostprocessorEntityTag);
+        viewModel.SelectedPostprocessor = viewModel.Postprocessors.Single(value =>
+            value.PostprocessorId == created.PostprocessorId);
+        await viewModel.DeleteSelectedPostprocessorAsync();
+
+        Assert.DoesNotContain(viewModel.Postprocessors, value => value.PostprocessorId == created.PostprocessorId);
+    }
+
+    [Fact]
     public async Task Viewer_can_refresh_but_all_setup_mutations_are_disabled()
     {
         var api = new FakeApiClient();
@@ -316,6 +356,9 @@ public sealed class SetupViewModelTests
         Assert.False(viewModel.NewMachineTypeCommand.CanExecute(null));
         Assert.False(viewModel.SaveMachineTypeCommand.CanExecute(null));
         Assert.False(viewModel.DeleteMachineTypeCommand.CanExecute(null));
+        Assert.False(viewModel.NewPostprocessorCommand.CanExecute(null));
+        Assert.False(viewModel.SavePostprocessorCommand.CanExecute(null));
+        Assert.False(viewModel.DeletePostprocessorCommand.CanExecute(null));
         Assert.False(viewModel.NewResourceCommand.CanExecute(null));
         Assert.False(viewModel.EditSelectedResourceCommand.CanExecute(null));
         Assert.False(viewModel.SaveResourceCommand.CanExecute(null));
@@ -352,6 +395,10 @@ public sealed class SetupViewModelTests
         [
             MachineType("type-mill", "5-axis milling", ["mill", "5-axis"])
         ];
+        private readonly List<PlannerPostprocessor> postprocessors =
+        [
+            Postprocessor("post-default", "Default CNC")
+        ];
         private readonly List<PlannerResource> resources = [];
         private readonly List<EmployeeCalendarException> resourceExceptions = [];
 
@@ -367,6 +414,9 @@ public sealed class SetupViewModelTests
         internal MachineTypeCreate? LastMachineTypeCreate { get; private set; }
         internal MachineTypeUpdate? LastMachineTypeUpdate { get; private set; }
         internal string? LastMachineTypeEntityTag { get; private set; }
+        internal PostprocessorCreate? LastPostprocessorCreate { get; private set; }
+        internal PostprocessorUpdate? LastPostprocessorUpdate { get; private set; }
+        internal string? LastPostprocessorEntityTag { get; private set; }
         internal ResourceCreate? LastResourceCreate { get; private set; }
         internal ResourceUpdate? LastResourceUpdate { get; private set; }
         internal string? LastResourceEntityTag { get; private set; }
@@ -584,6 +634,58 @@ public sealed class SetupViewModelTests
             return Task.CompletedTask;
         }
 
+        public Task<IReadOnlyList<PlannerPostprocessor>> ListPostprocessorsAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<PlannerPostprocessor>>(postprocessors.ToArray());
+
+        public Task<PlannerPostprocessor> CreatePostprocessorAsync(
+            PostprocessorCreate create,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastPostprocessorCreate = create;
+            var now = DateTimeOffset.UtcNow;
+            var value = new PlannerPostprocessor(
+                $"post-{postprocessors.Count + 1}", create.Name, create.Description,
+                create.IsActive, 1, now, now);
+            postprocessors.Add(value);
+            return Task.FromResult(value);
+        }
+
+        public Task<PostprocessorResource> UpdatePostprocessorAsync(
+            string postprocessorId,
+            PostprocessorUpdate update,
+            string entityTag,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastPostprocessorUpdate = update;
+            LastPostprocessorEntityTag = entityTag;
+            var index = postprocessors.FindIndex(value => value.PostprocessorId == postprocessorId);
+            var value = postprocessors[index] with
+            {
+                Name = update.Name,
+                Description = update.Description,
+                IsActive = update.IsActive,
+                Version = postprocessors[index].Version + 1
+            };
+            postprocessors[index] = value;
+            return Task.FromResult(new PostprocessorResource(
+                value, $"\"postprocessor:{postprocessorId}:v{value.Version}\""));
+        }
+
+        public Task DeletePostprocessorAsync(
+            string postprocessorId,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            postprocessors.RemoveAll(value => value.PostprocessorId == postprocessorId);
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<PlannerResource>>(resources.ToArray());
 
@@ -675,10 +777,17 @@ public sealed class SetupViewModelTests
             IReadOnlyList<string> capabilities) => new(
             id, name, capabilities, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
+        private static PlannerPostprocessor Postprocessor(string id, string name) => new(
+            id, name, null, true, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+
         private static PlannerMachine ToMachine(string id, MachineCreate value, int version) => new(
             id, value.Number, value.Name, value.ProcessType, value.AxisType,
             value.Capabilities, value.WorkingCalendarId, value.IsActive,
             value.DisplayEnabled, value.PicturePath, null, 0, version,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, value.MachineTypeId);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, value.MachineTypeId,
+            value.RespectMasterCalendar, value.ExecutionMode,
+            value.SupportedPostprocessorIds, value.UsableToolPositions,
+            value.RapidRateMillimetersPerMinute, value.ToolChangeTimeSeconds,
+            value.MachineTimeFactor);
     }
 }

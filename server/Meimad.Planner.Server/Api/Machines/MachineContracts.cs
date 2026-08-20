@@ -17,7 +17,13 @@ internal sealed record CreateMachineRequest(
     bool? DisplayEnabled,
     string? PicturePath,
     string? MachineTypeId = null,
-    bool? RespectMasterCalendar = true)
+    bool? RespectMasterCalendar = true,
+    string? ExecutionMode = null,
+    IReadOnlyList<string?>? SupportedPostprocessorIds = null,
+    int? UsableToolPositions = null,
+    double? RapidRateMillimetersPerMinute = null,
+    double? ToolChangeTimeSeconds = null,
+    double? MachineTimeFactor = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -30,7 +36,13 @@ internal sealed record CreateMachineRequest(
         DisplayEnabled,
         PicturePath,
         MachineTypeId,
-        RespectMasterCalendar);
+        RespectMasterCalendar,
+        ExecutionMode,
+        SupportedPostprocessorIds,
+        UsableToolPositions,
+        RapidRateMillimetersPerMinute,
+        ToolChangeTimeSeconds,
+        MachineTimeFactor);
 }
 
 internal sealed class PatchMachineRequest
@@ -53,7 +65,13 @@ internal sealed class PatchMachineRequest
             reader.Boolean("displayEnabled"),
             reader.String("picturePath"),
             reader.String("machineTypeId"),
-            reader.Boolean("respectMasterCalendar"));
+            reader.Boolean("respectMasterCalendar"),
+            reader.String("executionMode"),
+            reader.StringArray("supportedPostprocessorIds"),
+            reader.Integer("usableToolPositions"),
+            reader.Double("rapidRateMillimetersPerMinute"),
+            reader.Double("toolChangeTimeSeconds"),
+            reader.Double("machineTimeFactor"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -64,7 +82,9 @@ internal sealed class PatchMachineRequest
         [
             "number", "name", "processType", "axisType", "capabilities",
             "workingCalendarId", "isActive", "displayEnabled", "picturePath",
-            "machineTypeId", "respectMasterCalendar"
+            "machineTypeId", "respectMasterCalendar", "executionMode",
+            "supportedPostprocessorIds", "usableToolPositions",
+            "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -154,6 +174,48 @@ internal sealed class PatchMachineRequest
             return MachineField<IReadOnlyList<string?>?>.Specified(values);
         }
 
+        internal MachineField<int?> Integer(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return MachineField<int?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return MachineField<int?>.Specified(null);
+            }
+
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var value))
+            {
+                return MachineField<int?>.Specified(value);
+            }
+
+            InvalidType(name, "32-bit integer or null");
+            return MachineField<int?>.Unspecified;
+        }
+
+        internal MachineField<double?> Double(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return MachineField<double?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return MachineField<double?>.Specified(null);
+            }
+
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out var value))
+            {
+                return MachineField<double?>.Specified(value);
+            }
+
+            InvalidType(name, "number or null");
+            return MachineField<double?>.Unspecified;
+        }
+
         internal void ThrowIfInvalid()
         {
             if (issues.Count > 0)
@@ -184,7 +246,13 @@ internal sealed record MachineResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     string? MachineTypeId,
-    bool RespectMasterCalendar)
+    bool RespectMasterCalendar,
+    string ExecutionMode,
+    IReadOnlyList<string> SupportedPostprocessorIds,
+    int? UsableToolPositions,
+    double? RapidRateMillimetersPerMinute,
+    double? ToolChangeTimeSeconds,
+    double MachineTimeFactor)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -203,7 +271,13 @@ internal sealed record MachineResponse(
         machine.CreatedAt,
         machine.UpdatedAt,
         machine.MachineTypeId,
-        machine.RespectMasterCalendar);
+        machine.RespectMasterCalendar,
+        machine.ExecutionMode,
+        machine.SupportedPostprocessorIds ?? [],
+        machine.UsableToolPositions,
+        machine.RapidRateMillimetersPerMinute,
+        machine.ToolChangeTimeSeconds,
+        machine.MachineTimeFactor);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

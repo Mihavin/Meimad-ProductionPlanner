@@ -96,7 +96,13 @@ internal sealed record PlannerMachine(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     string? MachineTypeId = null,
-    bool RespectMasterCalendar = true)
+    bool RespectMasterCalendar = true,
+    string ExecutionMode = "MANUAL",
+    IReadOnlyList<string>? SupportedPostprocessorIds = null,
+    int? UsableToolPositions = null,
+    double? RapidRateMillimetersPerMinute = null,
+    double? ToolChangeTimeSeconds = null,
+    double MachineTimeFactor = 1.0)
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -443,7 +449,13 @@ internal sealed record MachineCreate(
     bool DisplayEnabled,
     string? PicturePath,
     string? MachineTypeId = null,
-    bool RespectMasterCalendar = true);
+    bool RespectMasterCalendar = true,
+    string ExecutionMode = "MANUAL",
+    IReadOnlyList<string>? SupportedPostprocessorIds = null,
+    int? UsableToolPositions = null,
+    double? RapidRateMillimetersPerMinute = null,
+    double? ToolChangeTimeSeconds = null,
+    double MachineTimeFactor = 1.0);
 
 internal sealed record WorkingCalendar(
     string WorkingCalendarId,
@@ -538,6 +550,32 @@ internal sealed record MachineTypeCreate(
 internal sealed record MachineTypeUpdate(
     string Name,
     IReadOnlyList<string> Capabilities);
+
+internal sealed record PlannerPostprocessor(
+    string PostprocessorId,
+    string Name,
+    string? Description,
+    bool IsActive,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    public string DisplayName => IsActive ? Name : $"{Name} (inactive)";
+}
+
+internal sealed record PostprocessorResource(
+    PlannerPostprocessor Value,
+    string EntityTag);
+
+internal sealed record PostprocessorCreate(
+    string Name,
+    string? Description,
+    bool IsActive);
+
+internal sealed record PostprocessorUpdate(
+    string Name,
+    string? Description,
+    bool IsActive);
 
 internal sealed record PlannerResource(
     string ResourceId,

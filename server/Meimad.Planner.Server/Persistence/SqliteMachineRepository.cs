@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Machines;
+using Meimad.Planner.Server.Application.Postprocessors;
 using Meimad.Planner.Server.Domain.Machines;
 using Meimad.Planner.Server.Domain.WorkingCalendars;
 using Microsoft.Data.Sqlite;
@@ -44,7 +45,21 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             FROM machine_types
             WHERE machine_types.id = machines.machine_type_id
         ), '[]') AS machine_type_capabilities_json,
-        machines.respect_master_calendar
+        machines.respect_master_calendar,
+        machines.execution_mode,
+        machines.usable_tool_positions,
+        machines.rapid_rate_mm_per_min,
+        machines.tool_change_time_seconds,
+        machines.machine_time_factor,
+        COALESCE((
+            SELECT json_group_array(postprocessor_id)
+            FROM (
+                SELECT machine_supported_postprocessors.postprocessor_id
+                FROM machine_supported_postprocessors
+                WHERE machine_supported_postprocessors.machine_id = machines.id
+                ORDER BY machine_supported_postprocessors.postprocessor_id
+            )
+        ), '[]') AS supported_postprocessor_ids_json
         """;
 
     private readonly SqliteDatabase database;
@@ -74,6 +89,11 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             machine.Number,
             null,
             cancellationToken);
+        await EnsurePostprocessorsExistAsync(
+            connection,
+            transaction,
+            machine.SupportedPostprocessorIds ?? [],
+            cancellationToken);
 
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -82,15 +102,22 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 id, number, name, machine_type, axis_type, capabilities_json,
                 working_calendar_id, display_configuration_json, status, picture_reference,
                 is_active, display_enabled, version, created_at, updated_at, machine_type_id,
-                respect_master_calendar)
+                respect_master_calendar, execution_mode, usable_tool_positions,
+                rapid_rate_mm_per_min, tool_change_time_seconds, machine_time_factor)
             VALUES (
                 $id, $number, $name, $processType, $axisType, $capabilities,
                 $calendarId, '{}', $status, $picturePath,
                 $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId,
-                $respectMasterCalendar);
+                $respectMasterCalendar, $executionMode, $usableToolPositions,
+                $rapidRateMillimetersPerMinute, $toolChangeTimeSeconds, $machineTimeFactor);
             """;
         AddWriteParameters(command, machine);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await ReplaceSupportedPostprocessorsAsync(
+            connection,
+            transaction,
+            machine,
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return machine;
     }
@@ -143,6 +170,11 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             machine.Number,
             machine.MachineId,
             cancellationToken);
+        await EnsurePostprocessorsExistAsync(
+            connection,
+            transaction,
+            machine.SupportedPostprocessorIds ?? [],
+            cancellationToken);
         await EnsureBacklogRemainsCompatibleAsync(
             connection,
             transaction,
@@ -165,6 +197,11 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 picture_reference = $picturePath,
                 machine_type_id = $machineTypeId,
                 respect_master_calendar = $respectMasterCalendar,
+                execution_mode = $executionMode,
+                usable_tool_positions = $usableToolPositions,
+                rapid_rate_mm_per_min = $rapidRateMillimetersPerMinute,
+                tool_change_time_seconds = $toolChangeTimeSeconds,
+                machine_time_factor = $machineTimeFactor,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
@@ -172,8 +209,66 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         AddWriteParameters(command, machine);
         command.Parameters.AddWithValue("$expectedVersion", expectedVersion);
         var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (affected == 1)
+        {
+            await ReplaceSupportedPostprocessorsAsync(
+                connection,
+                transaction,
+                machine,
+                cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         return affected == 1 ? machine : null;
+    }
+
+    private static async Task EnsurePostprocessorsExistAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<string> postprocessorIds,
+        CancellationToken cancellationToken)
+    {
+        foreach (var id in postprocessorIds)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT is_active FROM postprocessors WHERE id = $id;";
+            command.Parameters.AddWithValue("$id", id);
+            var active = await command.ExecuteScalarAsync(cancellationToken);
+            if (active is null || Convert.ToInt32(active, CultureInfo.InvariantCulture) != 1)
+            {
+                throw new PostprocessorReferenceNotFoundException(id);
+            }
+        }
+    }
+
+    private static async Task ReplaceSupportedPostprocessorsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Machine machine,
+        CancellationToken cancellationToken)
+    {
+        await using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM machine_supported_postprocessors WHERE machine_id = $machineId;";
+            delete.Parameters.AddWithValue("$machineId", machine.MachineId);
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var postprocessorId in machine.SupportedPostprocessorIds ?? [])
+        {
+            await using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO machine_supported_postprocessors (
+                    machine_id, postprocessor_id, created_at, updated_at)
+                VALUES ($machineId, $postprocessorId, $at, $at);
+                """;
+            insert.Parameters.AddWithValue("$machineId", machine.MachineId);
+            insert.Parameters.AddWithValue("$postprocessorId", postprocessorId);
+            insert.Parameters.AddWithValue("$at", FormatInstant(machine.UpdatedAt));
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static async Task EnsureBacklogRemainsCompatibleAsync(
@@ -342,6 +437,19 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             "$machineTypeId",
             machine.MachineTypeId is null ? DBNull.Value : machine.MachineTypeId);
         command.Parameters.AddWithValue("$respectMasterCalendar", machine.RespectMasterCalendar ? 1 : 0);
+        command.Parameters.AddWithValue("$executionMode", machine.ExecutionMode);
+        command.Parameters.AddWithValue(
+            "$usableToolPositions",
+            machine.UsableToolPositions.HasValue ? machine.UsableToolPositions.Value : DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$rapidRateMillimetersPerMinute",
+            machine.RapidRateMillimetersPerMinute.HasValue
+                ? machine.RapidRateMillimetersPerMinute.Value
+                : DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$toolChangeTimeSeconds",
+            machine.ToolChangeTimeSeconds.HasValue ? machine.ToolChangeTimeSeconds.Value : DBNull.Value);
+        command.Parameters.AddWithValue("$machineTimeFactor", machine.MachineTimeFactor);
     }
 
     private static Machine ReadMachine(SqliteDataReader reader)
@@ -349,6 +457,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         var capabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(5))
             ?? throw new InvalidDataException("Stored Machine capabilities must be a JSON array.");
         var typeCapabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(16)) ?? [];
+        var supportedPostprocessorIds = JsonSerializer.Deserialize<string[]>(reader.GetString(23)) ?? [];
         return new Machine(
             reader.GetString(0),
             reader.GetString(1),
@@ -367,7 +476,13 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             reader.IsDBNull(9) ? null : reader.GetString(9),
             reader.IsDBNull(15) ? null : reader.GetString(15),
             typeCapabilities,
-            reader.GetInt32(17) == 1);
+            reader.GetInt32(17) == 1,
+            reader.GetString(18),
+            supportedPostprocessorIds,
+            reader.IsDBNull(19) ? null : reader.GetInt32(19),
+            reader.IsDBNull(20) ? null : reader.GetDouble(20),
+            reader.IsDBNull(21) ? null : reader.GetDouble(21),
+            reader.GetDouble(22));
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

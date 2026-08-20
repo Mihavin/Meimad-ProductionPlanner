@@ -39,7 +39,13 @@ internal sealed class MachineService
             values.PicturePath,
             values.MachineTypeId,
             null,
-            command.RespectMasterCalendar ?? true);
+            command.RespectMasterCalendar ?? true,
+            values.ExecutionMode,
+            values.SupportedPostprocessorIds,
+            values.UsableToolPositions,
+            values.RapidRateMillimetersPerMinute,
+            values.ToolChangeTimeSeconds,
+            values.MachineTimeFactor);
         return await repository.CreateAsync(machine, editAuthority, cancellationToken);
     }
 
@@ -71,7 +77,15 @@ internal sealed class MachineService
             Select(command.IsActive, current.IsActive) ?? false,
             Select(command.DisplayEnabled, current.DisplayEnabled) ?? false,
             Select(command.PicturePath, current.PicturePath),
-            Select(command.MachineTypeId, current.MachineTypeId)));
+            Select(command.MachineTypeId, current.MachineTypeId),
+            Select(command.ExecutionMode, current.ExecutionMode),
+            Select(
+                command.SupportedPostprocessorIds,
+                (current.SupportedPostprocessorIds ?? []).Cast<string?>().ToArray()),
+            Select(command.UsableToolPositions, current.UsableToolPositions),
+            Select(command.RapidRateMillimetersPerMinute, current.RapidRateMillimetersPerMinute),
+            Select(command.ToolChangeTimeSeconds, current.ToolChangeTimeSeconds),
+            Select(command.MachineTimeFactor, current.MachineTimeFactor)));
         var updated = current with
         {
             Number = values.Number,
@@ -85,6 +99,12 @@ internal sealed class MachineService
             PicturePath = values.PicturePath,
             MachineTypeId = values.MachineTypeId,
             RespectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar) ?? true,
+            ExecutionMode = values.ExecutionMode,
+            SupportedPostprocessorIds = values.SupportedPostprocessorIds,
+            UsableToolPositions = values.UsableToolPositions,
+            RapidRateMillimetersPerMinute = values.RapidRateMillimetersPerMinute,
+            ToolChangeTimeSeconds = values.ToolChangeTimeSeconds,
+            MachineTimeFactor = values.MachineTimeFactor,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -106,7 +126,13 @@ internal sealed class MachineService
         command.IsActive,
         command.DisplayEnabled,
         command.PicturePath,
-        command.MachineTypeId);
+        command.MachineTypeId,
+        command.ExecutionMode,
+        command.SupportedPostprocessorIds,
+        command.UsableToolPositions,
+        command.RapidRateMillimetersPerMinute,
+        command.ToolChangeTimeSeconds,
+        command.MachineTimeFactor);
 
     private static T Select<T>(MachineField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;

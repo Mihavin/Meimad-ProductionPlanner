@@ -11,7 +11,13 @@ internal sealed record CreateMachineCommand(
     bool? DisplayEnabled,
     string? PicturePath = null,
     string? MachineTypeId = null,
-    bool? RespectMasterCalendar = true);
+    bool? RespectMasterCalendar = true,
+    string? ExecutionMode = null,
+    IReadOnlyList<string?>? SupportedPostprocessorIds = null,
+    int? UsableToolPositions = null,
+    double? RapidRateMillimetersPerMinute = null,
+    double? ToolChangeTimeSeconds = null,
+    double? MachineTimeFactor = null);
 
 internal readonly record struct MachineField<T>(bool IsSpecified, T Value)
 {
@@ -31,4 +37,10 @@ internal sealed record UpdateMachineCommand(
     MachineField<bool?> DisplayEnabled,
     MachineField<string?> PicturePath = default,
     MachineField<string?> MachineTypeId = default,
-    MachineField<bool?> RespectMasterCalendar = default);
+    MachineField<bool?> RespectMasterCalendar = default,
+    MachineField<string?> ExecutionMode = default,
+    MachineField<IReadOnlyList<string?>?> SupportedPostprocessorIds = default,
+    MachineField<int?> UsableToolPositions = default,
+    MachineField<double?> RapidRateMillimetersPerMinute = default,
+    MachineField<double?> ToolChangeTimeSeconds = default,
+    MachineField<double?> MachineTimeFactor = default);

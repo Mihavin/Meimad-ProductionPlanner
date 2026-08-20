@@ -537,6 +537,102 @@ public sealed class MachineApiTests
         });
     }
 
+    [Fact]
+    public async Task Machine_execution_configuration_uses_explicit_postprocessor_mapping()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            static async Task<string> CreatePostprocessorAsync(HttpClient http, string name)
+            {
+                using var response = await http.PostAsJsonAsync(
+                    "/api/v1/postprocessors",
+                    new { name, description = $"{name} configuration", isActive = true });
+                Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                return document.RootElement.GetProperty("postprocessorId").GetString()!;
+            }
+
+            var threeAxis = await CreatePostprocessorAsync(client, "Doosan 3X");
+            var fourAxis = await CreatePostprocessorAsync(client, "Doosan 4X");
+
+            using var createCnc = await client.PostAsJsonAsync(
+                "/api/v1/machines",
+                new
+                {
+                    number = "M-CNC",
+                    name = "CNC machine",
+                    processType = "mill",
+                    axisType = "4-axis",
+                    capabilities = Array.Empty<string>(),
+                    workingCalendarId = "calendar-1",
+                    isActive = true,
+                    displayEnabled = true,
+                    executionMode = "CNC_GCODE",
+                    supportedPostprocessorIds = new[] { threeAxis, fourAxis },
+                    usableToolPositions = 30,
+                    rapidRateMillimetersPerMinute = 24000,
+                    toolChangeTimeSeconds = 4.5,
+                    machineTimeFactor = 1.0
+                });
+            Assert.Equal(HttpStatusCode.Created, createCnc.StatusCode);
+            using (var created = JsonDocument.Parse(await createCnc.Content.ReadAsStringAsync()))
+            {
+                var root = created.RootElement;
+                Assert.Equal("CNC_GCODE", root.GetProperty("executionMode").GetString());
+                Assert.Equal(2, root.GetProperty("supportedPostprocessorIds").GetArrayLength());
+                Assert.Equal(30, root.GetProperty("usableToolPositions").GetInt32());
+                Assert.Equal(24000, root.GetProperty("rapidRateMillimetersPerMinute").GetDouble());
+                Assert.Equal(4.5, root.GetProperty("toolChangeTimeSeconds").GetDouble());
+                Assert.Equal(1.0, root.GetProperty("machineTimeFactor").GetDouble());
+            }
+
+            using var unsupported = await client.PostAsJsonAsync(
+                "/api/v1/machines",
+                new
+                {
+                    number = "M-INVALID-POST",
+                    name = "Invalid mapping",
+                    processType = "mill",
+                    capabilities = Array.Empty<string>(),
+                    workingCalendarId = "calendar-1",
+                    isActive = true,
+                    displayEnabled = true,
+                    executionMode = "CNC_GCODE",
+                    supportedPostprocessorIds = new[] { "not-a-managed-postprocessor" }
+                });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, unsupported.StatusCode);
+            using (var error = JsonDocument.Parse(await unsupported.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal("invalid_postprocessor", error.RootElement.GetProperty("error").GetProperty("code").GetString());
+            }
+
+            using var manual = await client.PostAsJsonAsync(
+                "/api/v1/machines",
+                new
+                {
+                    number = "M-MANUAL",
+                    name = "Manual machine",
+                    processType = "manual",
+                    capabilities = Array.Empty<string>(),
+                    workingCalendarId = "calendar-1",
+                    isActive = true,
+                    displayEnabled = true
+                });
+            manual.EnsureSuccessStatusCode();
+            using var manualDocument = JsonDocument.Parse(await manual.Content.ReadAsStringAsync());
+            Assert.Equal("MANUAL", manualDocument.RootElement.GetProperty("executionMode").GetString());
+            Assert.Equal(1.0, manualDocument.RootElement.GetProperty("machineTimeFactor").GetDouble());
+            Assert.Empty(manualDocument.RootElement.GetProperty("supportedPostprocessorIds").EnumerateArray());
+
+            using var mappedDelete = await client.DeleteAsync($"/api/v1/postprocessors/{threeAxis}");
+            Assert.Equal(HttpStatusCode.Conflict, mappedDelete.StatusCode);
+        });
+    }
+
     private static async Task<string> CreateMachineAsync(
         HttpClient client,
         string number,

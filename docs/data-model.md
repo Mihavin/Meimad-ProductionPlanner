@@ -274,6 +274,12 @@ Implemented Batch Operation scalar and dependency snapshots do not change when t
 | `picturePath` | Implemented optional absolute external path in schema v8 (`picture_reference`). SQLite stores no image bytes; the Server streams PNG/JPEG/BMP/GIF content to the Windows client. |
 | `deviceId` | Implemented read projection from the optional enabled E-Ink device binding. Active-editor binding/revocation/rotation is implemented through the device-registration API. |
 | `backlogCount` | Implemented derived count, never manually stored. |
+| `executionMode` | Implemented schema-v34 token: `CNC_GCODE` or `MANUAL`. Existing rows migrate to `MANUAL`; no Machine characteristics are inferred. |
+| `supportedPostprocessorIds` | Implemented projection of explicit rows in `machine_supported_postprocessors`; an empty list means no configured G-code compatibility. |
+| `usableToolPositions` | Implemented optional positive integer capacity representing positions actually available to an operation. |
+| `rapidRateMillimetersPerMinute` | Implemented optional positive Machine-level rate; units are millimeters per minute. |
+| `toolChangeTimeSeconds` | Implemented optional non-negative Machine-level duration in seconds. |
+| `machineTimeFactor` | Implemented positive Machine-level estimator factor; defaults to neutral `1.0`. |
 
 ### 7.2 Machine Type
 
@@ -285,6 +291,10 @@ Implemented Batch Operation scalar and dependency snapshots do not change when t
 | `version`, timestamps | Implemented optimistic version and UTC timestamps. |
 
 Machine Type create/read/list/optimistic update/guarded delete are Server-owned. A rename propagates the new name to the legacy `machines.machine_type` compatibility token on linked Machines. Before changing a type's name or capabilities, the repository verifies that every currently assigned Batch Operation on each linked Machine remains compatible; an unsafe change is rejected atomically. A rename is also blocked while a Case Operation or unfinished Batch Operation directly requires the old type name, because those immutable snapshots otherwise could become unassignable. Deletion is blocked while any Machine, Case Operation, or Batch Operation references the type.
+
+### 7.2a Postprocessor compatibility
+
+`postprocessors` stores `id`, required case-insensitively unique `name`, optional `description`, `is_active`, optimistic `version`, and UTC timestamps. `machine_supported_postprocessors` stores the unique `(machine_id, postprocessor_id)` pair and timestamps with restrictive foreign keys. This relation is the sole G-code dialect applicability mapping; Machine Type, brand, controller, model, axis count, and timing values do not imply support. A Postprocessor referenced by any Machine cannot be deactivated or deleted. G-code release ownership and readiness enforcement are deferred to later tasks.
 
 ### 7.3 Working Calendar
 
@@ -459,7 +469,7 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 13.
+- Ordered server-owned migrations are implemented through version 34.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 
 Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL Server host/port, database, schema/view, username, refresh interval, enable flag, optimistic version, and last read-only connection-test status. The password is stored only as an ASP.NET Data Protection ciphertext bound to the Server application; API responses expose only `passwordConfigured`. No Kitaron source rows or source database credentials are stored as plaintext, and this schema does not yet add source identity/import rows.
@@ -467,6 +477,8 @@ Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL S
 Schema v29 adds singleton `kitaron_mapping_settings` with the selected model, Draft/Ready status, complete field selections, detected source columns, notes, version, and timestamps.
 
 Schema v30 adds singleton `kitaron_sync_state` and `kitaron_sync_links`. Schema v31 adds `case_components`, extends source links to Case Components, and adds component create/update/match counters. A Case remains the only part master and may be a parent, child, both, or neither. Each active relationship stores a positive real `quantity_per_parent`; self-reference and duplicate parent/child pairs are constrained, while application writes also reject indirect cycles. Connector-owned missing BOM edges are deactivated rather than deleted, and removing an edge never deletes either Case. Schema v32 extends `batch_allocations` with `derived_order` and a stable `derived_order_key`. That key references a read-only projection of a source parent Order through one component path; it does not create an Order row for the child. Derived quantity is parent Order quantity multiplied by every edge quantity in the path, and remaining quantity subtracts non-cancelled child Batch allocations for that key. Parent role and child role are derived with active relationship existence queries and are not separately stored.
+
+Schema v34 adds Machine execution/capacity/timing columns, `postprocessors`, and the explicit Machine/Postprocessor join table. Existing Machines receive `MANUAL`, null unknown capacity/rates/tool-change time, and factor `1.0`. The migration intentionally does not infer CNC status or create compatibility mappings from existing descriptive fields.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
