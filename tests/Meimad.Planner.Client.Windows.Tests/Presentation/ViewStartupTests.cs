@@ -542,6 +542,51 @@ public sealed class ViewStartupTests
         Assert.Contains("plan changed", timelineStatusAfterClose, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Production_readiness_dialog_opens_with_textual_blockers_and_confirmation_controls()
+    {
+        Exception? startupException = null;
+        var rendered = false;
+        var thread = new Thread(() =>
+        {
+            ProductionReadinessDialog? dialog = null;
+            try
+            {
+                var readiness = new PlannerProductionReadiness(
+                    "NOT_READY", false, true, "Not ready: 2 blocking component(s)",
+                    [
+                        new("material", "Material", "UNVERIFIED", "Material is not confirmed.", true),
+                        new("toolOffsets", "Tool Offsets", "MISSING", "Offsets are missing.", true)
+                    ],
+                    "release-1", false,
+                    [new("release-1", "process-1", "post-1", "Doosan 3X", "program.nc", 1)]);
+                dialog = new ProductionReadinessDialog("PN-1 / B-1 / OP10", readiness);
+                dialog.Show();
+                dialog.UpdateLayout();
+                var text = Descendants<TextBlock>(dialog).Select(value => value.Text).ToArray();
+                rendered = text.Contains("Material")
+                    && text.Contains("Material is not confirmed.")
+                    && text.Contains("Tool Offsets")
+                    && Descendants<CheckBox>(dialog).Count() == 2
+                    && Descendants<ComboBox>(dialog).Single().Items.Count == 1;
+            }
+            catch (Exception exception)
+            {
+                startupException = exception;
+            }
+            finally
+            {
+                dialog?.Close();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "The readiness dialog startup check timed out.");
+        Assert.Null(startupException);
+        Assert.True(rendered);
+    }
+
     private static IEnumerable<T> Descendants<T>(DependencyObject parent)
         where T : DependencyObject
     {

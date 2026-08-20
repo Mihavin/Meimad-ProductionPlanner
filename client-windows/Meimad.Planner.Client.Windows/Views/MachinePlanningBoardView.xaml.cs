@@ -81,6 +81,44 @@ public partial class MachinePlanningBoardView : UserControl
     private async void SetManualMode_Click(object sender, RoutedEventArgs e) =>
         await ChangePlanningModeAsync(sender, "manual");
 
+    private async void ProductionReadinessText_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PlanningOperationViewModel operation })
+        {
+            await ShowProductionReadinessAsync(operation);
+            e.Handled = true;
+        }
+    }
+
+    private async void ProductionReadinessMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem menuItem
+            && ItemsControl.ItemsControlFromItemContainer(menuItem) is ContextMenu contextMenu
+            && contextMenu.PlacementTarget is FrameworkElement
+            {
+                DataContext: PlanningOperationViewModel operation
+            })
+        {
+            await ShowProductionReadinessAsync(operation);
+        }
+    }
+
+    private async Task ShowProductionReadinessAsync(PlanningOperationViewModel operation)
+    {
+        if (!operation.CanEditReadiness
+            || DataContext is not MachinePlanningBoardViewModel viewModel) return;
+        var readiness = await viewModel.ReadProductionReadinessAsync(operation);
+        if (readiness is null) return;
+        var dialog = new ProductionReadinessDialog(operation.DisplayTitle, readiness)
+        {
+            Owner = Window.GetWindow(this)
+        };
+        if (dialog.ShowDialog() == true && dialog.Value is not null)
+        {
+            await viewModel.UpdateProductionReadinessAsync(operation, dialog.Value);
+        }
+    }
+
     private async Task ChangePlanningModeAsync(object sender, string planningMode)
     {
         if (sender is not MenuItem menuItem

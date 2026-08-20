@@ -76,7 +76,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var actor = await EnsureEditAuthorityAsync(
+            connection, transaction, editAuthority, cancellationToken);
         machine = await ApplyMachineTypeAsync(connection, transaction, machine, cancellationToken);
         await EnsureCalendarExistsAsync(
             connection,
@@ -119,7 +120,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             machine,
             cancellationToken);
         await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
-            connection, transaction, machine.MachineId, machine.UpdatedAt, cancellationToken);
+            connection, transaction, machine.MachineId, machine.UpdatedAt,
+            actor, "machine_created", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return machine;
     }
@@ -159,7 +161,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var actor = await EnsureEditAuthorityAsync(
+            connection, transaction, editAuthority, cancellationToken);
         machine = await ApplyMachineTypeAsync(connection, transaction, machine, cancellationToken);
         await EnsureCalendarExistsAsync(
             connection,
@@ -219,7 +222,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 machine,
                 cancellationToken);
             await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
-                connection, transaction, machine.MachineId, machine.UpdatedAt, cancellationToken);
+                connection, transaction, machine.MachineId, machine.UpdatedAt,
+                actor, "machine_timing_or_compatibility_changed", cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         return affected == 1 ? machine : null;
@@ -384,7 +388,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         }
     }
 
-    private static async Task EnsureEditAuthorityAsync(
+    private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         EditAuthority editAuthority,
@@ -397,7 +401,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
+        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
         {
@@ -407,12 +411,13 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         }
 
         if (!string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != editAuthority.Generation)
+            || reader.GetInt64(2) != editAuthority.Generation)
         {
             throw new EditModeMutationException(
                 "edit_generation_stale",
                 "This client does not hold the active Edit Mode generation.");
         }
+        return reader.IsDBNull(1) ? editAuthority.ClientId : reader.GetString(1);
     }
 
     private static void AddWriteParameters(SqliteCommand command, Machine machine)

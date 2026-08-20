@@ -654,6 +654,71 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    internal async Task<PlannerProductionReadiness?> ReadProductionReadinessAsync(
+        PlanningOperationViewModel operation)
+    {
+        if (apiClient is null || IsBusy)
+        {
+            return null;
+        }
+
+        IsBusy = true;
+        try
+        {
+            return await apiClient.GetProductionReadinessAsync(operation.BatchOperationId);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Readiness unavailable", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+            return null;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    internal async Task<bool> UpdateProductionReadinessAsync(
+        PlanningOperationViewModel operation,
+        ProductionReadinessInputUpdate update)
+    {
+        if (apiClient is null || !isEditor || IsBusy)
+        {
+            AddFeedback(
+                "attention",
+                "Edit Mode required",
+                $"Readiness for {operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
+            return false;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var result = await apiClient.UpdateProductionReadinessInputsAsync(
+                operation.BatchOperationId, update, clientId, editGeneration);
+            AddFeedback(
+                result.IsReadyForProduction ? "information" : "attention",
+                result.IsReadyForProduction ? "Ready for Production" : "Readiness updated",
+                $"{operation.DisplayTitle}: {result.Summary}.");
+            StatusMessage = $"{operation.DisplayTitle}: {result.Summary}.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Readiness update rejected", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+            return false;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        await RefreshAsync();
+        PlanChanged?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
     internal async Task ChangePlanningModeAsync(
         PlanningOperationViewModel operation,
         string planningMode)
@@ -1289,6 +1354,10 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public bool CanScheduleBackward => CanChangePlanningMode && PlanningMode != "backward";
     public bool CanScheduleForward => CanChangePlanningMode && PlanningMode != "forward";
     public bool CanSetManualMode => CanChangePlanningMode && PlanningMode != "manual";
+    public bool CanEditReadiness => planningModeEditAvailable
+        && MachineId is not null
+        && Status == "not_started"
+        && OverallReadinessState != "NOT_MANAGED";
 
     private static string StateLabel(string state) => state.Replace('_', ' ').ToLowerInvariant() switch
     {
@@ -1308,6 +1377,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanScheduleBackward)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanScheduleForward)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanSetManualMode)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEditReadiness)));
     }
 
     private static string NormalizePlanningMode(string? value) =>

@@ -37,6 +37,7 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
         var context = await SqliteProductionReadinessContextReader.ReadAsync(
             connection, transaction, batchOperationId, cancellationToken)
             ?? throw new BatchOperationNotFoundException(batchOperationId);
+        var beforeReadiness = ProductionReadinessEvaluator.Evaluate(context);
 
         if (context.MachineAssignmentId is null || context.MachineId is null)
         {
@@ -78,15 +79,63 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
             MaterialStatus = update.MaterialStatus,
             MaterialComment = update.MaterialComment
         };
-        if (update.ToolOffsetStatus != ReadinessStates.Unverified
-            || !string.IsNullOrWhiteSpace(update.ToolOffsetComment))
+        var offsetRecorded = update.ToolOffsetStatus != ReadinessStates.Unverified
+            || !string.IsNullOrWhiteSpace(update.ToolOffsetComment);
+        if (offsetRecorded)
         {
             await InsertOffsetRecordAsync(connection, transaction, updatedContext,
                 update.ToolOffsetStatus, update.ToolOffsetComment, actor, now, cancellationToken);
         }
 
+        if (context.MaterialStatus != update.MaterialStatus
+            || !string.Equals(context.MaterialComment, update.MaterialComment, StringComparison.Ordinal))
+        {
+            await SqliteStructuredEventLogRepository.AppendAsync(
+                connection,
+                transaction,
+                new(
+                    "material_readiness_changed",
+                    now,
+                    actor,
+                    new Dictionary<string, string> { ["batchOperationId"] = batchOperationId },
+                    "physical_verification",
+                    update.MaterialComment,
+                    new { status = context.MaterialStatus, comment = context.MaterialComment },
+                    new { status = update.MaterialStatus, comment = update.MaterialComment }),
+                cancellationToken);
+        }
+
+        if (offsetRecorded)
+        {
+            await SqliteStructuredEventLogRepository.AppendAsync(
+                connection,
+                transaction,
+                new(
+                    "tool_offsets_confirmation_recorded",
+                    now,
+                    actor,
+                    ReadinessEntities(updatedContext),
+                    "physical_verification",
+                    update.ToolOffsetComment,
+                    null,
+                    new
+                    {
+                        status = update.ToolOffsetStatus,
+                        gcodeReleaseId = ProductionReadinessEvaluator.Evaluate(updatedContext)
+                            .EffectiveGCodeReleaseId
+                    }),
+                cancellationToken);
+        }
+
+        var finalContext = await SqliteProductionReadinessContextReader.ReadAsync(
+            connection, transaction, batchOperationId, cancellationToken)
+            ?? throw new BatchOperationNotFoundException(batchOperationId);
+        var finalReadiness = ProductionReadinessEvaluator.Evaluate(finalContext);
+        await SqliteReadinessAudit.AppendEvaluationAsync(
+            connection, transaction, finalContext, beforeReadiness, finalReadiness,
+            now, actor, "readiness_inputs_changed", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return await ReadAsync(batchOperationId, cancellationToken);
+        return finalReadiness;
     }
 
     private static async Task UpdateSelectionAsync(
@@ -234,4 +283,17 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
 
     private static string Iso(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static Dictionary<string, string> ReadinessEntities(
+        ProductionReadinessContext context)
+    {
+        var values = new Dictionary<string, string>
+        {
+            ["batchOperationId"] = context.BatchOperationId
+        };
+        if (context.MachineId is not null) values["machineId"] = context.MachineId;
+        if (context.ActiveProcessRevisionId is not null)
+            values["processRevisionId"] = context.ActiveProcessRevisionId;
+        return values;
+    }
 }

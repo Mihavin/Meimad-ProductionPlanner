@@ -168,6 +168,12 @@
                                   IsEnabled="{Binding CanSetManualMode}"
                                   Click="SetManualMode_Click"
                                   AutomationProperties.Name="Set manual mode" />
+                        <Separator/>
+                        <MenuItem Header="Production readiness..."
+                                  ToolTip="Review all readiness reasons and confirm material, offsets, and an explicit compatible release."
+                                  IsEnabled="{Binding CanEditReadiness}"
+                                  Click="ProductionReadinessMenu_Click"
+                                  AutomationProperties.Name="Production readiness" />
                     </ContextMenu>
                 </Border.ContextMenu>
                 <Grid>
@@ -214,7 +220,8 @@
                                        ToolTip="Planning mode for this Machine assignment" />
                             <TextBlock DockPanel.Dock="Right" Text="{Binding ReadinessSummaryText}" FontSize="10"
                                        Margin="6,0,0,0" TextTrimming="CharacterEllipsis"
-                                       ToolTip="{Binding ReadinessDetailText}">
+                                       ToolTip="{Binding ReadinessDetailText}" Cursor="Hand"
+                                       MouseLeftButtonUp="ProductionReadinessText_Click">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>

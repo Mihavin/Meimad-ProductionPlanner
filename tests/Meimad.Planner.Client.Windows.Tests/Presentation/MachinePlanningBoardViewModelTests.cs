@@ -67,6 +67,58 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public async Task Managed_operation_can_read_and_save_production_readiness_inputs()
+    {
+        var managedOperation = Operation("machine-1", 0) with
+        {
+            OverallReadinessState = "NOT_READY",
+            IsReadyForProduction = false,
+            ReadinessSummary = "Not ready: 2 blocking component(s)",
+            ReadinessComponents =
+            [
+                new("material", "Material", "UNVERIFIED", "Material is not confirmed.", true),
+                new("toolOffsets", "Tool Offsets", "MISSING", "Offsets are missing.", true)
+            ]
+        };
+        var snapshot = BoardBefore() with
+        {
+            Pool = [],
+            Machines = [Machine([managedOperation])]
+        };
+        var initial = new PlannerProductionReadiness(
+            "NOT_READY", false, true, "Not ready: 2 blocking component(s)",
+            managedOperation.ReadinessComponents!, "release-1", false,
+            [new("release-1", "process-1", "post-1", "Doosan 3X", "program.nc", 1)]);
+        var ready = initial with
+        {
+            OverallState = "READY_FOR_PRODUCTION",
+            IsReadyForProduction = true,
+            Summary = "Ready for production"
+        };
+        var api = new FakeApiClient(snapshot)
+        {
+            ReadinessResult = initial,
+            UpdatedReadinessResult = ready
+        };
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        var operation = viewModel.Machines.Single().Backlog.Single();
+
+        Assert.True(operation.CanEditReadiness);
+        Assert.Same(initial, await viewModel.ReadProductionReadinessAsync(operation));
+        var update = new ProductionReadinessInputUpdate(
+            "release-1", "READY", "Material checked", "READY", "Offsets checked");
+        Assert.True(await viewModel.UpdateProductionReadinessAsync(operation, update));
+
+        Assert.Equal("operation-1", api.ReadinessOperationId);
+        Assert.Equal(update, api.ReadinessUpdate);
+        Assert.Equal("windows-1", api.ClientId);
+        Assert.Equal(7, api.Generation);
+        Assert.Equal("Ready for Production", viewModel.Feedback[0].Title);
+    }
+
+    [Fact]
     public async Task Manual_assignment_sends_exact_target_and_refreshes_server_order()
     {
         var api = new FakeApiClient(BoardBefore())
@@ -629,6 +681,10 @@ public sealed class MachinePlanningBoardViewModelTests
         internal string? PlanningModeAssignmentId { get; private set; }
         internal int PlanningModeAssignmentVersion { get; private set; }
         internal string? PlanningMode { get; private set; }
+        internal PlannerProductionReadiness? ReadinessResult { get; init; }
+        internal PlannerProductionReadiness? UpdatedReadinessResult { get; init; }
+        internal string? ReadinessOperationId { get; private set; }
+        internal ProductionReadinessInputUpdate? ReadinessUpdate { get; private set; }
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
             CancellationToken cancellationToken = default) =>
@@ -657,6 +713,30 @@ public sealed class MachinePlanningBoardViewModelTests
         {
             BoardReadCount++;
             return Task.FromResult(snapshot);
+        }
+
+        public Task<PlannerProductionReadiness> GetProductionReadinessAsync(
+            string batchOperationId,
+            CancellationToken cancellationToken = default)
+        {
+            ReadinessOperationId = batchOperationId;
+            return Task.FromResult(ReadinessResult
+                ?? throw new InvalidOperationException("No fake readiness result was configured."));
+        }
+
+        public Task<PlannerProductionReadiness> UpdateProductionReadinessInputsAsync(
+            string batchOperationId,
+            ProductionReadinessInputUpdate update,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            ReadinessOperationId = batchOperationId;
+            ReadinessUpdate = update;
+            ClientId = clientId;
+            Generation = editGeneration;
+            return Task.FromResult(UpdatedReadinessResult
+                ?? throw new InvalidOperationException("No fake updated readiness result was configured."));
         }
 
         public Task<TimelineSnapshot> GetTimelineAsync(

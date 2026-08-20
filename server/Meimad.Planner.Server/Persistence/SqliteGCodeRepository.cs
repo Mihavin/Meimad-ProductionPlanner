@@ -2,6 +2,7 @@ using System.Globalization;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Domain.GCode;
+using Meimad.Planner.Server.Domain.Readiness;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -57,9 +58,12 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             ?? throw new GCodePostprocessorNotFoundException(command.PostprocessorId);
         var active = await ReadActiveProcessAsync(
             connection, transaction, command.CaseOperationId, cancellationToken);
+        var readinessBefore = await ReadAffectedReadinessAsync(
+            connection, transaction, command.CaseOperationId, cancellationToken);
 
         ToolTableRelease toolTable;
         ProcessRevision process;
+        var createdToolTable = false;
         var createsProcess = active is null
             || command.ChangeScope == GCodeChangeScopes.NewProcessRevision;
         if (createsProcess)
@@ -73,6 +77,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
 
             if (command.ToolTableFile is not null)
             {
+                createdToolTable = true;
                 toolTable = await InsertToolTableAsync(
                     connection,
                     transaction,
@@ -167,38 +172,27 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             process.IsActive);
         await InsertReleaseAsync(connection, transaction, release, cancellationToken);
         var ncEstimates = await SqliteNcCycleEstimateStore.InsertAnalysisAndEstimatesAsync(
-            connection, transaction, release, command.NcAnalysis, cancellationToken);
+            connection, transaction, release, command.NcAnalysis,
+            releasedBy, command.ChangeScope, cancellationToken);
         release = release with
         {
             NcAnalysis = command.NcAnalysis,
             MachineCycleEstimates = ncEstimates
         };
-        await SqliteStructuredEventLogRepository.AppendAsync(
-            connection,
-            transaction,
-            new(
-                createsProcess ? "process_revision_activated" : "gcode_release_published",
-                command.ReleasedAt,
-                releasedBy,
-                new Dictionary<string, string>
-                {
-                    ["caseOperationId"] = command.CaseOperationId,
-                    ["processRevisionId"] = process.ProcessRevisionId,
-                    ["gcodeReleaseId"] = release.GCodeReleaseId,
-                    ["postprocessorId"] = release.PostprocessorId,
-                    ["toolTableReleaseId"] = toolTable.ToolTableReleaseId
-                },
-                command.ChangeScope,
-                command.ReleaseComment,
-                null,
-                new
-                {
-                    processRevisionNumber = process.ProcessRevisionNumber,
-                    postSpecificRevision = postRevision,
-                    gcodeHash = release.FileHash,
-                    toolTableHash = toolTable.FileHash
-                }),
-            cancellationToken);
+        await AppendReleaseAuditAsync(
+            connection, transaction, release, process, toolTable,
+            active, createsProcess, createdToolTable, releasedBy,
+            command.ReleaseComment, cancellationToken);
+        var readinessAfter = await ReadAffectedReadinessAsync(
+            connection, transaction, command.CaseOperationId, cancellationToken);
+        foreach (var (operationId, current) in readinessAfter)
+        {
+            readinessBefore.TryGetValue(operationId, out var previous);
+            await SqliteReadinessAudit.AppendEvaluationAsync(
+                connection, transaction, current.Context, previous?.Result,
+                current.Result, command.ReleasedAt, releasedBy,
+                command.ChangeScope, cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         return release;
     }
@@ -598,6 +592,141 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         command.Parameters.AddWithValue("$postprocessorId", postprocessorId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture);
     }
+
+    private static async Task AppendReleaseAuditAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        GCodeRelease release,
+        ProcessRevision process,
+        ToolTableRelease toolTable,
+        ProcessRevision? previousActiveProcess,
+        bool createsProcess,
+        bool createdToolTable,
+        string actor,
+        string comment,
+        CancellationToken token)
+    {
+        var entities = new Dictionary<string, string>
+        {
+            ["caseOperationId"] = release.CaseOperationId,
+            ["processRevisionId"] = process.ProcessRevisionId,
+            ["gcodeReleaseId"] = release.GCodeReleaseId,
+            ["postprocessorId"] = release.PostprocessorId,
+            ["toolTableReleaseId"] = toolTable.ToolTableReleaseId
+        };
+        var releaseData = new
+        {
+            processRevisionNumber = process.ProcessRevisionNumber,
+            postSpecificRevision = release.PostSpecificRevision,
+            release.ChangeScope,
+            gcodeHash = release.FileHash,
+            toolTableHash = toolTable.FileHash
+        };
+
+        if (createdToolTable)
+        {
+            await SqliteStructuredEventLogRepository.AppendAsync(
+                connection, transaction,
+                new(
+                    "tool_table_release_published", release.ReleasedAt, actor, entities,
+                    release.ChangeScope, comment, null,
+                    new
+                    {
+                        toolTable.ToolTableReleaseId,
+                        toolTable.RevisionNumber,
+                        toolTable.RequiredToolCount,
+                        toolTable.FileHash
+                    }),
+                token);
+        }
+
+        if (createsProcess)
+        {
+            await SqliteStructuredEventLogRepository.AppendAsync(
+                connection, transaction,
+                new(
+                    "process_revision_created", release.ReleasedAt, actor, entities,
+                    release.ChangeScope, process.ChangeDescription, null,
+                    new
+                    {
+                        process.ProcessRevisionId,
+                        process.ProcessRevisionNumber,
+                        process.ToolTableReleaseId
+                    }),
+                token);
+            await SqliteStructuredEventLogRepository.AppendAsync(
+                connection, transaction,
+                new(
+                    "process_revision_activated", release.ReleasedAt, actor, entities,
+                    release.ChangeScope, process.ChangeDescription,
+                    previousActiveProcess is null ? null : new
+                    {
+                        previousActiveProcess.ProcessRevisionId,
+                        previousActiveProcess.ProcessRevisionNumber
+                    },
+                    new
+                    {
+                        process.ProcessRevisionId,
+                        process.ProcessRevisionNumber
+                    }),
+                token);
+        }
+        else
+        {
+            await SqliteStructuredEventLogRepository.AppendAsync(
+                connection, transaction,
+                new(
+                    "local_post_revision_published", release.ReleasedAt, actor, entities,
+                    release.ChangeScope, comment, null, releaseData),
+                token);
+        }
+
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection, transaction,
+            new(
+                "gcode_release_published", release.ReleasedAt, actor, entities,
+                release.ChangeScope, comment, null, releaseData),
+            token);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, ReadinessAuditSnapshot>>
+        ReadAffectedReadinessAsync(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            string caseOperationId,
+            CancellationToken token)
+    {
+        var operationIds = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT id
+                FROM batch_operations
+                WHERE source_case_operation_id = $caseOperationId
+                  AND status = 'not_started'
+                ORDER BY id;
+                """;
+            command.Parameters.AddWithValue("$caseOperationId", caseOperationId);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) operationIds.Add(reader.GetString(0));
+        }
+
+        var values = new Dictionary<string, ReadinessAuditSnapshot>(StringComparer.Ordinal);
+        foreach (var operationId in operationIds)
+        {
+            var context = await SqliteProductionReadinessContextReader.ReadAsync(
+                connection, transaction, operationId, token);
+            if (context is null) continue;
+            values.Add(operationId, new(
+                context, ProductionReadinessEvaluator.Evaluate(context)));
+        }
+        return values;
+    }
+
+    private sealed record ReadinessAuditSnapshot(
+        ProductionReadinessContext Context,
+        ProductionReadinessResult Result);
 
     private static async Task<int> NextNumberAsync(
         SqliteConnection connection,

@@ -13,6 +13,8 @@ internal static class SqliteNcCycleEstimateStore
         SqliteTransaction transaction,
         GCodeRelease release,
         NcProgramAnalysis analysis,
+        string actor,
+        string reason,
         CancellationToken token)
     {
         await using (var command = connection.CreateCommand())
@@ -71,7 +73,7 @@ internal static class SqliteNcCycleEstimateStore
         {
             var estimate = NcCycleTimeEstimator.Evaluate(
                 release.GCodeReleaseId, analysis, timing, analysis.AnalyzedAt);
-            await InsertEstimateAsync(connection, transaction, estimate, token);
+            await InsertEstimateAsync(connection, transaction, estimate, actor, reason, token);
             estimates.Add(estimate);
         }
         return estimates;
@@ -82,6 +84,8 @@ internal static class SqliteNcCycleEstimateStore
         SqliteTransaction transaction,
         string machineId,
         DateTimeOffset calculatedAt,
+        string actor,
+        string reason,
         CancellationToken token)
     {
         NcMachineTiming? timing;
@@ -131,7 +135,7 @@ internal static class SqliteNcCycleEstimateStore
         {
             await InsertEstimateAsync(connection, transaction,
                 NcCycleTimeEstimator.Evaluate(
-                    value.ReleaseId, value.Analysis, timing, calculatedAt), token);
+                    value.ReleaseId, value.Analysis, timing, calculatedAt), actor, reason, token);
         }
     }
 
@@ -212,6 +216,8 @@ internal static class SqliteNcCycleEstimateStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         NcMachineCycleEstimate value,
+        string actor,
+        string reason,
         CancellationToken token)
     {
         await using var command = connection.CreateCommand();
@@ -248,6 +254,31 @@ internal static class SqliteNcCycleEstimateStore
         command.Parameters.AddWithValue("$confidence", value.Confidence);
         command.Parameters.AddWithValue("$at", Format(value.CalculatedAt));
         await command.ExecuteNonQueryAsync(token);
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection,
+            transaction,
+            new(
+                "nc_estimate_recalculated",
+                value.CalculatedAt,
+                actor,
+                new Dictionary<string, string>
+                {
+                    ["gcodeReleaseId"] = value.GCodeReleaseId,
+                    ["machineId"] = value.MachineId
+                },
+                reason,
+                null,
+                null,
+                new
+                {
+                    value.ParserVersion,
+                    value.EstimatedCycleSeconds,
+                    value.Confidence,
+                    value.MachineRapidRateMillimetersPerMinute,
+                    value.MachineToolChangeTimeSeconds,
+                    value.MachineTimeFactor
+                }),
+            token);
     }
 
     private static NcProgramAnalysis ReadAnalysis(SqliteDataReader reader, int offset) => new(
