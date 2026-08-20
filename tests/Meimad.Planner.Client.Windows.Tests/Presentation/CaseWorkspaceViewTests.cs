@@ -83,6 +83,25 @@ public sealed class CaseWorkspaceViewTests
         Assert.Contains("e.Handled = true;", stepViewer, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Operation_gcode_area_exposes_release_and_history_without_a_draft_action()
+    {
+        var caseView = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "client-windows",
+            "Meimad.Planner.Client.Windows",
+            "Views",
+            "CaseWorkspaceView.xaml"));
+
+        Assert.Contains("Content=\"Release G-code\"", caseView, StringComparison.Ordinal);
+        Assert.Contains("Postprocessor matrix", caseView, StringComparison.Ordinal);
+        Assert.Contains("Process-revision history", caseView, StringComparison.Ordinal);
+        Assert.Contains("Local post-revision history", caseView, StringComparison.Ordinal);
+        Assert.Contains("Current file", caseView, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"Save Draft\"", caseView, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Content=\"Draft\"", caseView, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

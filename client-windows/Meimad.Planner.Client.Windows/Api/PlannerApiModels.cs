@@ -796,6 +796,109 @@ internal sealed record CaseOperationCreate(
     string? ExternalDelayCalendarId = null,
     bool RespectMasterCalendar = true);
 
+internal sealed record PlannerToolTableRelease(
+    string ToolTableReleaseId,
+    int RevisionNumber,
+    string OriginalFileName,
+    long FileSize,
+    string FileHash,
+    DateTimeOffset ReleasedAt,
+    string ReleasedBy,
+    string ReleaseComment,
+    int? RequiredToolCount = null,
+    IReadOnlyList<PlannerReleasedTool>? Tools = null)
+{
+    public string RequiredToolCountText => RequiredToolCount.HasValue
+        ? $"{RequiredToolCount.Value} required magazine tools"
+        : "Required tool count unavailable — release a structured tool table";
+}
+
+internal sealed record PlannerReleasedTool(
+    string ReleasedToolId,
+    int RowNumber,
+    string ToolIdentifier,
+    string Description,
+    bool IsRequired,
+    bool RequiresMagazinePosition,
+    bool IsActive,
+    string? MagazinePosition)
+{
+    public string RequirementText => !IsActive
+        ? "Inactive"
+        : !IsRequired
+            ? "Optional"
+            : RequiresMagazinePosition ? "Required magazine tool" : "Required external tool";
+}
+
+internal sealed record PlannerProcessRevision(
+    string ProcessRevisionId,
+    int ProcessRevisionNumber,
+    bool IsActive,
+    DateTimeOffset CreatedAt,
+    string CreatedBy,
+    string ChangeDescription,
+    int Version,
+    PlannerToolTableRelease ToolTable)
+{
+    public string DisplayName => $"Process r{ProcessRevisionNumber} — {ChangeDescription}";
+}
+
+internal sealed record PlannerGCodeRelease(
+    string GCodeReleaseId,
+    string ProcessRevisionId,
+    int ProcessRevisionNumber,
+    string PostprocessorId,
+    string PostprocessorName,
+    int PostSpecificRevision,
+    string OriginalFileName,
+    long FileSize,
+    string FileHash,
+    DateTimeOffset ReleasedAt,
+    string ReleasedBy,
+    string ChangeScope,
+    string ReleaseComment,
+    string ToolTableReleaseId,
+    bool IsCurrentForProcessAndPost,
+    bool IsForActiveProcess)
+{
+    public string DisplayName => $"Process r{ProcessRevisionNumber} / {PostprocessorName} r{PostSpecificRevision} — {OriginalFileName}";
+    public string ShortHash => FileHash.Length > 12 ? FileHash[..12] : FileHash;
+}
+
+internal sealed record PlannerPostprocessorReleaseStatus(
+    string PostprocessorId,
+    string PostprocessorName,
+    bool IsActive,
+    string Status,
+    PlannerGCodeRelease? CurrentRelease,
+    PlannerGCodeRelease? LatestHistoricalRelease)
+{
+    public string StatusText => Status switch
+    {
+        "current" => "Current",
+        "stale" => "Stale — regenerate for active process",
+        _ => "Missing — release required"
+    };
+}
+
+internal sealed record PlannerGCodeCatalog(
+    string CaseOperationId,
+    PlannerProcessRevision? ActiveProcessRevision,
+    IReadOnlyList<PlannerProcessRevision> ProcessRevisions,
+    IReadOnlyList<PlannerPostprocessorReleaseStatus> Postprocessors,
+    IReadOnlyList<PlannerGCodeRelease> Releases);
+
+internal sealed record GCodeReleaseCreate(
+    string PostprocessorId,
+    string ChangeScope,
+    string ReleaseComment,
+    string? ProcessChangeDescription,
+    bool ConfirmNewProcessRevision,
+    bool ReuseActiveToolTable,
+    bool ConfirmToolTable,
+    string GCodeFilePath,
+    string? ToolTableFilePath);
+
 internal sealed record CaseComponent(
     string CaseComponentId,
     string ParentCaseId,
@@ -1003,7 +1106,55 @@ internal sealed record PlanningBoardOperation(
     string? WorkFinishDate = null,
     DateTimeOffset? LatestStart = null,
     string? LatestStartWarning = null,
-    bool IsLatestStartOverdue = false);
+    bool IsLatestStartOverdue = false,
+    string ToolCapacityStatus = "not_managed",
+    string ToolCapacityMessage = "Tool capacity is not managed for this Operation.",
+    int? RequiredToolCount = null,
+    int? AvailableToolPositions = null,
+    bool IsToolCapacitySatisfied = true,
+    string OverallReadinessState = "NOT_MANAGED",
+    bool IsReadyForProduction = true,
+    string ReadinessSummary = "Readiness is not managed for this legacy Operation.",
+    IReadOnlyList<PlannerReadinessComponent>? ReadinessComponents = null,
+    string? EffectiveGCodeReleaseId = null,
+    bool RequiresExplicitGCodeSelection = false,
+    IReadOnlyList<PlannerReadinessRelease>? CompatibleGCodeReleases = null);
+
+internal sealed record PlannerReadinessComponent(
+    string Key,
+    string Label,
+    string State,
+    string Message,
+    bool IsBlocking);
+
+internal sealed record PlannerReadinessRelease(
+    string GCodeReleaseId,
+    string ProcessRevisionId,
+    string PostprocessorId,
+    string PostprocessorName,
+    string OriginalFileName,
+    int PostSpecificRevision)
+{
+    public string DisplayName =>
+        $"{PostprocessorName} r{PostSpecificRevision} — {OriginalFileName}";
+}
+
+internal sealed record PlannerProductionReadiness(
+    string OverallState,
+    bool IsReadyForProduction,
+    bool IsManaged,
+    string Summary,
+    IReadOnlyList<PlannerReadinessComponent> Components,
+    string? EffectiveGCodeReleaseId,
+    bool RequiresExplicitGCodeSelection,
+    IReadOnlyList<PlannerReadinessRelease> CompatibleGCodeReleases);
+
+internal sealed record ProductionReadinessInputUpdate(
+    string? SelectedGCodeReleaseId,
+    string MaterialStatus,
+    string? MaterialComment,
+    string ToolOffsetStatus,
+    string? ToolOffsetComment);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,
@@ -1099,7 +1250,10 @@ internal sealed record TimelineInterval(
     string PlanningMode = "manual",
     DateOnly? WorkFinishDate = null,
     string? MachineAssignmentId = null,
-    IReadOnlyList<TimelinePhase>? Phases = null)
+    IReadOnlyList<TimelinePhase>? Phases = null,
+    string OverallReadinessState = "NOT_MANAGED",
+    bool IsReadyForProduction = true,
+    string? ReadinessSummary = null)
 {
     /// <summary>
     /// The server calculation is authoritative. These optional fields let newer
@@ -1117,6 +1271,10 @@ internal sealed record TimelineInterval(
         && (string.Equals(TimingKind, "blocked", StringComparison.OrdinalIgnoreCase)
             || (string.Equals(Type, "waiting", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(MachineAssignmentId)));
+
+    public bool IsPlannedNotReady => IsForecast
+        && OverallReadinessState == "NOT_READY"
+        && !IsReadyForProduction;
 
     public string TimingLabel => IsBlocked
         ? "Blocked — waiting"

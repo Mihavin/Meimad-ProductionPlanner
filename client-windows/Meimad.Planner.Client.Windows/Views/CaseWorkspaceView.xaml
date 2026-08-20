@@ -320,6 +320,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -391,6 +392,101 @@
                                     <DataGridTextColumn Header="Cycle (HH:mm:ss)" Binding="{Binding CycleTimePerPartDisplay}" Width="120" />
                                 </DataGrid.Columns>
                             </DataGrid>
+                            <Border Grid.Row="3" Margin="0,14,0,0" Padding="14" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,10">
+                                        <Button DockPanel.Dock="Right" Content="Refresh G-code" Command="{Binding RefreshGCodeCommand}" Margin="8,0,0,0"/>
+                                        <StackPanel>
+                                            <TextBlock Text="Released G-code" FontSize="17" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding ActiveProcessRevisionText}" Foreground="{StaticResource MutedTextBrush}"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <TextBlock Text="Select an Operation above to manage its released production artifacts. Meimad has no Draft G-code state."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                    <TextBlock Text="Postprocessor matrix" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                    <DataGrid ItemsSource="{Binding GCodePostprocessors}" SelectedItem="{Binding SelectedReleasePostprocessor}"
+                                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="100" MaxHeight="190">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="*"/>
+                                            <DataGridTextColumn Header="Active process status" Binding="{Binding StatusText}" Width="220"/>
+                                            <DataGridTextColumn Header="Current file" Binding="{Binding CurrentRelease.OriginalFileName}" Width="180"/>
+                                            <DataGridTextColumn Header="Post revision" Binding="{Binding CurrentRelease.PostSpecificRevision}" Width="90"/>
+                                            <DataGridTextColumn Header="Released by" Binding="{Binding CurrentRelease.ReleasedBy}" Width="120"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+
+                                    <TextBlock Text="Release G-code" FontWeight="SemiBold" Margin="0,14,0,6"/>
+                                    <UniformGrid Columns="2">
+                                        <StackPanel Style="{StaticResource FormField}">
+                                            <TextBlock Text="Postprocessor" Style="{StaticResource FieldLabel}"/>
+                                            <ComboBox ItemsSource="{Binding GCodePostprocessors}" SelectedItem="{Binding SelectedReleasePostprocessor}" DisplayMemberPath="PostprocessorName"/>
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}">
+                                            <TextBlock Text="Change scope" Style="{StaticResource FieldLabel}"/>
+                                            <ComboBox ItemsSource="{Binding GCodeChangeScopes}" SelectedItem="{Binding GCodeChangeScope}"/>
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}">
+                                            <TextBlock Text="Released G-code file" Style="{StaticResource FieldLabel}"/>
+                                            <DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseGCode_Click" Margin="6,0,0,0"/><TextBox Text="{Binding GCodeFilePath}" IsReadOnly="True"/></DockPanel>
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}" IsEnabled="{Binding IsNewProcessRevisionRelease}">
+                                            <TextBlock Text="Tool-table file" Style="{StaticResource FieldLabel}"/>
+                                            <DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseToolTable_Click" Margin="6,0,0,0"/><TextBox Text="{Binding ToolTableFilePath}" IsReadOnly="True"/></DockPanel>
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}">
+                                            <TextBlock Text="Release comment" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding GCodeReleaseComment}" AcceptsReturn="True" MinHeight="55"/>
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}">
+                                            <TextBlock Text="Process change description" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding ProcessChangeDescription}" AcceptsReturn="True" MinHeight="55"/>
+                                        </StackPanel>
+                                    </UniformGrid>
+                                    <TextBlock Text="{Binding NewProcessRevisionWarning}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,2,0,8"/>
+                                    <WrapPanel Margin="0,0,0,8">
+                                        <CheckBox Content="Reuse the active physical tool table" IsChecked="{Binding ReuseActiveToolTable}" IsEnabled="{Binding IsNewProcessRevisionRelease}" Margin="0,0,18,6"/>
+                                        <CheckBox Content="I confirm this exact physical tool table" IsChecked="{Binding ConfirmToolTable}" Margin="0,0,18,6"/>
+                                        <CheckBox Content="I confirm creation of a new manufacturing-process revision" IsChecked="{Binding ConfirmNewProcessRevision}" Margin="0,0,18,6"/>
+                                    </WrapPanel>
+                                    <Button Content="Release G-code" Command="{Binding ReleaseGCodeCommand}" HorizontalAlignment="Right"/>
+
+                                    <TextBlock Text="Process-revision history" FontWeight="SemiBold" Margin="0,14,0,5"/>
+                                    <DataGrid ItemsSource="{Binding ProcessRevisions}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="150">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessRevisionNumber}" Width="70"/>
+                                            <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/>
+                                            <DataGridTextColumn Header="Description" Binding="{Binding ChangeDescription}" Width="*"/>
+                                            <DataGridTextColumn Header="Created by" Binding="{Binding CreatedBy}" Width="120"/>
+                                            <DataGridTextColumn Header="Tool table" Binding="{Binding ToolTable.OriginalFileName}" Width="150"/>
+                                            <DataGridTextColumn Header="Required tools" Binding="{Binding ToolTable.RequiredToolCount}" Width="95"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <TextBlock Text="{Binding ActiveToolTableSummary}" FontWeight="SemiBold" Margin="0,10,0,5"/>
+                                    <DataGrid ItemsSource="{Binding ActiveReleasedTools}" AutoGenerateColumns="False"
+                                              IsReadOnly="True" CanUserAddRows="False" MaxHeight="160">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Tool" Binding="{Binding ToolIdentifier}" Width="100"/>
+                                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*"/>
+                                            <DataGridTextColumn Header="Requirement" Binding="{Binding RequirementText}" Width="170"/>
+                                            <DataGridTextColumn Header="Magazine position" Binding="{Binding MagazinePosition}" Width="120"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <TextBlock Text="Local post-revision history" FontWeight="SemiBold" Margin="0,14,0,5"/>
+                                    <DataGrid ItemsSource="{Binding GCodeReleases}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Process" Binding="{Binding ProcessRevisionNumber}" Width="70"/>
+                                            <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="130"/>
+                                            <DataGridTextColumn Header="Post rev" Binding="{Binding PostSpecificRevision}" Width="70"/>
+                                            <DataGridTextColumn Header="Original filename" Binding="{Binding OriginalFileName}" Width="180"/>
+                                            <DataGridTextColumn Header="SHA-256" Binding="{Binding ShortHash}" Width="110"/>
+                                            <DataGridTextColumn Header="Released by" Binding="{Binding ReleasedBy}" Width="110"/>
+                                            <DataGridTextColumn Header="Comment" Binding="{Binding ReleaseComment}" Width="*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </StackPanel>
+                            </Border>
                         </Grid>
                         </ScrollViewer>
                     </TabItem>

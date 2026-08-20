@@ -325,6 +325,11 @@ internal static class MachineAssignmentEndpoints
                 "machine_operation_already_in_progress",
                 exception.Message,
                 context),
+            ProductionReadinessException readiness => PlanningHttpSupport.Error(
+                StatusCodes.Status409Conflict,
+                readiness.Code,
+                readiness.Message,
+                context),
             EditModeMutationException edit => PlanningHttpSupport.Error(
                 StatusCodes.Status409Conflict,
                 edit.Code,

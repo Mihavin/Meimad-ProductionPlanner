@@ -6,6 +6,39 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class CaseWorkspaceViewModelTests
 {
     [Fact]
+    public async Task Gcode_release_scope_follows_whether_an_active_process_exists()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+        await viewModel.RefreshGCodeAsync();
+
+        Assert.Equal("NEW_PROCESS_REVISION", viewModel.GCodeChangeScope);
+        Assert.False(viewModel.ReuseActiveToolTable);
+        Assert.Single(viewModel.GCodePostprocessors);
+
+        var tools = new PlannerToolTableRelease(
+            "tools-1", 1, "tools.csv", 10, new string('a', 64),
+            DateTimeOffset.UtcNow, "planner", "Initial tools");
+        var process = new PlannerProcessRevision(
+            "process-1", 1, true, DateTimeOffset.UtcNow,
+            "planner", "Initial process", 1, tools);
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            ActiveProcessRevision = process,
+            ProcessRevisions = [process]
+        };
+
+        await viewModel.RefreshGCodeAsync();
+
+        Assert.Equal("LOCAL_POST_REVISION", viewModel.GCodeChangeScope);
+        Assert.True(viewModel.ReuseActiveToolTable);
+        Assert.Equal(process, viewModel.ActiveProcessRevision);
+    }
+
+    [Fact]
     public async Task Loads_case_pool_details_and_tabs_only_through_api_client()
     {
         var api = new FakeApiClient(CreateCase());
@@ -489,6 +522,12 @@ public sealed class CaseWorkspaceViewModelTests
         internal long LastGeneration { get; private set; }
         internal int PreviewReads { get; private set; }
         internal int OrderListReads { get; private set; }
+        internal PlannerGCodeCatalog GCodeCatalog { get; set; } = new(
+            "operation-1",
+            null,
+            [],
+            [new PlannerPostprocessorReleaseStatus("post-1", "Doosan 3X", true, "missing", null, null)],
+            []);
 
         public Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
             CaseQuery query,
@@ -652,6 +691,12 @@ public sealed class CaseWorkspaceViewModelTests
                 .ThenBy(order => order.OrderId, StringComparer.Ordinal)
                 .ToArray());
         }
+
+        public Task<PlannerGCodeCatalog> GetOperationGCodeAsync(
+            string caseId,
+            string operationId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(GCodeCatalog);
 
         public Task<PlannerOrder> CreateOrderAsync(
             OrderCreate create,

@@ -65,6 +65,12 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             await BlockBySqlAsync(c, t,
                 "SELECT EXISTS(SELECT 1 FROM employee_resources, json_each(employee_resources.skills_json) WHERE json_each.value = $id);",
                 id, "Remove this Machine from Employee qualifications first.", token);
+            await ExecuteDeleteAsync(
+                c,
+                t,
+                "DELETE FROM machine_supported_postprocessors WHERE machine_id = $id;",
+                id,
+                token);
             return await DeleteRowAsync(c, t, "machines", id, token);
         }, token);
 
@@ -155,6 +161,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             var group = reader.IsDBNull(1) ? null : reader.GetString(1);
             await reader.DisposeAsync();
             await BlockIfAnyAsync(c, t, "batch_operations", "source_case_operation_id", id, "The Operation has already been instantiated in a Production Batch.", token);
+            await BlockIfAnyAsync(c, t, "process_revisions", "case_operation_id", id, "The Operation has immutable process or G-code release history.", token);
             await BlockIfAnyAsync(c, t, "case_operations", "predecessor_case_operation_id", id, "Another Case Operation depends on this Operation.", token);
             if (group is not null)
             {

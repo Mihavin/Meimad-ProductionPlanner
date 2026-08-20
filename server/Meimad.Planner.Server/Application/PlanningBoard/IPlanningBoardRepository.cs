@@ -1,5 +1,7 @@
 namespace Meimad.Planner.Server.Application.PlanningBoard;
 
+using Meimad.Planner.Server.Domain.Readiness;
+
 internal interface IPlanningBoardRepository
 {
     Task<PlanningBoardSnapshot> ReadAsync(CancellationToken cancellationToken);
@@ -48,7 +50,19 @@ internal sealed record PlanningBoardOperation(
     string? LatestStartWarning = null,
     bool IsLatestStartOverdue = false,
     int RoutePosition = 0,
-    long ExternalDelaySeconds = 0);
+    long ExternalDelaySeconds = 0,
+    string ToolCapacityStatus = "not_managed",
+    string ToolCapacityMessage = "Tool capacity is not managed for this Operation.",
+    int? RequiredToolCount = null,
+    int? AvailableToolPositions = null,
+    bool IsToolCapacitySatisfied = true,
+    string OverallReadinessState = OverallReadinessStates.NotReady,
+    bool IsReadyForProduction = false,
+    string ReadinessSummary = "Readiness has not been evaluated.",
+    IReadOnlyList<ReadinessComponent>? ReadinessComponents = null,
+    string? EffectiveGCodeReleaseId = null,
+    bool RequiresExplicitGCodeSelection = false,
+    IReadOnlyList<ReadinessRelease>? CompatibleGCodeReleases = null);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

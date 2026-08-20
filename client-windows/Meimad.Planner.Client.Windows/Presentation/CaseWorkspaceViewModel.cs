@@ -93,6 +93,16 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string componentDemandQuantity = "1";
     private bool isParentCase;
     private bool isChildCase;
+    private PlannerPostprocessorReleaseStatus? selectedReleasePostprocessor;
+    private string gcodeFilePath = string.Empty;
+    private string toolTableFilePath = string.Empty;
+    private string gcodeChangeScope = "LOCAL_POST_REVISION";
+    private string gcodeReleaseComment = string.Empty;
+    private string processChangeDescription = string.Empty;
+    private bool confirmNewProcessRevision;
+    private bool reuseActiveToolTable;
+    private bool confirmToolTable;
+    private PlannerProcessRevision? activeProcessRevision;
 
     internal CaseWorkspaceViewModel(IWorkingFolderLauncher folderLauncher)
     {
@@ -124,6 +134,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             () => SelectedWhereUsed is not null && apiClient is not null && !IsBusy);
         PreviewComponentDemandCommand = new AsyncCommand(PreviewComponentDemandAsync,
             () => SelectedCase is not null && apiClient is not null && !IsBusy);
+        RefreshGCodeCommand = new AsyncCommand(RefreshGCodeAsync,
+            () => SelectedCase is not null && SelectedOperation is not null && apiClient is not null && !IsBusy);
+        ReleaseGCodeCommand = new AsyncCommand(ReleaseGCodeAsync, () => CanReleaseGCode);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -157,6 +170,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public ObservableCollection<BatchOrderAllocationViewModel> BatchOrderAllocations { get; } = [];
+
+    public ObservableCollection<PlannerProcessRevision> ProcessRevisions { get; } = [];
+
+    public ObservableCollection<PlannerPostprocessorReleaseStatus> GCodePostprocessors { get; } = [];
+
+    public ObservableCollection<PlannerGCodeRelease> GCodeReleases { get; } = [];
 
     public IReadOnlyList<string> ActiveFilters { get; } = ["All", "Active", "Inactive"];
 
@@ -214,6 +233,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand OpenParentCaseCommand { get; }
 
     public AsyncCommand PreviewComponentDemandCommand { get; }
+
+    public AsyncCommand RefreshGCodeCommand { get; }
+
+    public AsyncCommand ReleaseGCodeCommand { get; }
 
     public string SearchText
     {
@@ -295,9 +318,107 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanBeginEditOperation));
                 BeginEditOperationCommand.RaiseCanExecuteChanged();
+                ClearGCodeCatalog();
+                RefreshGCodeCommand.RaiseCanExecuteChanged();
+                ReleaseGCodeCommand.RaiseCanExecuteChanged();
+                if (value is not null && apiClient is not null && !IsBusy)
+                {
+                    RefreshGCodeCommand.Execute(null);
+                }
             }
         }
     }
+
+    public PlannerProcessRevision? ActiveProcessRevision
+    {
+        get => activeProcessRevision;
+        private set
+        {
+            if (SetField(ref activeProcessRevision, value))
+            {
+                OnPropertyChanged(nameof(ActiveProcessRevisionText));
+                OnPropertyChanged(nameof(HasActiveProcessRevision));
+                OnPropertyChanged(nameof(ActiveToolTableSummary));
+                OnPropertyChanged(nameof(ActiveReleasedTools));
+            }
+        }
+    }
+
+    public bool HasActiveProcessRevision => ActiveProcessRevision is not null;
+
+    public string ActiveProcessRevisionText => ActiveProcessRevision is null
+        ? "No released process revision"
+        : $"Active process r{ActiveProcessRevision.ProcessRevisionNumber} — {ActiveProcessRevision.ChangeDescription}";
+
+    public string ActiveToolTableSummary => ActiveProcessRevision?.ToolTable.RequiredToolCountText
+        ?? "No active released tool table";
+
+    public IReadOnlyList<PlannerReleasedTool> ActiveReleasedTools =>
+        ActiveProcessRevision?.ToolTable.Tools ?? [];
+
+    public IReadOnlyList<string> GCodeChangeScopes { get; } =
+        ["LOCAL_POST_REVISION", "NEW_PROCESS_REVISION"];
+
+    public PlannerPostprocessorReleaseStatus? SelectedReleasePostprocessor
+    {
+        get => selectedReleasePostprocessor;
+        set
+        {
+            if (SetField(ref selectedReleasePostprocessor, value))
+            {
+                OnPropertyChanged(nameof(CanReleaseGCode));
+                ReleaseGCodeCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string GCodeFilePath
+    {
+        get => gcodeFilePath;
+        set
+        {
+            if (SetField(ref gcodeFilePath, value))
+            {
+                OnPropertyChanged(nameof(CanReleaseGCode));
+                ReleaseGCodeCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string ToolTableFilePath { get => toolTableFilePath; set => SetField(ref toolTableFilePath, value); }
+
+    public string GCodeChangeScope
+    {
+        get => gcodeChangeScope;
+        set
+        {
+            if (SetField(ref gcodeChangeScope, value))
+            {
+                ReuseActiveToolTable = value == "LOCAL_POST_REVISION"
+                    ? ActiveProcessRevision is not null
+                    : ActiveProcessRevision is not null && ReuseActiveToolTable;
+                OnPropertyChanged(nameof(IsNewProcessRevisionRelease));
+                OnPropertyChanged(nameof(NewProcessRevisionWarning));
+                ReleaseGCodeCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsNewProcessRevisionRelease => GCodeChangeScope == "NEW_PROCESS_REVISION";
+
+    public string NewProcessRevisionWarning => IsNewProcessRevisionRelease
+        ? "This creates a new manufacturing-process revision. Existing G-code releases for other postprocessors will not be current for the new revision and must be regenerated before those machines are production-ready."
+        : "A local post revision keeps the active manufacturing process and does not invalidate other Postprocessors.";
+
+    public string GCodeReleaseComment { get => gcodeReleaseComment; set => SetField(ref gcodeReleaseComment, value); }
+    public string ProcessChangeDescription { get => processChangeDescription; set => SetField(ref processChangeDescription, value); }
+    public bool ConfirmNewProcessRevision { get => confirmNewProcessRevision; set => SetField(ref confirmNewProcessRevision, value); }
+    public bool ReuseActiveToolTable { get => reuseActiveToolTable; set => SetField(ref reuseActiveToolTable, value); }
+    public bool ConfirmToolTable { get => confirmToolTable; set => SetField(ref confirmToolTable, value); }
+
+    public bool CanReleaseGCode => isEditor && apiClient is not null && SelectedCase is not null
+        && SelectedOperation is not null && SelectedReleasePostprocessor is not null
+        && !string.IsNullOrWhiteSpace(GCodeFilePath) && !IsBusy;
     public PlannerOrder? SelectedOrder
     {
         get => selectedOrder;
@@ -1226,6 +1347,133 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     internal void SetWorkingFolderSelection(string path) => WorkingFolderPath = path;
 
+    internal void SetGCodeFileSelection(string path) => GCodeFilePath = path;
+
+    internal void SetToolTableFileSelection(string path) => ToolTableFilePath = path;
+
+    internal async Task RefreshGCodeAsync()
+    {
+        if (apiClient is null || SelectedCase is null || SelectedOperation is null || IsBusy)
+        {
+            return;
+        }
+
+        var caseId = SelectedCase.CaseId;
+        var operationId = SelectedOperation.CaseOperationId;
+        IsBusy = true;
+        try
+        {
+            var catalog = await apiClient.GetOperationGCodeAsync(caseId, operationId);
+            if (SelectedCase?.CaseId != caseId || SelectedOperation?.CaseOperationId != operationId)
+            {
+                return;
+            }
+
+            ActiveProcessRevision = catalog.ActiveProcessRevision;
+            Replace(ProcessRevisions, catalog.ProcessRevisions);
+            Replace(GCodePostprocessors, catalog.Postprocessors);
+            Replace(GCodeReleases, catalog.Releases);
+            SelectedReleasePostprocessor = GCodePostprocessors.FirstOrDefault(value => value.IsActive)
+                ?? GCodePostprocessors.FirstOrDefault();
+            GCodeChangeScope = ActiveProcessRevision is null
+                ? "NEW_PROCESS_REVISION"
+                : "LOCAL_POST_REVISION";
+            ReuseActiveToolTable = ActiveProcessRevision is not null;
+            StatusMessage = ActiveProcessRevisionText;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    internal async Task ReleaseGCodeAsync()
+    {
+        if (!CanReleaseGCode || apiClient is null || SelectedCase is null
+            || SelectedOperation is null || SelectedReleasePostprocessor is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(GCodeReleaseComment))
+        {
+            StatusMessage = "A release comment is required.";
+            return;
+        }
+
+        if (!File.Exists(GCodeFilePath))
+        {
+            StatusMessage = "Select an existing G-code file.";
+            return;
+        }
+
+        if (!ConfirmToolTable)
+        {
+            StatusMessage = "Confirm the exact physical tool table used for this release.";
+            return;
+        }
+
+        if (IsNewProcessRevisionRelease
+            && (!ConfirmNewProcessRevision || string.IsNullOrWhiteSpace(ProcessChangeDescription)))
+        {
+            StatusMessage = "A new process revision requires confirmation and a process change description.";
+            return;
+        }
+
+        var requiresToolUpload = ActiveProcessRevision is null
+            || (IsNewProcessRevisionRelease && !ReuseActiveToolTable);
+        if (requiresToolUpload && !File.Exists(ToolTableFilePath))
+        {
+            StatusMessage = "Upload the exact tool table, or explicitly reuse the active tool table for a new process revision.";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var released = await apiClient.ReleaseGCodeAsync(
+                SelectedCase.CaseId,
+                SelectedOperation.CaseOperationId,
+                new GCodeReleaseCreate(
+                    SelectedReleasePostprocessor.PostprocessorId,
+                    GCodeChangeScope,
+                    GCodeReleaseComment.Trim(),
+                    string.IsNullOrWhiteSpace(ProcessChangeDescription)
+                        ? null
+                        : ProcessChangeDescription.Trim(),
+                    ConfirmNewProcessRevision,
+                    ReuseActiveToolTable,
+                    ConfirmToolTable,
+                    GCodeFilePath,
+                    !IsNewProcessRevisionRelease || string.IsNullOrWhiteSpace(ToolTableFilePath)
+                        ? null
+                        : ToolTableFilePath),
+                clientId,
+                editGeneration);
+            StatusMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.";
+            GCodeFilePath = string.Empty;
+            ToolTableFilePath = string.Empty;
+            GCodeReleaseComment = string.Empty;
+            ConfirmNewProcessRevision = false;
+            ConfirmToolTable = false;
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        await RefreshGCodeAsync();
+    }
+
     internal Task SelectCaseAsync(CasePoolItemViewModel item)
     {
         SelectedCase = item;
@@ -1810,6 +2058,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         WhereUsed.Clear();
         ComponentDemand.Clear();
         ComponentCaseOptions.Clear();
+        ClearGCodeCatalog();
         RecalculateCurrentTimeTotals();
         ApplyCase(new PlannerCase(
             string.Empty, string.Empty, string.Empty, null, null, null, null, string.Empty,
@@ -1850,6 +2099,23 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
+    private void ClearGCodeCatalog()
+    {
+        ActiveProcessRevision = null;
+        ProcessRevisions.Clear();
+        GCodePostprocessors.Clear();
+        GCodeReleases.Clear();
+        selectedReleasePostprocessor = null;
+        OnPropertyChanged(nameof(SelectedReleasePostprocessor));
+        GCodeFilePath = string.Empty;
+        ToolTableFilePath = string.Empty;
+        GCodeReleaseComment = string.Empty;
+        ProcessChangeDescription = string.Empty;
+        ConfirmNewProcessRevision = false;
+        ReuseActiveToolTable = false;
+        ConfirmToolTable = false;
+    }
+
     private static BitmapImage? LoadPreview(byte[]? serverBytes, string? localPath)
     {
         var preview = ToBitmap(serverBytes);
@@ -1872,7 +2138,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         string.IsNullOrWhiteSpace(value) ? null : value;
 
     private static bool IsExpected(Exception exception) => exception is
-        PlannerApiException or PlannerProtocolException or HttpRequestException or TaskCanceledException;
+        PlannerApiException or PlannerProtocolException or HttpRequestException or TaskCanceledException
+        or IOException or UnauthorizedAccessException;
 
     private static string FriendlyMessage(Exception exception) => exception switch
     {
@@ -1924,6 +2191,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanBeginEditBatch));
         OnPropertyChanged(nameof(CanCreateOperation));
         OnPropertyChanged(nameof(CanBeginEditOperation));
+        OnPropertyChanged(nameof(CanReleaseGCode));
         RaiseCommandStates();
     }
 
@@ -1951,6 +2219,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         SaveComponentCommand.RaiseCanExecuteChanged();
         RemoveComponentCommand.RaiseCanExecuteChanged();
         PreviewComponentDemandCommand.RaiseCanExecuteChanged();
+        RefreshGCodeCommand.RaiseCanExecuteChanged();
+        ReleaseGCodeCommand.RaiseCanExecuteChanged();
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)

@@ -294,7 +294,23 @@ Machine Type create/read/list/optimistic update/guarded delete are Server-owned.
 
 ### 7.2a Postprocessor compatibility
 
-`postprocessors` stores `id`, required case-insensitively unique `name`, optional `description`, `is_active`, optimistic `version`, and UTC timestamps. `machine_supported_postprocessors` stores the unique `(machine_id, postprocessor_id)` pair and timestamps with restrictive foreign keys. This relation is the sole G-code dialect applicability mapping; Machine Type, brand, controller, model, axis count, and timing values do not imply support. A Postprocessor referenced by any Machine cannot be deactivated or deleted. G-code release ownership and readiness enforcement are deferred to later tasks.
+`postprocessors` stores `id`, required case-insensitively unique `name`, optional `description`, `is_active`, optimistic `version`, and UTC timestamps. `machine_supported_postprocessors` stores the unique `(machine_id, postprocessor_id)` pair and timestamps with restrictive foreign keys. This relation is the sole G-code dialect applicability mapping; Machine Type, brand, controller, model, axis count, and timing values do not imply support. A Postprocessor referenced by any Machine cannot be deactivated or deleted. Release history restricts deletion but remains readable after deactivation.
+
+### 7.2b Process and G-code releases
+
+Schema v35 adds immutable released-production history without duplicating `CaseOperation`, `BatchOperation`, Machine, or assignment entities.
+
+| Table | Key fields and invariants |
+|---|---|
+| `tool_table_releases` | Stable ID, Case Operation, positive operation-local revision, original filename, unique server-relative path, positive size, 64-character SHA-256, release user/time/comment, timestamps. Unique `(case_operation_id, revision_number)`; update/delete triggers reject mutation. |
+| `process_revisions` | Stable ID, Case Operation, positive revision, active flag, exact tool-table release, creator/time, required change description, version/timestamps. Unique operation/revision and partial unique index allowing at most one active revision per Operation. Historical rows remain referenced. |
+| `gcode_releases` | Stable ID, Case Operation, exact process/Postprocessor/tool-table IDs, positive Postprocessor-specific revision, immutable file metadata/hash, release audit/comment, and `LOCAL_POST_REVISION` or `NEW_PROCESS_REVISION`. Unique `(process_revision_id, postprocessor_id, post_specific_revision)`; update/delete triggers reject mutation. No Draft/status column exists. |
+
+The current G-code is derived as the greatest Postprocessor-specific revision for the active process and Postprocessor; an earlier record is never edited to become non-current. A release has no Machine foreign key. Machine applicability is evaluated only by joining its Postprocessor ID to `machine_supported_postprocessors`.
+
+Schema v35 also adds nullable `production_process_revision_id`, `production_gcode_release_id`, `production_tool_table_release_id`, `production_gcode_file_hash`, and `production_tool_table_file_hash` to `batch_operations`. The first Start pins this exact context; subsequent releases do not update it. Reset clears the production pins. Null preserves backward compatibility for work that has not entered managed release history.
+
+Schema v36 adds nullable `tool_table_releases.required_tool_count` and immutable `tool_table_release_tools`. Each row has a stable ID, parent release, positive row number, tool identifier/description, `is_required`, `requires_magazine_position`, `is_active`, optional position label, and timestamps. Row update/delete and post-publication insertion are rejected by triggers. A process-publication trigger verifies that the stored count equals `COUNT(DISTINCT lower(trim(tool_identifier)))` over active, required, magazine-consuming rows. Null count is reserved for pre-v36 release history whose raw file cannot be reinterpreted safely; such a process is not reported tool-capacity-ready until a new structured tool table is released.
 
 ### 7.3 Working Calendar
 
@@ -469,7 +485,7 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 34.
+- Ordered server-owned migrations are implemented through version 36.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 
 Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL Server host/port, database, schema/view, username, refresh interval, enable flag, optimistic version, and last read-only connection-test status. The password is stored only as an ASP.NET Data Protection ciphertext bound to the Server application; API responses expose only `passwordConfigured`. No Kitaron source rows or source database credentials are stored as plaintext, and this schema does not yet add source identity/import rows.
@@ -479,9 +495,13 @@ Schema v29 adds singleton `kitaron_mapping_settings` with the selected model, Dr
 Schema v30 adds singleton `kitaron_sync_state` and `kitaron_sync_links`. Schema v31 adds `case_components`, extends source links to Case Components, and adds component create/update/match counters. A Case remains the only part master and may be a parent, child, both, or neither. Each active relationship stores a positive real `quantity_per_parent`; self-reference and duplicate parent/child pairs are constrained, while application writes also reject indirect cycles. Connector-owned missing BOM edges are deactivated rather than deleted, and removing an edge never deletes either Case. Schema v32 extends `batch_allocations` with `derived_order` and a stable `derived_order_key`. That key references a read-only projection of a source parent Order through one component path; it does not create an Order row for the child. Derived quantity is parent Order quantity multiplied by every edge quantity in the path, and remaining quantity subtracts non-cancelled child Batch allocations for that key. Parent role and child role are derived with active relationship existence queries and are not separately stored.
 
 Schema v34 adds Machine execution/capacity/timing columns, `postprocessors`, and the explicit Machine/Postprocessor join table. Existing Machines receive `MANUAL`, null unknown capacity/rates/tool-change time, and factor `1.0`. The migration intentionally does not infer CNC status or create compatibility mappings from existing descriptive fields.
+
+Schema v35 adds released tool tables, process revisions, immutable Postprocessor-specific G-code releases, and nullable exact production pins on Batch Operations. It creates no synthetic release from Case timing values, old E-Ink package files, Machine descriptions, or legacy Kitaron data. The configured release storage must be backed up together with SQLite.
+
+Schema v36 adds structured immutable released-tool rows and the derived required magazine-tool count. Existing v35 tool-table metadata/process history is preserved with null count and no invented rows. Capacity is a live projection from the effective process tool release and assigned Machine; no readiness boolean is persisted.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-Schema v16 and the implemented slices are the current persistence/domain contracts. Schema v16 adds non-negative QA/per-event load-unload timing, automatic-loading frequency, regular-worker requirement, and day-shift-only fields to Case Operations and immutable Batch Operation snapshots with zero/false defaults. It requires no additional persistence for periodic reload calculation: Timeline expands the existing snapshots transiently into the documented manual or automatic cadence. Remaining blocking model decisions in [Implementation plan](implementation-plan.md#open-decisions) must be resolved before affected repositories and APIs are implemented; later changes require new migrations and must never rewrite an applied migration in a deployed system.
+The implemented migrations through schema v36 are the current persistence/domain contract. Schema v16 timing/cadence snapshots, schema v35 release/production-pin history, and schema v36 released tool requirements coexist: Timeline still expands the timing snapshots, while release context is pinned independently on first Start and tool capacity is evaluated from the concrete Machine context. Remaining blocking model decisions in [Implementation plan](implementation-plan.md#open-decisions) must be resolved before affected repositories and APIs are implemented; later changes require new migrations and must never rewrite an applied migration in a deployed system.

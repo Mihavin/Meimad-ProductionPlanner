@@ -443,6 +443,55 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.False(later.CanStart);
     }
 
+    [Fact]
+    public void Tool_capacity_mismatch_is_visible_and_blocks_first_start_but_not_pinned_resume()
+    {
+        var mismatch = Operation("machine-1", 0) with
+        {
+            ToolCapacityStatus = "tool_capacity_mismatch",
+            ToolCapacityMessage = "Tool capacity mismatch: requires 25 tool positions; assigned machine supports 20.",
+            RequiredToolCount = 25,
+            AvailableToolPositions = 20,
+            IsToolCapacitySatisfied = false
+        };
+        var notStarted = new PlanningOperationViewModel(mismatch);
+        var suspended = new PlanningOperationViewModel(mismatch with { Status = "suspended" });
+
+        Assert.True(notStarted.IsToolCapacityBlocking);
+        Assert.False(notStarted.CanStart);
+        Assert.Contains("requires 25", notStarted.ToolCapacityText, StringComparison.Ordinal);
+        Assert.False(suspended.IsToolCapacityBlocking);
+        Assert.True(suspended.CanStart);
+    }
+
+    [Fact]
+    public void Computed_readiness_lists_explanations_and_blocks_only_first_start()
+    {
+        var operation = Operation("machine-1", 0) with
+        {
+            OverallReadinessState = "NOT_READY",
+            IsReadyForProduction = false,
+            ReadinessSummary = "Not ready: 2 blocking component(s)",
+            ReadinessComponents =
+            [
+                new("gcode", "G-code", "READY", "Compatible release selected.", false),
+                new("toolOffsets", "Tool Offsets", "MISSING", "Offsets are missing.", true),
+                new("material", "Material", "UNVERIFIED", "Material is unverified.", true)
+            ]
+        };
+
+        var notStarted = new PlanningOperationViewModel(operation);
+        var suspended = new PlanningOperationViewModel(operation with { Status = "suspended" });
+
+        Assert.True(notStarted.IsReadinessBlocking);
+        Assert.False(notStarted.CanStart);
+        Assert.Contains("Not ready", notStarted.ReadinessSummaryText, StringComparison.Ordinal);
+        Assert.Contains("Tool Offsets: Missing", notStarted.ReadinessDetailText, StringComparison.Ordinal);
+        Assert.Contains("Material: Unverified", notStarted.ReadinessDetailText, StringComparison.Ordinal);
+        Assert.False(suspended.IsReadinessBlocking);
+        Assert.True(suspended.CanStart);
+    }
+
     private static PlanningBoardSnapshot BoardBefore() => new(
         DateTimeOffset.Parse("2026-08-11T10:00:00Z"),
         "unavailable",

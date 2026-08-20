@@ -3,8 +3,10 @@ using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.MachineAssignments;
+using Meimad.Planner.Server.Domain.GCode;
 using Meimad.Planner.Server.Domain.Machines;
 using Meimad.Planner.Server.Domain.ProductionBatches;
+using Meimad.Planner.Server.Domain.Readiness;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -473,6 +475,19 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 connection, transaction, execution.MachineId, batchOperationId, cancellationToken);
         }
 
+        var productionPin = action switch
+        {
+            BatchOperationExecutionAction.Start when execution.Status == "not_started" =>
+                await ResolveProductionPinAsync(
+                    connection,
+                    transaction,
+                    batchOperationId,
+                    now,
+                    cancellationToken),
+            BatchOperationExecutionAction.Reset => null,
+            _ => execution.ProductionPin
+        };
+
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
@@ -482,6 +497,11 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                     actual_start = $actualStart,
                     actual_end = $actualEnd,
                     actual_machine_id = $actualMachineId,
+                    production_process_revision_id = $processRevisionId,
+                    production_gcode_release_id = $gcodeReleaseId,
+                    production_tool_table_release_id = $toolTableReleaseId,
+                    production_gcode_file_hash = $gcodeFileHash,
+                    production_tool_table_file_hash = $toolTableFileHash,
                     version = version + 1,
                     updated_at = $updatedAt
                 WHERE id = $id;
@@ -493,6 +513,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 actualEnd.HasValue ? FormatInstant(actualEnd.Value) : DBNull.Value;
             update.Parameters.Add("$actualMachineId", SqliteType.Text).Value =
                 actualMachineId is null ? DBNull.Value : actualMachineId;
+            update.Parameters.Add("$processRevisionId", SqliteType.Text).Value =
+                productionPin?.ProcessRevisionId is null ? DBNull.Value : productionPin.ProcessRevisionId;
+            update.Parameters.Add("$gcodeReleaseId", SqliteType.Text).Value =
+                productionPin?.GCodeReleaseId is null ? DBNull.Value : productionPin.GCodeReleaseId;
+            update.Parameters.Add("$toolTableReleaseId", SqliteType.Text).Value =
+                productionPin?.ToolTableReleaseId is null ? DBNull.Value : productionPin.ToolTableReleaseId;
+            update.Parameters.Add("$gcodeFileHash", SqliteType.Text).Value =
+                productionPin?.GCodeFileHash is null ? DBNull.Value : productionPin.GCodeFileHash;
+            update.Parameters.Add("$toolTableFileHash", SqliteType.Text).Value =
+                productionPin?.ToolTableFileHash is null ? DBNull.Value : productionPin.ToolTableFileHash;
             update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
             update.Parameters.AddWithValue("$id", batchOperationId);
             await update.ExecuteNonQueryAsync(cancellationToken);
@@ -571,9 +601,22 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 status = execution.Status,
                 actualStart = execution.ActualStart,
                 actualEnd = execution.ActualEnd,
-                actualMachineId = execution.ActualMachineId
+                actualMachineId = execution.ActualMachineId,
+                productionProcessRevisionId = execution.ProductionPin?.ProcessRevisionId,
+                productionGCodeReleaseId = execution.ProductionPin?.GCodeReleaseId,
+                productionToolTableReleaseId = execution.ProductionPin?.ToolTableReleaseId,
+                productionGCodeFileHash = execution.ProductionPin?.GCodeFileHash,
+                productionToolTableFileHash = execution.ProductionPin?.ToolTableFileHash
             },
-            new { status=targetStatus,actualStart,actualEnd,actualMachineId,pauseReason }), cancellationToken);
+            new
+            {
+                status=targetStatus,actualStart,actualEnd,actualMachineId,pauseReason,
+                productionProcessRevisionId = productionPin?.ProcessRevisionId,
+                productionGCodeReleaseId = productionPin?.GCodeReleaseId,
+                productionToolTableReleaseId = productionPin?.ToolTableReleaseId,
+                productionGCodeFileHash = productionPin?.GCodeFileHash,
+                productionToolTableFileHash = productionPin?.ToolTableFileHash
+            }), cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
         return new BatchOperationExecutionResult(
@@ -647,7 +690,13 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                    machine_assignments.backlog_position,
                    batch_operations.actual_start,
                    batch_operations.actual_end,
-                   batch_operations.actual_machine_id
+                   batch_operations.actual_machine_id,
+                   batch_operations.source_case_operation_id,
+                   batch_operations.production_process_revision_id,
+                   batch_operations.production_gcode_release_id,
+                   batch_operations.production_tool_table_release_id,
+                   batch_operations.production_gcode_file_hash,
+                   batch_operations.production_tool_table_file_hash
             FROM batch_operations
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
@@ -669,8 +718,106 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             reader.IsDBNull(5) ? null : reader.GetInt32(5),
             reader.IsDBNull(6) ? null : ParseInstant(reader.GetString(6)),
             reader.IsDBNull(7) ? null : ParseInstant(reader.GetString(7)),
-            reader.IsDBNull(8) ? null : reader.GetString(8));
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.GetString(9),
+            new ProductionPin(
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)));
     }
+
+    private static async Task<ProductionPin?> ResolveProductionPinAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        DateTimeOffset now,
+        CancellationToken token)
+    {
+        var context = await SqliteProductionReadinessContextReader.ReadAsync(
+            connection, transaction, batchOperationId, token)
+            ?? throw new BatchOperationNotFoundException(batchOperationId);
+        if (context.ActiveProcessRevisionId is null)
+        {
+            // Existing Operations without managed release history retain their pre-v35 execution behavior.
+            return null;
+        }
+
+        var readiness = ProductionReadinessEvaluator.Evaluate(context);
+        if (!readiness.IsReadyForProduction)
+        {
+            var blocker = readiness.Components.First(component => component.IsBlocking);
+            throw new ProductionReadinessException(ReadinessErrorCode(context, blocker), blocker.Message);
+        }
+
+        if (context.MachineAssignmentId is not null
+            && context.SelectedGCodeReleaseId is null
+            && readiness.EffectiveGCodeReleaseId is not null)
+        {
+            await using var select = connection.CreateCommand();
+            select.Transaction = transaction;
+            select.CommandText = """
+                UPDATE machine_assignments
+                SET selected_gcode_release_id = $releaseId,
+                    version = version + 1,
+                    updated_at = $updatedAt
+                WHERE id = $assignmentId AND selected_gcode_release_id IS NULL;
+                """;
+            select.Parameters.AddWithValue("$releaseId", readiness.EffectiveGCodeReleaseId);
+            select.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
+            select.Parameters.AddWithValue("$assignmentId", context.MachineAssignmentId);
+            await select.ExecuteNonQueryAsync(token);
+        }
+
+        string toolTableHash;
+        await using (var tool = connection.CreateCommand())
+        {
+            tool.Transaction = transaction;
+            tool.CommandText = "SELECT file_hash FROM tool_table_releases WHERE id = $id;";
+            tool.Parameters.AddWithValue("$id", context.ActiveToolTableReleaseId!);
+            toolTableHash = (string)(await tool.ExecuteScalarAsync(token))!;
+        }
+
+        string? gcodeHash = null;
+        if (readiness.EffectiveGCodeReleaseId is not null)
+        {
+            await using var gcode = connection.CreateCommand();
+            gcode.Transaction = transaction;
+            gcode.CommandText = "SELECT file_hash FROM gcode_releases WHERE id = $id;";
+            gcode.Parameters.AddWithValue("$id", readiness.EffectiveGCodeReleaseId);
+            gcodeHash = (string)(await gcode.ExecuteScalarAsync(token))!;
+        }
+
+        return new ProductionPin(
+            context.ActiveProcessRevisionId,
+            readiness.EffectiveGCodeReleaseId,
+            context.ActiveToolTableReleaseId,
+            gcodeHash,
+            toolTableHash);
+    }
+
+    private static string ReadinessErrorCode(
+        ProductionReadinessContext context,
+        ReadinessComponent component) => component.Key switch
+    {
+        ReadinessComponentKeys.GCode when component.State == ReadinessStates.Outdated => "gcode_release_outdated",
+        ReadinessComponentKeys.GCode when component.State == ReadinessStates.Incompatible => "gcode_release_incompatible",
+        ReadinessComponentKeys.GCode when component.State == ReadinessStates.Blocked => "gcode_release_selection_required",
+        ReadinessComponentKeys.GCode => "gcode_release_missing",
+        ReadinessComponentKeys.ToolTable when component.State == ReadinessStates.Outdated => "tool_table_outdated",
+        ReadinessComponentKeys.ToolTable => "tool_table_missing",
+        ReadinessComponentKeys.ToolOffsets when component.State == ReadinessStates.Outdated => "tool_offsets_outdated",
+        ReadinessComponentKeys.ToolOffsets when component.State == ReadinessStates.Missing => "tool_offsets_missing",
+        ReadinessComponentKeys.ToolOffsets => "tool_offsets_unverified",
+        ReadinessComponentKeys.Material when component.State == ReadinessStates.Missing => "material_missing",
+        ReadinessComponentKeys.Material => "material_unverified",
+        ReadinessComponentKeys.MachinePostprocessorCompatibility => "postprocessor_incompatible",
+        ReadinessComponentKeys.ToolCapacity when !context.RequiredToolCount.HasValue => "tool_requirements_unavailable",
+        ReadinessComponentKeys.ToolCapacity when !context.UsableToolPositions.HasValue => "machine_capacity_unavailable",
+        ReadinessComponentKeys.ToolCapacity => "tool_capacity_mismatch",
+        _ => "production_not_ready"
+    };
 
     private static async Task UpdateProductionBatchStatusAsync(
         SqliteConnection connection,
@@ -1152,5 +1299,14 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         int? BacklogPosition,
         DateTimeOffset? ActualStart,
         DateTimeOffset? ActualEnd,
-        string? ActualMachineId);
+        string? ActualMachineId,
+        string SourceCaseOperationId,
+        ProductionPin ProductionPin);
+
+    private sealed record ProductionPin(
+        string? ProcessRevisionId,
+        string? GCodeReleaseId,
+        string? ToolTableReleaseId,
+        string? GCodeFileHash,
+        string? ToolTableFileHash);
 }

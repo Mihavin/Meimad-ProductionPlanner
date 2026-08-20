@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Meimad.Planner.Server.Application.PlanningBoard;
+using Meimad.Planner.Server.Domain.GCode;
+using Meimad.Planner.Server.Domain.Readiness;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -143,7 +145,14 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    batch_operations.route_position,
                    CASE WHEN batch_operations.has_external_delay = 0 THEN 0
                         WHEN batch_operations.external_delay_duration_unit = 'hours' THEN CAST(batch_operations.external_delay_duration * 3600 AS INTEGER)
-                        ELSE CAST(batch_operations.external_delay_duration * 86400 AS INTEGER) END
+                        ELSE CAST(batch_operations.external_delay_duration * 86400 AS INTEGER) END,
+                   CASE WHEN batch_operations.status = 'not_started'
+                        THEN active_process.id
+                        ELSE batch_operations.production_process_revision_id END,
+                   CASE WHEN batch_operations.status = 'not_started'
+                        THEN active_tools.required_tool_count
+                        ELSE pinned_tools.required_tool_count END,
+                   assigned_machine.usable_tool_positions
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -151,6 +160,15 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
               ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
+            LEFT JOIN machines assigned_machine
+              ON assigned_machine.id = machine_assignments.machine_id
+            LEFT JOIN process_revisions active_process
+              ON active_process.case_operation_id = batch_operations.source_case_operation_id
+             AND active_process.is_active = 1
+            LEFT JOIN tool_table_releases active_tools
+              ON active_tools.id = active_process.tool_table_release_id
+            LEFT JOIN tool_table_releases pinned_tools
+              ON pinned_tools.id = batch_operations.production_tool_table_release_id
             LEFT JOIN operation_pause_events
               ON operation_pause_events.batch_operation_id = batch_operations.id
              AND operation_pause_events.status = 'active'
@@ -167,6 +185,23 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             var loadUnloadSeconds = reader.GetInt32(16);
             var automaticLoading = reader.GetInt32(18) == 1;
             var everyNParts = GetNullableInt32(reader, 19);
+            var machineId = GetNullableString(reader, 11);
+            var hasManagedProcess = !reader.IsDBNull(35);
+            var requiredToolCount = GetNullableInt32(reader, 36);
+            var availableToolPositions = GetNullableInt32(reader, 37);
+            var capacity = hasManagedProcess && machineId is not null
+                ? ToolCapacityEvaluator.Evaluate(requiredToolCount, availableToolPositions)
+                : null;
+            var capacityStatus = !hasManagedProcess
+                ? "not_managed"
+                : machineId is null ? "unassigned" : capacity!.Code;
+            var capacityMessage = !hasManagedProcess
+                ? "Tool capacity is not managed because this Operation has no released process revision."
+                : machineId is null
+                    ? requiredToolCount.HasValue
+                        ? $"Tool capacity pending assignment: the active process requires {requiredToolCount.Value} tool positions."
+                        : "Tool capacity pending assignment; the active tool table has no structured required-tool count."
+                    : capacity!.Message;
             operations.Add(new PlanningBoardOperation(
                 reader.GetString(0),
                 reader.GetString(1),
@@ -179,7 +214,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 setupSeconds,
                 cycleSeconds,
                 reader.GetString(10),
-                GetNullableString(reader, 11),
+                machineId,
                 GetNullableInt32(reader, 12),
                 plannedQuantity,
                 JsonSerializer.Deserialize<string[]>(reader.GetString(14)) ?? [],
@@ -202,7 +237,42 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 null,
                 false,
                 reader.GetInt32(33),
-                reader.GetInt64(34)));
+                reader.GetInt64(34),
+                capacityStatus,
+                capacityMessage,
+                requiredToolCount,
+                availableToolPositions,
+                !hasManagedProcess || capacity?.IsSatisfied == true));
+        }
+
+        await reader.DisposeAsync();
+        for (var index = 0; index < operations.Count; index++)
+        {
+            var operation = operations[index];
+            var context = await SqliteProductionReadinessContextReader.ReadAsync(
+                connection, transaction, operation.BatchOperationId, cancellationToken);
+            if (context is null) continue;
+            var readiness = ProductionReadinessEvaluator.Evaluate(context);
+            var readinessManaged = readiness.IsManaged;
+            var capacityComponent = readiness.Components.Single(
+                component => component.Key == ReadinessComponentKeys.ToolCapacity);
+            operations[index] = operation with
+            {
+                ToolCapacityStatus = CapacityCode(context, capacityComponent),
+                ToolCapacityMessage = capacityComponent.Message,
+                RequiredToolCount = context.RequiredToolCount,
+                AvailableToolPositions = context.UsableToolPositions,
+                IsToolCapacitySatisfied = capacityComponent.State is ReadinessStates.Ready or ReadinessStates.NotRequired,
+                OverallReadinessState = readinessManaged ? readiness.OverallState : "NOT_MANAGED",
+                IsReadyForProduction = !readinessManaged || readiness.IsReadyForProduction,
+                ReadinessSummary = readinessManaged
+                    ? readiness.Summary
+                    : "Readiness is not managed for this legacy Operation.",
+                ReadinessComponents = readinessManaged ? readiness.Components : [],
+                EffectiveGCodeReleaseId = readiness.EffectiveGCodeReleaseId,
+                RequiresExplicitGCodeSelection = readiness.RequiresExplicitGCodeSelection,
+                CompatibleGCodeReleases = readiness.CompatibleGCodeReleases
+            };
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -225,6 +295,18 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             var latest = due.AddSeconds(-remaining);
             return operation with { LatestStart = latest, IsLatestStartOverdue = latest < now };
         }).ToArray();
+    }
+
+    private static string CapacityCode(
+        ProductionReadinessContext context,
+        ReadinessComponent capacity)
+    {
+        if (context.ActiveProcessRevisionId is null) return "not_managed";
+        if (context.MachineId is null) return "unassigned";
+        if (capacity.State == ReadinessStates.Ready) return "satisfied";
+        if (!context.RequiredToolCount.HasValue) return "tool_requirements_unavailable";
+        if (!context.UsableToolPositions.HasValue) return "machine_capacity_unavailable";
+        return "tool_capacity_mismatch";
     }
 
     private static string? GetNullableString(SqliteDataReader reader, int ordinal) =>

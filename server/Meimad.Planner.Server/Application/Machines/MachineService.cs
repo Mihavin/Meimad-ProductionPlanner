@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Machines;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Meimad.Planner.Server.Application.Machines;
 
@@ -7,11 +8,16 @@ internal sealed class MachineService
 {
     private readonly IMachineRepository repository;
     private readonly TimeProvider timeProvider;
+    private readonly ILogger<MachineService> logger;
 
-    public MachineService(IMachineRepository repository, TimeProvider timeProvider)
+    public MachineService(
+        IMachineRepository repository,
+        TimeProvider timeProvider,
+        ILogger<MachineService>? logger = null)
     {
         this.repository = repository;
         this.timeProvider = timeProvider;
+        this.logger = logger ?? NullLogger<MachineService>.Instance;
     }
 
     internal async Task<Machine> CreateAsync(
@@ -46,7 +52,13 @@ internal sealed class MachineService
             values.RapidRateMillimetersPerMinute,
             values.ToolChangeTimeSeconds,
             values.MachineTimeFactor);
-        return await repository.CreateAsync(machine, editAuthority, cancellationToken);
+        var created = await repository.CreateAsync(machine, editAuthority, cancellationToken);
+        logger.LogInformation(
+            "Created Machine {MachineId} with execution mode {ExecutionMode} and {PostprocessorCount} supported Postprocessors.",
+            created.MachineId,
+            created.ExecutionMode,
+            created.SupportedPostprocessorIds?.Count ?? 0);
+        return created;
     }
 
     internal Task<Machine?> GetByIdAsync(
@@ -108,12 +120,18 @@ internal sealed class MachineService
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
-        return await repository.UpdateAsync(
+        var saved = await repository.UpdateAsync(
                 updated,
                 expectedVersion,
                 editAuthority,
                 cancellationToken)
             ?? throw new MachineVersionConflictException(machineId, expectedVersion);
+        logger.LogInformation(
+            "Updated Machine {MachineId} execution configuration to {ExecutionMode} with {PostprocessorCount} supported Postprocessors.",
+            saved.MachineId,
+            saved.ExecutionMode,
+            saved.SupportedPostprocessorIds?.Count ?? 0);
+        return saved;
     }
 
     private static MachineValues ToValues(CreateMachineCommand command) => new(

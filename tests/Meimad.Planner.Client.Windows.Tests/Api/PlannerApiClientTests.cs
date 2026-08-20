@@ -12,7 +12,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_working_plan_import_client_uploads_workbook_and_commits_explicit_selections_with_authority()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
              "machineSections":[],"rows":[],"openOrderRows":[],"issues":[]}
@@ -66,7 +66,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_preview_reads_batch_context_and_complete_machine_compatibility_facts()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
              "machineSections":[{"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Five-axis mill","firstDataRow":2,"lastDataRow":2,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill 1","processType":"milling","axisType":"5-axis","capabilities":["fiveAxis"],"machineTypeCapabilities":["probe"],"score":1,"reason":"Exact"}]}],
@@ -95,7 +95,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_view_model_requires_editor_and_explicit_resolutions_then_refreshes_on_commit()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":0.9}],"openOrderColumns":[]},
              "machineSections":[{"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Mill A","firstDataRow":2,"lastDataRow":2,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill 1","score":1,"reason":"Exact"}]}],
@@ -165,7 +165,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_view_model_allows_a_skipped_blocked_row_and_does_not_require_its_machine_mapping()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":4,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},{"field":"quantity","column":"B","header":"Quantity","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[
@@ -627,7 +627,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_column_mapping_keeps_the_target_field_stable_and_commits_the_selected_source_column()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1},{"field":"quantity","column":"B","header":"Quantity","confidence":1}],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1}]},
              "machineSections":[],"rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-1","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2","orderNumber":"SO-2","customer":"Acme","outstandingQuantity":1},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[]}
@@ -688,13 +688,13 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_sheet_or_column_correction_requires_a_fresh_server_preview()
     {
         const string initialPreview = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Alternative","rowCount":3,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":4}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},{"field":"notes","column":"B","header":"Notes","confidence":0.8,"required":false}],"openOrderColumns":[]},
              "machineSections":[],"rows":[{"rowKey":"Planning!2","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-OLD","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
             """;
         const string correctedPreview = """
-            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2026-08-20T10:05:00Z",
+            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2099-08-20T10:05:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Alternative","rowCount":3,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":4}]},
              "suggestions":{"planningSheet":"Alternative","openOrdersSheet":"Orders","planningColumns":[{"field":"partNumber","column":"C","header":"Part","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[],"rows":[{"rowKey":"Alternative!3","sheetName":"Alternative","rowNumber":3,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-NEW","quantity":1},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
@@ -741,13 +741,13 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_sheet_change_without_manual_mapping_asks_server_to_auto_map_the_new_sheet()
     {
         const string initialPreview = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":2},{"name":"Alternative","rowCount":2,"columnCount":2}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[],"rows":[],"openOrderRows":[],"issues":[]}
             """;
         const string remappedPreview = """
-            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2026-08-20T10:05:00Z",
+            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2099-08-20T10:05:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":2},{"name":"Alternative","rowCount":2,"columnCount":2}]},
              "suggestions":{"planningSheet":"Alternative","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"B","header":"Item Number","confidence":0.98,"required":true}],"openOrderColumns":[]},
              "machineSections":[],"rows":[],"openOrderRows":[],"issues":[]}
@@ -775,13 +775,13 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_zero_suggestions_still_exposes_all_targets_and_described_source_columns()
     {
         const string initialPreview = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":3,"columnCount":3,"columns":[{"column":"A","header":"Legacy Item","sample":"PN-1001"},{"column":"B","header":"Legacy Units","sample":"12"},{"column":"C","header":"Mystery note","sample":"urgent"}]}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[],"openOrderColumns":[]},
              "machineSections":[],"rows":[],"openOrderRows":[],"issues":[{"severity":"blocking","code":"required_column_mapping_missing","message":"Part mapping required","sheetName":null,"rowNumber":null,"field":"partNumber","sectionKey":null,"scope":"planning"}]}
             """;
         const string correctedPreview = """
-            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2026-08-20T10:05:00Z",
+            {"schemaVersion":1,"importToken":"import-2","workbookSha256":"abc123","expiresAt":"2099-08-20T10:05:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":3,"columnCount":3,"columns":[{"column":"A","header":"Legacy Item","sample":"PN-1001"},{"column":"B","header":"Legacy Units","sample":"12"},{"column":"C","header":"Mystery note","sample":"urgent"}]}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Legacy Item","confidence":1,"required":true},{"field":"quantity","column":"B","header":"Legacy Units","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[],"rows":[{"rowKey":"plan-1","sheetName":"Planning","rowNumber":2,"sectionKey":"none","sourceOrder":1,"values":{"partNumber":"PN-1001","quantity":12},"provenance":[],"candidates":{"cases":[],"orders":[],"batches":[],"caseOperations":[],"batchOperations":[]}}],"openOrderRows":[],"issues":[]}
@@ -824,7 +824,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_failed_refresh_invalidates_the_old_commit_gate_until_a_successful_preview()
     {
         const string preview = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Orders","rowCount":2,"columnCount":2,"columns":[{"column":"A","header":"Part","sample":"PN-2"}]}]},
              "suggestions":{"planningSheet":null,"openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}]},
              "machineSections":[],"rows":[],"openOrderRows":[{"rowKey":"open-1","sheetName":"Orders","rowNumber":2,"sourceOrder":1,"values":{"partNumber":"PN-2"},"provenance":[],"candidates":{"cases":[],"orders":[]}}],"issues":[]}
@@ -865,7 +865,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_preview_summary_reports_validation_matches_decisions_and_unknown_machines()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":4}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}]},
              "machineSections":[{"sectionKey":"machine-a","sheetName":"Planning","headerRow":1,"sourceLabel":"Unknown cell","firstDataRow":2,"lastDataRow":2,"candidates":[{"machineId":"machine-1","number":"M1","name":"Mill","processType":"mill","axisType":"3-axis","capabilities":[],"machineTypeCapabilities":[],"score":0,"reason":"manual_choice"}]}],
@@ -907,7 +907,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_orders_only_commit_omits_the_excluded_planning_sheet_and_its_blockers()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":2,"columnCount":3},{"name":"Orders","rowCount":2,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders","planningColumns":[],"openOrderColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true}]},
              "machineSections":[],"rows":[],
@@ -961,7 +961,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_wizard_requires_explicit_outcomes_and_applies_only_safe_pool_patterns()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-1","workbookSha256":"abc123","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":3,"columnCount":3}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":null,"planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},{"field":"quantity","column":"B","header":"Quantity","confidence":1,"required":true}],"openOrderColumns":[]},
              "machineSections":[
@@ -1048,7 +1048,7 @@ public sealed class PlannerApiClientTests
     public async Task Legacy_import_automatic_draft_uses_only_exact_safe_candidates_and_requires_skip_confirmation()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"import-auto","workbookSha256":"abc12345feed9876","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"import-auto","workbookSha256":"abc12345feed9876","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"legacy.xlsx","sheets":[{"name":"Planning","rowCount":5,"columnCount":3},{"name":"Orders","rowCount":4,"columnCount":4}]},
              "suggestions":{"planningSheet":"Planning","openOrdersSheet":"Orders",
                "planningColumns":[{"field":"partNumber","column":"A","header":"Part","confidence":0.65,"required":true},{"field":"quantity","column":"B","header":"Quantity","confidence":0.65,"required":true}],
@@ -1140,7 +1140,7 @@ public sealed class PlannerApiClientTests
     public async Task Fixed_case_order_import_excludes_every_planning_and_machine_mutation()
     {
         const string previewJson = """
-            {"schemaVersion":1,"importToken":"fixed-token","workbookSha256":"fixed-hash","expiresAt":"2026-08-20T10:00:00Z",
+            {"schemaVersion":1,"importToken":"fixed-token","workbookSha256":"fixed-hash","expiresAt":"2099-08-20T10:00:00Z",
              "workbook":{"fileName":"working-plan.xlsx","sheets":[{"name":"Sheet1","rowCount":4,"columnCount":15}]},
              "suggestions":{"planningSheet":null,"openOrdersSheet":"Sheet1","planningColumns":[],"openOrderColumns":[
                {"field":"partNumber","column":"A","header":"Part","confidence":1,"required":true},

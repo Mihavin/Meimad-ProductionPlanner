@@ -87,6 +87,21 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<PlannerGCodeCatalog> GetOperationGCodeAsync(
+        string caseId,
+        string operationId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<PlannerGCodeRelease> ReleaseGCodeAsync(
+        string caseId,
+        string operationId,
+        GCodeReleaseCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<PlannerOrder> UpdateOrderAsync(
         string orderId,
         OrderUpdate update,
@@ -405,6 +420,19 @@ internal interface IPlannerApiClient : IDisposable
 
     Task<PlanningBoardSnapshot> GetPlanningBoardAsync(
         CancellationToken cancellationToken = default);
+
+    Task<PlannerProductionReadiness> GetProductionReadinessAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<PlannerProductionReadiness> UpdateProductionReadinessInputsAsync(
+        string batchOperationId,
+        ProductionReadinessInputUpdate update,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
 
     Task<TimelineSnapshot> GetTimelineAsync(
         DateTimeOffset from,
@@ -737,6 +765,71 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<CaseOperation>(response, cancellationToken);
+    }
+
+    public async Task<PlannerGCodeCatalog> GetOperationGCodeAsync(
+        string caseId,
+        string operationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(operationId)}/gcode",
+            cancellationToken);
+        return await ReadSuccessAsync<PlannerGCodeCatalog>(response, cancellationToken);
+    }
+
+    public async Task<PlannerGCodeRelease> ReleaseGCodeAsync(
+        string caseId,
+        string operationId,
+        GCodeReleaseCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(operationId)}/gcode-releases",
+            clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(create.PostprocessorId), "postprocessorId");
+        content.Add(new StringContent(create.ChangeScope), "changeScope");
+        content.Add(new StringContent(create.ReleaseComment), "releaseComment");
+        if (!string.IsNullOrWhiteSpace(create.ProcessChangeDescription))
+        {
+            content.Add(new StringContent(create.ProcessChangeDescription), "processChangeDescription");
+        }
+        content.Add(new StringContent(create.ConfirmNewProcessRevision.ToString()), "confirmNewProcessRevision");
+        content.Add(new StringContent(create.ReuseActiveToolTable.ToString()), "reuseActiveToolTable");
+        content.Add(new StringContent(create.ConfirmToolTable.ToString()), "confirmToolTable");
+        await using var gcodeStream = File.OpenRead(create.GCodeFilePath);
+        using var gcodeContent = new StreamContent(gcodeStream);
+        content.Add(gcodeContent, "gcodeFile", Path.GetFileName(create.GCodeFilePath));
+        FileStream? toolStream = null;
+        StreamContent? toolContent = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(create.ToolTableFilePath))
+            {
+                toolStream = File.OpenRead(create.ToolTableFilePath);
+                toolContent = new StreamContent(toolStream);
+                content.Add(toolContent, "toolTableFile", Path.GetFileName(create.ToolTableFilePath));
+            }
+
+            request.Content = content;
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            return await ReadSuccessAsync<PlannerGCodeRelease>(response, cancellationToken);
+        }
+        finally
+        {
+            toolContent?.Dispose();
+            if (toolStream is not null)
+            {
+                await toolStream.DisposeAsync();
+            }
+        }
     }
 
     public async Task<IReadOnlyList<CaseComponent>> ListCaseComponentsAsync(
@@ -1563,6 +1656,35 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     {
         using var response = await httpClient.GetAsync("api/v1/planning-board", cancellationToken);
         return await ReadSuccessAsync<PlanningBoardSnapshot>(response, cancellationToken);
+    }
+
+    public async Task<PlannerProductionReadiness> GetProductionReadinessAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/readiness",
+            cancellationToken);
+        return await ReadSuccessAsync<PlannerProductionReadiness>(response, cancellationToken);
+    }
+
+    public async Task<PlannerProductionReadiness> UpdateProductionReadinessInputsAsync(
+        string batchOperationId,
+        ProductionReadinessInputUpdate update,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Put,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/readiness-inputs",
+            clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerProductionReadiness>(response, cancellationToken);
     }
 
     public async Task<TimelineSnapshot> GetTimelineAsync(

@@ -4,6 +4,8 @@ using System.Text.Json;
 using Meimad.Planner.Server.Domain.Timeline;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Application.EventLogging;
+using Meimad.Planner.Server.Application.Readiness;
+using Meimad.Planner.Server.Domain.Readiness;
 
 namespace Meimad.Planner.Server.Application.Timeline;
 
@@ -16,6 +18,7 @@ internal sealed class TimelineProjectionService
     private readonly TimelineCalculationEngine engine;
     private readonly TimelineOptions options;
     private readonly IStructuredEventLogRepository eventLog;
+    private readonly IProductionReadinessRepository readinessRepository;
     private readonly ILogger<TimelineProjectionService> logger;
 
     public TimelineProjectionService(
@@ -23,12 +26,14 @@ internal sealed class TimelineProjectionService
         TimelineCalculationEngine engine,
         TimelineOptions options,
         IStructuredEventLogRepository eventLog,
+        IProductionReadinessRepository readinessRepository,
         ILogger<TimelineProjectionService> logger)
     {
         this.repository = repository;
         this.engine = engine;
         this.options = options;
         this.eventLog = eventLog;
+        this.readinessRepository = readinessRepository;
         this.logger = logger;
     }
 
@@ -611,6 +616,31 @@ internal sealed class TimelineProjectionService
             projectedMachines,
             source.Operations,
             allConflicts);
+        var readinessByOperation = new Dictionary<string, ProductionReadinessResult>(
+            StringComparer.Ordinal);
+        foreach (var operationId in projectedMachines
+                     .SelectMany(machine => machine.Intervals)
+                     .Where(interval => interval.OperationStatus == "not_started"
+                         && interval.OperationId is not null)
+                     .Select(interval => interval.OperationId!)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var readiness = await readinessRepository.ReadAsync(operationId, cancellationToken);
+            if (readiness.IsManaged) readinessByOperation[operationId] = readiness;
+        }
+        projectedMachines = projectedMachines.Select(machine => machine with
+        {
+            Intervals = machine.Intervals.Select(interval =>
+                interval.OperationId is not null
+                && readinessByOperation.TryGetValue(interval.OperationId, out var readiness)
+                    ? interval with
+                    {
+                        OverallReadinessState = readiness.OverallState,
+                        IsReadyForProduction = readiness.IsReadyForProduction,
+                        ReadinessSummary = readiness.Summary
+                    }
+                    : interval).ToArray()
+        }).ToArray();
         var batches = source.Operations
             .GroupBy(operation => operation.BatchId, StringComparer.Ordinal)
             .Select(group => new TimelineProjectionBatch(

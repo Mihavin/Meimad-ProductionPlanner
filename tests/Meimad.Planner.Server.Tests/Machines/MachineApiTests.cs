@@ -579,9 +579,11 @@ public sealed class MachineApiTests
                     machineTimeFactor = 1.0
                 });
             Assert.Equal(HttpStatusCode.Created, createCnc.StatusCode);
+            string cncMachineId;
             using (var created = JsonDocument.Parse(await createCnc.Content.ReadAsStringAsync()))
             {
                 var root = created.RootElement;
+                cncMachineId = root.GetProperty("machineId").GetString()!;
                 Assert.Equal("CNC_GCODE", root.GetProperty("executionMode").GetString());
                 Assert.Equal(2, root.GetProperty("supportedPostprocessorIds").GetArrayLength());
                 Assert.Equal(30, root.GetProperty("usableToolPositions").GetInt32());
@@ -630,6 +632,11 @@ public sealed class MachineApiTests
 
             using var mappedDelete = await client.DeleteAsync($"/api/v1/postprocessors/{threeAxis}");
             Assert.Equal(HttpStatusCode.Conflict, mappedDelete.StatusCode);
+
+            using var deleteMachine = await client.DeleteAsync($"/api/v1/machines/{cncMachineId}");
+            Assert.Equal(HttpStatusCode.NoContent, deleteMachine.StatusCode);
+            using var nowUnmappedDelete = await client.DeleteAsync($"/api/v1/postprocessors/{threeAxis}");
+            Assert.Equal(HttpStatusCode.NoContent, nowUnmappedDelete.StatusCode);
         });
     }
 

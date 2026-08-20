@@ -822,8 +822,12 @@ public partial class TimelineView : UserControl
                 Background = hasRenderablePhases
                     ? Brushes.Transparent
                     : IntervalBrush(interval),
-                BorderBrush = hasRenderablePhases ? Brushes.Transparent : Brushes.White,
-                BorderThickness = hasRenderablePhases ? new Thickness(0) : new Thickness(1),
+                BorderBrush = interval.IsPlannedNotReady
+                    ? Brushes.Red
+                    : hasRenderablePhases ? Brushes.Transparent : Brushes.White,
+                BorderThickness = interval.IsPlannedNotReady
+                    ? new Thickness(2)
+                    : hasRenderablePhases ? new Thickness(0) : new Thickness(1),
                 ToolTip = $"{label}\nLocal: {FormatLocal(interval.StartsAt, DisplayTimeZone())} → {FormatLocal(interval.EndsAt, DisplayTimeZone())}\n{interval.Detail}",
                 Child = BuildIntervalContent(
                     interval, label, width, laneHeight, clippedStart, clippedEnd)
@@ -1294,7 +1298,12 @@ public partial class TimelineView : UserControl
         var actual = interval.ActualStart.HasValue || interval.ActualEnd.HasValue
             ? $"\nActual: {FormatLocal(interval.ActualStart, displayZone)} → {FormatLocal(interval.ActualEnd, displayZone)}"
             : string.Empty;
-        var detail = string.IsNullOrWhiteSpace(interval.Detail) ? string.Empty : $"\n{interval.Detail}";
+        var readiness = interval.OverallReadinessState == "NOT_MANAGED"
+            ? string.Empty
+            : $"\nReadiness: {(interval.IsReadyForProduction ? "Ready for production" : interval.ReadinessSummary ?? "Not ready")}";
+        var detail = string.IsNullOrWhiteSpace(interval.Detail)
+            ? readiness
+            : $"{readiness}\n{interval.Detail}";
         var operation = !string.IsNullOrWhiteSpace(interval.OperationId)
             && interval.OperationNumber.HasValue
             ? $"\nOperation: {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd()

@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Postprocessors;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Meimad.Planner.Server.Application.Postprocessors;
 
@@ -7,11 +8,16 @@ internal sealed class PostprocessorService
 {
     private readonly IPostprocessorRepository repository;
     private readonly TimeProvider timeProvider;
+    private readonly ILogger<PostprocessorService> logger;
 
-    public PostprocessorService(IPostprocessorRepository repository, TimeProvider timeProvider)
+    public PostprocessorService(
+        IPostprocessorRepository repository,
+        TimeProvider timeProvider,
+        ILogger<PostprocessorService>? logger = null)
     {
         this.repository = repository;
         this.timeProvider = timeProvider;
+        this.logger = logger ?? NullLogger<PostprocessorService>.Instance;
     }
 
     internal async Task<Postprocessor> CreateAsync(
@@ -24,7 +30,7 @@ internal sealed class PostprocessorService
             command.Description,
             command.IsActive));
         var now = timeProvider.GetUtcNow();
-        return await repository.CreateAsync(new Postprocessor(
+        var created = await repository.CreateAsync(new Postprocessor(
             Guid.NewGuid().ToString("N"),
             values.Name,
             values.Description,
@@ -32,6 +38,11 @@ internal sealed class PostprocessorService
             1,
             now,
             now), authority, token);
+        logger.LogInformation(
+            "Created Postprocessor {PostprocessorId}; active={IsActive}.",
+            created.PostprocessorId,
+            created.IsActive);
+        return created;
     }
 
     internal Task<Postprocessor?> GetByIdAsync(string id, CancellationToken token = default) =>
@@ -61,15 +72,28 @@ internal sealed class PostprocessorService
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
-        return await repository.UpdateAsync(candidate, expectedVersion, authority, token)
+        var saved = await repository.UpdateAsync(candidate, expectedVersion, authority, token)
             ?? throw new PostprocessorVersionConflictException(id, expectedVersion);
+        logger.LogInformation(
+            "Updated Postprocessor {PostprocessorId}; active={IsActive}.",
+            saved.PostprocessorId,
+            saved.IsActive);
+        return saved;
     }
 
-    internal Task<bool> DeleteAsync(
+    internal async Task<bool> DeleteAsync(
         string id,
         EditAuthority authority,
-        CancellationToken token = default) =>
-        repository.DeleteAsync(id, authority, token);
+        CancellationToken token = default)
+    {
+        var deleted = await repository.DeleteAsync(id, authority, token);
+        if (deleted)
+        {
+            logger.LogInformation("Deleted Postprocessor {PostprocessorId}.", id);
+        }
+
+        return deleted;
+    }
 
     private static T Select<T>(PostprocessorField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;

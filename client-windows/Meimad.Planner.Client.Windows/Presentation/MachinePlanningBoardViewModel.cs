@@ -1123,6 +1123,18 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         LatestStart = operation.LatestStart;
         LatestStartWarning = operation.LatestStartWarning;
         IsLatestStartOverdue = operation.IsLatestStartOverdue;
+        ToolCapacityStatus = operation.ToolCapacityStatus;
+        ToolCapacityMessage = operation.ToolCapacityMessage;
+        RequiredToolCount = operation.RequiredToolCount;
+        AvailableToolPositions = operation.AvailableToolPositions;
+        IsToolCapacitySatisfied = operation.IsToolCapacitySatisfied;
+        OverallReadinessState = operation.OverallReadinessState;
+        IsReadyForProduction = operation.IsReadyForProduction;
+        ReadinessSummary = operation.ReadinessSummary;
+        ReadinessComponents = operation.ReadinessComponents ?? [];
+        EffectiveGCodeReleaseId = operation.EffectiveGCodeReleaseId;
+        RequiresExplicitGCodeSelection = operation.RequiresExplicitGCodeSelection;
+        CompatibleGCodeReleases = operation.CompatibleGCodeReleases ?? [];
     }
 
     public string BatchOperationId { get; }
@@ -1147,6 +1159,32 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public DateTimeOffset? LatestStart { get; }
     public string? LatestStartWarning { get; }
     public bool IsLatestStartOverdue { get; }
+    public string ToolCapacityStatus { get; }
+    public string ToolCapacityMessage { get; }
+    public int? RequiredToolCount { get; }
+    public int? AvailableToolPositions { get; }
+    public bool IsToolCapacitySatisfied { get; }
+    public string OverallReadinessState { get; }
+    public bool IsReadyForProduction { get; }
+    public string ReadinessSummary { get; }
+    public IReadOnlyList<PlannerReadinessComponent> ReadinessComponents { get; }
+    public string? EffectiveGCodeReleaseId { get; }
+    public bool RequiresExplicitGCodeSelection { get; }
+    public IReadOnlyList<PlannerReadinessRelease> CompatibleGCodeReleases { get; }
+    public bool IsReadinessBlocking => MachineId is not null
+        && Status == "not_started"
+        && (!IsReadyForProduction || IsToolCapacityBlocking);
+    public string ReadinessSummaryText => IsReadyForProduction
+        ? "Readiness: Ready for production"
+        : $"Readiness: {ReadinessSummary}";
+    public string ReadinessDetailText => ReadinessComponents.Count == 0
+        ? ReadinessSummary
+        : string.Join(Environment.NewLine,
+            ReadinessComponents.Select(component =>
+                $"{component.Label}: {StateLabel(component.State)} — {component.Message}"));
+    public bool IsToolCapacityBlocking => MachineId is not null
+        && Status == "not_started"
+        && !IsToolCapacitySatisfied;
     public string LatestStartText => LatestStart.HasValue
         ? $"Latest start {LatestStart.Value:yyyy-MM-dd HH:mm}"
         : LatestStartWarning ?? "Latest start unavailable";
@@ -1198,6 +1236,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         _ => $"Unknown ({PlanningMode})"
     };
     public string PlanningModeText => $"Mode {PlanningModeLabel}";
+    public string ToolCapacityText => $"Tools: {ToolCapacityMessage}";
     public string StatusGlyph => Status switch
     {
         "not_started" => "○",
@@ -1208,6 +1247,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     };
     public bool CanStart => MachineId is not null
         && BacklogPosition == 0
+        && !IsReadinessBlocking
         && Status is "not_started" or "suspended";
     public bool CanSuspend => MachineId is not null && Status == "in_progress";
     public bool CanFinish => MachineId is not null && Status == "in_progress";
@@ -1221,6 +1261,12 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public bool CanScheduleBackward => CanChangePlanningMode && PlanningMode != "backward";
     public bool CanScheduleForward => CanChangePlanningMode && PlanningMode != "forward";
     public bool CanSetManualMode => CanChangePlanningMode && PlanningMode != "manual";
+
+    private static string StateLabel(string state) => state.Replace('_', ' ').ToLowerInvariant() switch
+    {
+        var value when value.Length > 0 => char.ToUpperInvariant(value[0]) + value[1..],
+        _ => state
+    };
 
     internal void SetPlanningModeEditAvailability(bool value)
     {

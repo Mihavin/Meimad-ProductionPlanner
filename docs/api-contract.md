@@ -643,12 +643,21 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/machine-types/{machineTypeId}` | Read one Machine Type and its version. |
 | `PATCH` | `/api/v1/machine-types/{machineTypeId}` | Optimistically update a Machine Type. |
 | `DELETE` | `/api/v1/machine-types/{machineTypeId}` | Delete an unreferenced Machine Type. |
+| `GET` | `/api/v1/postprocessors` | List managed Postprocessors. |
+| `POST` | `/api/v1/postprocessors` | Create a Postprocessor configuration. |
+| `GET` | `/api/v1/postprocessors/{postprocessorId}` | Read one Postprocessor and its version. |
+| `PATCH` | `/api/v1/postprocessors/{postprocessorId}` | Optimistically update a Postprocessor. |
+| `DELETE` | `/api/v1/postprocessors/{postprocessorId}` | Delete an unreferenced Postprocessor. |
+| `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode` | Read active/history/process and Postprocessor current/stale/missing matrix. |
+| `POST` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode-releases` | Publish one immutable released G-code artifact and optional new process/tool-table release. |
+| `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode-releases/{releaseId}/file` | Download and verify an historical G-code release. |
+| `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/tool-table-releases/{toolTableReleaseId}/file` | Download and verify an historical tool-table release. |
 
 Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. A separately confirmed Batch deletion is the exception to relationship blocking: it deletes the Batch-owned Machine Assignments, pause history, assignment overrides, package metadata/file records, allocations, and Batch Operations, compacts affected Machine backlogs, deletes the Batch, and recomputes affected Order lifecycles in one immediate transaction. Machine deletion still requires no assignment, downtime, device binding, official package, or Employee qualification reference. These endpoints never delete external folders, images, engineering files, or physical package bytes.
 
 An accepted assignment may produce warnings/conflicts; it must not cause silent rescheduling. Which structural errors reject versus which planning conflicts are accepted and reported is TBD.
 
-**Implemented now:** Machine collection GET/POST, GET/PATCH/DELETE by ID, guarded Case/Operation/Order/Batch deletes, Machine picture GET, Machine backlog GET, assignment PUT/DELETE, assignment planning-mode PATCH, Batch Operation execution POST commands, Machine Type CRUD, Working Calendar CRUD with usage/work/break/dated-exception data including one overnight window, dedicated Setup Calendar read/set/clear, and Machine downtime list/read/create/planned-edit/breakdown-restore. Backlog reorder POST, Machine Assignment query/read routes, downtime recurrence/cancellation, combined/multiple overnight-window policy, automatic holiday linkage, and calendar archive remain Proposed. E-Ink binding administration is implemented separately under `/api/v1/eink/device-registrations`.
+**Implemented now:** Machine collection GET/POST and GET/PATCH/DELETE by ID including execution/capacity/timing/Postprocessor fields, Postprocessor CRUD, guarded Case/Operation/Order/Batch deletes, Machine picture GET, Machine backlog GET, assignment PUT/DELETE, assignment planning-mode PATCH, Batch Operation execution POST commands, Machine Type CRUD, Working Calendar CRUD with usage/work/break/dated-exception data including one overnight window, dedicated Setup Calendar read/set/clear, and Machine downtime list/read/create/planned-edit/breakdown-restore. Backlog reorder POST, Machine Assignment query/read routes, downtime recurrence/cancellation, combined/multiple overnight-window policy, automatic holiday linkage, and calendar archive remain Proposed. E-Ink binding administration is implemented separately under `/api/v1/eink/device-registrations`.
 
 Schema-v11-v14 Setup administration adds active-editor CRUD at `/api/v1/resources` and `/api/v1/israeli-holidays`, plus optimistic `GET/PUT /api/v1/report-email-settings`. Employee Resource `skills` is the complete collection of stable Machine IDs that the employee knows how to operate; create/update rejects a submitted missing Machine with `422 unknown_machine`. The Windows Setup editor presents this collection as Machine-number/name checkboxes. Legacy textual skill tokens remain readable for upgrade compatibility and are replaced by selected Machine IDs on the employee's next Setup save. `POST /api/v1/israeli-holidays/sync` accepts `fromYear`/`toYear`, explicitly fetches Hebcal, atomically updates local provider rows, preserves manual overrides, and returns counts plus attempt/success/error state. Provider failure returns `succeeded: false` without changing cached holidays. Holiday status is `non_working`, `working`, or `partial_working`; partial working requires one same-day local start/end range. Working Calendar create/update includes `useIsraeliHolidays` (default false). A calendar-specific dated exception takes precedence; cached non-working closes the day, working preserves the recurring schedule, and partial-working replaces it with the holiday range. Timeline and employee-availability reads use SQLite only and never require internet. Resource updates use `ETag: "resource:{id}:v{version}"`; holiday updates use `ETag: "israeli-holiday:{id}:v{version}"`; report settings use `ETag: "report-email-settings:1:v{version}"`.
 
@@ -673,7 +682,13 @@ Implemented Machine create request and representation:
   "isActive": true,
   "displayEnabled": true,
   "picturePath": "C:\\MachinePictures\\M-07.jpg",
-  "machineTypeId": "opaque-machine-type-id"
+  "machineTypeId": "opaque-machine-type-id",
+  "executionMode": "CNC_GCODE",
+  "supportedPostprocessorIds": ["opaque-postprocessor-id"],
+  "usableToolPositions": 30,
+  "rapidRateMillimetersPerMinute": 24000,
+  "toolChangeTimeSeconds": 4.5,
+  "machineTimeFactor": 1.0
 }
 ```
 
@@ -694,11 +709,19 @@ Implemented Machine create request and representation:
   "version": 3,
   "createdAt": "2026-08-01T08:00:00Z",
   "updatedAt": "2026-08-10T12:00:00Z",
-  "machineTypeId": "opaque-machine-type-id"
+  "machineTypeId": "opaque-machine-type-id",
+  "executionMode": "CNC_GCODE",
+  "supportedPostprocessorIds": ["opaque-postprocessor-id"],
+  "usableToolPositions": 30,
+  "rapidRateMillimetersPerMinute": 24000,
+  "toolChangeTimeSeconds": 4.5,
+  "machineTimeFactor": 1.0
 }
 ```
 
 `machineTypeId` is an optional stable link to the reusable catalog. Existing schema-v9 Machines are linked during migration from their case-insensitive legacy `processType` values. For compatibility with existing Case Operation requirements, a linked type's name is mirrored into `processType`; Machine-specific `capabilities`, `axisType`, and the linked Machine Type's capabilities all participate in Server assignment validation. Machine and Machine Type changes that would invalidate a current assignment return `409 assigned_operation_incompatible`.
+
+Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior.
 
 Implemented Machine Type create request and representation:
 
@@ -721,6 +744,111 @@ Implemented Machine Type create request and representation:
 ```
 
 Machine Type POST requires Edit Mode. PATCH accepts partial `name` and `capabilities`, requires `If-Match: "machine-type:{machineTypeId}:v{version}"`, and returns the updated representation. Names are case-insensitively unique; duplicate names return `409 machine_type_name_conflict`. Renames propagate the compatibility process name to linked Machines in the same transaction, but return `409 machine_type_name_in_use` while a Case Operation or unfinished Batch Operation requires the old name. DELETE returns `409 machine_type_in_use` while a Machine, Case Operation, or Batch Operation references the type; success returns `204`.
+
+Implemented Postprocessor create/update representation:
+
+```json
+{
+  "postprocessorId": "opaque-postprocessor-id",
+  "name": "Doosan 4X",
+  "description": "Released four-axis program configuration",
+  "isActive": true,
+  "version": 1,
+  "createdAt": "2026-08-20T08:00:00Z",
+  "updatedAt": "2026-08-20T08:00:00Z"
+}
+```
+
+Postprocessor POST requires `name`, optional `description`, and `isActive`, under Edit Mode. PATCH requires `If-Match: "postprocessor:{postprocessorId}:v{version}"` and supplies the complete editable values. Names are case-insensitively unique. A missing/inactive Machine mapping returns `422 invalid_postprocessor`; attempting to deactivate or delete a mapped Postprocessor returns `409 postprocessor_in_use`. Compatibility is evaluated only through explicit ID membership, never through Machine brand, controller, model, type, name, or axis count.
+
+Implemented Operation G-code catalog response:
+
+```json
+{
+  "caseOperationId": "opaque-operation-id",
+  "activeProcessRevision": {
+    "processRevisionId": "opaque-process-revision-id",
+    "processRevisionNumber": 2,
+    "isActive": true,
+    "createdAt": "2026-08-20T09:00:00Z",
+    "createdBy": "release-manager",
+    "changeDescription": "Changed tool selection and machining sequence",
+    "version": 1,
+    "toolTable": {
+      "toolTableReleaseId": "opaque-tool-release-id",
+      "revisionNumber": 2,
+      "requiredToolCount": 2,
+      "originalFileName": "tools.csv",
+      "fileSize": 842,
+      "fileHash": "64-character-lowercase-sha256",
+      "releasedAt": "2026-08-20T09:00:00Z",
+      "releasedBy": "release-manager",
+      "releaseComment": "Approved physical table",
+      "tools": [
+        {
+          "toolIdentifier": "T01",
+          "description": "10 mm end mill",
+          "isRequired": true,
+          "requiresMagazinePosition": true,
+          "isActive": true,
+          "magazinePosition": 1
+        }
+      ]
+    }
+  },
+  "processRevisions": [],
+  "postprocessors": [
+    {
+      "postprocessorId": "opaque-postprocessor-id",
+      "postprocessorName": "Doosan 4X",
+      "isActive": true,
+      "status": "stale",
+      "currentRelease": null,
+      "latestHistoricalRelease": {
+        "gCodeReleaseId": "opaque-release-id",
+        "processRevisionId": "older-process-revision-id",
+        "processRevisionNumber": 1,
+        "postprocessorId": "opaque-postprocessor-id",
+        "postprocessorName": "Doosan 4X",
+        "postSpecificRevision": 2,
+        "originalFileName": "program.nc",
+        "fileSize": 12040,
+        "fileHash": "64-character-lowercase-sha256",
+        "releasedAt": "2026-08-19T10:00:00Z",
+        "releasedBy": "release-manager",
+        "changeScope": "LOCAL_POST_REVISION",
+        "releaseComment": "Controller-only correction",
+        "toolTableReleaseId": "older-tool-release-id",
+        "isCurrentForProcessAndPost": true,
+        "isForActiveProcess": false
+      }
+    }
+  ],
+  "releases": []
+}
+```
+
+`processRevisions` and `releases` contain full immutable history. Postprocessor `status` is `current`, `stale`, or `missing` relative to the active process revision. A release representation contains `gCodeReleaseId`, exact process revision ID/number, Postprocessor ID/name, `postSpecificRevision`, original filename, file size/hash, release user/time, `changeScope`, mandatory comment, exact `toolTableReleaseId`, and derived current/active booleans. No Draft or mutable status exists.
+
+Release publication requires Edit Mode and `multipart/form-data` fields:
+
+| Field | Rule |
+|---|---|
+| `postprocessorId` | Required active managed Postprocessor. |
+| `changeScope` | `LOCAL_POST_REVISION` or `NEW_PROCESS_REVISION`. |
+| `releaseComment` | Required, maximum 2,000 characters. |
+| `processChangeDescription` | Required for a new process revision. |
+| `confirmNewProcessRevision` | Must be `true` for new process scope. |
+| `reuseActiveToolTable` | Explicitly reuse the active exact tool-table release for a new process; mutually exclusive with upload. |
+| `confirmToolTable` | Must be `true` to confirm the exact physical tool-table version. |
+| `gcodeFile` | Required allow-listed released program file; default maximum 100 MB. |
+| `toolTableFile` | Required for the first process unless exact active reuse is valid; a changed upload requires new process scope; structured CSV, JSON, or text-delimited CSV; default maximum 25 MB. |
+
+The released table accepts a JSON tool array (directly or under `tools` / `toolTable`) or a CSV header with a tool identifier (`toolIdentifier`, `toolId`, `tool`, or `identifier`). Description, required state, active state, magazine-position requirement, and optional magazine position are retained per immutable row. Omitted required/active flags default to `true`; an omitted magazine requirement defaults to `true`. `requiredToolCount` is the case-insensitive distinct identifier count for rows that are active, required, and require a magazine position. Duplicate identifiers, optional rows, inactive rows, and external/non-magazine rows do not increase it; the highest T number is never used.
+
+Successful publication returns `201` and the immutable release representation. Validation returns `422 validation_failed`; missing operation/history returns `404 resource_not_found`; conflicting process state returns `409` with a specific reason; unavailable or hash/length-invalid storage returns `503 release_storage_unavailable`. File responses include `X-Meimad-Checksum-SHA256` and support ranges. Original filenames are metadata only; server filenames and final paths are sanitized/owned by the Server.
+
+On first Start of managed work, capacity is evaluated for both CNC and MANUAL Machines from the active process's released table and the assigned Machine's `usableToolPositions`. A mismatch returns `409 tool_capacity_mismatch` with the required and available counts. Missing structured release data returns `409 tool_requirements_unavailable`; a positive requirement with no configured Machine capacity returns `409 machine_capacity_unavailable`. CNC execution additionally returns `409 gcode_release_missing` when no current compatible release exists and `409 gcode_release_selection_required` when more than one compatible current release is available. The accepted transaction pins exact process/G-code/tool-table IDs and hashes; later releases do not switch running work. Suspend/resume keeps that pin and does not silently switch process context.
 
 Implemented assign/move request:
 
@@ -919,9 +1047,16 @@ The added operation fields are:
   "estimatedTimeSeconds": 10740,
   "machineAssignmentId": "opaque-assignment-id",
   "assignmentVersion": 4,
-  "planningMode": "backward"
+  "planningMode": "backward",
+  "toolCapacityStatus": "tool_capacity_mismatch",
+  "toolCapacityMessage": "Tool capacity mismatch: requires 25 tool positions; assigned machine supports 20.",
+  "requiredToolCount": 25,
+  "availableToolPositions": 20,
+  "isToolCapacitySatisfied": false
 }
 ```
+
+Tool capacity is a live projection for the operation's concrete assignment. A not-started managed operation uses its active process and released tool table; an already-started operation keeps its pinned production context. Machine assignment/capacity and active process/table changes are therefore reflected on the next board read without storing a global readiness flag. Unassigned work is reported as `unassigned`; legacy work without a managed process is `not_managed`. A mismatch stays assigned and visible on the board, but the Windows Start action is disabled and the Server independently rejects first Start. No release is rewritten, no tool is removed, and no automatic Machine move occurs.
 
 `estimatedTimeSeconds` is setup + QA + aggregate load/unload + (`cycleTimePerPartSeconds x plannedQuantity`) using checked wide arithmetic. `loadUnloadTimeSeconds` remains per event: manual loading has one event per part; automatic loading has `ceil(plannedQuantity / loadUnloadEveryNParts)` events with a frequency, or zero events without one. The total is unchanged by Timeline's repeated phase placement. It is null when setup or cycle input is missing or cannot be represented. It is a compact input-derived estimate for the planning card, not a projected start/finish, persisted schedule, or actual-time record. A stock-only Batch returns an empty `orderReferences` array; the Windows client presents that state explicitly rather than inventing an Order.
 

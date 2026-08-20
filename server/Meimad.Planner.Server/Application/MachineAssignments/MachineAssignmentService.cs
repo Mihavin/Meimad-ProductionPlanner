@@ -349,6 +349,11 @@ internal sealed class MachineAlreadyRunningOperationException : Exception
         : base($"Machine '{machineId}' already has an operation in progress.") { }
 }
 
+internal sealed class ProductionReadinessException(string code, string message) : Exception(message)
+{
+    internal string Code { get; } = code;
+}
+
 internal sealed class CompletedBatchOperationCannotBeAssignedException : Exception
 {
     internal CompletedBatchOperationCannotBeAssignedException(string batchOperationId)

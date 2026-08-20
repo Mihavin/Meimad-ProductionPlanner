@@ -25,6 +25,12 @@ public sealed class MigrationTests
         "machine_types",
         "postprocessors",
         "machine_supported_postprocessors",
+        "tool_table_releases",
+        "tool_table_release_tools",
+        "batch_operation_material_readiness",
+        "tool_offset_readiness_records",
+        "process_revisions",
+        "gcode_releases",
         "setup_calendar_settings",
         "employee_resources",
         "employee_calendar_exceptions",
@@ -49,7 +55,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(34L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(37L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -132,6 +138,12 @@ public sealed class MigrationTests
         Assert.Equal("synchronize_not_started_batch_operation_times", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 34;";
         Assert.Equal("machine_execution_and_postprocessors", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 35;";
+        Assert.Equal("gcode_process_revisions", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 36;";
+        Assert.Equal("released_tool_capacity", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 37;";
+        Assert.Equal("contextual_production_readiness", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*)
@@ -206,7 +218,80 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(34L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(37L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Version_35_release_history_is_preserved_with_unknown_structured_tool_count()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP TRIGGER tool_offset_readiness_records_immutable_update;
+                DROP TRIGGER tool_offset_readiness_context_consistent;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_insert;
+                DROP TABLE tool_offset_readiness_records;
+                DROP TABLE batch_operation_material_readiness;
+                DROP INDEX ix_machine_assignments_selected_gcode;
+                ALTER TABLE machine_assignments DROP COLUMN selected_gcode_release_id;
+                DELETE FROM schema_migrations WHERE version = 37;
+                DROP TRIGGER process_revisions_tool_count_consistent;
+                DROP TABLE tool_table_release_tools;
+                ALTER TABLE tool_table_releases DROP COLUMN required_tool_count;
+                DELETE FROM schema_migrations WHERE version = 36;
+                PRAGMA user_version = 35;
+
+                INSERT INTO cases (id, part_number, name, working_folder_path)
+                VALUES ('case-v35-tools', 'PN-V35-TOOLS', 'Legacy tools', 'C:\Cases\PN-V35-TOOLS');
+                INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
+                VALUES ('operation-v35-tools', 'case-v35-tools', 10, 0, 'Mill');
+                INSERT INTO tool_table_releases (
+                    id, case_operation_id, revision_number, original_file_name,
+                    stored_relative_path, file_size, file_hash, released_at,
+                    released_by, release_comment, created_at, updated_at)
+                VALUES (
+                    'tools-v35', 'operation-v35-tools', 1, 'legacy.csv',
+                    'operations/operation-v35-tools/tool-tables/tools-v35/legacy.csv',
+                    10, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    '2026-08-20T00:00:00Z', 'legacy-user', 'Legacy release',
+                    '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z');
+                INSERT INTO process_revisions (
+                    id, case_operation_id, revision_number, is_active,
+                    tool_table_release_id, created_at, created_by,
+                    change_description, version, updated_at)
+                VALUES (
+                    'process-v35', 'operation-v35-tools', 1, 1, 'tools-v35',
+                    '2026-08-20T00:00:00Z', 'legacy-user', 'Legacy process', 1,
+                    '2026-08-20T00:00:00Z');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var migrator = new DatabaseMigrator(
+            fixture.Database,
+            NullLogger<DatabaseMigrator>.Instance);
+        await migrator.MigrateAsync();
+
+        await using var reopened = await fixture.Database.OpenConnectionAsync();
+        await using var read = reopened.CreateCommand();
+        read.CommandText = """
+            SELECT tool_table_releases.required_tool_count,
+                   process_revisions.tool_table_release_id,
+                   (SELECT COUNT(*) FROM tool_table_release_tools)
+            FROM process_revisions
+            JOIN tool_table_releases
+              ON tool_table_releases.id = process_revisions.tool_table_release_id
+            WHERE process_revisions.id = 'process-v35';
+            """;
+        await using var reader = await read.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.True(reader.IsDBNull(0));
+        Assert.Equal("tools-v35", reader.GetString(1));
+        Assert.Equal(0, reader.GetInt32(2));
     }
 
     [Fact]
@@ -523,6 +608,16 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP TRIGGER tool_offset_readiness_records_immutable_update;
+                DROP TRIGGER tool_offset_readiness_context_consistent;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_insert;
+                DROP TABLE tool_offset_readiness_records;
+                DROP TABLE batch_operation_material_readiness;
+                DROP INDEX ix_machine_assignments_selected_gcode;
+                ALTER TABLE machine_assignments DROP COLUMN selected_gcode_release_id;
+                DELETE FROM schema_migrations WHERE version = 37;
                 ALTER TABLE case_operations DROP COLUMN qa_seconds;
                 ALTER TABLE case_operations DROP COLUMN load_unload_seconds;
                 ALTER TABLE case_operations DROP COLUMN load_unload_requires_worker;
@@ -547,6 +642,18 @@ public sealed class MigrationTests
                 DROP TABLE employee_calendar_exceptions;
                 DROP TABLE employee_resources;
                 DROP TABLE setup_calendar_settings;
+                DROP INDEX ix_batch_operations_production_release;
+                ALTER TABLE batch_operations DROP COLUMN production_tool_table_file_hash;
+                ALTER TABLE batch_operations DROP COLUMN production_gcode_file_hash;
+                ALTER TABLE batch_operations DROP COLUMN production_tool_table_release_id;
+                ALTER TABLE batch_operations DROP COLUMN production_gcode_release_id;
+                ALTER TABLE batch_operations DROP COLUMN production_process_revision_id;
+                DROP TRIGGER process_revisions_tool_count_consistent;
+                DROP TABLE tool_table_release_tools;
+                ALTER TABLE tool_table_releases DROP COLUMN required_tool_count;
+                DROP TABLE gcode_releases;
+                DROP TABLE process_revisions;
+                DROP TABLE tool_table_releases;
                 DROP TABLE machine_supported_postprocessors;
                 DROP TABLE postprocessors;
                 ALTER TABLE machines DROP COLUMN machine_time_factor;
@@ -580,7 +687,7 @@ public sealed class MigrationTests
                 DROP TABLE kitaron_sync_state;
                 DROP TABLE kitaron_mapping_settings;
                 DROP TABLE kitaron_connection_settings;
-                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34);
+                DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36);
                 UPDATE edit_tokens
                 SET holder_client_id = 'existing-client',
                     holder_user_id = 'existing-user',
@@ -675,6 +782,16 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP TRIGGER tool_offset_readiness_records_immutable_update;
+                DROP TRIGGER tool_offset_readiness_context_consistent;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_insert;
+                DROP TABLE tool_offset_readiness_records;
+                DROP TABLE batch_operation_material_readiness;
+                DROP INDEX ix_machine_assignments_selected_gcode;
+                ALTER TABLE machine_assignments DROP COLUMN selected_gcode_release_id;
+                DELETE FROM schema_migrations WHERE version = 37;
                 ALTER TABLE case_operations DROP COLUMN qa_seconds;
                 ALTER TABLE case_operations DROP COLUMN load_unload_seconds;
                 ALTER TABLE case_operations DROP COLUMN load_unload_requires_worker;
@@ -699,6 +816,18 @@ public sealed class MigrationTests
                 DROP TABLE employee_calendar_exceptions;
                 DROP TABLE employee_resources;
                 DROP TABLE setup_calendar_settings;
+                DROP INDEX ix_batch_operations_production_release;
+                ALTER TABLE batch_operations DROP COLUMN production_tool_table_file_hash;
+                ALTER TABLE batch_operations DROP COLUMN production_gcode_file_hash;
+                ALTER TABLE batch_operations DROP COLUMN production_tool_table_release_id;
+                ALTER TABLE batch_operations DROP COLUMN production_gcode_release_id;
+                ALTER TABLE batch_operations DROP COLUMN production_process_revision_id;
+                DROP TRIGGER process_revisions_tool_count_consistent;
+                DROP TABLE tool_table_release_tools;
+                ALTER TABLE tool_table_releases DROP COLUMN required_tool_count;
+                DROP TABLE gcode_releases;
+                DROP TABLE process_revisions;
+                DROP TABLE tool_table_releases;
                 DROP TABLE machine_supported_postprocessors;
                 DROP TABLE postprocessors;
                 ALTER TABLE machines DROP COLUMN machine_time_factor;
@@ -733,7 +862,7 @@ public sealed class MigrationTests
                 DROP TABLE kitaron_sync_state;
                 DROP TABLE kitaron_mapping_settings;
                 DROP TABLE kitaron_connection_settings;
-                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34);
+                DELETE FROM schema_migrations WHERE version IN (9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36);
                 PRAGMA user_version = 8;
 
                 INSERT INTO cases (id, part_number, name, working_folder_path)
@@ -828,6 +957,16 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP TRIGGER tool_offset_readiness_records_immutable_update;
+                DROP TRIGGER tool_offset_readiness_context_consistent;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
+                DROP TRIGGER machine_assignment_selected_release_matches_operation_insert;
+                DROP TABLE tool_offset_readiness_records;
+                DROP TABLE batch_operation_material_readiness;
+                DROP INDEX ix_machine_assignments_selected_gcode;
+                ALTER TABLE machine_assignments DROP COLUMN selected_gcode_release_id;
+                DELETE FROM schema_migrations WHERE version = 37;
                 ALTER TABLE case_operations DROP COLUMN qa_seconds;
                 ALTER TABLE case_operations DROP COLUMN load_unload_seconds;
                 ALTER TABLE case_operations DROP COLUMN load_unload_requires_worker;
@@ -852,6 +991,18 @@ public sealed class MigrationTests
                 DROP TABLE employee_calendar_exceptions;
                 DROP TABLE employee_resources;
                 DROP TABLE setup_calendar_settings;
+                DROP INDEX ix_batch_operations_production_release;
+                ALTER TABLE batch_operations DROP COLUMN production_tool_table_file_hash;
+                ALTER TABLE batch_operations DROP COLUMN production_gcode_file_hash;
+                ALTER TABLE batch_operations DROP COLUMN production_tool_table_release_id;
+                ALTER TABLE batch_operations DROP COLUMN production_gcode_release_id;
+                ALTER TABLE batch_operations DROP COLUMN production_process_revision_id;
+                DROP TRIGGER process_revisions_tool_count_consistent;
+                DROP TABLE tool_table_release_tools;
+                ALTER TABLE tool_table_releases DROP COLUMN required_tool_count;
+                DROP TABLE gcode_releases;
+                DROP TABLE process_revisions;
+                DROP TABLE tool_table_releases;
                 DROP TABLE machine_supported_postprocessors;
                 DROP TABLE postprocessors;
                 ALTER TABLE machines DROP COLUMN machine_time_factor;
@@ -882,7 +1033,7 @@ public sealed class MigrationTests
                 DROP TABLE kitaron_sync_state;
                 DROP TABLE kitaron_mapping_settings;
                 DROP TABLE kitaron_connection_settings;
-                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34);
+                DELETE FROM schema_migrations WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36);
                 PRAGMA user_version = 9;
 
                 INSERT INTO working_calendars (id, name, time_zone_id)
@@ -968,7 +1119,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 35;";
+            command.CommandText = "PRAGMA user_version = 38;";
             await command.ExecuteNonQueryAsync();
         }
 

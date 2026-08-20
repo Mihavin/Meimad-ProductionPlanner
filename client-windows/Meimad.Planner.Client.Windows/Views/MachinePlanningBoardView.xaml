@@ -211,6 +211,21 @@
                             <TextBlock DockPanel.Dock="Right" Text="{Binding PlanningModeText}" FontSize="10"
                                        FontWeight="SemiBold" Margin="6,0,0,0"
                                        ToolTip="Planning mode for this Machine assignment" />
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding ReadinessSummaryText}" FontSize="10"
+                                       Margin="6,0,0,0" TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding ReadinessDetailText}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsReadinessBlocking}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource RedBrush}"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                             <TextBlock Text="{Binding BatchOrderText}" FontSize="10"
                                        Foreground="{StaticResource MutedTextBrush}"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding LatestStartText}" />

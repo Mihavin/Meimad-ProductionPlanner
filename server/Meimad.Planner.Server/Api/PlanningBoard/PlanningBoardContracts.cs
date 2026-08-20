@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Application.PlanningBoard;
+using Meimad.Planner.Server.Api.Readiness;
 
 namespace Meimad.Planner.Server.Api.PlanningBoard;
 
@@ -62,7 +63,19 @@ internal sealed record PlanningBoardOperationResponse(
     string? WorkFinishDate,
     DateTimeOffset? LatestStart,
     string? LatestStartWarning,
-    bool IsLatestStartOverdue)
+    bool IsLatestStartOverdue,
+    string ToolCapacityStatus,
+    string ToolCapacityMessage,
+    int? RequiredToolCount,
+    int? AvailableToolPositions,
+    bool IsToolCapacitySatisfied,
+    string OverallReadinessState,
+    bool IsReadyForProduction,
+    string ReadinessSummary,
+    IReadOnlyList<ReadinessComponentResponse> ReadinessComponents,
+    string? EffectiveGCodeReleaseId,
+    bool RequiresExplicitGCodeSelection,
+    IReadOnlyList<ReadinessReleaseResponse> CompatibleGCodeReleases)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -101,7 +114,19 @@ internal sealed record PlanningBoardOperationResponse(
         operation.WorkFinishDate,
         operation.LatestStart,
         operation.LatestStartWarning,
-        operation.IsLatestStartOverdue);
+        operation.IsLatestStartOverdue,
+        operation.ToolCapacityStatus,
+        operation.ToolCapacityMessage,
+        operation.RequiredToolCount,
+        operation.AvailableToolPositions,
+        operation.IsToolCapacitySatisfied,
+        operation.OverallReadinessState,
+        operation.IsReadyForProduction,
+        operation.ReadinessSummary,
+        (operation.ReadinessComponents ?? []).Select(ReadinessComponentResponse.FromDomain).ToArray(),
+        operation.EffectiveGCodeReleaseId,
+        operation.RequiresExplicitGCodeSelection,
+        (operation.CompatibleGCodeReleases ?? []).Select(ReadinessReleaseResponse.FromDomain).ToArray());
 }
 
 internal sealed record PlanningBoardMachineResponse(

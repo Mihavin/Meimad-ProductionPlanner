@@ -82,6 +82,46 @@ public partial class CaseWorkspaceView : UserControl
         UpdateStepSnapshotState();
     }
 
+    private void BrowseGCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel)
+        {
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "Select released production G-code",
+            Filter = "G-code|*.nc;*.tap;*.gcode;*.cnc;*.iso;*.mpf;*.spf|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            viewModel.SetGCodeFileSelection(dialog.FileName);
+        }
+    }
+
+    private void BrowseToolTable_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel)
+        {
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "Select the released physical tool table",
+            Filter = "Tool tables|*.json;*.csv;*.txt;*.xml;*.mht;*.tools;*.tooltable|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            viewModel.SetToolTableFileSelection(dialog.FileName);
+        }
+    }
+
     private void SnapshotStep_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not CaseWorkspaceViewModel viewModel

@@ -51,7 +51,10 @@ internal sealed record TimelineProjectionInterval(
     string? MachineAssignmentId = null,
     string? PlanningMode = null,
     DateOnly? WorkFinishDate = null,
-    IReadOnlyList<TimelineProjectionPhase>? Phases = null);
+    IReadOnlyList<TimelineProjectionPhase>? Phases = null,
+    string OverallReadinessState = "NOT_MANAGED",
+    bool IsReadyForProduction = true,
+    string? ReadinessSummary = null);
 
 internal sealed record TimelineProjectionPhase(
     string Type,

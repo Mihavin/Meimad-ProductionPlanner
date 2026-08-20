@@ -74,7 +74,9 @@ internal sealed class SqlitePostprocessorRepository : IPostprocessorRepository
         await EnsureNameAvailableAsync(connection, transaction, value.Name, value.PostprocessorId, token);
         if (!value.IsActive)
         {
-            await EnsureNotInUseAsync(connection, transaction, value.PostprocessorId, token);
+            await EnsureNotInUseAsync(
+                connection, transaction, value.PostprocessorId,
+                includeReleasedHistory: false, token);
         }
 
         await using var command = connection.CreateCommand();
@@ -100,7 +102,8 @@ internal sealed class SqlitePostprocessorRepository : IPostprocessorRepository
         await using var connection = await database.OpenConnectionAsync(token);
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, authority, token);
-        await EnsureNotInUseAsync(connection, transaction, id, token);
+        await EnsureNotInUseAsync(
+            connection, transaction, id, includeReleasedHistory: true, token);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "DELETE FROM postprocessors WHERE id = $id;";
@@ -114,6 +117,7 @@ internal sealed class SqlitePostprocessorRepository : IPostprocessorRepository
         SqliteConnection connection,
         SqliteTransaction transaction,
         string id,
+        bool includeReleasedHistory,
         CancellationToken token)
     {
         await using var command = connection.CreateCommand();
@@ -121,9 +125,13 @@ internal sealed class SqlitePostprocessorRepository : IPostprocessorRepository
         command.CommandText = """
             SELECT EXISTS(
                 SELECT 1 FROM machine_supported_postprocessors
-                WHERE postprocessor_id = $id);
+                WHERE postprocessor_id = $id
+                UNION ALL
+                SELECT 1 FROM gcode_releases
+                WHERE postprocessor_id = $id AND $includeReleasedHistory = 1);
             """;
         command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$includeReleasedHistory", includeReleasedHistory ? 1 : 0);
         if (Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1)
         {
             throw new PostprocessorInUseException(id);
