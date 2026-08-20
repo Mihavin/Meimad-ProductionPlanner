@@ -34,6 +34,7 @@ internal sealed record PublishGCodeReleaseCommand(
     StoredReleaseFile GCodeFile,
     StoredReleaseFile? ToolTableFile,
     ReleasedToolTableDefinition? ToolTableDefinition,
+    NcProgramAnalysis NcAnalysis,
     DateTimeOffset ReleasedAt);
 
 internal sealed record ReleasedFileDownload(

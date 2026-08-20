@@ -67,7 +67,62 @@ internal sealed record GCodeRelease(
     string ReleaseComment,
     string ToolTableReleaseId,
     bool IsCurrentForProcessAndPost,
-    bool IsForActiveProcess);
+    bool IsForActiveProcess,
+    NcProgramAnalysis? NcAnalysis = null,
+    IReadOnlyList<NcMachineCycleEstimate>? MachineCycleEstimates = null);
+
+internal static class NcAnalysisStatus
+{
+    internal const string Complete = "COMPLETE";
+    internal const string Partial = "PARTIAL";
+    internal const string Unavailable = "UNAVAILABLE";
+}
+
+internal static class NcEstimateConfidence
+{
+    internal const string High = "HIGH";
+    internal const string Medium = "MEDIUM";
+    internal const string Low = "LOW";
+    internal const string Unavailable = "UNAVAILABLE";
+}
+
+internal sealed record NcProgramAnalysis(
+    string ParserVersion,
+    string Status,
+    double FeedMotionSeconds,
+    double RapidDistanceMillimeters,
+    int ToolChangeCount,
+    double DwellSeconds,
+    string? DetectedUnits,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> UnsupportedConstructs,
+    string Confidence,
+    DateTimeOffset AnalyzedAt);
+
+internal sealed record NcMachineTiming(
+    string MachineId,
+    double? RapidRateMillimetersPerMinute,
+    double? ToolChangeTimeSeconds,
+    double MachineTimeFactor);
+
+internal sealed record NcMachineCycleEstimate(
+    string GCodeReleaseId,
+    string MachineId,
+    string ParserVersion,
+    double RawFeedSeconds,
+    double RapidDistanceMillimeters,
+    double? RapidSeconds,
+    int ToolChangeCount,
+    double? ToolChangeSeconds,
+    double DwellSeconds,
+    double? MachineRapidRateMillimetersPerMinute,
+    double? MachineToolChangeTimeSeconds,
+    double MachineTimeFactor,
+    double? RawCycleSeconds,
+    double? EstimatedCycleSeconds,
+    IReadOnlyList<string> Warnings,
+    string Confidence,
+    DateTimeOffset CalculatedAt);
 
 internal sealed record PostprocessorReleaseStatus(
     string PostprocessorId,

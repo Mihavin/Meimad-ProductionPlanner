@@ -24,7 +24,10 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         }
 
         var processes = await ReadProcessRevisionsAsync(connection, caseOperationId, cancellationToken);
-        var releases = await ReadReleasesAsync(connection, caseOperationId, cancellationToken);
+        var nc = await SqliteNcCycleEstimateStore.ReadForOperationAsync(
+            connection, caseOperationId, cancellationToken);
+        var releases = await ReadReleasesAsync(
+            connection, caseOperationId, nc.Analyses, nc.Estimates, cancellationToken);
         var active = processes.FirstOrDefault(value => value.IsActive);
         var postprocessors = await ReadPostprocessorStatusesAsync(
             connection,
@@ -163,6 +166,13 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             true,
             process.IsActive);
         await InsertReleaseAsync(connection, transaction, release, cancellationToken);
+        var ncEstimates = await SqliteNcCycleEstimateStore.InsertAnalysisAndEstimatesAsync(
+            connection, transaction, release, command.NcAnalysis, cancellationToken);
+        release = release with
+        {
+            NcAnalysis = command.NcAnalysis,
+            MachineCycleEstimates = ncEstimates
+        };
         await SqliteStructuredEventLogRepository.AppendAsync(
             connection,
             transaction,
@@ -288,6 +298,8 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
     private static async Task<IReadOnlyList<GCodeRelease>> ReadReleasesAsync(
         SqliteConnection connection,
         string operationId,
+        IReadOnlyDictionary<string, NcProgramAnalysis> analyses,
+        IReadOnlyDictionary<string, IReadOnlyList<NcMachineCycleEstimate>> estimates,
         CancellationToken token)
     {
         await using var command = connection.CreateCommand();
@@ -316,7 +328,12 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
         {
-            values.Add(ReadRelease(reader));
+            var release = ReadRelease(reader);
+            values.Add(release with
+            {
+                NcAnalysis = analyses.GetValueOrDefault(release.GCodeReleaseId),
+                MachineCycleEstimates = estimates.GetValueOrDefault(release.GCodeReleaseId, [])
+            });
         }
 
         return values;

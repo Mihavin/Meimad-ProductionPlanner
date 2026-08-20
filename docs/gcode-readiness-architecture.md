@@ -1,6 +1,6 @@
 # G-code release and readiness architecture
 
-Status: Tasks 1-4 implemented through schema v36; later G-code analysis, estimate, offsets, and material work is identified explicitly below.
+Status: Tasks 1-7 implemented through schema v38; authoritative inventory integration, a persisted manager-override authoring flow, actual-time calibration, and detailed tool verification are identified explicitly below.
 
 ## Scope and terminology
 
@@ -71,6 +71,16 @@ This deliberately excludes duplicate rows, optional tools, inactive/history rows
 
 `Domain/GCode/ToolCapacityEvaluator` is the shared pure rule. `SqlitePlanningBoardRepository` evaluates it on every board read for the concrete Batch Operation, selected process/tool-table context, assigned Machine, and `UsableToolPositions`. `SqliteMachineAssignmentRepository` evaluates the same rule transactionally before first Start. A MANUAL Machine skips only G-code compatibility; applicable released tool capacity still participates. A mismatch remains planned, is shown with required and available counts, and blocks readiness/Start without modifying a program, table, assignment, or process.
 
+## Contextual readiness engine
+
+Schema v37 adds assignment-level `selected_gcode_release_id`, Batch Operation material readiness, and append-only tool-offset readiness records keyed to Batch Operation, Machine, process revision, and selected/effective G-code release. No global `Operation.IsReady` value exists. `Domain/Readiness/ProductionReadinessEvaluator` is the single pure component rule used by `SqliteProductionReadinessRepository`, Planning Board projection, Timeline annotation, and the transactional first-Start check.
+
+The components are G-code, Tool Table, Tool Offsets, Material, Machine/Postprocessor Compatibility, and Tool Capacity. A managed context is `READY_FOR_PRODUCTION` only when every component is `READY` or `NOT_REQUIRED`. CNC G-code distinguishes missing, historical/outdated, incompatible, and multiple-compatible-selection-required states. MANUAL execution makes only G-code and Postprocessor compatibility `NOT_REQUIRED`. A unique compatible current release can be resolved safely and is persisted on the assignment within the Start transaction; multiple compatible releases require the explicit readiness-input selection API.
+
+Material defaults to `UNVERIFIED` and becomes ready only through a physical confirmation input. The engine never reads historical Kitaron receipt rows. Offset confirmation is exact to the current production tuple; an older Machine/process/release record is retained and reported `OUTDATED`. When required tool count is zero, offsets are `NOT_REQUIRED`; otherwise missing/unverified offsets block managed Start.
+
+`GET /api/v1/batch-operations/{id}/readiness` returns the overall result, all component states/messages, effective release, and compatible release choices. The active editor updates selection/material/offset inputs through `PUT /api/v1/batch-operations/{id}/readiness-inputs`. Planning Board cards expose the summary and component explanations. Timeline forecast intervals remain scheduled but receive a red text-labelled not-ready outline/tooltip. Readiness never auto-moves, removes, splits, or edits production work.
+
 ## File storage and recovery
 
 `GCode:ReleaseRoot` configures server-owned physical storage and is resolved through `ServerStoragePathResolver`. It may be a configured server disk or server-accessible shared path. Clients upload bytes; clients never choose the final server path. Metadata stores only a safe relative path.
@@ -104,30 +114,54 @@ Planning and Timeline placement remain legal without these values. On the first 
 
 Start stores exact IDs and hashes. Suspend/resume/finish retain them; a reset to not-started clears them. Publishing a later local or process release does not switch an in-progress operation. Legacy operations with no managed process revision retain pre-v35 execution behavior for backward compatibility.
 
-This is contextual validation and immutable production pinning, not a persisted global `Operation.IsReady`. Tool capacity is now calculated for `(BatchOperation, assigned Machine, selected process revision, released tool table)`; later readiness dimensions extend that context with selected release, offsets, and material status. Planning readiness and permission to Start remain separate.
+This is contextual validation and immutable production pinning, not a persisted global `Operation.IsReady`. Readiness is calculated for `(BatchOperation, MachineAssignment, effective process revision, selected/current release, released tool table, contextual offset record, physical material input)`. Planning readiness and permission to Start remain separate.
 
-## Estimate pipeline
+## NC analysis and planning estimate
 
-Task 3 does not change duration calculation. The current authoritative Timeline inputs remain the existing Batch Operation setup/cycle snapshots, with QA, load/unload cadence, Batch quantity, calendars, resources, dependencies, downtime, and external delay handled by the existing Planning Board/Timeline services.
+Schema v38 separates parse-once release analysis from Machine evaluation. `NcProgramParser` normalizes feed-motion seconds, rapid distance in millimetres, tool-change count, recognized dwell, units, warnings, unsupported constructs, parser version, and confidence. It supports modal G0/G1/G2/G3, F, T/M6, recognized G4, G20/G21, G90/G91, and plane selection. Macros, canned cycles, subprogram calls, unsupported feed modes, transformations/TCP, rotary motion, and malformed blocks produce warnings and lower confidence without rejecting the released artifact.
 
-Later estimator work must reuse `SqliteTimelineSourceRepository`, `TimelineProjectionService`, and `TimelineCalculationEngine`, and centralize the formula currently shared conceptually with `SqlitePlanningBoardRepository`. It may use released analysis, Machine rapid/tool-change/factor parameters, manual Case Operation estimates, and future audited overrides. Only not-started snapshots may be recalculated; started history and its production pins stay frozen.
+`NcCycleTimeEstimator` evaluates that immutable analysis for each explicitly compatible Machine. The formula is `(feed seconds + rapid distance / Machine rapid rate + tool changes × Machine tool-change seconds + dwell seconds) × Machine time factor`; distance is millimetres and time is seconds. `gcode_machine_cycle_estimates` retains append-only calculation history, raw metrics, Machine inputs, warnings, confidence, and calculation time.
+
+For a not-started Batch Operation, planning precedence is `manager override > valid selected/current compatible NC estimate > manual batch_operations.cycle_seconds`. The pure estimator accepts the manager-override tier, but no persisted override authoring field exists yet, so current repository projection supplies null for that tier. Planning Board and Timeline use the selected source while preserving the manual snapshot. Started work does not switch duration source. Parser or Machine-input failure returns an unavailable estimate and falls back to manual timing; it never changes G-code readiness.
+
+## Setup occupancy and Timeline duration
+
+Task 7 reuses `batch_operations.setup_seconds` (snapshotted from the Case Operation) as the operation-specific **Fixture Setup Time**. It does not introduce a duplicate setup or worker model. For a not-started Operation with a managed active process revision, `SetupOccupancyEstimator` calculates in seconds:
+
+```text
+ToolLoading = RequiredToolCount * DefaultToolLoadTimePerTool
+FirstPieceProveOut = SelectedCycleEstimate * DefaultFirstPieceFactor
+TotalSetup = ToolLoading + FixtureSetup + FirstPieceProveOut
+RemainingProduction = max(PlannedQuantity - 1, 0) * SelectedCycleEstimate
+TotalPlannedMachineTime = TotalSetup + RemainingProduction
+```
+
+Tool loading means loading already assembled, prepared, and delivered tools into the Machine magazine. It explicitly excludes tool-room assembly and off-Machine measurement/preparation. `SetupEstimation:DefaultToolLoadTimePerToolSeconds` defaults to 60 seconds and `SetupEstimation:DefaultFirstPieceFactor` defaults to 1.5. Both are configuration-owned process defaults rather than Machine physics; they are deliberately isolated so a future setup-worker profile can supply tool-load time, first-piece factor, efficiency factor, and availability-calendar context without changing the formula.
+
+The existing Timeline setup phase, setup calendar, setup-worker resources, skill matching, QA, load/unload cadence, Machine calendars, dependencies, downtime, and external delay remain authoritative. `ProductionCycleQuantity` separates full planned quantity (still used for load/unload occurrence rules) from normal-cycle quantity. The first part is included only in prove-out, so the Timeline never also adds `quantity * cycle`. Quantity zero contributes no setup or production occupancy; quantity one contributes setup/prove-out and zero remaining normal cycles.
+
+Planning Board cards expose NC/manual source plus prepared-tool loading, fixture setup, first-piece prove-out, total setup, remaining runtime, and total planned Machine time. Existing QA and load/unload phases are additional established Timeline occupancy and are not folded into the Task 7 `TotalPlannedMachineTime` component value. Missing fixture or all cycle sources keeps duration unavailable for positive quantity. A missing required-tool count is visible as a warning and contributes zero tool-loading time until structured tool data exists.
+
+Only not-started managed Operations are recalculated. In-progress, suspended, and completed work stays on its stored Batch Operation timing and production pins, so new NC estimates or configuration changes do not silently rewrite historical execution duration. Legacy Operations without a process revision retain their pre-v35 setup-plus-quantity-cycle behavior.
 
 ## Migration and compatibility strategy
 
 - V34 safely defaulted existing Machines to `MANUAL`, left unknown capacity/rates null, set factor `1.0`, and inferred no Postprocessor mappings.
 - V35 creates empty release/history tables and nullable Batch Operation pins. It does not invent process revisions, G-code, tool tables, hashes, or compatibility from old Case fields or E-Ink assets.
 - V36 creates immutable released-tool rows and adds nullable `required_tool_count`. Existing v35 releases retain null instead of receiving an invented count; all new releases must have parsed rows and a verified aggregate.
+- V37 adds nullable assignment selection and empty readiness-input/history tables. It invents no offset confirmation or material availability; missing rows evaluate safely as missing/unverified. Existing Operations without a managed process retain the documented legacy Start compatibility path.
+- Task 7 is migration-free: it reuses fixture setup, released required-tool count, planning-cycle selection, quantity, and existing setup-resource scheduling. Its two backward-compatible defaults are application configuration, not persisted historical facts.
 - Existing Machines, Cases, Operations, Batches, packages, and execution records remain readable. Operations gain managed context only when an approved first process is released.
 - Release numbering and active-process uniqueness are serialized with `BEGIN IMMEDIATE` and database uniqueness constraints. Publication failures clean up staged/final artifacts; startup recovery handles a process crash between atomic file publication and database commit.
 - Operation deletion is blocked once immutable process/release history exists. Released physical files have no retention deletion workflow in this task.
 
 ## Deferred work
 
-- Full aggregate readiness, Machine tool identity/presence/life validation, tool offsets, material status, released-program analysis, and estimator precedence are later tasks. Task 4 implements only released required-position count versus usable Machine magazine capacity and its Planning Board/Start presentation.
-- Material readiness must not be reconstructed from old Kitaron receipt rows. A future authoritative provider must report current status and freshness for the concrete Batch context. Until then it is `NotEvaluated`, not “ready.”
+- Detailed Machine tool identity/presence/life validation, actual offset values, manager override, and actual-time calibration are later tasks. Task 5 stores only contextual offset readiness confirmation, not an offset-value inventory.
+- Material readiness is a clean physical-confirmation input only. Future authoritative inventory reconciliation and freshness remain deferred and must not reconstruct availability from old Kitaron receipt rows.
 - Job Package generation still accepts its existing package inputs. A later change should snapshot selected authoritative process/release/tool/offset context without rewriting old package history.
-- Explicit selection among multiple compatible current G-code releases should be added with the full readiness UI. Today Start rejects ambiguity with `gcode_release_selection_required`.
+- A richer readiness editing dialog may later improve the Windows workflow; the current Server API supports explicit release selection and physical confirmations while the board/timeline present computed status.
 
 ## Verification
 
-Migration tests cover fresh and prior-version upgrades, rollback fixtures, schema identity, v35 unknown-count preservation, and entity timestamps. G-code API/domain tests additionally cover distinct required counting, duplicate/optional/inactive/external exclusions, below/equal/above capacity, exact blocking detail, live result changes after Machine reassignment/capacity changes, process-specific tables, immutable rows, planned-state retention, and Start rejection. Existing Machine, execution, migration, server-startup, and Windows build/test suites remain regression coverage.
+Migration tests cover fresh and prior-version upgrades, rollback fixtures, schema identity, v35 unknown-count preservation, and entity timestamps. Readiness domain/API tests cover manual G-code exemption, current/stale/incompatible/multiple releases, missing table/offsets/material, capacity mismatch, explicit selection, immediate reassignment effects, planned-state retention, and Start rejection/acceptance. NC tests cover metric/inch units, absolute/incremental/modal feed, rapid, linear/arc/helical motion, tool changes, dwell, comments/sequence numbers, macros, canned cycles, malformed blocks, per-Machine results, recalculation history, manual fallback/preservation, and Timeline-source precedence. Setup-estimate tests cover zero/one/many quantities, prepared-tool loading, fixture setup, prove-out factor, first-part de-duplication, manager/NC/manual precedence, Machine-estimate changes, missing inputs, configuration validation, Timeline duration, API projection, and Windows presentation. Existing Machine, execution, Timeline, migration, server-startup, and Windows suites remain regression coverage.

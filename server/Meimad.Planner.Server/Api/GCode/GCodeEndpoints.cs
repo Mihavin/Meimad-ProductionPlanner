@@ -225,7 +225,9 @@ internal sealed record GCodeReleaseResponse(
     string ReleaseComment,
     string ToolTableReleaseId,
     bool IsCurrentForProcessAndPost,
-    bool IsForActiveProcess)
+    bool IsForActiveProcess,
+    NcProgramAnalysisResponse? NcAnalysis,
+    IReadOnlyList<NcMachineCycleEstimateResponse> MachineCycleEstimates)
 {
     internal static GCodeReleaseResponse FromDomain(GCodeRelease value) => new(
         value.GCodeReleaseId, value.ProcessRevisionId, value.ProcessRevisionNumber,
@@ -233,7 +235,42 @@ internal sealed record GCodeReleaseResponse(
         value.OriginalFileName, value.FileSize, value.FileHash, value.ReleasedAt,
         value.ReleasedBy, value.ChangeScope, value.ReleaseComment,
         value.ToolTableReleaseId, value.IsCurrentForProcessAndPost,
-        value.IsForActiveProcess);
+        value.IsForActiveProcess,
+        value.NcAnalysis is null ? null : NcProgramAnalysisResponse.FromDomain(value.NcAnalysis),
+        (value.MachineCycleEstimates ?? []).Select(NcMachineCycleEstimateResponse.FromDomain).ToArray());
+}
+
+internal sealed record NcProgramAnalysisResponse(
+    string ParserVersion, string Status, double FeedMotionSeconds,
+    double RapidDistanceMillimeters, int ToolChangeCount, double DwellSeconds,
+    string? DetectedUnits, IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> UnsupportedConstructs, string Confidence,
+    DateTimeOffset AnalyzedAt)
+{
+    internal static NcProgramAnalysisResponse FromDomain(NcProgramAnalysis value) => new(
+        value.ParserVersion, value.Status, value.FeedMotionSeconds,
+        value.RapidDistanceMillimeters, value.ToolChangeCount, value.DwellSeconds,
+        value.DetectedUnits, value.Warnings, value.UnsupportedConstructs,
+        value.Confidence, value.AnalyzedAt);
+}
+
+internal sealed record NcMachineCycleEstimateResponse(
+    string MachineId, string ParserVersion, double RawFeedSeconds,
+    double RapidDistanceMillimeters, double? RapidSeconds, int ToolChangeCount,
+    double? ToolChangeSeconds, double DwellSeconds,
+    double? MachineRapidRateMillimetersPerMinute,
+    double? MachineToolChangeTimeSeconds, double MachineTimeFactor,
+    double? RawCycleSeconds, double? EstimatedCycleSeconds,
+    IReadOnlyList<string> Warnings, string Confidence, DateTimeOffset CalculatedAt)
+{
+    internal static NcMachineCycleEstimateResponse FromDomain(NcMachineCycleEstimate value) => new(
+        value.MachineId, value.ParserVersion, value.RawFeedSeconds,
+        value.RapidDistanceMillimeters, value.RapidSeconds, value.ToolChangeCount,
+        value.ToolChangeSeconds, value.DwellSeconds,
+        value.MachineRapidRateMillimetersPerMinute,
+        value.MachineToolChangeTimeSeconds, value.MachineTimeFactor,
+        value.RawCycleSeconds, value.EstimatedCycleSeconds, value.Warnings,
+        value.Confidence, value.CalculatedAt);
 }
 
 internal sealed record PostprocessorReleaseStatusResponse(

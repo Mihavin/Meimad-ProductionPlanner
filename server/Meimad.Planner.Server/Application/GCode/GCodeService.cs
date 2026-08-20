@@ -101,6 +101,24 @@ internal sealed class GCodeService
             }
 
             var releasedAt = timeProvider.GetUtcNow();
+            NcProgramAnalysis analysis;
+            try
+            {
+                analysis = await NcProgramParser.ParseAsync(
+                    artifactStore.ResolveStoredPath(gcodePublication.File.StoredRelativePath),
+                    releasedAt,
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "NC analysis was unavailable for released artifact {ReleaseId}; the production release will be preserved.",
+                    gcodePublication.File.ArtifactId);
+                analysis = NcProgramParser.Unavailable(
+                    releasedAt,
+                    "Estimate unavailable: the NC parser could not interpret this release.");
+            }
             var release = await repository.PublishAsync(new PublishGCodeReleaseCommand(
                 caseId,
                 operationId,
@@ -115,6 +133,7 @@ internal sealed class GCodeService
                 gcodePublication.File,
                 toolPublication?.File,
                 toolDefinition,
+                analysis,
                 releasedAt), authority, cancellationToken);
             logger.LogInformation(
                 "Released G-code {ReleaseId} for Operation {OperationId}, Process Revision {ProcessRevisionNumber}, Postprocessor {PostprocessorId}, Post Revision {PostRevision}.",

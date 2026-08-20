@@ -1116,6 +1116,29 @@ public sealed class TimelineCalculationEngineTests
             backlogs.SelectMany(value => value.Operations).Select(value => value.OperationId));
     }
 
+    [Fact]
+    public void Setup_prove_out_replaces_the_first_normal_cycle_in_timeline_duration()
+    {
+        var operation = new TimelineOperationInput(
+            "op-setup-estimate",
+            TimeSpan.FromSeconds(570),
+            TimeSpan.FromSeconds(100),
+            PlannedQuantity: 4,
+            ProductionCycleQuantity: 3);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-1", [operation])],
+            [Calendar("machine-1", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [], []));
+
+        Assert.Empty(result.Conflicts);
+        var scheduled = Assert.Single(result.Operations);
+        Assert.Equal(TimeSpan.FromSeconds(570),
+            TimeSpan.FromTicks(scheduled.SetupIntervals.Sum(interval => (interval.EndsAt - interval.StartsAt).Ticks)));
+        Assert.Equal(TimeSpan.FromSeconds(300),
+            TimeSpan.FromTicks(scheduled.ProductionIntervals.Sum(interval => (interval.EndsAt - interval.StartsAt).Ticks)));
+        Assert.Equal(TimeSpan.FromSeconds(870), scheduled.FinishesAt - scheduled.StartsAt);
+    }
+
     private static TimelineCalculationInput Input(
         IReadOnlyList<TimelineMachineBacklog> backlogs,
         IReadOnlyList<TimelineMachineCalendar> calendars,

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Timeline;
+using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.Timeline;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -12,15 +13,18 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
 {
     private readonly SqliteDatabase database;
     private readonly TimeProvider timeProvider;
+    private readonly SetupEstimationOptions setupEstimation;
     private readonly ILogger<SqliteTimelineSourceRepository> logger;
 
     public SqliteTimelineSourceRepository(
         SqliteDatabase database,
         TimeProvider timeProvider,
+        SetupEstimationOptions setupEstimation,
         ILogger<SqliteTimelineSourceRepository> logger)
     {
         this.database = database;
         this.timeProvider = timeProvider;
+        this.setupEstimation = setupEstimation;
         this.logger = logger;
     }
 
@@ -36,7 +40,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         var machines = await ReadMachinesAsync(connection, transaction, cancellationToken);
         var machinesElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
-        var operations = await ReadOperationsAsync(connection, transaction, cancellationToken);
+        var operations = await ReadOperationsAsync(
+            connection, transaction, setupEstimation, cancellationToken);
         var operationsElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
         var downtimes = await ReadDowntimesAsync(
@@ -119,6 +124,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
     private static async Task<IReadOnlyList<TimelineSourceOperation>> ReadOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
+        SetupEstimationOptions setupEstimation,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -243,13 +249,26 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                         THEN CAST(batch_operations.external_delay_duration AS INTEGER) ELSE 0 END,
                    external_delay_calendars.calendar_json,
                    external_delay_calendars.time_zone_id,
-                   batch_operations.external_delay_respect_master_calendar
+                   batch_operations.external_delay_respect_master_calendar,
+                   nc_estimate.gcode_release_id,
+                   nc_estimate.estimated_cycle_seconds,
+                   nc_estimate.confidence,
+                   nc_estimate.warnings_json,
+                   active_process.id,
+                   active_tools.required_tool_count
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
             JOIN cases ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
+            LEFT JOIN effective_batch_operation_nc_estimates nc_estimate
+              ON nc_estimate.batch_operation_id = batch_operations.id
+            LEFT JOIN process_revisions active_process
+              ON active_process.case_operation_id = batch_operations.source_case_operation_id
+             AND active_process.is_active = 1
+            LEFT JOIN tool_table_releases active_tools
+              ON active_tools.id = active_process.tool_table_release_id
             LEFT JOIN operation_pause_events
               ON operation_pause_events.batch_operation_id = batch_operations.id
              AND operation_pause_events.status = 'active'
@@ -271,10 +290,33 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             var priorityOrder = (JsonSerializer.Deserialize<string[]>(reader.GetString(26)) ?? [])
                 .OrderBy(value => value, Comparer<string>.Create(TimelinePriorityComparer.CompareOrderNumbers))
                 .FirstOrDefault();
+            var status = reader.GetString(7);
+            var plannedQuantity = reader.GetInt32(8);
+            var fixtureSetupSeconds = NullableInt(reader, 9);
+            var manualCycleSeconds = NullableInt(reader, 10);
+            var hasManagedProcess = !reader.IsDBNull(46);
+            var requiredToolCount = NullableInt(reader, 47);
+            var ncCycleSeconds = status == "not_started" && !reader.IsDBNull(43)
+                ? reader.GetDouble(43) : (double?)null;
+            var occupancy = status == "not_started" && hasManagedProcess
+                ? SetupOccupancyEstimator.Evaluate(new SetupOccupancyInput(
+                    plannedQuantity,
+                    requiredToolCount,
+                    fixtureSetupSeconds,
+                    null,
+                    ncCycleSeconds,
+                    manualCycleSeconds,
+                    setupEstimation.DefaultToolLoadTimePerToolSeconds,
+                    setupEstimation.DefaultFirstPieceFactor))
+                : null;
+            var scheduledSetupSeconds = occupancy?.TotalSetupSeconds ?? fixtureSetupSeconds;
+            var scheduledCycleSeconds = occupancy?.SelectedCycleSeconds
+                ?? (plannedQuantity == 0 && occupancy is not null ? 0 : manualCycleSeconds);
+            var productionCycleQuantity = occupancy?.RemainingProductionQuantity ?? plannedQuantity;
             values.Add(new TimelineSourceOperation(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                reader.GetString(4), reader.GetInt32(5), reader.GetString(6), reader.GetString(7),
-                reader.GetInt32(8), NullableInt(reader, 9), NullableInt(reader, 10),
+                reader.GetString(4), reader.GetInt32(5), reader.GetString(6), status,
+                plannedQuantity, scheduledSetupSeconds, scheduledCycleSeconds,
                 reader.GetString(11), reader.GetString(12), NullableString(reader, 13),
                 NullableString(reader, 14), NullableString(reader, 15), NullableString(reader, 16), NullableInt(reader, 17),
                 NullableString(reader, 18),
@@ -294,7 +336,24 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetInt32(38),
                 NullableString(reader, 39),
                 NullableString(reader, 40),
-                reader.GetInt32(41) == 1));
+                reader.GetInt32(41) == 1,
+                manualCycleSeconds,
+                ncCycleSeconds,
+                occupancy?.PlanningCycleSource
+                    ?? (manualCycleSeconds.HasValue ? "manual" : "unavailable"),
+                NullableString(reader, 44),
+                reader.IsDBNull(45) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(45)) ?? [],
+                NullableString(reader, 42),
+                FixtureSetupSeconds: fixtureSetupSeconds,
+                RequiredToolCount: requiredToolCount,
+                ToolLoadingSeconds: occupancy?.ToolLoadingSeconds ?? 0,
+                FirstPieceProveOutSeconds: occupancy?.FirstPieceProveOutSeconds,
+                TotalSetupSeconds: occupancy?.TotalSetupSeconds,
+                ProductionCycleQuantity: productionCycleQuantity,
+                RemainingProductionSeconds: occupancy?.RemainingProductionSeconds,
+                TotalPlannedMachineSeconds: occupancy?.TotalPlannedMachineSeconds,
+                SetupEstimateWarnings: occupancy?.Warnings ?? [],
+                UsesSetupOccupancyEstimate: occupancy is not null));
         }
 
         return values;

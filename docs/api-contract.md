@@ -848,7 +848,16 @@ The released table accepts a JSON tool array (directly or under `tools` / `toolT
 
 Successful publication returns `201` and the immutable release representation. Validation returns `422 validation_failed`; missing operation/history returns `404 resource_not_found`; conflicting process state returns `409` with a specific reason; unavailable or hash/length-invalid storage returns `503 release_storage_unavailable`. File responses include `X-Meimad-Checksum-SHA256` and support ranges. Original filenames are metadata only; server filenames and final paths are sanitized/owned by the Server.
 
-On first Start of managed work, capacity is evaluated for both CNC and MANUAL Machines from the active process's released table and the assigned Machine's `usableToolPositions`. A mismatch returns `409 tool_capacity_mismatch` with the required and available counts. Missing structured release data returns `409 tool_requirements_unavailable`; a positive requirement with no configured Machine capacity returns `409 machine_capacity_unavailable`. CNC execution additionally returns `409 gcode_release_missing` when no current compatible release exists and `409 gcode_release_selection_required` when more than one compatible current release is available. The accepted transaction pins exact process/G-code/tool-table IDs and hashes; later releases do not switch running work. Suspend/resume keeps that pin and does not silently switch process context.
+On first Start of managed work, the centralized readiness engine evaluates G-code, released tool table, contextual tool offsets, physical material input, Machine/Postprocessor compatibility, and capacity. Failures return `409` with specific codes such as `gcode_release_missing`, `gcode_release_outdated`, `gcode_release_incompatible`, `gcode_release_selection_required`, `tool_table_missing`, `tool_offsets_missing`, `tool_offsets_outdated`, `material_missing`, `material_unverified`, `postprocessor_incompatible`, `tool_capacity_mismatch`, `tool_requirements_unavailable`, or `machine_capacity_unavailable`. The accepted transaction persists a uniquely resolvable release selection when needed and pins exact process/G-code/tool-table IDs and hashes; later releases do not switch running work. Suspend/resume keeps that pin.
+
+Implemented contextual readiness routes:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/batch-operations/{batchOperationId}/readiness` | Compute the concrete assignment readiness and explanations. |
+| `PUT` | `/api/v1/batch-operations/{batchOperationId}/readiness-inputs` | Active editor sets explicit release selection, physical material status, and contextual offset status. |
+
+The GET/PUT response contains `overallState`, `isReadyForProduction`, `isManaged`, `summary`, six `{key,label,state,message,isBlocking}` components, `effectiveGCodeReleaseId`, `requiresExplicitGCodeSelection`, and compatible release choices. Component states are `READY`, `MISSING`, `OUTDATED`, `INCOMPATIBLE`, `BLOCKED`, `NOT_REQUIRED`, or `UNVERIFIED`. Overall state is `READY_FOR_PRODUCTION` only when every required component is ready/not-required. PUT accepts nullable `selectedGCodeReleaseId`, `materialStatus`, `materialComment`, `toolOffsetStatus`, and `toolOffsetComment`; statuses are `READY`, `MISSING`, or `UNVERIFIED`. Offset confirmation binds to the current Batch Operation/Machine/process/effective release. Material never derives from historical Kitaron receipts.
 
 Implemented assign/move request:
 
@@ -1044,7 +1053,7 @@ The added operation fields are:
 {
   "plannedQuantity": 53,
   "orderReferences": ["WO-2026-1042", "WO-2026-1043"],
-  "estimatedTimeSeconds": 10740,
+  "estimatedTimeSeconds": 12825,
   "machineAssignmentId": "opaque-assignment-id",
   "assignmentVersion": 4,
   "planningMode": "backward",
@@ -1052,19 +1061,43 @@ The added operation fields are:
   "toolCapacityMessage": "Tool capacity mismatch: requires 25 tool positions; assigned machine supports 20.",
   "requiredToolCount": 25,
   "availableToolPositions": 20,
-  "isToolCapacitySatisfied": false
+  "isToolCapacitySatisfied": false,
+  "overallReadinessState": "NOT_READY",
+  "isReadyForProduction": false,
+  "readinessSummary": "Not ready: 2 blocking component(s)",
+  "readinessComponents": [
+    {"key":"toolOffsets","label":"Tool Offsets","state":"MISSING","message":"Tool offsets have not been confirmed for this Machine and production configuration.","isBlocking":true},
+    {"key":"material","label":"Material","state":"UNVERIFIED","message":"Material has not been physically verified; historical Kitaron receipts are not used.","isBlocking":true}
+  ],
+  "toolLoadingTimeSeconds": 1500,
+  "fixtureSetupTimeSeconds": 900,
+  "firstPieceProveOutTimeSeconds": 270,
+  "totalSetupTimeSeconds": 2670,
+  "remainingProductionQuantity": 52,
+  "remainingProductionRuntimeSeconds": 9360,
+  "totalPlannedMachineTimeSeconds": 12030,
+  "setupEstimateWarnings": [],
+  "usesSetupOccupancyEstimate": true
 }
 ```
 
 Tool capacity is a live projection for the operation's concrete assignment. A not-started managed operation uses its active process and released tool table; an already-started operation keeps its pinned production context. Machine assignment/capacity and active process/table changes are therefore reflected on the next board read without storing a global readiness flag. Unassigned work is reported as `unassigned`; legacy work without a managed process is `not_managed`. A mismatch stays assigned and visible on the board, but the Windows Start action is disabled and the Server independently rejects first Start. No release is rewritten, no tool is removed, and no automatic Machine move occurs.
 
-`estimatedTimeSeconds` is setup + QA + aggregate load/unload + (`cycleTimePerPartSeconds x plannedQuantity`) using checked wide arithmetic. `loadUnloadTimeSeconds` remains per event: manual loading has one event per part; automatic loading has `ceil(plannedQuantity / loadUnloadEveryNParts)` events with a frequency, or zero events without one. The total is unchanged by Timeline's repeated phase placement. It is null when setup or cycle input is missing or cannot be represented. It is a compact input-derived estimate for the planning card, not a projected start/finish, persisted schedule, or actual-time record. A stock-only Batch returns an empty `orderReferences` array; the Windows client presents that state explicitly rather than inventing an Order.
+Schema-v37 board fields extend that live projection to every readiness component. Not-ready rows remain in their exact pool/backlog position and remain draggable. The Windows client shows the summary and component explanations without relying on color; first Start alone is disabled when managed readiness is unresolved.
+
+For a not-started managed Operation, Task 7 interprets the stored `setupTimeSeconds` as fixture installation and projects prepared-tool loading, first-piece prove-out, total setup, remaining normal-cycle quantity/runtime, and total planned Machine time as the separate fields above. The first part is included in prove-out, so it is removed from normal-cycle quantity. `estimatedTimeSeconds` is computed total setup + QA + aggregate load/unload for the full planned quantity + (`planningCycleTimePerPartSeconds x remainingProductionQuantity`) using checked wide arithmetic. `loadUnloadTimeSeconds` remains per event: manual loading has one event per part; automatic loading has `ceil(plannedQuantity / loadUnloadEveryNParts)` events with a frequency, or zero events without one. It is null when fixture setup or every cycle source is missing or cannot be represented. Quantity zero has zero setup and production occupancy. Legacy Operations without a managed process keep the former stored setup + full-quantity cycle calculation. A stock-only Batch returns an empty `orderReferences` array; the Windows client presents that state explicitly rather than inventing an Order.
+
+Schema v38 keeps `cycleTimePerPartSeconds` as the manual Batch Operation snapshot and adds `ncEstimatedCycleTimePerPartSeconds`, `planningCycleTimePerPartSeconds`, `planningCycleTimeSource` (`nc_estimate`, `manual`, or `unavailable`), `ncEstimateConfidence`, `ncEstimateWarnings`, and `ncEstimateGCodeReleaseId`. `estimatedTimeSeconds` uses `planningCycleTimePerPartSeconds`. Only not-started work may select the NC source. The setup fields require no later schema: released required-tool count, fixture snapshot, and planned quantity already exist. `setupEstimateWarnings` makes missing structured tool counts visible; such a count contributes zero loading seconds until resolved.
+
+G-code catalog responses expose optional `ncAnalysis` and `machineCycleEstimates`. Analysis includes parser version/status, raw feed seconds, rapid distance in millimetres, tool-change count, dwell seconds, units, warnings, unsupported constructs, confidence, and analysis time. Each Machine estimate includes the raw metrics, Machine timing inputs, component seconds, raw/final seconds, warnings, confidence, and calculation time. Estimate absence or low confidence does not change G-code readiness.
 
 The current board response also contains `readAt`, `conflictCalculationStatus`, `conflictCalculationMessage`, `conflicts`, `pool`, and `machines`. Until persistence/API orchestration connects the pure engine, the status is exactly `unavailable`, the message says the engine is not connected to this projection, and `conflicts` is empty. Consumers must not interpret that empty list as a conflict-free plan. Assignment rejection feedback is client presentation of the assignment command error and is not stored as a calculated conflict.
 
 The current schema has no durable `planRevision`, so transitional read projections do not claim one. OD-010/OD-011 must define the revision trigger and full conflict catalog before caching/freshness semantics are added.
 
 ### 7.1 Timeline calculation
+
+For managed not-started operation intervals, schema v37 returns `overallReadinessState`, `isReadyForProduction`, and `readinessSummary`. Readiness does not remove, move, resize, or convert the forecast into a Timeline conflict. The Windows Timeline preserves the calculated interval and marks planned not-ready work with a labelled red outline and explanatory tooltip.
 
 `GET /api/v1/timeline` is implemented as a read-only route. Authentication and the future `planning.read` policy remain pending. Supported query parameters are:
 

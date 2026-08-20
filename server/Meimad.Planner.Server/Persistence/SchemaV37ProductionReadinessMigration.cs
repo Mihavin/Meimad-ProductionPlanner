@@ -117,11 +117,6 @@ internal sealed class SchemaV37ProductionReadinessMigration : IDatabaseMigration
                 SELECT RAISE(ABORT, 'tool-offset readiness records are immutable');
             END;
 
-            CREATE TRIGGER tool_offset_readiness_records_immutable_delete
-            BEFORE DELETE ON tool_offset_readiness_records
-            BEGIN
-                SELECT RAISE(ABORT, 'tool-offset readiness records are immutable');
-            END;
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

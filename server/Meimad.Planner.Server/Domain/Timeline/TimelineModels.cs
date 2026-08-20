@@ -39,7 +39,8 @@ internal sealed record TimelineOperationInput(
     bool AutomaticLoading = false,
     int? LoadUnloadEveryNParts = null,
     TimeSpan ExternalDelayAfter = default,
-    TimelineWorkingDayDelay? ExternalWorkingDayDelay = null);
+    TimelineWorkingDayDelay? ExternalWorkingDayDelay = null,
+    int? ProductionCycleQuantity = null);
 
 internal sealed record TimelineWorkingDayDelay(
     int Days,

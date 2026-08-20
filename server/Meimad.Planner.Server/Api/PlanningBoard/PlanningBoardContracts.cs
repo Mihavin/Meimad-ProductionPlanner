@@ -75,7 +75,22 @@ internal sealed record PlanningBoardOperationResponse(
     IReadOnlyList<ReadinessComponentResponse> ReadinessComponents,
     string? EffectiveGCodeReleaseId,
     bool RequiresExplicitGCodeSelection,
-    IReadOnlyList<ReadinessReleaseResponse> CompatibleGCodeReleases)
+    IReadOnlyList<ReadinessReleaseResponse> CompatibleGCodeReleases,
+    double? NcEstimatedCycleTimePerPartSeconds,
+    double? PlanningCycleTimePerPartSeconds,
+    string PlanningCycleTimeSource,
+    string? NcEstimateConfidence,
+    IReadOnlyList<string> NcEstimateWarnings,
+    string? NcEstimateGCodeReleaseId,
+    double ToolLoadingTimeSeconds,
+    double? FixtureSetupTimeSeconds,
+    double? FirstPieceProveOutTimeSeconds,
+    double? TotalSetupTimeSeconds,
+    int? RemainingProductionQuantity,
+    double? RemainingProductionRuntimeSeconds,
+    double? TotalPlannedMachineTimeSeconds,
+    IReadOnlyList<string> SetupEstimateWarnings,
+    bool UsesSetupOccupancyEstimate)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -126,7 +141,22 @@ internal sealed record PlanningBoardOperationResponse(
         (operation.ReadinessComponents ?? []).Select(ReadinessComponentResponse.FromDomain).ToArray(),
         operation.EffectiveGCodeReleaseId,
         operation.RequiresExplicitGCodeSelection,
-        (operation.CompatibleGCodeReleases ?? []).Select(ReadinessReleaseResponse.FromDomain).ToArray());
+        (operation.CompatibleGCodeReleases ?? []).Select(ReadinessReleaseResponse.FromDomain).ToArray(),
+        operation.NcEstimatedCycleTimePerPartSeconds,
+        operation.PlanningCycleTimePerPartSeconds,
+        operation.PlanningCycleTimeSource,
+        operation.NcEstimateConfidence,
+        operation.NcEstimateWarnings ?? [],
+        operation.NcEstimateGCodeReleaseId,
+        operation.ToolLoadingTimeSeconds,
+        operation.FixtureSetupTimeSeconds,
+        operation.FirstPieceProveOutTimeSeconds,
+        operation.TotalSetupTimeSeconds,
+        operation.RemainingProductionQuantity,
+        operation.RemainingProductionRuntimeSeconds,
+        operation.TotalPlannedMachineTimeSeconds,
+        operation.SetupEstimateWarnings ?? [],
+        operation.UsesSetupOccupancyEstimate);
 }
 
 internal sealed record PlanningBoardMachineResponse(

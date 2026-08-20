@@ -118,6 +118,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             transaction,
             machine,
             cancellationToken);
+        await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
+            connection, transaction, machine.MachineId, machine.UpdatedAt, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return machine;
     }
@@ -216,6 +218,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 transaction,
                 machine,
                 cancellationToken);
+            await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
+                connection, transaction, machine.MachineId, machine.UpdatedAt, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         return affected == 1 ? machine : null;

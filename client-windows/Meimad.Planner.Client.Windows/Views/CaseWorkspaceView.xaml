@@ -353,7 +353,7 @@
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationName}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Required Machine Type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OperationMachineTypeOptions}" SelectedItem="{Binding NewOperationRequiredMachineType}" MinHeight="38" Padding="7"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Dependency Type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OperationDependencyTypes}" SelectedItem="{Binding NewOperationDependencyType}" MinHeight="38" Padding="7"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Setup Time (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSetupTime}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Fixture Setup Time (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationSetupTime}" ToolTip="Machine occupancy for installing the fixture. Prepared-tool loading and first-piece prove-out are estimated separately."/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Cycle Time / Part (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationCycleTimePerPart}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="QA After Setup (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationQaTime}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Load / Unload per Event (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOperationLoadUnloadTime}"/></StackPanel>
@@ -481,6 +481,14 @@
                                             <DataGridTextColumn Header="Post rev" Binding="{Binding PostSpecificRevision}" Width="70"/>
                                             <DataGridTextColumn Header="Original filename" Binding="{Binding OriginalFileName}" Width="180"/>
                                             <DataGridTextColumn Header="SHA-256" Binding="{Binding ShortHash}" Width="110"/>
+                                            <DataGridTemplateColumn Header="NC estimate" Width="160">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding NcEstimateSummary}"
+                                                                   ToolTip="{Binding NcWarningSummary}" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
                                             <DataGridTextColumn Header="Released by" Binding="{Binding ReleasedBy}" Width="110"/>
                                             <DataGridTextColumn Header="Comment" Binding="{Binding ReleaseComment}" Width="*"/>
                                         </DataGrid.Columns>

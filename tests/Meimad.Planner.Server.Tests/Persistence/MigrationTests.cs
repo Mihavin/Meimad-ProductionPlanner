@@ -55,7 +55,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(37L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(38L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -144,6 +144,15 @@ public sealed class MigrationTests
         Assert.Equal("released_tool_capacity", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 37;";
         Assert.Equal("contextual_production_readiness", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 38;";
+        Assert.Equal("nc_cycle_estimates", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE (type = 'table' AND name IN ('gcode_release_analyses', 'gcode_machine_cycle_estimates'))
+               OR (type = 'view' AND name = 'effective_batch_operation_nc_estimates');
+            """;
+        Assert.Equal(3L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         migrationCommand.CommandText = """
             SELECT COUNT(*)
@@ -218,7 +227,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(37L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(38L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -229,7 +238,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP VIEW effective_batch_operation_nc_estimates;
+                DROP TRIGGER gcode_release_analyses_immutable_delete;
+                DROP TRIGGER gcode_release_analyses_immutable_update;
+                DROP TABLE gcode_machine_cycle_estimates;
+                DROP TABLE gcode_release_analyses;
+                DELETE FROM schema_migrations WHERE version = 38;
                 DROP TRIGGER tool_offset_readiness_records_immutable_update;
                 DROP TRIGGER tool_offset_readiness_context_consistent;
                 DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
@@ -608,7 +622,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP VIEW effective_batch_operation_nc_estimates;
+                DROP TRIGGER gcode_release_analyses_immutable_delete;
+                DROP TRIGGER gcode_release_analyses_immutable_update;
+                DROP TABLE gcode_machine_cycle_estimates;
+                DROP TABLE gcode_release_analyses;
+                DELETE FROM schema_migrations WHERE version = 38;
                 DROP TRIGGER tool_offset_readiness_records_immutable_update;
                 DROP TRIGGER tool_offset_readiness_context_consistent;
                 DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
@@ -782,7 +801,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP VIEW effective_batch_operation_nc_estimates;
+                DROP TRIGGER gcode_release_analyses_immutable_delete;
+                DROP TRIGGER gcode_release_analyses_immutable_update;
+                DROP TABLE gcode_machine_cycle_estimates;
+                DROP TABLE gcode_release_analyses;
+                DELETE FROM schema_migrations WHERE version = 38;
                 DROP TRIGGER tool_offset_readiness_records_immutable_update;
                 DROP TRIGGER tool_offset_readiness_context_consistent;
                 DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
@@ -957,7 +981,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                DROP TRIGGER tool_offset_readiness_records_immutable_delete;
+                DROP VIEW effective_batch_operation_nc_estimates;
+                DROP TRIGGER gcode_release_analyses_immutable_delete;
+                DROP TRIGGER gcode_release_analyses_immutable_update;
+                DROP TABLE gcode_machine_cycle_estimates;
+                DROP TABLE gcode_release_analyses;
+                DELETE FROM schema_migrations WHERE version = 38;
                 DROP TRIGGER tool_offset_readiness_records_immutable_update;
                 DROP TRIGGER tool_offset_readiness_context_consistent;
                 DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
@@ -1119,7 +1148,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 38;";
+            command.CommandText = "PRAGMA user_version = 39;";
             await command.ExecuteNonQueryAsync();
         }
 

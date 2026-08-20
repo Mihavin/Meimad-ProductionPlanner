@@ -859,11 +859,50 @@ internal sealed record PlannerGCodeRelease(
     string ReleaseComment,
     string ToolTableReleaseId,
     bool IsCurrentForProcessAndPost,
-    bool IsForActiveProcess)
+    bool IsForActiveProcess,
+    PlannerNcProgramAnalysis? NcAnalysis = null,
+    IReadOnlyList<PlannerNcMachineCycleEstimate>? MachineCycleEstimates = null)
 {
     public string DisplayName => $"Process r{ProcessRevisionNumber} / {PostprocessorName} r{PostSpecificRevision} — {OriginalFileName}";
     public string ShortHash => FileHash.Length > 12 ? FileHash[..12] : FileHash;
+    public string NcEstimateSummary => NcAnalysis is null
+        ? "Estimate unavailable"
+        : $"{NcAnalysis.Confidence} · {MachineCycleEstimates?.Count(value => value.EstimatedCycleSeconds.HasValue) ?? 0} Machine estimate(s)";
+    public string NcWarningSummary => NcAnalysis?.Warnings.Count > 0
+        ? string.Join(Environment.NewLine, NcAnalysis.Warnings)
+        : "No parser warnings.";
 }
+
+internal sealed record PlannerNcProgramAnalysis(
+    string ParserVersion,
+    string Status,
+    double FeedMotionSeconds,
+    double RapidDistanceMillimeters,
+    int ToolChangeCount,
+    double DwellSeconds,
+    string? DetectedUnits,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> UnsupportedConstructs,
+    string Confidence,
+    DateTimeOffset AnalyzedAt);
+
+internal sealed record PlannerNcMachineCycleEstimate(
+    string MachineId,
+    string ParserVersion,
+    double RawFeedSeconds,
+    double RapidDistanceMillimeters,
+    double? RapidSeconds,
+    int ToolChangeCount,
+    double? ToolChangeSeconds,
+    double DwellSeconds,
+    double? MachineRapidRateMillimetersPerMinute,
+    double? MachineToolChangeTimeSeconds,
+    double MachineTimeFactor,
+    double? RawCycleSeconds,
+    double? EstimatedCycleSeconds,
+    IReadOnlyList<string> Warnings,
+    string Confidence,
+    DateTimeOffset CalculatedAt);
 
 internal sealed record PlannerPostprocessorReleaseStatus(
     string PostprocessorId,
@@ -1118,7 +1157,22 @@ internal sealed record PlanningBoardOperation(
     IReadOnlyList<PlannerReadinessComponent>? ReadinessComponents = null,
     string? EffectiveGCodeReleaseId = null,
     bool RequiresExplicitGCodeSelection = false,
-    IReadOnlyList<PlannerReadinessRelease>? CompatibleGCodeReleases = null);
+    IReadOnlyList<PlannerReadinessRelease>? CompatibleGCodeReleases = null,
+    double? NcEstimatedCycleTimePerPartSeconds = null,
+    double? PlanningCycleTimePerPartSeconds = null,
+    string PlanningCycleTimeSource = "manual",
+    string? NcEstimateConfidence = null,
+    IReadOnlyList<string>? NcEstimateWarnings = null,
+    string? NcEstimateGCodeReleaseId = null,
+    double ToolLoadingTimeSeconds = 0,
+    double? FixtureSetupTimeSeconds = null,
+    double? FirstPieceProveOutTimeSeconds = null,
+    double? TotalSetupTimeSeconds = null,
+    int? RemainingProductionQuantity = null,
+    double? RemainingProductionRuntimeSeconds = null,
+    double? TotalPlannedMachineTimeSeconds = null,
+    IReadOnlyList<string>? SetupEstimateWarnings = null,
+    bool UsesSetupOccupancyEstimate = false);
 
 internal sealed record PlannerReadinessComponent(
     string Key,

@@ -60,6 +60,11 @@
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#F57C00" /><TextBlock Text="RESERVED" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"><Border Width="12" Height="12" Background="#00897B" /><TextBlock Text="ACTUAL HISTORY" Margin="5,0,0,0" /></StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
+                            ToolTip="A red outline means the planned Operation remains on the Timeline but is not ready for production.">
+                    <Border Width="12" Height="12" Background="White" BorderBrush="#C62828" BorderThickness="2" />
+                    <TextBlock Text="PLANNED — NOT READY" Margin="5,0,0,0" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
                             ToolTip="The red vertical line marks the current time in the configured factory time zone.">
                     <Border Width="12" Height="12" Background="#C62828" />
                     <TextBlock Text="NOW = CURRENT TIME" Margin="5,0,0,0" />

@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Meimad.Planner.Server.Application.PlanningBoard;
+using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.GCode;
 using Meimad.Planner.Server.Domain.Readiness;
+using Meimad.Planner.Server.Domain.Timeline;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -9,10 +11,14 @@ namespace Meimad.Planner.Server.Persistence;
 internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
 {
     private readonly SqliteDatabase database;
+    private readonly SetupEstimationOptions setupEstimation;
 
-    public SqlitePlanningBoardRepository(SqliteDatabase database)
+    public SqlitePlanningBoardRepository(
+        SqliteDatabase database,
+        SetupEstimationOptions setupEstimation)
     {
         this.database = database;
+        this.setupEstimation = setupEstimation;
     }
 
     public async Task<PlanningBoardSnapshot> ReadAsync(CancellationToken cancellationToken)
@@ -20,7 +26,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: true);
         var machines = await ReadMachinesAsync(connection, transaction, cancellationToken);
-        var operations = await ReadOperationsAsync(connection, transaction, cancellationToken);
+        var operations = await ReadOperationsAsync(
+            connection, transaction, setupEstimation, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         var byMachine = operations
@@ -87,6 +94,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
     private static async Task<IReadOnlyList<PlanningBoardOperation>> ReadOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
+        SetupEstimationOptions setupEstimation,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -152,7 +160,11 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    CASE WHEN batch_operations.status = 'not_started'
                         THEN active_tools.required_tool_count
                         ELSE pinned_tools.required_tool_count END,
-                   assigned_machine.usable_tool_positions
+                   assigned_machine.usable_tool_positions,
+                   nc_estimate.gcode_release_id,
+                   nc_estimate.estimated_cycle_seconds,
+                   nc_estimate.confidence,
+                   nc_estimate.warnings_json
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -162,6 +174,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
               ON machine_assignments.batch_operation_id = batch_operations.id
             LEFT JOIN machines assigned_machine
               ON assigned_machine.id = machine_assignments.machine_id
+            LEFT JOIN effective_batch_operation_nc_estimates nc_estimate
+              ON nc_estimate.batch_operation_id = batch_operations.id
             LEFT JOIN process_revisions active_process
               ON active_process.case_operation_id = batch_operations.source_case_operation_id
              AND active_process.is_active = 1
@@ -189,6 +203,24 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             var hasManagedProcess = !reader.IsDBNull(35);
             var requiredToolCount = GetNullableInt32(reader, 36);
             var availableToolPositions = GetNullableInt32(reader, 37);
+            double? ncCycleSeconds = reader.GetString(10) == "not_started" && !reader.IsDBNull(39)
+                ? reader.GetDouble(39) : null;
+            var planningCycleSeconds = ncCycleSeconds ?? cycleSeconds;
+            var occupancy = reader.GetString(10) == "not_started" && hasManagedProcess
+                ? SetupOccupancyEstimator.Evaluate(new SetupOccupancyInput(
+                    plannedQuantity,
+                    requiredToolCount,
+                    setupSeconds,
+                    null,
+                    ncCycleSeconds,
+                    cycleSeconds,
+                    setupEstimation.DefaultToolLoadTimePerToolSeconds,
+                    setupEstimation.DefaultFirstPieceFactor))
+                : null;
+            var scheduledSetupSeconds = occupancy?.TotalSetupSeconds ?? setupSeconds;
+            var scheduledCycleSeconds = occupancy?.SelectedCycleSeconds
+                ?? (plannedQuantity == 0 && occupancy is not null ? 0 : planningCycleSeconds);
+            var productionCycleQuantity = occupancy?.RemainingProductionQuantity ?? plannedQuantity;
             var capacity = hasManagedProcess && machineId is not null
                 ? ToolCapacityEvaluator.Evaluate(requiredToolCount, availableToolPositions)
                 : null;
@@ -218,7 +250,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 GetNullableInt32(reader, 12),
                 plannedQuantity,
                 JsonSerializer.Deserialize<string[]>(reader.GetString(14)) ?? [],
-                EstimateSeconds(setupSeconds, cycleSeconds, plannedQuantity,
+                EstimateSeconds(scheduledSetupSeconds, scheduledCycleSeconds,
+                    productionCycleQuantity, plannedQuantity,
                     qaSeconds, loadUnloadSeconds, automaticLoading, everyNParts),
                 qaSeconds, loadUnloadSeconds, reader.GetInt32(17) == 1,
                 automaticLoading, everyNParts, reader.GetInt32(20) == 1,
@@ -242,7 +275,24 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 capacityMessage,
                 requiredToolCount,
                 availableToolPositions,
-                !hasManagedProcess || capacity?.IsSatisfied == true));
+                !hasManagedProcess || capacity?.IsSatisfied == true,
+                NcEstimatedCycleTimePerPartSeconds: ncCycleSeconds,
+                PlanningCycleTimePerPartSeconds: planningCycleSeconds,
+                PlanningCycleTimeSource: ncCycleSeconds.HasValue
+                    ? "nc_estimate" : cycleSeconds.HasValue ? "manual" : "unavailable",
+                NcEstimateConfidence: GetNullableString(reader, 40),
+                NcEstimateWarnings: reader.IsDBNull(41)
+                    ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(41)) ?? [],
+                NcEstimateGCodeReleaseId: GetNullableString(reader, 38),
+                ToolLoadingTimeSeconds: occupancy?.ToolLoadingSeconds ?? 0,
+                FixtureSetupTimeSeconds: occupancy?.FixtureSetupSeconds,
+                FirstPieceProveOutTimeSeconds: occupancy?.FirstPieceProveOutSeconds,
+                TotalSetupTimeSeconds: occupancy?.TotalSetupSeconds,
+                RemainingProductionQuantity: occupancy?.RemainingProductionQuantity,
+                RemainingProductionRuntimeSeconds: occupancy?.RemainingProductionSeconds,
+                TotalPlannedMachineTimeSeconds: occupancy?.TotalPlannedMachineSeconds,
+                SetupEstimateWarnings: occupancy?.Warnings ?? [],
+                UsesSetupOccupancyEstimate: occupancy is not null));
         }
 
         await reader.DisposeAsync();
@@ -331,7 +381,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
     }
 
     private static long? EstimateSeconds(
-        int? setupSeconds, int? cycleSeconds, int quantity,
+        double? setupSeconds, double? cycleSeconds, int productionCycleQuantity,
+        int plannedQuantity,
         int qaSeconds, int loadUnloadSeconds, bool automaticLoading, int? everyNParts)
     {
         if (!setupSeconds.HasValue || !cycleSeconds.HasValue)
@@ -342,11 +393,14 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         try
         {
             var loadOccurrences = automaticLoading
-                ? everyNParts.HasValue ? (quantity + (long)everyNParts.Value - 1) / everyNParts.Value : 0
-                : quantity;
-            return checked((long)setupSeconds.Value + qaSeconds
+                ? everyNParts.HasValue
+                    ? (plannedQuantity + (long)everyNParts.Value - 1) / everyNParts.Value : 0
+                : plannedQuantity;
+            var total = setupSeconds.Value + (double)qaSeconds
                 + (long)loadUnloadSeconds * loadOccurrences
-                + (long)cycleSeconds.Value * quantity);
+                + cycleSeconds.Value * productionCycleQuantity;
+            return !double.IsFinite(total) || total > long.MaxValue
+                ? null : checked((long)Math.Ceiling(total));
         }
         catch (OverflowException)
         {

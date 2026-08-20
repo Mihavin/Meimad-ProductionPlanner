@@ -18,7 +18,7 @@ internal sealed class TimelineProjectionService
     private readonly TimelineCalculationEngine engine;
     private readonly TimelineOptions options;
     private readonly IStructuredEventLogRepository eventLog;
-    private readonly IProductionReadinessRepository readinessRepository;
+    private readonly IProductionReadinessRepository? readinessRepository;
     private readonly ILogger<TimelineProjectionService> logger;
 
     public TimelineProjectionService(
@@ -26,8 +26,8 @@ internal sealed class TimelineProjectionService
         TimelineCalculationEngine engine,
         TimelineOptions options,
         IStructuredEventLogRepository eventLog,
-        IProductionReadinessRepository readinessRepository,
-        ILogger<TimelineProjectionService> logger)
+        ILogger<TimelineProjectionService> logger,
+        IProductionReadinessRepository? readinessRepository = null)
     {
         this.repository = repository;
         this.engine = engine;
@@ -161,8 +161,19 @@ internal sealed class TimelineProjectionService
 
             try
             {
-                var productionSeconds = checked(
-                    (long)operation.CycleSeconds.Value * operation.PlannedQuantity);
+                var productionCycleQuantity = operation.ProductionCycleQuantity
+                    ?? operation.PlannedQuantity;
+                var productionSeconds = operation.CycleSeconds.Value
+                    * productionCycleQuantity;
+                if (!double.IsFinite(operation.SetupSeconds.Value)
+                    || !double.IsFinite(operation.CycleSeconds.Value)
+                    || !double.IsFinite(productionSeconds)
+                    || operation.SetupSeconds.Value > TimeSpan.MaxValue.TotalSeconds
+                    || operation.CycleSeconds.Value > TimeSpan.MaxValue.TotalSeconds
+                    || productionSeconds > TimeSpan.MaxValue.TotalSeconds)
+                {
+                    throw new OverflowException();
+                }
                 var loadUnloadSeconds = LoadUnloadTotalSeconds(operation);
                 if (operation.SetupSeconds.Value == 0
                     && operation.QaSeconds == 0
@@ -311,7 +322,8 @@ internal sealed class TimelineProjectionService
                         operation.AutomaticLoading,
                         operation.LoadUnloadEveryNParts,
                         operation.ExternalDelayAfter,
-                        externalWorkingDayDelays.GetValueOrDefault(operation.OperationId)))
+                        externalWorkingDayDelays.GetValueOrDefault(operation.OperationId),
+                        operation.ProductionCycleQuantity))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number
@@ -625,6 +637,7 @@ internal sealed class TimelineProjectionService
                      .Select(interval => interval.OperationId!)
                      .Distinct(StringComparer.Ordinal))
         {
+            if (readinessRepository is null) break;
             var readiness = await readinessRepository.ReadAsync(operationId, cancellationToken);
             if (readiness.IsManaged) readinessByOperation[operationId] = readiness;
         }

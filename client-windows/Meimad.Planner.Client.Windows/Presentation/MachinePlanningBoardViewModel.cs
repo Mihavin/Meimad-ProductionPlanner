@@ -1135,6 +1135,18 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         EffectiveGCodeReleaseId = operation.EffectiveGCodeReleaseId;
         RequiresExplicitGCodeSelection = operation.RequiresExplicitGCodeSelection;
         CompatibleGCodeReleases = operation.CompatibleGCodeReleases ?? [];
+        PlanningCycleTimeSource = operation.PlanningCycleTimeSource;
+        NcEstimateConfidence = operation.NcEstimateConfidence;
+        NcEstimateWarnings = operation.NcEstimateWarnings ?? [];
+        ToolLoadingTimeSeconds = operation.ToolLoadingTimeSeconds;
+        FixtureSetupTimeSeconds = operation.FixtureSetupTimeSeconds;
+        FirstPieceProveOutTimeSeconds = operation.FirstPieceProveOutTimeSeconds;
+        TotalSetupTimeSeconds = operation.TotalSetupTimeSeconds;
+        RemainingProductionQuantity = operation.RemainingProductionQuantity;
+        RemainingProductionRuntimeSeconds = operation.RemainingProductionRuntimeSeconds;
+        TotalPlannedMachineTimeSeconds = operation.TotalPlannedMachineTimeSeconds;
+        SetupEstimateWarnings = operation.SetupEstimateWarnings ?? [];
+        UsesSetupOccupancyEstimate = operation.UsesSetupOccupancyEstimate;
     }
 
     public string BatchOperationId { get; }
@@ -1171,6 +1183,18 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string? EffectiveGCodeReleaseId { get; }
     public bool RequiresExplicitGCodeSelection { get; }
     public IReadOnlyList<PlannerReadinessRelease> CompatibleGCodeReleases { get; }
+    public string PlanningCycleTimeSource { get; }
+    public string? NcEstimateConfidence { get; }
+    public IReadOnlyList<string> NcEstimateWarnings { get; }
+    public double ToolLoadingTimeSeconds { get; }
+    public double? FixtureSetupTimeSeconds { get; }
+    public double? FirstPieceProveOutTimeSeconds { get; }
+    public double? TotalSetupTimeSeconds { get; }
+    public int? RemainingProductionQuantity { get; }
+    public double? RemainingProductionRuntimeSeconds { get; }
+    public double? TotalPlannedMachineTimeSeconds { get; }
+    public IReadOnlyList<string> SetupEstimateWarnings { get; }
+    public bool UsesSetupOccupancyEstimate { get; }
     public bool IsReadinessBlocking => MachineId is not null
         && Status == "not_started"
         && (!IsReadyForProduction || IsToolCapacityBlocking);
@@ -1217,6 +1241,10 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string EstimatedTimeText => EstimatedTimeSeconds.HasValue
         ? $"Time {Formatting.DurationText.Format(EstimatedTimeSeconds.Value)}"
         : "Time unavailable";
+    public string EstimatedTimeDetail => BuildEstimatedTimeDetail();
+    public string SetupEstimateText => UsesSetupOccupancyEstimate && TotalSetupTimeSeconds.HasValue
+        ? $"Setup {Duration(TotalSetupTimeSeconds)}"
+        : "";
     public string StatusText => Status switch
     {
         "not_started" => "Not started",
@@ -1314,6 +1342,40 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
             return null;
         }
     }
+
+    private string BuildEstimatedTimeDetail()
+    {
+        var cycleSummary = PlanningCycleTimeSource switch
+        {
+            "manager_override" => "Manager override cycle estimate.",
+            "nc_estimate" => $"NC-based cycle estimate ({NcEstimateConfidence ?? "unknown"} confidence).",
+            "manual" => "Manual operation cycle estimate.",
+            _ => "Cycle estimate unavailable."
+        };
+        if (!UsesSetupOccupancyEstimate)
+        {
+            return cycleSummary + (NcEstimateWarnings.Count == 0
+                ? string.Empty : Environment.NewLine + string.Join(Environment.NewLine, NcEstimateWarnings));
+        }
+
+        var lines = new List<string>
+        {
+            cycleSummary,
+            $"Prepared-tool magazine loading: {Duration(ToolLoadingTimeSeconds)}",
+            $"Fixture setup: {Duration(FixtureSetupTimeSeconds)}",
+            $"First-piece prove-out: {Duration(FirstPieceProveOutTimeSeconds)}",
+            $"Total setup: {Duration(TotalSetupTimeSeconds)}",
+            $"Remaining production ({RemainingProductionQuantity ?? 0} parts): {Duration(RemainingProductionRuntimeSeconds)}",
+            $"Total planned machine time: {Duration(TotalPlannedMachineTimeSeconds)}"
+        };
+        lines.AddRange(SetupEstimateWarnings);
+        lines.AddRange(NcEstimateWarnings);
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string Duration(double? seconds) => seconds.HasValue
+        ? Formatting.DurationText.Format(checked((long)Math.Ceiling(seconds.Value)))
+        : "unavailable";
 
 }
 

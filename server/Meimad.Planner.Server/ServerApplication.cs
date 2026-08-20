@@ -88,6 +88,7 @@ public static class ServerApplication
             builder.Configuration,
             builder.Environment.ContentRootPath);
         var timelineOptions = TimelineOptions.FromConfiguration(builder.Configuration);
+        var setupEstimationOptions = SetupEstimationOptions.FromConfiguration(builder.Configuration);
         var legacyImportOptions = LegacyImportOptions.FromConfiguration(builder.Configuration);
 
         builder.Services.AddSingleton(serverOptions);
@@ -98,6 +99,7 @@ public static class ServerApplication
         builder.Services.AddSingleton(eInkOptions);
         builder.Services.AddSingleton(gCodeOptions);
         builder.Services.AddSingleton(timelineOptions);
+        builder.Services.AddSingleton(setupEstimationOptions);
         builder.Services.AddSingleton(legacyImportOptions);
         builder.Services.AddSingleton<SqliteDatabase>();
         builder.Services.AddDataProtection()

@@ -24,6 +24,49 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public void Nc_planning_estimate_is_labelled_with_confidence_and_warnings()
+    {
+        var operation = new PlanningOperationViewModel(new PlanningBoardOperation(
+            "operation-nc", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
+            "mill", 0, 300, "not_started", "machine-1", 0,
+            EstimatedTimeSeconds: 132,
+            PlanningCycleTimeSource: "nc_estimate",
+            NcEstimateConfidence: "LOW",
+            NcEstimateWarnings: ["Estimate excludes unsupported canned cycle G81."]));
+
+        Assert.Equal("Time 00:02:12", operation.EstimatedTimeText);
+        Assert.Contains("NC-based", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+        Assert.Contains("LOW", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+        Assert.Contains("G81", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Setup_occupancy_components_are_visible_without_double_counting_the_first_part()
+    {
+        var operation = new PlanningOperationViewModel(new PlanningBoardOperation(
+            "operation-setup", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
+            "mill", 300, 100, "not_started", "machine-1", 0,
+            PlannedQuantity: 4,
+            EstimatedTimeSeconds: 870,
+            PlanningCycleTimeSource: "nc_estimate",
+            NcEstimateConfidence: "HIGH",
+            ToolLoadingTimeSeconds: 120,
+            FixtureSetupTimeSeconds: 300,
+            FirstPieceProveOutTimeSeconds: 150,
+            TotalSetupTimeSeconds: 570,
+            RemainingProductionQuantity: 3,
+            RemainingProductionRuntimeSeconds: 300,
+            TotalPlannedMachineTimeSeconds: 870,
+            UsesSetupOccupancyEstimate: true));
+
+        Assert.Equal("Setup 00:09:30", operation.SetupEstimateText);
+        Assert.Contains("Prepared-tool magazine loading: 00:02:00", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+        Assert.Contains("First-piece prove-out: 00:02:30", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+        Assert.Contains("Remaining production (3 parts): 00:05:00", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+        Assert.Contains("Total planned machine time: 00:14:30", operation.EstimatedTimeDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Manual_assignment_sends_exact_target_and_refreshes_server_order()
     {
         var api = new FakeApiClient(BoardBefore())

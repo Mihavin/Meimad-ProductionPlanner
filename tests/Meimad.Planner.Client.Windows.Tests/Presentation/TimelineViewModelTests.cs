@@ -9,6 +9,25 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class TimelineViewModelTests
 {
     [Fact]
+    public void Planned_not_ready_interval_keeps_its_forecast_and_explains_readiness()
+    {
+        var interval = new TimelineInterval(
+            "operation", "machine-1", "operation-1", "batch-1", "B-1", "PN-1",
+            10, "Mill", DateTimeOffset.Parse("2026-08-20T08:00:00Z"),
+            DateTimeOffset.Parse("2026-08-20T09:00:00Z"), "Calculated production",
+            TimingKind: "forecast", OperationStatus: "not_started",
+            MachineAssignmentId: "assignment-1",
+            OverallReadinessState: "NOT_READY",
+            IsReadyForProduction: false,
+            ReadinessSummary: "Not ready: Tool Offsets missing");
+
+        Assert.True(interval.IsForecast);
+        Assert.True(interval.IsPlannedNotReady);
+        Assert.Contains("Readiness: Not ready", TimelineView.IntervalToolTip(
+            interval, TimelineView.IntervalLabel(interval)), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Timeline_defaults_to_a_thirty_day_window_for_multi_day_dependency_chains()
     {
         var viewModel = new TimelineViewModel();

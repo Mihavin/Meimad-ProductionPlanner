@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
@@ -13,6 +14,128 @@ namespace Meimad.Planner.Server.Tests.GCode;
 
 public sealed class GCodeReleaseApiTests
 {
+    [Fact]
+    public async Task Released_nc_is_analyzed_once_and_evaluated_per_machine_without_overwriting_manual_cycle()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            await using (var connection = await application.Services
+                             .GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE machines
+                    SET rapid_rate_mm_per_min = 6000, tool_change_time_seconds = 10
+                    WHERE id = 'machine-1';
+                    UPDATE batch_operations
+                    SET setup_seconds = 0, cycle_seconds = 300
+                    WHERE id = 'batch-op-1';
+                    INSERT INTO machines (
+                        id, number, name, machine_type, working_calendar_id, status,
+                        is_active, execution_mode, usable_tool_positions,
+                        rapid_rate_mm_per_min, tool_change_time_seconds, machine_time_factor)
+                    VALUES ('machine-2', 'M-2', 'CNC 2', 'mill', 'calendar-1', 'active',
+                            1, 'CNC_GCODE', 30, 12000, 4, 1.2);
+                    INSERT INTO machine_supported_postprocessors (machine_id, postprocessor_id)
+                    VALUES ('machine-2', 'post-a');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var nc = Encoding.UTF8.GetBytes("""
+                (machine-independent released program)
+                N10 G21 G90
+                N20 G0 X6000
+                N30 G1 X6600 F600
+                N40 T1 M6
+                N50 G4 X2
+                N60 M30
+                """);
+            var release = await ReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "NC estimate release",
+                nc, Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false,
+                processDescription: "Initial estimated process");
+
+            using (var response = await client.GetAsync(
+                       "/api/v1/cases/case-1/operations/case-op-1/gcode"))
+            {
+                response.EnsureSuccessStatusCode();
+                using var catalog = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                var item = catalog.RootElement.GetProperty("releases").EnumerateArray()
+                    .Single(value => value.GetProperty("gCodeReleaseId").GetString() == release.ReleaseId);
+                var analysis = item.GetProperty("ncAnalysis");
+                Assert.Equal("HIGH", analysis.GetProperty("confidence").GetString());
+                Assert.Equal(60d, analysis.GetProperty("feedMotionSeconds").GetDouble(), 6);
+                Assert.Equal(6000d, analysis.GetProperty("rapidDistanceMillimeters").GetDouble(), 6);
+                Assert.Equal(2, item.GetProperty("machineCycleEstimates").GetArrayLength());
+            }
+
+            var machineOne = await BoardOperationAsync(client, "machine-1");
+            Assert.Equal(300, machineOne.GetProperty("cycleTimePerPartSeconds").GetInt32());
+            Assert.Equal("nc_estimate", machineOne.GetProperty("planningCycleTimeSource").GetString());
+            Assert.Equal(132d, machineOne.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+            Assert.Equal(60d, machineOne.GetProperty("toolLoadingTimeSeconds").GetDouble(), 6);
+            Assert.Equal(0d, machineOne.GetProperty("fixtureSetupTimeSeconds").GetDouble(), 6);
+            Assert.Equal(198d, machineOne.GetProperty("firstPieceProveOutTimeSeconds").GetDouble(), 6);
+            Assert.Equal(258d, machineOne.GetProperty("totalSetupTimeSeconds").GetDouble(), 6);
+            Assert.Equal(0, machineOne.GetProperty("remainingProductionQuantity").GetInt32());
+            Assert.Equal(258d, machineOne.GetProperty("totalPlannedMachineTimeSeconds").GetDouble(), 6);
+            Assert.True(machineOne.GetProperty("usesSetupOccupancyEstimate").GetBoolean());
+
+            var timelineSource = application.Services.GetRequiredService<ITimelineSourceRepository>();
+            var timelineSnapshot = await timelineSource.ReadAsync(
+                DateTimeOffset.Parse("2026-08-20T00:00:00Z"),
+                DateTimeOffset.Parse("2026-08-21T00:00:00Z"),
+                CancellationToken.None);
+            var timelineOperation = Assert.Single(timelineSnapshot.Operations);
+            Assert.Equal(132d, timelineOperation.CycleSeconds!.Value, 6);
+            Assert.Equal(258d, timelineOperation.SetupSeconds!.Value, 6);
+            Assert.Equal(0, timelineOperation.ProductionCycleQuantity);
+            Assert.Equal(258d, timelineOperation.TotalPlannedMachineSeconds!.Value, 6);
+            Assert.Equal(300, timelineOperation.ManualCycleSeconds);
+            Assert.Equal("nc_estimate", timelineOperation.PlanningCycleTimeSource);
+
+            using (var move = await client.PutAsJsonAsync(
+                       "/api/v1/batch-operations/batch-op-1/assignment",
+                       new { machineId = "machine-2", backlogPosition = 0 }))
+            {
+                move.EnsureSuccessStatusCode();
+            }
+            var machineTwo = await BoardOperationAsync(client, "machine-2");
+            Assert.Equal(115.2d, machineTwo.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+
+            using (var patch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/machines/machine-2"))
+            {
+                patch.Headers.TryAddWithoutValidation("If-Match", "\"machine:machine-2:v1\"");
+                patch.Content = JsonContent.Create(new
+                {
+                    rapidRateMillimetersPerMinute = 6000,
+                    toolChangeTimeSeconds = 4,
+                    machineTimeFactor = 1.2
+                });
+                using var updated = await client.SendAsync(patch);
+                updated.EnsureSuccessStatusCode();
+            }
+
+            var recalculated = await BoardOperationAsync(client, "machine-2");
+            Assert.Equal(151.2d, recalculated.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+            Assert.Equal(300, recalculated.GetProperty("cycleTimePerPartSeconds").GetInt32());
+
+            await using var auditConnection = await application.Services
+                .GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var audit = auditConnection.CreateCommand();
+            audit.CommandText = """
+                SELECT COUNT(*) FROM gcode_machine_cycle_estimates
+                WHERE gcode_release_id = $releaseId AND machine_id = 'machine-2';
+                """;
+            audit.Parameters.AddWithValue("$releaseId", release.ReleaseId);
+            Assert.True(Convert.ToInt32(await audit.ExecuteScalarAsync()) >= 3);
+        });
+    }
+
     [Fact]
     public async Task Contextual_readiness_is_explainable_plannable_selectable_and_blocks_start()
     {
@@ -38,6 +161,20 @@ public sealed class GCodeReleaseApiTests
                 Assert.Equal("READY", ReadinessState(initial.RootElement, "toolTable"));
                 Assert.Equal("MISSING", ReadinessState(initial.RootElement, "toolOffsets"));
                 Assert.Equal("UNVERIFIED", ReadinessState(initial.RootElement, "material"));
+            }
+
+            await SetOperationTimesAsync(application.Services);
+            using (var timelineResponse = await client.GetAsync(
+                       "/api/v1/timeline?from=2026-08-20T00:00:00Z&to=2026-08-21T00:00:00Z&asOf=2026-08-20T08:00:00Z"))
+            {
+                timelineResponse.EnsureSuccessStatusCode();
+                using var timeline = JsonDocument.Parse(await timelineResponse.Content.ReadAsStringAsync());
+                var interval = timeline.RootElement.GetProperty("machines").EnumerateArray()
+                    .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                    .Single(value => value.TryGetProperty("operationId", out var id)
+                        && id.GetString() == "batch-op-1");
+                Assert.Equal("NOT_READY", interval.GetProperty("overallReadinessState").GetString());
+                Assert.False(interval.GetProperty("isReadyForProduction").GetBoolean());
             }
 
             using (var blocked = await client.PostAsync(
@@ -492,6 +629,18 @@ public sealed class GCodeReleaseApiTests
         command.Parameters.AddWithValue("$id", machineId);
         command.Parameters.AddWithValue("$number", number);
         command.Parameters.AddWithValue("$capacity", capacity);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task SetOperationTimesAsync(IServiceProvider services)
+    {
+        await using var connection = await services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE batch_operations
+            SET setup_seconds = 60, cycle_seconds = 60
+            WHERE id = 'batch-op-1';
+            """;
         await command.ExecuteNonQueryAsync();
     }
 

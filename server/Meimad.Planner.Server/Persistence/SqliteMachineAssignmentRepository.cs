@@ -160,6 +160,11 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 null, null,
                 new { machineId=current.MachineId,backlogPosition=current.BacklogPosition },
                 new { machineId,backlogPosition }), cancellationToken);
+        if (current is null || !string.Equals(current.MachineId, machineId, StringComparison.Ordinal))
+        {
+            await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
+                connection, transaction, machineId, now, cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         return new AssignmentMutationResult(persisted, current is null);
     }

@@ -55,6 +55,8 @@ internal sealed class TimelineCalculationEngine
                 || entry.Operation.QaDuration < TimeSpan.Zero
                 || entry.Operation.LoadUnloadDuration < TimeSpan.Zero
                 || entry.Operation.PlannedQuantity < 0
+                || ProductionCycleQuantity(entry.Operation) < 0
+                || ProductionCycleQuantity(entry.Operation) > entry.Operation.PlannedQuantity
                 || entry.Operation.LoadUnloadEveryNParts <= 0)
             {
                 invalidOperations.Add(entry.Operation.OperationId);
@@ -1247,7 +1249,7 @@ internal sealed class TimelineCalculationEngine
         TimeSpan.FromTicks(checked(
             operation.SetupDuration.Ticks
             + operation.QaDuration.Ticks
-            + operation.ProductionDuration.Ticks * operation.PlannedQuantity
+            + operation.ProductionDuration.Ticks * ProductionCycleQuantity(operation)
             + operation.LoadUnloadDuration.Ticks * LoadUnloadOccurrenceCount(operation)));
 
     private static int LoadUnloadOccurrenceCount(TimelineOperationInput operation)
@@ -1276,22 +1278,30 @@ internal sealed class TimelineCalculationEngine
 
         if (LoadUnloadOccurrenceCount(operation) == 0)
         {
-            return [new ProductionRun(operation.PlannedQuantity, false)];
+            return ProductionCycleQuantity(operation) == 0
+                ? []
+                : [new ProductionRun(ProductionCycleQuantity(operation), false)];
         }
 
         var partsPerRun = operation.AutomaticLoading
             ? operation.LoadUnloadEveryNParts!.Value
             : 1;
         var remaining = operation.PlannedQuantity;
+        var skippedProductionParts = operation.PlannedQuantity - ProductionCycleQuantity(operation);
         var runs = new List<ProductionRun>();
         while (remaining > 0)
         {
             var partCount = Math.Min(remaining, partsPerRun);
-            runs.Add(new ProductionRun(partCount, true));
+            var skippedInRun = Math.Min(skippedProductionParts, partCount);
+            runs.Add(new ProductionRun(partCount - skippedInRun, true));
+            skippedProductionParts -= skippedInRun;
             remaining -= partCount;
         }
         return runs;
     }
+
+    private static int ProductionCycleQuantity(TimelineOperationInput operation) =>
+        operation.ProductionCycleQuantity ?? operation.PlannedQuantity;
 
     private static TimeSpan ProductionRunDuration(
         TimelineOperationInput operation,

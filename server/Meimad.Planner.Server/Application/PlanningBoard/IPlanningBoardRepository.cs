@@ -62,7 +62,22 @@ internal sealed record PlanningBoardOperation(
     IReadOnlyList<ReadinessComponent>? ReadinessComponents = null,
     string? EffectiveGCodeReleaseId = null,
     bool RequiresExplicitGCodeSelection = false,
-    IReadOnlyList<ReadinessRelease>? CompatibleGCodeReleases = null);
+    IReadOnlyList<ReadinessRelease>? CompatibleGCodeReleases = null,
+    double? NcEstimatedCycleTimePerPartSeconds = null,
+    double? PlanningCycleTimePerPartSeconds = null,
+    string PlanningCycleTimeSource = "manual",
+    string? NcEstimateConfidence = null,
+    IReadOnlyList<string>? NcEstimateWarnings = null,
+    string? NcEstimateGCodeReleaseId = null,
+    double ToolLoadingTimeSeconds = 0,
+    double? FixtureSetupTimeSeconds = null,
+    double? FirstPieceProveOutTimeSeconds = null,
+    double? TotalSetupTimeSeconds = null,
+    int? RemainingProductionQuantity = null,
+    double? RemainingProductionRuntimeSeconds = null,
+    double? TotalPlannedMachineTimeSeconds = null,
+    IReadOnlyList<string>? SetupEstimateWarnings = null,
+    bool UsesSetupOccupancyEstimate = false);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,
