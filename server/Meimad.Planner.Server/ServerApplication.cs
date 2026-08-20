@@ -99,7 +99,7 @@ public static class ServerApplication
         {
             client.BaseAddress = new Uri("https://www.hebcal.com/");
             client.Timeout = TimeSpan.FromSeconds(15);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("Meimad-Planner/0.1.3");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Meimad-Planner/0.1.10");
         });
         builder.Services.AddSingleton<AdministrativeSetupService>();
         builder.Services.AddSingleton<IPlanningDeletionRepository, SqlitePlanningDeletionRepository>();

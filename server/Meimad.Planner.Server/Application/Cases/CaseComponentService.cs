@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Orders;
+using Meimad.Planner.Server.Application.ProductionBatches;
 using Meimad.Planner.Server.Domain.Orders;
 using System.Security.Cryptography;
 using System.Text;
@@ -83,6 +84,7 @@ internal interface ICaseComponentRepository
 internal sealed class CaseComponentService(
     ICaseComponentRepository repository,
     ICaseRepository caseRepository,
+    IProductionBatchRepository productionBatchRepository,
     TimeProvider timeProvider)
 {
     internal Task<IReadOnlyList<CaseComponentDetails>> ListComponentsAsync(
@@ -98,6 +100,8 @@ internal sealed class CaseComponentService(
         int sortOrder, string? notes, EditAuthority editAuthority, CancellationToken cancellationToken)
     {
         Validate(parentCaseId, childCaseId, quantityPerParent, sortOrder, notes);
+        if ((await productionBatchRepository.ListByCaseAsync(parentCaseId, cancellationToken)).Count > 0)
+            throw new CaseParentBatchesMustBeRemovedException();
         return await repository.CreateAsync(
             $"component-{Guid.NewGuid():N}", parentCaseId, childCaseId, quantityPerParent,
             sortOrder, NormalizeNotes(notes), timeProvider.GetUtcNow(), editAuthority, cancellationToken);
@@ -260,3 +264,6 @@ internal sealed class CaseComponentDuplicateException()
 internal sealed class CaseComponentNotFoundException : Exception;
 
 internal sealed class CaseComponentVersionConflictException : Exception;
+
+internal sealed class CaseParentBatchesMustBeRemovedException()
+    : Exception("Remove this Case's Production Batches before adding a component. A Case with components is a parent and cannot retain direct Production Batches.");

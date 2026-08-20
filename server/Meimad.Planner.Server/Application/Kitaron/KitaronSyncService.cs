@@ -92,7 +92,8 @@ internal sealed class KitaronSyncService
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
                 var snapshot = await sourceReader.ReadAsync(connection, password, columns, cancellationToken);
-                var plan = BuildPlan(snapshot, active, mapping.Version);
+                var existingCasePartNumbers = await syncRepository.GetExistingCasePartNumbersAsync(cancellationToken);
+                var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version);
                 return await syncRepository.ApplyAsync(plan, timeProvider.GetUtcNow(), cancellationToken);
             }
             catch (KitaronSyncBlockedException exception)
@@ -113,6 +114,7 @@ internal sealed class KitaronSyncService
     private KitaronSyncPlan BuildPlan(
         KitaronSourceSnapshot snapshot,
         IReadOnlyList<KitaronMappingField> fields,
+        IReadOnlySet<string> existingCasePartNumbers,
         int mappingVersion)
     {
         var byTarget = fields.ToDictionary(
@@ -145,6 +147,8 @@ internal sealed class KitaronSyncService
 
         var reachableParts = parsed.Select(row => row.Part)
             .Concat(snapshot.Orders.Select(order => order.PartNumber))
+            .Concat(existingCasePartNumbers)
+            .Concat(snapshot.Components.Select(component => component.ParentPartNumber))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var componentsByParent = snapshot.Components
             .GroupBy(item => item.ParentPartNumber, StringComparer.OrdinalIgnoreCase)

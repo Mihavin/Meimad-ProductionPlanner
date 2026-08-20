@@ -35,6 +35,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private PlannerOrder? selectedOrder;
     private ProductionBatch? selectedBatch;
     private CaseComponent? selectedComponent;
+    private CaseComponent? selectedWhereUsed;
     private CasePoolItemViewModel? selectedComponentCase;
     private string? entityTag;
     private string searchText = string.Empty;
@@ -119,6 +120,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             () => CanBeginChildCreate && (SelectedComponent is not null || SelectedComponentCase is not null));
         RemoveComponentCommand = new AsyncCommand(RemoveComponentAsync,
             () => CanBeginChildCreate && SelectedComponent is not null);
+        OpenParentCaseCommand = new AsyncCommand(OpenParentCaseAsync,
+            () => SelectedWhereUsed is not null && apiClient is not null && !IsBusy);
         PreviewComponentDemandCommand = new AsyncCommand(PreviewComponentDemandAsync,
             () => SelectedCase is not null && apiClient is not null && !IsBusy);
     }
@@ -126,6 +129,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public event EventHandler? PlanChanged;
+
+    internal Func<int, bool> ConfirmBatchRemoval { get; set; } = _ => false;
 
     public ObservableCollection<CasePoolItemViewModel> Cases { get; } = [];
 
@@ -205,6 +210,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand SaveComponentCommand { get; }
 
     public AsyncCommand RemoveComponentCommand { get; }
+
+    public AsyncCommand OpenParentCaseCommand { get; }
 
     public AsyncCommand PreviewComponentDemandCommand { get; }
 
@@ -346,6 +353,18 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         set { if (SetField(ref selectedComponentCase, value)) RaiseCommandStates(); }
     }
 
+    public CaseComponent? SelectedWhereUsed
+    {
+        get => selectedWhereUsed;
+        set
+        {
+            if (SetField(ref selectedWhereUsed, value))
+            {
+                OpenParentCaseCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
     public string ComponentQuantityPerParent
     {
         get => componentQuantityPerParent;
@@ -413,6 +432,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public bool IsParentCase => isParentCase;
 
     public bool IsChildCase => isChildCase;
+
+    public bool CanShowBatches => !IsParentCase;
 
     public bool CanManageOperations => CanBeginChildCreate && !IsParentCase;
 
@@ -585,7 +606,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 var item = new CasePoolItemViewModel(plannerCase);
                 Cases.Add(item);
-                item.Thumbnail = ToBitmap(await apiClient.GetCasePreviewAsync(plannerCase.CaseId));
+                item.Thumbnail = LoadPreview(
+                    await apiClient.GetCasePreviewAsync(plannerCase.CaseId), plannerCase.PreviewPath);
             }
 
             hasLoaded = true;
@@ -803,7 +825,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     Operations[index] = saved;
                 }
                 SelectedOperation = saved;
-                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Existing Production Batches were not changed.";
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Not-started Production Batch operations received the revised times.";
             }
             else
             {
@@ -1247,6 +1269,23 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (SelectedComponent is null)
             {
                 if (SelectedComponentCase is null) return;
+                if (!IsParentCase && Batches.Count > 0)
+                {
+                    if (Operations.Count > 0)
+                    {
+                        StatusMessage = "Remove this Case's direct Operations before adding a component. Parent Cases cannot have direct Operations.";
+                        return;
+                    }
+                    if (!ConfirmBatchRemoval(Batches.Count))
+                    {
+                        StatusMessage = "Adding the component was cancelled; existing Production Batches were kept.";
+                        return;
+                    }
+                    foreach (var batch in Batches.ToArray())
+                        await apiClient.DeleteBatchAsync(batch.BatchId, clientId, editGeneration);
+                    Batches.Clear();
+                    SelectedBatch = null;
+                }
                 saved = await apiClient.CreateCaseComponentAsync(
                     SelectedCase.CaseId,
                     new CaseComponentCreate(SelectedComponentCase.CaseId, quantity, Components.Count, NullIfBlank(ComponentNotes)),
@@ -1264,10 +1303,42 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             }
             SelectedComponent = saved;
             Replace(WhereUsed, await apiClient.ListCaseWhereUsedAsync(SelectedCase.CaseId));
-            StatusMessage = $"Component {saved.ChildPartNumber} saved.";
+            await RefreshSelectedCaseSummaryAsync();
+            StatusMessage = $"Component {saved.ChildPartNumber} saved. This Case is now a parent, so direct Production Batches are unavailable.";
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
         finally { IsBusy = false; }
+    }
+
+    private async Task OpenParentCaseAsync()
+    {
+        if (apiClient is null || SelectedWhereUsed is null || IsBusy) return;
+        var parentCaseId = SelectedWhereUsed.ParentCaseId;
+        CasePoolItemViewModel? item = null;
+        IsBusy = true;
+        try
+        {
+            var parent = await apiClient.GetCaseAsync(parentCaseId);
+            item = Cases.FirstOrDefault(value => value.CaseId == parentCaseId);
+            if (item is null)
+            {
+                item = new CasePoolItemViewModel(parent.Value);
+                Cases.Add(item);
+            }
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+        if (item is not null)
+        {
+            SelectedCase = item;
+            await LoadSelectedCaseSafeAsync();
+        }
     }
 
     private async Task RemoveComponentAsync()
@@ -1364,11 +1435,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             Replace(Batches, await batchesTask);
             Replace(Components, await componentsTask);
             Replace(WhereUsed, await whereUsedTask);
+            SelectedWhereUsed = null;
             Replace(ComponentCaseOptions, Cases.Where(item => item.CaseId != caseId).ToArray());
             SelectedComponent = null;
             SelectedComponentCase = null;
             ComponentDemand.Clear();
-            DetailPreview = ToBitmap(await previewTask);
+            DetailPreview = LoadPreview(await previewTask, resource.Value.PreviewPath);
             selectedDetailsAreStale = false;
             StatusMessage = $"Case {resource.Value.PartNumber} loaded from the Server.";
         }
@@ -1424,7 +1496,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 SelectedCase!.Update(resource.Value);
             }
-            DetailPreview = ToBitmap(await apiClient.GetCasePreviewAsync(resource.Value.CaseId));
+            DetailPreview = LoadPreview(
+                await apiClient.GetCasePreviewAsync(resource.Value.CaseId), resource.Value.PreviewPath);
             StatusMessage = creating
                 ? $"Case {resource.Value.PartNumber} created by the Server."
                 : $"Case {resource.Value.PartNumber} saved by the Server.";
@@ -1777,6 +1850,24 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
+    private static BitmapImage? LoadPreview(byte[]? serverBytes, string? localPath)
+    {
+        var preview = ToBitmap(serverBytes);
+        if (preview is not null || string.IsNullOrWhiteSpace(localPath))
+        {
+            return preview;
+        }
+
+        try
+        {
+            return ToBitmap(File.ReadAllBytes(localPath));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     private static string? NullIfBlank(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
@@ -1823,6 +1914,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanBeginChildCreate));
         OnPropertyChanged(nameof(IsParentCase));
         OnPropertyChanged(nameof(IsChildCase));
+        OnPropertyChanged(nameof(CanShowBatches));
         OnPropertyChanged(nameof(CanManageOperations));
         OnPropertyChanged(nameof(CanManageDirectOrders));
         OnPropertyChanged(nameof(CanManageBatches));

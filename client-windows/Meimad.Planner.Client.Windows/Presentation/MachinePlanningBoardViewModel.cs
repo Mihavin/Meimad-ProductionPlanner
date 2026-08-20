@@ -910,8 +910,20 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             .Distinct(StringComparer.Ordinal)
             .ToDictionary(caseId => caseId, caseId => apiClient.GetCasePreviewAsync(caseId), StringComparer.Ordinal);
         await Task.WhenAll(previewTasks.Values);
+        IReadOnlyList<PlannerCase> cases = [];
+        try
+        {
+            cases = await apiClient.ListCasesAsync(new CaseQuery(null, null, null, "partNumber"));
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal API fakes used by isolated board tests may not expose Case master data.
+        }
+        var previewPaths = cases.ToDictionary(item => item.CaseId, item => item.PreviewPath, StringComparer.Ordinal);
         var previews = previewTasks.ToDictionary(
-            pair => pair.Key, pair => ToBitmap(pair.Value.Result), StringComparer.Ordinal);
+            pair => pair.Key,
+            pair => LoadPreview(pair.Value.Result, previewPaths.GetValueOrDefault(pair.Key)),
+            StringComparer.Ordinal);
         foreach (var operation in operations)
         {
             operation.Preview = previews[operation.CaseId];
@@ -963,6 +975,20 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
         catch (Exception exception) when (exception is
             IOException or NotSupportedException or InvalidOperationException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static BitmapImage? LoadPreview(byte[]? serverBytes, string? localPath)
+    {
+        var preview = ToBitmap(serverBytes);
+        if (preview is not null || string.IsNullOrWhiteSpace(localPath)) return preview;
+        try
+        {
+            return ToBitmap(File.ReadAllBytes(localPath));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             return null;
         }
@@ -1134,6 +1160,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Preview)));
         }
     }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     public string PartCaseText => $"{PartNumber} / {CaseName ?? CaseId}";
     public string OperationText => $"OP{OperationNumber} {OperationName}";

@@ -1,6 +1,6 @@
 # Windows installers
 
-Current package version: `0.1.3`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
+Current package version: `0.1.10`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
 
 The repository builds two independent 64-bit Windows Installer packages:
 
@@ -25,7 +25,7 @@ Verify both package payloads without installing either application:
 
 The Server binaries are installed below `Program Files`. Mutable Server state is deliberately outside the installation directory:
 
-- database: `%ProgramData%\MeimadPlanner\Server\data\planner.db`
+- database: `%ProgramData%\MeimadPlanner\Server\data\meimad-planner.db`
 - backups: `%ProgramData%\MeimadPlanner\Server\backups`
 - E-Ink packages: `%ProgramData%\MeimadPlanner\Server\eink`
 

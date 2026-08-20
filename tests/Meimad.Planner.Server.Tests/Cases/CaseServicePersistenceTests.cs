@@ -115,6 +115,73 @@ public sealed class CaseServicePersistenceTests
     }
 
     [Fact]
+    public async Task Updating_case_operation_times_updates_not_started_batch_snapshots_only()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var editAuthority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+        var created = await service.CreateAsync(
+            CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "external-case-operation-sync")),
+            editAuthority);
+        var operation = await service.CreateOperationAsync(
+            created.CaseId,
+            new CreateCaseOperationCommand(10, "Mill", "mill", 60, 30, "INDEPENDENT", null, null),
+            editAuthority);
+
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.CommandText = """
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                VALUES ('batch-not-started', $caseId, 'B-NS', 'waiting', 1),
+                       ('batch-in-progress', $caseId, 'B-IP', 'in_progress', 1);
+                INSERT INTO batch_operations (
+                    id, production_batch_id, source_case_operation_id, operation_number,
+                    route_position, name, setup_seconds, cycle_seconds, status)
+                VALUES
+                    ('batch-operation-not-started', 'batch-not-started', $operationId, 10, 0, 'Mill', 60, 30, 'not_started'),
+                    ('batch-operation-in-progress', 'batch-in-progress', $operationId, 10, 0, 'Mill', 60, 30, 'in_progress');
+                """;
+            insert.Parameters.AddWithValue("$caseId", created.CaseId);
+            insert.Parameters.AddWithValue("$operationId", operation.CaseOperationId);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        await service.UpdateOperationAsync(
+            created.CaseId,
+            operation.CaseOperationId,
+            operation.Version,
+            new UpdateCaseOperationCommand(
+                OptionalField<int>.Unspecified,
+                OptionalField<string?>.Unspecified,
+                OptionalField<string?>.Unspecified,
+                OptionalField<int?>.Specified(150),
+                OptionalField<int?>.Specified(75),
+                OptionalField<string?>.Unspecified,
+                OptionalField<string?>.Unspecified,
+                OptionalField<string?>.Unspecified),
+            editAuthority);
+
+        await using var assertionConnection = await fixture.Database.OpenConnectionAsync();
+        await using var assertion = assertionConnection.CreateCommand();
+        assertion.CommandText = """
+            SELECT id, setup_seconds, cycle_seconds
+            FROM batch_operations
+            ORDER BY id;
+            """;
+        await using var reader = await assertion.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("batch-operation-in-progress", reader.GetString(0));
+        Assert.Equal(60, reader.GetInt32(1));
+        Assert.Equal(30, reader.GetInt32(2));
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("batch-operation-not-started", reader.GetString(0));
+        Assert.Equal(150, reader.GetInt32(1));
+        Assert.Equal(75, reader.GetInt32(2));
+        Assert.False(await reader.ReadAsync());
+    }
+
+    [Fact]
     public async Task Case_survives_database_reopen()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();

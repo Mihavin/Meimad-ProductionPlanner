@@ -7,15 +7,18 @@ namespace Meimad.Planner.Server.Application.ProductionBatches;
 internal sealed class ProductionBatchService
 {
     private readonly IProductionBatchRepository repository;
+    private readonly ICaseComponentRepository? componentRepository;
     private readonly TimeProvider timeProvider;
     private readonly DerivedCaseOrderService? derivedOrderService;
 
     public ProductionBatchService(
         IProductionBatchRepository repository,
         TimeProvider timeProvider,
-        DerivedCaseOrderService? derivedOrderService = null)
+        DerivedCaseOrderService? derivedOrderService = null,
+        ICaseComponentRepository? componentRepository = null)
     {
         this.repository = repository;
+        this.componentRepository = componentRepository;
         this.timeProvider = timeProvider;
         this.derivedOrderService = derivedOrderService;
     }
@@ -35,6 +38,7 @@ internal sealed class ProductionBatchService
                 allocation.OrderId,
                 allocation.Quantity,
                 allocation.DerivedOrderKey)).ToArray()));
+        await EnsureCaseCanOwnBatchesAsync(values.CaseId, cancellationToken);
         await ValidateDerivedAllocationsAsync(values.CaseId, values.Allocations, null, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var batchId = Guid.NewGuid().ToString("N");
@@ -88,6 +92,7 @@ internal sealed class ProductionBatchService
                 allocation.OrderId,
                 allocation.Quantity,
                 allocation.DerivedOrderKey)).ToArray()));
+        await EnsureCaseCanOwnBatchesAsync(current.CaseId, cancellationToken);
         await ValidateDerivedAllocationsAsync(current.CaseId, values.Allocations, current, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var allocations = values.Allocations.Select(allocation => new BatchAllocation(
@@ -121,6 +126,13 @@ internal sealed class ProductionBatchService
         string batchId,
         CancellationToken cancellationToken = default) =>
         repository.ListOperationsAsync(batchId, cancellationToken);
+
+    private async Task EnsureCaseCanOwnBatchesAsync(string caseId, CancellationToken cancellationToken)
+    {
+        if (componentRepository is not null
+            && (await componentRepository.ListComponentsAsync(caseId, cancellationToken)).Any(item => item.IsActive))
+            throw new ProductionBatchParentCaseForbiddenException();
+    }
 
     private async Task ValidateDerivedAllocationsAsync(
         string caseId, IReadOnlyList<ValidatedBatchAllocationValue> allocations,
@@ -182,10 +194,10 @@ internal sealed class ProductionBatchRouteRequiredException : Exception
     }
 }
 
-internal sealed class ProductionBatchChildCaseRequiredException : Exception
+internal sealed class ProductionBatchParentCaseForbiddenException : Exception
 {
-    internal ProductionBatchChildCaseRequiredException()
-        : base("Production Batches belong to child Cases in the component pool.") { }
+    internal ProductionBatchParentCaseForbiddenException()
+        : base("A parent Case cannot own Production Batches. Production Batches belong to standalone or child Cases.") { }
 }
 
 internal sealed class ProductionBatchNotFoundException : Exception

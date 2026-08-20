@@ -109,6 +109,7 @@ internal sealed record KitaronSyncStatus(
 internal interface IKitaronSyncRepository
 {
     Task<KitaronSyncStatus> GetStatusAsync(CancellationToken cancellationToken);
+    Task<IReadOnlySet<string>> GetExistingCasePartNumbersAsync(CancellationToken cancellationToken);
     Task<KitaronSyncStatus> MarkStartedAsync(int mappingVersion, DateTimeOffset now, CancellationToken cancellationToken);
     Task<KitaronSyncStatus> MarkFailedAsync(string status, string message, DateTimeOffset now, CancellationToken cancellationToken);
     Task<KitaronSyncStatus> ApplyAsync(KitaronSyncPlan plan, DateTimeOffset now, CancellationToken cancellationToken);

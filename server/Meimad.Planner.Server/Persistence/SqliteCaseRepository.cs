@@ -545,8 +545,64 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             throw new CaseOperationVersionConflictException(operationId, expectedVersion);
         }
 
+        // A Batch owns an execution snapshot of its Case Operation.  Keep the
+        // timing portion of every not-started snapshot in sync so the planning
+        // board and Timeline immediately recalculate with the revised routing
+        // times.  Started and completed work remains an historical record.
+        await PropagateTimingToNotStartedBatchOperationsAsync(
+            connection,
+            transaction,
+            candidate,
+            cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
         return candidate;
+    }
+
+    private static async Task PropagateTimingToNotStartedBatchOperationsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CaseOperationDetails operation,
+        CancellationToken cancellationToken)
+    {
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE batch_operations
+            SET setup_seconds = $setupSeconds,
+                cycle_seconds = $cycleSeconds,
+                qa_seconds = $qaSeconds,
+                load_unload_seconds = $loadUnloadSeconds,
+                load_unload_requires_worker = $loadUnloadRequiresWorker,
+                automatic_loading = $automaticLoading,
+                load_unload_every_n_parts = $loadUnloadEveryNParts,
+                has_external_delay = $hasExternalDelay,
+                external_delay_description = $externalDelayDescription,
+                external_delay_duration = $externalDelayDuration,
+                external_delay_duration_unit = $externalDelayDurationUnit,
+                external_delay_calendar_id = $externalDelayCalendarId,
+                external_delay_respect_master_calendar = $externalDelayRespectMasterCalendar,
+                version = version + 1,
+                updated_at = $updatedAt
+            WHERE source_case_operation_id = $sourceCaseOperationId
+              AND status = 'not_started';
+            """;
+        update.Parameters.AddWithValue("$sourceCaseOperationId", operation.CaseOperationId);
+        AddNullableInteger(update, "$setupSeconds", operation.SetupTimeSeconds);
+        AddNullableInteger(update, "$cycleSeconds", operation.CycleTimePerPartSeconds);
+        update.Parameters.AddWithValue("$qaSeconds", operation.QaTimeAfterSetupSeconds);
+        update.Parameters.AddWithValue("$loadUnloadSeconds", operation.LoadUnloadTimeSeconds);
+        update.Parameters.AddWithValue("$loadUnloadRequiresWorker", operation.LoadUnloadRequiresWorker ? 1 : 0);
+        update.Parameters.AddWithValue("$automaticLoading", operation.AutomaticLoading ? 1 : 0);
+        AddNullableInteger(update, "$loadUnloadEveryNParts", operation.LoadUnloadEveryNParts);
+        update.Parameters.AddWithValue("$hasExternalDelay", operation.HasExternalDelay ? 1 : 0);
+        AddNullableText(update, "$externalDelayDescription", operation.ExternalDelayDescription);
+        update.Parameters.AddWithValue("$externalDelayDuration", operation.ExternalDelayDuration);
+        update.Parameters.AddWithValue("$externalDelayDurationUnit", operation.ExternalDelayDurationUnit);
+        AddNullableText(update, "$externalDelayCalendarId", operation.ExternalDelayCalendarId);
+        update.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", operation.RespectMasterCalendar ? 1 : 0);
+        update.Parameters.AddWithValue("$updatedAt", FormatInstant(operation.UpdatedAt));
+        await update.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static void ValidateExternalDelay(

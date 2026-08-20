@@ -427,7 +427,7 @@
                                 </Grid>
 
                                 <TextBlock Text="Where Used" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                                <DataGrid ItemsSource="{Binding WhereUsed}" AutoGenerateColumns="False" IsReadOnly="True"
+                                <DataGrid ItemsSource="{Binding WhereUsed}" SelectedItem="{Binding SelectedWhereUsed}" AutoGenerateColumns="False" IsReadOnly="True"
                                           CanUserAddRows="False" MinHeight="110">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Parent Part Number" Binding="{Binding ParentPartNumber}" Width="180" />
@@ -436,6 +436,8 @@
                                         <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="70" />
                                     </DataGrid.Columns>
                                 </DataGrid>
+                                <Button Content="Open Case" Command="{Binding OpenParentCaseCommand}" HorizontalAlignment="Right" Margin="0,8,0,0"
+                                        ToolTip="Open the selected parent Case" />
 
                                 <TextBlock Text="Component Demand Preview" FontSize="18" FontWeight="SemiBold" Margin="0,18,0,8" />
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
@@ -547,7 +549,7 @@
                         <TabItem.Style>
                             <Style TargetType="TabItem">
                                 <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers><DataTrigger Binding="{Binding IsChildCase}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                                <Style.Triggers><DataTrigger Binding="{Binding CanShowBatches}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
                             </Style>
                         </TabItem.Style>
                         <ScrollViewer x:Name="BatchesTabScroll" VerticalScrollBarVisibility="Visible"
@@ -565,7 +567,7 @@
                                     <Button Content="Add Production Batch" Command="{Binding BeginCreateBatchCommand}" Margin="0"
                                             ToolTip="Requires at least one defined Case Operation; the Server never invents a route." />
                                 </StackPanel>
-                                <TextBlock Text="Child production launches with explicit parent-derived demand, stock, and scrap allocations."
+                                <TextBlock Text="Standalone and child production launches use direct or parent-derived demand, stock, and scrap allocations."
                                            Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                             </DockPanel>
                             <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"

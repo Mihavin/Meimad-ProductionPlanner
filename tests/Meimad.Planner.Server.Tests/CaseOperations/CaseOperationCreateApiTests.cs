@@ -201,7 +201,7 @@ public sealed class CaseOperationCreateApiTests
             var snapshotted = Assert.Single(
                 snapshotDocument.RootElement.GetProperty("items").EnumerateArray());
             Assert.Equal("Saw", snapshotted.GetProperty("name").GetString());
-            Assert.Equal(60, snapshotted.GetProperty("setupTimeSeconds").GetInt32());
+            Assert.Equal(90, snapshotted.GetProperty("setupTimeSeconds").GetInt32());
 
             using var caseResponse = await client.GetAsync($"/api/v1/cases/{caseId}");
             using var caseDocument = JsonDocument.Parse(

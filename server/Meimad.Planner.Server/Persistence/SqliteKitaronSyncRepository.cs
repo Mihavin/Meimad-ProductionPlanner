@@ -12,6 +12,22 @@ internal sealed class SqliteKitaronSyncRepository(
         return await ReadStatusAsync(connection, null, cancellationToken);
     }
 
+    public async Task<IReadOnlySet<string>> GetExistingCasePartNumbersAsync(
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT DISTINCT TRIM(part_number)
+            FROM cases
+            WHERE NULLIF(TRIM(part_number), '') IS NOT NULL;
+            """;
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(reader.GetString(0));
+        return result;
+    }
+
     public async Task<KitaronSyncStatus> MarkStartedAsync(
         int mappingVersion,
         DateTimeOffset now,
@@ -94,6 +110,8 @@ internal sealed class SqliteKitaronSyncRepository(
         }
         await DeactivateMissingComponentsAsync(
             connection, transaction, plan.KnownComponentSourceKeys, now, counts, cancellationToken);
+        await SynchronizeNotStartedBatchOperationTimesAsync(
+            connection, transaction, now, cancellationToken);
 
         var message = $"Synchronized {plan.SourceRows:N0} source rows: " +
             $"{counts.CasesCreated} Case(s), {counts.OrdersCreated} Order(s), and " +
@@ -139,11 +157,51 @@ internal sealed class SqliteKitaronSyncRepository(
         return result;
     }
 
+    private static async Task SynchronizeNotStartedBatchOperationTimesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE batch_operations
+            SET setup_seconds = (
+                    SELECT case_operations.setup_seconds
+                    FROM case_operations
+                    WHERE case_operations.id = batch_operations.source_case_operation_id),
+                cycle_seconds = (
+                    SELECT case_operations.cycle_seconds
+                    FROM case_operations
+                    WHERE case_operations.id = batch_operations.source_case_operation_id),
+                version = version + 1,
+                updated_at = $now
+            WHERE status = 'not_started'
+              AND EXISTS (
+                    SELECT 1
+                    FROM case_operations
+                    WHERE case_operations.id = batch_operations.source_case_operation_id)
+              AND (
+                    setup_seconds IS NOT (
+                        SELECT case_operations.setup_seconds
+                        FROM case_operations
+                        WHERE case_operations.id = batch_operations.source_case_operation_id)
+                    OR cycle_seconds IS NOT (
+                        SELECT case_operations.cycle_seconds
+                        FROM case_operations
+                        WHERE case_operations.id = batch_operations.source_case_operation_id));
+            """;
+        update.Parameters.AddWithValue("$now", now.ToString("O"));
+        await update.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task<string> ResolveCaseAsync(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncCase item,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
-        var link = await ReadLinkAsync(connection, transaction, "case", item.SourceKey, cancellationToken);
+        var link = await ReadValidLinkAsync(
+            connection, transaction, "case", item.SourceKey, "cases", counts, cancellationToken);
         if (link is null)
         {
             var matches = await FindIdsAsync(connection, transaction,
@@ -172,7 +230,6 @@ internal sealed class SqliteKitaronSyncRepository(
             await UpsertLinkAsync(connection, transaction, "case", item.SourceKey, id, owns, item.SourceHash, now, cancellationToken);
             return id;
         }
-        await EnsureTargetExistsAsync(connection, transaction, "cases", link.Value.TargetId, cancellationToken);
         if (link.Value.OwnsTarget && !StringComparer.Ordinal.Equals(link.Value.SourceHash, item.SourceHash))
         {
             await using var update = connection.CreateCommand();
@@ -198,11 +255,13 @@ internal sealed class SqliteKitaronSyncRepository(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncOrder item, string caseId,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
-        var link = await ReadLinkAsync(connection, transaction, "order", item.SourceKey, cancellationToken);
+        var link = await ReadValidLinkAsync(
+            connection, transaction, "order", item.SourceKey, "orders", counts, cancellationToken);
         if (link is null)
         {
             var legacyKey = $"{item.CaseSourceKey}\u001f{item.OrderNumber}";
-            var legacyLink = await ReadLinkAsync(connection, transaction, "order", legacyKey, cancellationToken);
+            var legacyLink = await ReadValidLinkAsync(
+                connection, transaction, "order", legacyKey, "orders", counts, cancellationToken);
             if (legacyLink is not null)
             {
                 await DeleteLinkAsync(connection, transaction, "order", legacyKey, cancellationToken);
@@ -248,7 +307,6 @@ internal sealed class SqliteKitaronSyncRepository(
             await UpsertLinkAsync(connection, transaction, "order", item.SourceKey, id, owns, item.SourceHash, now, cancellationToken);
             return;
         }
-        await EnsureTargetExistsAsync(connection, transaction, "orders", link.Value.TargetId, cancellationToken);
         if (link.Value.OwnsTarget && !StringComparer.Ordinal.Equals(link.Value.SourceHash, item.SourceHash))
         {
             var allocated = await ScalarIntAsync(connection, transaction,
@@ -292,7 +350,8 @@ internal sealed class SqliteKitaronSyncRepository(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncOperation item, string caseId,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
-        var link = await ReadLinkAsync(connection, transaction, "case_operation", item.SourceKey, cancellationToken);
+        var link = await ReadValidLinkAsync(
+            connection, transaction, "case_operation", item.SourceKey, "case_operations", counts, cancellationToken);
         if (link is null)
         {
             var matches = await FindIdsAsync(connection, transaction,
@@ -325,7 +384,6 @@ internal sealed class SqliteKitaronSyncRepository(
             await UpsertLinkAsync(connection, transaction, "case_operation", item.SourceKey, id, owns, item.SourceHash, now, cancellationToken);
             return;
         }
-        await EnsureTargetExistsAsync(connection, transaction, "case_operations", link.Value.TargetId, cancellationToken);
         if (link.Value.OwnsTarget && !StringComparer.Ordinal.Equals(link.Value.SourceHash, item.SourceHash))
         {
             await using var update = connection.CreateCommand();
@@ -356,10 +414,13 @@ internal sealed class SqliteKitaronSyncRepository(
         if (await ScalarIntAsync(connection, transaction,
                 "SELECT COUNT(*) FROM case_operations WHERE case_id=$caseId;",
                 "$caseId", parentCaseId, cancellationToken) > 0)
-            throw new KitaronSyncDataException(
-                $"Kitaron parent Case {item.ParentCaseSourceKey} still has direct Operations. Remove or migrate that route before activating its Components.");
+        {
+            counts.Warnings++;
+            return;
+        }
 
-        var link = await ReadLinkAsync(connection, transaction, "case_component", item.SourceKey, cancellationToken);
+        var link = await ReadValidLinkAsync(
+            connection, transaction, "case_component", item.SourceKey, "case_components", counts, cancellationToken);
         if (link is null)
         {
             var matches = await FindComponentIdsAsync(
@@ -368,6 +429,18 @@ internal sealed class SqliteKitaronSyncRepository(
                 throw new KitaronSyncDataException($"Component {item.SourceKey} matches multiple Planner relationships.");
             var id = matches.Count == 1 ? matches[0] : StableId("kit-component", item.SourceKey);
             var owns = matches.Count == 0;
+            if (!owns)
+            {
+                var linkedSourceKey = await ReadSourceKeyForTargetAsync(
+                    connection, transaction, "case_component", id, cancellationToken);
+                if (linkedSourceKey is not null
+                    && !StringComparer.Ordinal.Equals(linkedSourceKey, item.SourceKey))
+                {
+                    counts.ComponentsMatched++;
+                    counts.Warnings++;
+                    return;
+                }
+            }
             if (owns)
             {
                 await EnsureNoComponentCycleAsync(
@@ -392,7 +465,6 @@ internal sealed class SqliteKitaronSyncRepository(
             return;
         }
 
-        await EnsureTargetExistsAsync(connection, transaction, "case_components", link.Value.TargetId, cancellationToken);
         if (link.Value.OwnsTarget && !StringComparer.Ordinal.Equals(link.Value.SourceHash, item.SourceHash))
         {
             await EnsureNoComponentCycleAsync(
@@ -517,6 +589,23 @@ internal sealed class SqliteKitaronSyncRepository(
             ? (reader.GetString(0), reader.GetInt32(1) != 0, reader.GetString(2)) : null;
     }
 
+    private static async Task<(string TargetId, bool OwnsTarget, string SourceHash)?> ReadValidLinkAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string entity, string key,
+        string targetTable, MutableCounts counts, CancellationToken cancellationToken)
+    {
+        var link = await ReadLinkAsync(connection, transaction, entity, key, cancellationToken);
+        if (link is null) return null;
+        if (await TargetExistsAsync(
+                connection, transaction, targetTable, link.Value.TargetId, cancellationToken))
+        {
+            return link;
+        }
+
+        await DeleteLinkAsync(connection, transaction, entity, key, cancellationToken);
+        counts.Warnings++;
+        return null;
+    }
+
     private static async Task DeleteLinkAsync(
         SqliteConnection connection, SqliteTransaction transaction, string entity, string key,
         CancellationToken cancellationToken)
@@ -526,6 +615,23 @@ internal sealed class SqliteKitaronSyncRepository(
         command.CommandText = "DELETE FROM kitaron_sync_links WHERE source_entity=$entity AND source_key=$key;";
         Add(command, "$entity", entity); Add(command, "$key", key);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<string?> ReadSourceKeyForTargetAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string entity, string targetId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT source_key
+            FROM kitaron_sync_links
+            WHERE source_entity=$entity AND target_id=$target
+            LIMIT 1;
+            """;
+        Add(command, "$entity", entity);
+        Add(command, "$target", targetId);
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
     }
 
     private static async Task UpsertLinkAsync(
@@ -547,7 +653,7 @@ internal sealed class SqliteKitaronSyncRepository(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task EnsureTargetExistsAsync(
+    private static async Task<bool> TargetExistsAsync(
         SqliteConnection connection, SqliteTransaction transaction, string table, string id,
         CancellationToken cancellationToken)
     {
@@ -555,8 +661,7 @@ internal sealed class SqliteKitaronSyncRepository(
         command.Transaction = transaction;
         command.CommandText = $"SELECT COUNT(*) FROM {table} WHERE id=$id;";
         Add(command, "$id", id);
-        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) != 1)
-            throw new KitaronSyncDataException($"A Kitaron link points to a missing {table} record.");
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
     }
 
     private static async Task<IReadOnlyList<string>> FindIdsAsync(

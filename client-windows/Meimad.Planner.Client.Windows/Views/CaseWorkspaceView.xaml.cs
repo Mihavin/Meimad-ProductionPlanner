@@ -28,10 +28,15 @@ public partial class CaseWorkspaceView : UserControl
         if (e.NewValue is CaseWorkspaceViewModel newViewModel)
         {
             newViewModel.PropertyChanged += CaseWorkspace_PropertyChanged;
+            newViewModel.ConfirmBatchRemoval = ConfirmBatchRemoval;
         }
         StepViewer.ClearModel();
         UpdateStepSnapshotState();
     }
+
+    private static bool ConfirmBatchRemoval(int batchCount) => MessageBox.Show(
+        $"Adding a child component converts this Case into a parent. {batchCount} direct Production Batch{(batchCount == 1 ? string.Empty : "es")} and their assignments, execution history, allocations, and generated job-package records will be permanently removed. Continue?",
+        "Remove direct Production Batches?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
     private void CaseWorkspace_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

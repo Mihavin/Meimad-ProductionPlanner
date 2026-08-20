@@ -2,7 +2,7 @@
   <Package
     Name="Meimad Production Planner Server"
     Manufacturer="Meimad"
-    Version="0.1.3"
+    Version="0.1.10"
     UpgradeCode="{49637DC8-BA22-4B14-90C7-AA74B249A38F}"
     Scope="perMachine">
 
@@ -37,7 +37,7 @@
           Start="auto"
           ErrorControl="normal"
           Account="LocalSystem"
-          Arguments="--Database:Path=&quot;[CommonAppDataFolder]MeimadPlanner\Server\data\planner.db&quot; --Backup:Folder=&quot;[CommonAppDataFolder]MeimadPlanner\Server\backups&quot; --EInk:PackageRoot=&quot;[CommonAppDataFolder]MeimadPlanner\Server\eink&quot;" />
+          Arguments="--Database:Path=&quot;[CommonAppDataFolder]MeimadPlanner\Server\data\meimad-planner.db&quot; --Backup:Folder=&quot;[CommonAppDataFolder]MeimadPlanner\Server\backups&quot; --EInk:PackageRoot=&quot;[CommonAppDataFolder]MeimadPlanner\Server\eink&quot;" />
         <ServiceControl
           Id="ControlPlannerServerService"
           Name="Meimad Planner Server"

@@ -371,6 +371,237 @@ public sealed class KitaronConnectionApiTests
         Assert.Equal(4, reader.ReadCount);
     }
 
+    [Fact]
+    public async Task Existing_planner_case_seeds_component_import_when_parent_is_absent_from_planning_view()
+    {
+        var reader = new ExistingCaseComponentReader();
+        await RunAsync(new CompleteTester(), async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO cases (
+                        id, part_number, name, working_folder_path,
+                        version, created_at, updated_at)
+                    VALUES (
+                        'existing-parent', '30P410136000-501', 'INTERCOSTAL 1 ASSEMBLY', 'existing',
+                        1, '2026-08-19T00:00:00Z', '2026-08-19T00:00:00Z');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await ConfigureReadySyncAsync(client);
+            using var sync = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Equal(HttpStatusCode.OK, sync.StatusCode);
+            using var syncJson = JsonDocument.Parse(await sync.Content.ReadAsStringAsync());
+            Assert.Equal("succeeded", syncJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(1, syncJson.RootElement.GetProperty("casesCreated").GetInt32());
+            Assert.Equal(1, syncJson.RootElement.GetProperty("casesMatched").GetInt32());
+            Assert.Equal(1, syncJson.RootElement.GetProperty("componentsCreated").GetInt32());
+
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT parent.part_number, child.part_number, component.quantity_per_parent
+                FROM case_components component
+                JOIN cases parent ON parent.id=component.parent_case_id
+                JOIN cases child ON child.id=component.child_case_id
+                WHERE component.is_active=1;
+                """;
+            await using var relationship = await verify.ExecuteReaderAsync();
+            Assert.True(await relationship.ReadAsync());
+            Assert.Equal("30P410136000-501", relationship.GetString(0));
+            Assert.Equal("30P410136100-001", relationship.GetString(1));
+            Assert.Equal(1d, relationship.GetDouble(2));
+            Assert.False(await relationship.ReadAsync());
+        }, reader);
+    }
+
+    [Fact]
+    public async Task Kitaron_bom_root_imports_when_absent_from_both_planning_view_and_planner()
+    {
+        var reader = new ExistingCaseComponentReader();
+        await RunAsync(new CompleteTester(), async (application, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var sync = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Equal(HttpStatusCode.OK, sync.StatusCode);
+            using var syncJson = JsonDocument.Parse(await sync.Content.ReadAsStringAsync());
+            Assert.Equal("succeeded", syncJson.RootElement.GetProperty("status").GetString());
+            Assert.Equal(2, syncJson.RootElement.GetProperty("casesCreated").GetInt32());
+            Assert.Equal(1, syncJson.RootElement.GetProperty("componentsCreated").GetInt32());
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var verify = connection.CreateCommand();
+            verify.CommandText = """
+                SELECT COUNT(*)
+                FROM case_components component
+                JOIN cases parent ON parent.id=component.parent_case_id
+                JOIN cases child ON child.id=component.child_case_id
+                WHERE parent.part_number='30P410136000-501'
+                  AND child.part_number='30P410136100-001'
+                  AND component.quantity_per_parent=1
+                  AND component.is_active=1;
+                """;
+            Assert.Equal(1L, (long)(await verify.ExecuteScalarAsync())!);
+        }, reader);
+    }
+
+    [Fact]
+    public async Task Sync_repairs_link_whose_case_operation_target_was_deleted()
+    {
+        await RunAsync(new CapturingTester(), async (application, _) =>
+        {
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var now = new DateTimeOffset(2026, 8, 19, 6, 0, 0, TimeSpan.Zero);
+            var item = new KitaronSyncCase(
+                "STALE-PART", "STALE-PART", "Stale link part", null, null,
+                "stale", "case-hash");
+            var operation = new KitaronSyncOperation(
+                "STALE-PART\u001f10", "STALE-PART", 10, 0, "Cut", null, null, null, "operation-hash");
+            var plan = new KitaronSyncPlan(
+                1, [item], [], [operation], [], new HashSet<string>(), [], 1);
+
+            var first = await repository.ApplyAsync(plan, now, CancellationToken.None);
+            Assert.Equal(1, first.OperationsCreated);
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var delete = connection.CreateCommand())
+            {
+                delete.CommandText = "DELETE FROM case_operations;";
+                await delete.ExecuteNonQueryAsync();
+            }
+
+            var repaired = await repository.ApplyAsync(plan, now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal("succeeded", repaired.Status);
+            Assert.Equal(1, repaired.OperationsCreated);
+            Assert.Equal(1, repaired.WarningCount);
+
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT COUNT(*)
+                FROM kitaron_sync_links link
+                JOIN case_operations operation ON operation.id=link.target_id
+                WHERE link.source_entity='case_operation' AND link.source_key='STALE-PART' || char(31) || '10';
+                """;
+            Assert.Equal(1L, (long)(await verify.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
+    public async Task Legacy_parent_operations_skip_conflicting_component_without_failing_sync()
+    {
+        await RunAsync(new CapturingTester(), async (application, _) =>
+        {
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var now = new DateTimeOffset(2026, 8, 19, 6, 0, 0, TimeSpan.Zero);
+            var parent = new KitaronSyncCase("PARENT", "PARENT", "Parent", null, null, "parent", "parent-hash");
+            var child = new KitaronSyncCase("CHILD", "CHILD", "Child", null, null, "child", "child-hash");
+            var operation = new KitaronSyncOperation(
+                "PARENT\u001f10", "PARENT", 10, 0, "Legacy route", null, null, null, "operation-hash");
+            await repository.ApplyAsync(
+                new KitaronSyncPlan(1, [parent], [], [operation], [], new HashSet<string>(), [], 1),
+                now, CancellationToken.None);
+
+            var component = new KitaronSyncComponent(
+                "1:2", "PARENT", "CHILD", 1, 0, "component-hash");
+            var result = await repository.ApplyAsync(
+                new KitaronSyncPlan(1, [parent, child], [], [], [component], new HashSet<string> { "1:2" }, [], 1),
+                now.AddMinutes(1), CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            Assert.Equal(0, result.ComponentsCreated);
+            Assert.Equal(1, result.WarningCount);
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var verify = connection.CreateCommand();
+            verify.CommandText = "SELECT COUNT(*) FROM case_components;";
+            Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
+    public async Task Duplicate_kitaron_edges_reuse_one_parent_child_relationship()
+    {
+        await RunAsync(new CapturingTester(), async (application, _) =>
+        {
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var now = new DateTimeOffset(2026, 8, 19, 6, 0, 0, TimeSpan.Zero);
+            var parent = new KitaronSyncCase("PARENT", "PARENT", "Parent", null, null, "parent", "parent-hash");
+            var child = new KitaronSyncCase("CHILD", "CHILD", "Child", null, null, "child", "child-hash");
+            var first = new KitaronSyncComponent("1:2", "PARENT", "CHILD", 1, 0, "component-hash-1");
+            var duplicate = new KitaronSyncComponent("3:4", "PARENT", "CHILD", 1, 1, "component-hash-2");
+            var result = await repository.ApplyAsync(
+                new KitaronSyncPlan(
+                    2, [parent, child], [], [], [first, duplicate],
+                    new HashSet<string> { "1:2", "3:4" }, [], 1),
+                now, CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            Assert.Equal(1, result.ComponentsCreated);
+            Assert.Equal(1, result.ComponentsMatched);
+            Assert.Equal(1, result.WarningCount);
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var verify = connection.CreateCommand();
+            verify.CommandText = """
+                SELECT (SELECT COUNT(*) FROM case_components),
+                       (SELECT COUNT(*) FROM kitaron_sync_links WHERE source_entity='case_component');
+                """;
+            await using var counts = await verify.ExecuteReaderAsync();
+            Assert.True(await counts.ReadAsync());
+            Assert.Equal(1, counts.GetInt32(0));
+            Assert.Equal(1, counts.GetInt32(1));
+        });
+    }
+
+    private static async Task ConfigureReadySyncAsync(HttpClient client)
+    {
+        using var saveConnection = await client.PutAsJsonAsync("/api/v1/kitaron/connection", new
+        {
+            serverHost = "192.168.0.240", serverPort = 1433, databaseName = "KitaronData229",
+            viewSchema = "dbo", viewName = "VQWorkPlanningForStationF4", username = "kit",
+            password = "sync-secret", clearPassword = false, enabled = true,
+            refreshIntervalSeconds = 3600, version = 1
+        });
+        Assert.Equal(HttpStatusCode.OK, saveConnection.StatusCode);
+        using var testConnection = await client.PostAsync("/api/v1/kitaron/connection/test", null);
+        Assert.Equal(HttpStatusCode.OK, testConnection.StatusCode);
+
+        using var mappingResponse = await client.GetAsync("/api/v1/kitaron/mapping");
+        using var mappingJson = JsonDocument.Parse(await mappingResponse.Content.ReadAsStringAsync());
+        var mapping = mappingJson.RootElement;
+        var fields = mapping.GetProperty("fields").EnumerateArray().Select(field => new
+        {
+            targetEntity = field.GetProperty("targetEntity").GetString(),
+            targetField = field.GetProperty("targetField").GetString(),
+            enabled = field.GetProperty("required").GetBoolean()
+                || field.GetProperty("confidence").GetString() is not ("blocked" or "low"),
+            sourceColumn = field.GetProperty("targetField").GetString() == "route_position"
+                ? "ActionNumber"
+                : field.GetProperty("sourceColumn").ValueKind == JsonValueKind.Null
+                    ? null : field.GetProperty("sourceColumn").GetString(),
+            confidence = field.GetProperty("confidence").GetString() is "blocked"
+                ? "low" : field.GetProperty("confidence").GetString(),
+            transform = field.GetProperty("transform").GetString(),
+            notes = (string?)null
+        }).ToArray();
+        using var ready = await client.PutAsJsonAsync("/api/v1/kitaron/mapping", new
+        {
+            modelMode = "domain_aligned", status = "ready_for_implementation", fields,
+            notes = "Existing-case component synchronization test.",
+            version = mapping.GetProperty("version").GetInt32()
+        });
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+    }
+
     private static async Task RunAsync(
         IKitaronConnectionTester tester,
         Func<WebApplication, HttpClient, Task> test,
@@ -468,6 +699,23 @@ public sealed class KitaronConnectionApiTests
                 ["ActionDescription"] = name, ["Station"] = "MILL", ["RootID"] = "WO-100",
                 ["ProductionAmount"] = 12
             });
+    }
+
+    private sealed class ExistingCaseComponentReader : IKitaronSourceReader
+    {
+        public Task<KitaronSourceSnapshot> ReadAsync(
+            StoredKitaronConnectionSettings settings, string password, IReadOnlyList<string> columns,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal("sync-secret", password);
+            return Task.FromResult(new KitaronSourceSnapshot(
+                [],
+                [],
+                [new KitaronSourceComponent(
+                    "10251:10254",
+                    "30P410136000-501", "INTERCOSTAL 1 ASSEMBLY", "NEW",
+                    "30P410136100-001", "INTERCOSTAL 1", "NEW", 1, 0)]));
+        }
     }
 
     private sealed class CapturingTester : IKitaronConnectionTester
