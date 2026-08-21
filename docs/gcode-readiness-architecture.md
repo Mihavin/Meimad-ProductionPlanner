@@ -60,7 +60,7 @@ The implemented service boundary is `Application/GCode/GCodeService` plus `IGCod
 
 ## Released tool table and capacity validation
 
-Schema v36 extends each `tool_table_releases` row with nullable `required_tool_count` and creates immutable `tool_table_release_tools` rows containing tool identifier, description, required/optional state, magazine-position requirement, active state, and optional position. New releases parse structured CSV or JSON before database publication. Their count is:
+Schema v36 extends each `tool_table_releases` row with nullable `required_tool_count` and creates immutable `tool_table_release_tools` rows containing tool identifier, description, required/optional state, magazine-position requirement, active state, and optional position. New releases parse structured CSV/JSON or a Cimatron `TP_MODEL.TOOLS.mht` CAM export before database publication. MHT Number/Name cells map to identifier/description; every exported row is active, required, and magazine-consuming, while position remains null because the CAM table has no separate pocket field. Their count is:
 
 ```text
 count(distinct case-insensitive tool identifier)

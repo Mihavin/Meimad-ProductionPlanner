@@ -1,5 +1,7 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Meimad.Planner.Server.Domain.GCode;
 
 namespace Meimad.Planner.Server.Application.GCode;
@@ -7,6 +9,7 @@ namespace Meimad.Planner.Server.Application.GCode;
 internal static class ReleasedToolTableParser
 {
     private const int MaximumRows = 2000;
+    private static readonly TimeSpan PatternTimeout = TimeSpan.FromSeconds(5);
 
     internal static async Task<ReleasedToolTableDefinition> ParseAsync(
         string absolutePath,
@@ -18,9 +21,10 @@ internal static class ReleasedToolTableParser
         {
             ".json" => await ParseJsonAsync(absolutePath, cancellationToken),
             ".csv" or ".txt" => await ParseCsvAsync(absolutePath, cancellationToken),
+            ".mht" or ".mhtml" => await ParseCimatronMhtAsync(absolutePath, cancellationToken),
             _ => throw Validation(
                 "unsupported_tool_table_format",
-                "Released tool tables must use structured CSV or JSON format.")
+                "Released tool tables must use structured CSV/JSON or Cimatron MHT format.")
         };
 
         var requiredToolCount = tools
@@ -29,6 +33,195 @@ internal static class ReleasedToolTableParser
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
         return new ReleasedToolTableDefinition(tools, requiredToolCount);
+    }
+
+    private static async Task<IReadOnlyList<ReleasedTool>> ParseCimatronMhtAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var archive = await File.ReadAllTextAsync(path, cancellationToken);
+        var html = ExtractHtmlPart(archive);
+        var tools = new List<ReleasedTool>();
+        var rows = Regex.Matches(
+            html,
+            @"<tr\b[^>]*>(?<content>.*?)</tr\s*>",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline,
+            PatternTimeout);
+        foreach (Match row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var cells = Regex.Matches(
+                row.Groups["content"].Value,
+                @"<t[dh]\b[^>]*>(?<content>.*?)</t[dh]\s*>",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline,
+                PatternTimeout);
+            if (cells.Count < 2)
+            {
+                continue;
+            }
+
+            var identifier = HtmlText(cells[0].Groups["content"].Value);
+            if (!Regex.IsMatch(
+                    identifier,
+                    @"^T\s*\d+[\p{L}\p{N}._/-]*$",
+                    RegexOptions.IgnoreCase,
+                    PatternTimeout))
+            {
+                continue;
+            }
+
+            if (tools.Count >= MaximumRows)
+            {
+                throw Validation("too_many_tool_rows", $"A released tool table may contain at most {MaximumRows} rows.");
+            }
+
+            identifier = Required(identifier, "toolIdentifier", 80, tools.Count + 1);
+            var description = Optional(HtmlText(cells[1].Groups["content"].Value), 240) ?? identifier;
+            tools.Add(new ReleasedTool(
+                Guid.NewGuid().ToString("N"),
+                tools.Count + 1,
+                identifier,
+                description,
+                IsRequired: true,
+                RequiresMagazinePosition: true,
+                IsActive: true,
+                MagazinePosition: null));
+        }
+
+        if (tools.Count == 0)
+        {
+            throw Validation(
+                "cimatron_tool_rows_required",
+                "The Cimatron MHT tool table does not contain recognizable tool rows.");
+        }
+
+        return tools;
+    }
+
+    private static string ExtractHtmlPart(string archive)
+    {
+        var boundary = Regex.Match(
+            archive,
+            """boundary\s*=\s*(?:"(?<value>[^"]+)"|(?<value>[^;\r\n]+))""",
+            RegexOptions.IgnoreCase,
+            PatternTimeout);
+        if (!boundary.Success)
+        {
+            throw Validation("invalid_cimatron_mht", "The Cimatron MHT file has no MIME boundary.");
+        }
+
+        var marker = "--" + boundary.Groups["value"].Value.Trim();
+        foreach (var part in archive.Split(marker, StringSplitOptions.None))
+        {
+            var separator = Regex.Match(part, @"\r?\n\r?\n", RegexOptions.None, PatternTimeout);
+            if (!separator.Success)
+            {
+                continue;
+            }
+
+            var headers = part[..separator.Index];
+            if (!Regex.IsMatch(headers, @"Content-Type\s*:\s*text/html\b", RegexOptions.IgnoreCase, PatternTimeout))
+            {
+                continue;
+            }
+
+            var body = part[(separator.Index + separator.Length)..].TrimEnd('\r', '\n');
+            if (Regex.IsMatch(
+                    headers,
+                    @"Content-Transfer-Encoding\s*:\s*quoted-printable\b",
+                    RegexOptions.IgnoreCase,
+                    PatternTimeout))
+            {
+                return DecodeQuotedPrintable(body);
+            }
+
+            if (Regex.IsMatch(
+                    headers,
+                    @"Content-Transfer-Encoding\s*:\s*base64\b",
+                    RegexOptions.IgnoreCase,
+                    PatternTimeout))
+            {
+                try
+                {
+                    return Encoding.UTF8.GetString(Convert.FromBase64String(
+                        Regex.Replace(body, @"\s+", string.Empty, RegexOptions.None, PatternTimeout)));
+                }
+                catch (FormatException)
+                {
+                    throw Validation("invalid_cimatron_mht", "The Cimatron MHT HTML part contains invalid Base64 data.");
+                }
+            }
+
+            return body;
+        }
+
+        throw Validation("invalid_cimatron_mht", "The Cimatron MHT file has no HTML tool-table part.");
+    }
+
+    private static string DecodeQuotedPrintable(string value)
+    {
+        using var bytes = new MemoryStream(value.Length);
+        for (var index = 0; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (character == '=' && index + 1 < value.Length && value[index + 1] == '\n')
+            {
+                index++;
+                continue;
+            }
+
+            if (character == '=' && index + 2 < value.Length
+                                 && value[index + 1] == '\r' && value[index + 2] == '\n')
+            {
+                index += 2;
+                continue;
+            }
+
+            if (character == '=' && index + 2 < value.Length
+                                 && Hex(value[index + 1]) is var high && high >= 0
+                                 && Hex(value[index + 2]) is var low && low >= 0)
+            {
+                bytes.WriteByte((byte)((high << 4) | low));
+                index += 2;
+                continue;
+            }
+
+            if (character <= 0x7f)
+            {
+                bytes.WriteByte((byte)character);
+            }
+            else
+            {
+                bytes.Write(Encoding.UTF8.GetBytes(character.ToString()));
+            }
+        }
+
+        return Encoding.UTF8.GetString(bytes.ToArray());
+    }
+
+    private static int Hex(char value) => value switch
+    {
+        >= '0' and <= '9' => value - '0',
+        >= 'a' and <= 'f' => value - 'a' + 10,
+        >= 'A' and <= 'F' => value - 'A' + 10,
+        _ => -1
+    };
+
+    private static string HtmlText(string value)
+    {
+        var withoutTags = Regex.Replace(
+            value,
+            @"<[^>]+>",
+            " ",
+            RegexOptions.Singleline,
+            PatternTimeout);
+        return Regex.Replace(
+                WebUtility.HtmlDecode(withoutTags).Replace('\u00a0', ' '),
+                @"\s+",
+                " ",
+                RegexOptions.None,
+                PatternTimeout)
+            .Trim();
     }
 
     private static async Task<IReadOnlyList<ReleasedTool>> ParseCsvAsync(

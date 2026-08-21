@@ -431,6 +431,55 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
+    public async Task Cimatron_mht_tool_table_creates_the_process_release_without_conversion()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var cimatronMht = Encoding.UTF8.GetBytes("""
+                MIME-Version: 1.0
+                Content-Type: multipart/related; boundary="cam-boundary"
+
+                --cam-boundary
+                Content-Transfer-Encoding: quoted-printable
+                Content-Type: text/html; charset="us-ascii"
+
+                <html><body><table class=3DMsoTableGrid>
+                <tr><td>Number</td><td>Name</td><td>Dia</td><td>Holder</td></tr>
+                <tr><td><b>T1</b></td><td>FLYCUTTER=5F80</td><td>80.</td><td>HOLDER5</td></tr>
+                <tr><td><b>T17</b></td><td>DRILL=5F8.5</td><td>8.5</td><td>HOLDER5</td></tr>
+                </table></body></html>
+                --cam-boundary--
+                """);
+
+            var released = await ReleaseAsync(
+                client,
+                "post-a",
+                "NEW_PROCESS_REVISION",
+                "Native Cimatron tool-table release",
+                Encoding.UTF8.GetBytes("T1 M06\nT17 M06\nM30\n"),
+                cimatronMht,
+                confirmNewProcess: true,
+                reuseActiveTools: false,
+                processDescription: "Initial Cimatron manufacturing process",
+                toolFileName: "TP_MODEL.TOOLS.mht");
+
+            Assert.Equal(1, released.ProcessRevisionNumber);
+            using var catalogResponse = await client.GetAsync(
+                "/api/v1/cases/case-1/operations/case-op-1/gcode");
+            catalogResponse.EnsureSuccessStatusCode();
+            using var catalog = JsonDocument.Parse(await catalogResponse.Content.ReadAsStringAsync());
+            var toolTable = catalog.RootElement
+                .GetProperty("activeProcessRevision")
+                .GetProperty("toolTable");
+            Assert.Equal("TP_MODEL.TOOLS.mht", toolTable.GetProperty("originalFileName").GetString());
+            Assert.Equal(2, toolTable.GetProperty("requiredToolCount").GetInt32());
+            Assert.Equal(2, toolTable.GetProperty("tools").GetArrayLength());
+        });
+    }
+
+    [Fact]
     public async Task Required_distinct_magazine_tools_drive_live_machine_capacity_and_block_start()
     {
         await RunAsync(async (application, client, _) =>
@@ -915,11 +964,13 @@ public sealed class GCodeReleaseApiTests
         byte[]? tools,
         bool confirmNewProcess,
         bool reuseActiveTools,
-        string? processDescription = null)
+        string? processDescription = null,
+        string toolFileName = "tools.csv")
     {
         using var response = await SendReleaseAsync(
             client, postprocessorId, scope, comment, gcode, tools,
-            confirmNewProcess, reuseActiveTools, confirmTools: true, processDescription);
+            confirmNewProcess, reuseActiveTools, confirmTools: true, processDescription,
+            toolFileName);
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(
@@ -946,7 +997,8 @@ public sealed class GCodeReleaseApiTests
         bool confirmNewProcess,
         bool reuseActiveTools,
         bool confirmTools,
-        string? processDescription = null)
+        string? processDescription = null,
+        string toolFileName = "tools.csv")
     {
         var content = new MultipartFormDataContent();
         content.Add(new StringContent(postprocessorId), "postprocessorId");
@@ -959,7 +1011,7 @@ public sealed class GCodeReleaseApiTests
         content.Add(new ByteArrayContent(gcode), "gcodeFile", "program.nc");
         if (tools is not null)
         {
-            content.Add(new ByteArrayContent(tools), "toolTableFile", "tools.csv");
+            content.Add(new ByteArrayContent(tools), "toolTableFile", toolFileName);
         }
 
         return client.PostAsync(

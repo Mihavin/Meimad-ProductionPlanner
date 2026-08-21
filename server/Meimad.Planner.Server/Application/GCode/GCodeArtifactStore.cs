@@ -10,7 +10,7 @@ internal sealed class GCodeArtifactStore
         [".nc", ".tap", ".gcode", ".cnc", ".iso", ".mpf", ".spf"],
         StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ToolTableExtensions = new(
-        [".json", ".csv", ".txt"],
+        [".json", ".csv", ".txt", ".mht", ".mhtml"],
         StringComparer.OrdinalIgnoreCase);
 
     private readonly GCodeOptions options;

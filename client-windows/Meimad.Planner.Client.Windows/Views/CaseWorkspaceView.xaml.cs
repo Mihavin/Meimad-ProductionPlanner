@@ -112,7 +112,7 @@ public partial class CaseWorkspaceView : UserControl
         var dialog = new OpenFileDialog
         {
             Title = "Select the released physical tool table",
-            Filter = "Tool tables|*.json;*.csv;*.txt;*.xml;*.mht;*.tools;*.tooltable|All files|*.*",
+            Filter = "Tool tables|*.mht;*.mhtml;*.json;*.csv;*.txt|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
