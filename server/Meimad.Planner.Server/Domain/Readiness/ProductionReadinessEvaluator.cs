@@ -6,6 +6,9 @@ internal static class ProductionReadinessEvaluator
 {
     internal static ProductionReadinessResult Evaluate(ProductionReadinessContext context)
     {
+        if (context.ActiveProcessRevisionId is null)
+            return EvaluateLegacy(context);
+
         var components = new List<ReadinessComponent>(6);
         var currentReleases = context.ActiveProcessRevisionId is null
             ? []
@@ -25,16 +28,44 @@ internal static class ProductionReadinessEvaluator
         AddOffsets(context, effectiveRelease, components);
         AddMaterial(context, components);
 
-        var ready = components.All(component => !component.IsBlocking
-            && component.State is ReadinessStates.Ready or ReadinessStates.NotRequired);
+        var managed = context.ActiveProcessRevisionId is not null;
+        var ready = managed
+            ? components.All(component => !component.IsBlocking
+                && component.State is ReadinessStates.Ready or ReadinessStates.NotRequired)
+            : components.Single(component => component.Key == ReadinessComponentKeys.Material)
+                is { IsBlocking: false, State: ReadinessStates.Ready };
         return new ProductionReadinessResult(
             ready ? OverallReadinessStates.ReadyForProduction : OverallReadinessStates.NotReady,
             ready,
-            context.ActiveProcessRevisionId is not null,
+            managed,
             components,
             effectiveRelease?.GCodeReleaseId,
             !manual && compatible.Length > 1 && effectiveRelease is null,
             compatible);
+    }
+
+    private static ProductionReadinessResult EvaluateLegacy(ProductionReadinessContext context)
+    {
+        var components = new List<ReadinessComponent>(6)
+        {
+            Component(ReadinessComponentKeys.GCode, "G-code", ReadinessStates.NotRequired,
+                "This legacy Operation has no managed process revision; G-code readiness is not enforced."),
+            Component(ReadinessComponentKeys.ToolTable, "Tool Table", ReadinessStates.NotRequired,
+                "This legacy Operation has no managed process revision; released tool-table readiness is not enforced."),
+            Component(ReadinessComponentKeys.MachinePostprocessorCompatibility,
+                "Machine/Postprocessor Compatibility", ReadinessStates.NotRequired,
+                "This legacy Operation has no managed process revision; Postprocessor compatibility is not enforced."),
+            Component(ReadinessComponentKeys.ToolCapacity, "Tool Capacity", ReadinessStates.NotRequired,
+                "This legacy Operation has no released tool requirement count."),
+            Component(ReadinessComponentKeys.ToolOffsets, "Tool Offsets", ReadinessStates.NotRequired,
+                "This legacy Operation has no managed production context for offset confirmation.")
+        };
+        AddMaterial(context, components);
+        var material = components.Single(component => component.Key == ReadinessComponentKeys.Material);
+        var ready = !material.IsBlocking && material.State == ReadinessStates.Ready;
+        return new(
+            ready ? OverallReadinessStates.ReadyForProduction : OverallReadinessStates.NotReady,
+            ready, false, components, null, false, []);
     }
 
     private static ReadinessRelease? ResolveGCode(

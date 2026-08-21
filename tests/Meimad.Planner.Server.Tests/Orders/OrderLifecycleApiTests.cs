@@ -213,6 +213,20 @@ public sealed class OrderLifecycleApiTests
                 ('assignment-second', 'second-op', 'machine-second', 0),
                 ('assignment-single', 'single-op', 'machine-single', 0),
                 ('assignment-partial', 'partial-op', 'machine-partial', 0);
+            INSERT INTO verified_material_receipts (
+                id, case_id, quantity, received_at, verified_at, verified_by,
+                source, created_at, updated_at)
+            VALUES ('order-material', 'order-case', 25, '2026-08-11T00:00:00Z',
+                    '2026-08-11T00:00:00Z', 'test', 'LOCAL_VERIFIED',
+                    '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
+            INSERT INTO batch_material_reservations (
+                id, receipt_id, production_batch_id, quantity, reserved_at, reserved_by,
+                created_at, updated_at)
+            VALUES
+                ('order-material-shared', 'order-material', 'batch-shared', 12, '2026-08-11T00:00:00Z', 'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z'),
+                ('order-material-second', 'order-material', 'batch-second', 5, '2026-08-11T00:00:00Z', 'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z'),
+                ('order-material-single', 'order-material', 'batch-single', 3, '2026-08-11T00:00:00Z', 'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z'),
+                ('order-material-partial', 'order-material', 'batch-partial', 5, '2026-08-11T00:00:00Z', 'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
             UPDATE edit_tokens
             SET holder_client_id = 'order-lifecycle-client', holder_user_id = 'planner',
                 generation = 1, acquired_at = '2026-08-11T00:00:00Z', version = version + 1

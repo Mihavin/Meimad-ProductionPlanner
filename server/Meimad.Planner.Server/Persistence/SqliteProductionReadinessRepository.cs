@@ -39,6 +39,14 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
             ?? throw new BatchOperationNotFoundException(batchOperationId);
         var beforeReadiness = ProductionReadinessEvaluator.Evaluate(context);
 
+        if (!string.Equals(update.MaterialStatus, context.MaterialStatus, StringComparison.Ordinal)
+            || !string.IsNullOrWhiteSpace(update.MaterialComment))
+        {
+            throw new ProductionReadinessValidationException(
+                "materialStatus", "material_reconciliation_required",
+                "Material readiness is calculated from local verified receipts and explicit Batch reservations; it cannot be set manually.");
+        }
+
         if (context.MachineAssignmentId is null || context.MachineId is null)
         {
             if (update.SelectedGCodeReleaseId is not null
@@ -70,14 +78,10 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
 
         await UpdateSelectionAsync(connection, transaction, context,
             update.SelectedGCodeReleaseId, now, cancellationToken);
-        await UpsertMaterialAsync(connection, transaction, batchOperationId,
-            update.MaterialStatus, update.MaterialComment, actor, now, cancellationToken);
 
         var updatedContext = context with
         {
-            SelectedGCodeReleaseId = update.SelectedGCodeReleaseId,
-            MaterialStatus = update.MaterialStatus,
-            MaterialComment = update.MaterialComment
+            SelectedGCodeReleaseId = update.SelectedGCodeReleaseId
         };
         var offsetRecorded = update.ToolOffsetStatus != ReadinessStates.Unverified
             || !string.IsNullOrWhiteSpace(update.ToolOffsetComment);
@@ -85,24 +89,6 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
         {
             await InsertOffsetRecordAsync(connection, transaction, updatedContext,
                 update.ToolOffsetStatus, update.ToolOffsetComment, actor, now, cancellationToken);
-        }
-
-        if (context.MaterialStatus != update.MaterialStatus
-            || !string.Equals(context.MaterialComment, update.MaterialComment, StringComparison.Ordinal))
-        {
-            await SqliteStructuredEventLogRepository.AppendAsync(
-                connection,
-                transaction,
-                new(
-                    "material_readiness_changed",
-                    now,
-                    actor,
-                    new Dictionary<string, string> { ["batchOperationId"] = batchOperationId },
-                    "physical_verification",
-                    update.MaterialComment,
-                    new { status = context.MaterialStatus, comment = context.MaterialComment },
-                    new { status = update.MaterialStatus, comment = update.MaterialComment }),
-                cancellationToken);
         }
 
         if (offsetRecorded)
@@ -161,42 +147,6 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
         command.Parameters.AddWithValue("$releaseId", (object?)selectedReleaseId ?? DBNull.Value);
         command.Parameters.AddWithValue("$updatedAt", Iso(now));
         command.Parameters.AddWithValue("$assignmentId", context.MachineAssignmentId);
-        await command.ExecuteNonQueryAsync(token);
-    }
-
-    private static async Task UpsertMaterialAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string batchOperationId,
-        string status,
-        string? comment,
-        string actor,
-        DateTimeOffset now,
-        CancellationToken token)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO batch_operation_material_readiness (
-                batch_operation_id, status, confirmed_at, confirmed_by,
-                comment, version, updated_at)
-            VALUES ($id, $status, $confirmedAt, $confirmedBy, $comment, 1, $updatedAt)
-            ON CONFLICT(batch_operation_id) DO UPDATE SET
-                status = excluded.status,
-                confirmed_at = excluded.confirmed_at,
-                confirmed_by = excluded.confirmed_by,
-                comment = excluded.comment,
-                version = batch_operation_material_readiness.version + 1,
-                updated_at = excluded.updated_at;
-            """;
-        command.Parameters.AddWithValue("$id", batchOperationId);
-        command.Parameters.AddWithValue("$status", status);
-        command.Parameters.AddWithValue("$confirmedAt",
-            status == ReadinessStates.Ready ? Iso(now) : DBNull.Value);
-        command.Parameters.AddWithValue("$confirmedBy",
-            status == ReadinessStates.Ready ? actor : DBNull.Value);
-        command.Parameters.AddWithValue("$comment", (object?)comment ?? DBNull.Value);
-        command.Parameters.AddWithValue("$updatedAt", Iso(now));
         await command.ExecuteNonQueryAsync(token);
     }
 

@@ -22,6 +22,8 @@ internal static class SqliteProductionReadinessContextReader
         string? selectedReleaseId;
         string materialStatus;
         string? materialComment;
+        string batchId;
+        int plannedQuantity;
 
         await using (var command = connection.CreateCommand())
         {
@@ -44,9 +46,10 @@ internal static class SqliteProductionReadinessContextReader
                        CASE WHEN operation.status = 'not_started'
                             THEN assignment.selected_gcode_release_id
                             ELSE operation.production_gcode_release_id END,
-                       COALESCE(material.status, 'UNVERIFIED'),
-                       material.comment
+                       operation.production_batch_id,
+                       batch.planned_quantity
                 FROM batch_operations operation
+                JOIN production_batches batch ON batch.id = operation.production_batch_id
                 LEFT JOIN machine_assignments assignment
                   ON assignment.batch_operation_id = operation.id
                 LEFT JOIN machines machine ON machine.id = assignment.machine_id
@@ -57,8 +60,6 @@ internal static class SqliteProductionReadinessContextReader
                   ON active_tools.id = active_process.tool_table_release_id
                 LEFT JOIN tool_table_releases pinned_tools
                   ON pinned_tools.id = operation.production_tool_table_release_id
-                LEFT JOIN batch_operation_material_readiness material
-                  ON material.batch_operation_id = operation.id
                 WHERE operation.id = $id;
                 """;
             command.Parameters.AddWithValue("$id", batchOperationId);
@@ -77,9 +78,12 @@ internal static class SqliteProductionReadinessContextReader
             toolTableId = String(reader, 6);
             requiredToolCount = Int(reader, 7);
             selectedReleaseId = String(reader, 8);
-            materialStatus = reader.GetString(9);
-            materialComment = String(reader, 10);
+            batchId = reader.GetString(9);
+            plannedQuantity = reader.GetInt32(10);
         }
+
+        (materialStatus, materialComment) = await ReadMaterialAsync(
+            connection, transaction, batchId, plannedQuantity, token);
 
         var supported = new HashSet<string>(StringComparer.Ordinal);
         if (machineId is not null)
@@ -157,4 +161,45 @@ internal static class SqliteProductionReadinessContextReader
 
     private static int? Int(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+
+    private static async Task<(string Status, string Message)> ReadMaterialAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        string batchId,
+        int plannedQuantity,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT
+                COALESCE((SELECT SUM(quantity) FROM batch_material_reservations
+                          WHERE production_batch_id = $batchId), 0),
+                COALESCE((SELECT SUM(receipt.quantity)
+                          FROM verified_material_receipts receipt
+                          JOIN production_batches batch ON batch.id = $batchId
+                          WHERE receipt.case_id = batch.case_id), 0)
+                - COALESCE((SELECT SUM(reservation.quantity)
+                            FROM batch_material_reservations reservation
+                            WHERE reservation.production_batch_id <> $batchId
+                              AND reservation.receipt_id IN (
+                                  SELECT receipt.id
+                                  FROM verified_material_receipts receipt
+                                  JOIN production_batches batch ON batch.id = $batchId
+                                  WHERE receipt.case_id = batch.case_id)), 0);
+            """;
+        command.Parameters.AddWithValue("$batchId", batchId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        var reserved = reader.GetInt32(0);
+        var availableToBatch = reader.GetInt32(1);
+        if (reserved >= plannedQuantity)
+            return ("READY",
+                $"{reserved} of {plannedQuantity} verified material piece(s) are reserved for this Production Batch.");
+        if (availableToBatch < plannedQuantity)
+            return ("MISSING",
+                $"Production Batch requires {plannedQuantity} material piece(s); {availableToBatch} verified piece(s) are available to it. Shortage: {plannedQuantity - availableToBatch}.");
+        return ("UNVERIFIED",
+            $"Production Batch requires {plannedQuantity} material piece(s); {availableToBatch} verified piece(s) are available, but only {reserved} are explicitly reserved.");
+    }
 }

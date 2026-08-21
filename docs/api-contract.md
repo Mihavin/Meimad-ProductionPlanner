@@ -848,16 +848,29 @@ The released table accepts a JSON tool array (directly or under `tools` / `toolT
 
 Successful publication returns `201` and the immutable release representation. Validation returns `422 validation_failed`; missing operation/history returns `404 resource_not_found`; conflicting process state returns `409` with a specific reason; unavailable or hash/length-invalid storage returns `503 release_storage_unavailable`. File responses include `X-Meimad-Checksum-SHA256` and support ranges. Original filenames are metadata only; server filenames and final paths are sanitized/owned by the Server.
 
-On first Start of managed work, the centralized readiness engine evaluates G-code, released tool table, contextual tool offsets, physical material input, Machine/Postprocessor compatibility, and capacity. Failures return `409` with specific codes such as `gcode_release_missing`, `gcode_release_outdated`, `gcode_release_incompatible`, `gcode_release_selection_required`, `tool_table_missing`, `tool_offsets_missing`, `tool_offsets_outdated`, `material_missing`, `material_unverified`, `postprocessor_incompatible`, `tool_capacity_mismatch`, `tool_requirements_unavailable`, or `machine_capacity_unavailable`. The accepted transaction persists a uniquely resolvable release selection when needed and pins exact process/G-code/tool-table IDs and hashes; later releases do not switch running work. Suspend/resume keeps that pin.
+On first Start of managed work, the centralized readiness engine evaluates G-code, released tool table, contextual tool offsets, Batch-level verified-material reservations, Machine/Postprocessor compatibility, and capacity. Failures return `409` with specific codes such as `gcode_release_missing`, `gcode_release_outdated`, `gcode_release_incompatible`, `gcode_release_selection_required`, `tool_table_missing`, `tool_offsets_missing`, `tool_offsets_outdated`, `material_missing`, `material_unverified`, `postprocessor_incompatible`, `tool_capacity_mismatch`, `tool_requirements_unavailable`, or `machine_capacity_unavailable`. The accepted transaction persists a uniquely resolvable release selection when needed and pins exact process/G-code/tool-table IDs and hashes; later releases do not switch running work. Suspend/resume keeps that pin.
+
+An existing legacy Operation without a managed process revision still bypasses G-code/tool-table/offset/postprocessor pinning, but schema v39 material reconciliation applies to it: Start returns `material_missing` or `material_unverified` until its parent Batch is covered by explicit verified reservations.
 
 Implemented contextual readiness routes:
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/v1/batch-operations/{batchOperationId}/readiness` | Compute the concrete assignment readiness and explanations. |
-| `PUT` | `/api/v1/batch-operations/{batchOperationId}/readiness-inputs` | Active editor sets explicit release selection, physical material status, and contextual offset status. |
+| `PUT` | `/api/v1/batch-operations/{batchOperationId}/readiness-inputs` | Active editor sets explicit release selection and contextual offset status; material is derived from Batch reconciliation. |
 
-The GET/PUT response contains `overallState`, `isReadyForProduction`, `isManaged`, `summary`, six `{key,label,state,message,isBlocking}` components, `effectiveGCodeReleaseId`, `requiresExplicitGCodeSelection`, and compatible release choices. Component states are `READY`, `MISSING`, `OUTDATED`, `INCOMPATIBLE`, `BLOCKED`, `NOT_REQUIRED`, or `UNVERIFIED`. Overall state is `READY_FOR_PRODUCTION` only when every required component is ready/not-required. PUT accepts nullable `selectedGCodeReleaseId`, `materialStatus`, `materialComment`, `toolOffsetStatus`, and `toolOffsetComment`; statuses are `READY`, `MISSING`, or `UNVERIFIED`. Offset confirmation binds to the current Batch Operation/Machine/process/effective release. Material never derives from historical Kitaron receipts.
+The GET/PUT response contains `overallState`, `isReadyForProduction`, `isManaged`, `summary`, six `{key,label,state,message,isBlocking}` components, `effectiveGCodeReleaseId`, `requiresExplicitGCodeSelection`, and compatible release choices. Component states are `READY`, `MISSING`, `OUTDATED`, `INCOMPATIBLE`, `BLOCKED`, `NOT_REQUIRED`, or `UNVERIFIED`. Overall state is `READY_FOR_PRODUCTION` only when every required component is ready/not-required. PUT accepts nullable `selectedGCodeReleaseId`, legacy-compatible `materialStatus`/`materialComment`, `toolOffsetStatus`, and `toolOffsetComment`; material status must match the Server-derived value and comments are rejected because material cannot be manually overridden. Offset confirmation binds to the current Batch Operation/Machine/process/effective release. The Windows Planning Board consumes these routes through its textual Production Readiness dialog; the client neither calculates readiness nor treats color as the only signal.
+
+### 6.12 Verified material receipts and Batch reconciliation
+
+| Method | Route | Behavior |
+|---|---|---|
+| `GET` | `/api/v1/material-receipts?caseId={caseId}` | Lists Case-scoped, locally verified piece receipts with global reserved/available counts. |
+| `POST` | `/api/v1/material-receipts` | Active editor records a physically verified local receipt: `caseId`, positive integer `quantity`, `receivedAt`, optional `externalReference`, and optional `comment`. |
+| `GET` | `/api/v1/batches/{batchId}/material` | Returns planned/required pieces, reserved pieces, verified quantity available to this Batch, shortage, state/message, Case receipts, and current reservations. |
+| `PUT` | `/api/v1/batches/{batchId}/material/reservations` | Active editor atomically replaces the complete explicit reservation set with positive `{receiptId,quantity,comment?}` rows. An empty list releases all reservations. |
+
+Receipt and Batch must belong to the same Case. Reservations cannot exceed either receipt availability (excluding the Batch's replaced rows) or Batch planned quantity. The Server never selects receipts automatically. Reducing a Batch below its reserved quantity returns `422 material_reservation_exceeded`; the editor releases/adjusts reservations first. Material state is `READY` when reserved pieces cover planned quantity, `MISSING` when verified availability cannot cover it, otherwise `UNVERIFIED`. Kitaron sync has no mutation route to either v39 table.
 
 Implemented assign/move request:
 
@@ -1067,7 +1080,7 @@ The added operation fields are:
   "readinessSummary": "Not ready: 2 blocking component(s)",
   "readinessComponents": [
     {"key":"toolOffsets","label":"Tool Offsets","state":"MISSING","message":"Tool offsets have not been confirmed for this Machine and production configuration.","isBlocking":true},
-    {"key":"material","label":"Material","state":"UNVERIFIED","message":"Material has not been physically verified; historical Kitaron receipts are not used.","isBlocking":true}
+    {"key":"material","label":"Material","state":"MISSING","message":"Production Batch requires 53 material piece(s); 0 verified piece(s) are available to it. Shortage: 53.","isBlocking":true}
   ],
   "toolLoadingTimeSeconds": 1500,
   "fixtureSetupTimeSeconds": 900,
@@ -1097,7 +1110,7 @@ The current schema has no durable `planRevision`, so transitional read projectio
 
 ### 7.1 Timeline calculation
 
-For managed not-started operation intervals, schema v37 returns `overallReadinessState`, `isReadyForProduction`, and `readinessSummary`. Readiness does not remove, move, resize, or convert the forecast into a Timeline conflict. The Windows Timeline preserves the calculated interval and marks planned not-ready work with a labelled red outline and explanatory tooltip.
+For not-started operation intervals, the Server returns `overallReadinessState`, `isReadyForProduction`, and `readinessSummary`. Managed Operations receive the complete process/Machine evaluation; legacy Operations receive the schema-v39 material gate while release components are `NOT_REQUIRED`. Readiness does not remove, move, resize, or convert the forecast into a Timeline conflict. The Windows Timeline preserves the calculated interval and marks planned not-ready work with a labelled red outline and explanatory tooltip.
 
 `GET /api/v1/timeline` is implemented as a read-only route. Authentication and the future `planning.read` policy remain pending. Supported query parameters are:
 

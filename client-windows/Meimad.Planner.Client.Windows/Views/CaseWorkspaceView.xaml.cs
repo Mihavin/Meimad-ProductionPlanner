@@ -280,7 +280,7 @@ public partial class CaseWorkspaceView : UserControl
     private async void DeleteCase_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
-            && Confirm("Delete the selected Case? It must have no Operations, Orders, or Production Batches."))
+            && Confirm("Delete the selected Case? It must have no Operations, Orders, Production Batches, active component links, or verified material receipt history."))
             await viewModel.DeleteSelectedCaseAsync();
     }
 
@@ -301,7 +301,7 @@ public partial class CaseWorkspaceView : UserControl
     private async void DeleteBatch_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
-            && Confirm("Delete the selected Production Batch and all of its assignments, Operation execution/pause history, allocations, and generated job-package records? This cannot be undone."))
+            && Confirm("Delete the selected Production Batch and all of its assignments, Operation execution/pause history, allocations, material reservations, and generated job-package records? Verified receipt history remains. This cannot be undone."))
             await viewModel.DeleteSelectedBatchAsync();
     }
 

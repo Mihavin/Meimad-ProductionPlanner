@@ -43,7 +43,8 @@ internal sealed class DatabaseMigrator
         new SchemaV35GCodeProcessRevisionsMigration(),
         new SchemaV36ReleasedToolCapacityMigration(),
         new SchemaV37ProductionReadinessMigration(),
-        new SchemaV38NcCycleEstimatesMigration()
+        new SchemaV38NcCycleEstimatesMigration(),
+        new SchemaV39MaterialReconciliationMigration()
     ];
 
     private readonly SqliteDatabase database;

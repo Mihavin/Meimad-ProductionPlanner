@@ -22,6 +22,8 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             if (!await ExistsAsync(c, t, "cases", id, token)) return false;
             await BlockIfAnyAsync(c, t, "orders", "case_id", id, "Delete the Case's Orders first.", token);
             await BlockIfAnyAsync(c, t, "production_batches", "case_id", id, "Delete the Case's Production Batches first.", token);
+            await BlockIfAnyAsync(c, t, "verified_material_receipts", "case_id", id,
+                "The Case has verified material receipt history and cannot be deleted.", token);
             await BlockIfAnyAsync(c, t, "case_operations", "case_id", id, "Delete the Case's Operations first.", token);
             await BlockBySqlAsync(c, t,
                 "SELECT EXISTS(SELECT 1 FROM case_components WHERE is_active=1 AND (parent_case_id=$id OR child_case_id=$id));",

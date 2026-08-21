@@ -131,6 +131,23 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
+        string batchId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<VerifiedMaterialReceipt> CreateVerifiedMaterialReceiptAsync(
+        VerifiedMaterialReceiptCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<BatchMaterialReconciliation> ReplaceBatchMaterialReservationsAsync(
+        string batchId,
+        MaterialReservationsReplace update,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<byte[]?> GetCasePreviewAsync(
         string caseId,
         CancellationToken cancellationToken = default);
@@ -976,6 +993,45 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
+    }
+
+    public async Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
+        string batchId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/material", cancellationToken);
+        return await ReadSuccessAsync<BatchMaterialReconciliation>(response, cancellationToken);
+    }
+
+    public async Task<VerifiedMaterialReceipt> CreateVerifiedMaterialReceiptAsync(
+        VerifiedMaterialReceiptCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/material-receipts", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<VerifiedMaterialReceipt>(response, cancellationToken);
+    }
+
+    public async Task<BatchMaterialReconciliation> ReplaceBatchMaterialReservationsAsync(
+        string batchId,
+        MaterialReservationsReplace update,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/material/reservations", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<BatchMaterialReconciliation>(response, cancellationToken);
     }
 
     public async Task<byte[]?> GetCasePreviewAsync(

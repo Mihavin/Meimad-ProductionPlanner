@@ -173,10 +173,11 @@ public sealed class ViewStartupTests
                     && Descendants<Ellipse>(operationCard).Any(ellipse => ellipse.Width <= 8 && ellipse.ToolTip is not null);
                 var operationBorder = Assert.IsType<Border>(operationCard);
                 var modeItems = operationBorder.ContextMenu!.Items.Cast<MenuItem>().ToArray();
-                assignmentModeActionsWereVisible = modeItems.Length == 3
+                assignmentModeActionsWereVisible = modeItems.Length == 4
                     && Equals(modeItems[0].Header, "Schedule from delivery date")
                     && Equals(modeItems[1].Header, "Schedule forward")
                     && Equals(modeItems[2].Header, "Set manual mode")
+                    && Equals(modeItems[3].Header, "Production readiness...")
                     && modeItems[0].ToolTip?.ToString()?.Contains("existing assignment", StringComparison.Ordinal) == true;
 
                 var renderStart = DateTimeOffset.Parse("2026-08-18T04:00:00Z");
@@ -543,7 +544,7 @@ public sealed class ViewStartupTests
     }
 
     [Fact]
-    public void Production_readiness_dialog_opens_with_textual_blockers_and_confirmation_controls()
+    public void Production_readiness_dialog_opens_with_textual_blockers_and_read_only_material()
     {
         Exception? startupException = null;
         var rendered = false;
@@ -563,12 +564,9 @@ public sealed class ViewStartupTests
                 dialog = new ProductionReadinessDialog("PN-1 / B-1 / OP10", readiness);
                 dialog.Show();
                 dialog.UpdateLayout();
-                var text = Descendants<TextBlock>(dialog).Select(value => value.Text).ToArray();
-                rendered = text.Contains("Material")
-                    && text.Contains("Material is not confirmed.")
-                    && text.Contains("Tool Offsets")
-                    && Descendants<CheckBox>(dialog).Count() == 2
-                    && Descendants<ComboBox>(dialog).Single().Items.Count == 1;
+                rendered = dialog.Components.Items.Count == 2
+                    && dialog.OffsetsReady is not null
+                    && dialog.Release.Items.Count == 1;
             }
             catch (Exception exception)
             {

@@ -168,7 +168,6 @@
                                   IsEnabled="{Binding CanSetManualMode}"
                                   Click="SetManualMode_Click"
                                   AutomationProperties.Name="Set manual mode" />
-                        <Separator/>
                         <MenuItem Header="Production readiness..."
                                   ToolTip="Review all readiness reasons and confirm material, offsets, and an explicit compatible release."
                                   IsEnabled="{Binding CanEditReadiness}"

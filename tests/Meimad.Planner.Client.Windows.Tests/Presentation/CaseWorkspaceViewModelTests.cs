@@ -792,6 +792,20 @@ public sealed class CaseWorkspaceViewModelTests
                     $"allocation-{index}", value.AllocationType, value.OrderId, value.Quantity)).ToArray()));
         }
 
+        public Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
+            string batchId,
+            CancellationToken cancellationToken = default)
+        {
+            var batch = LastBatchUpdate is not null
+                ? new ProductionBatch(batchId, plannerCase.CaseId, LastBatchUpdate.BatchNumber,
+                    "waiting", LastBatchUpdate.PlannedQuantity, null, 1, 2)
+                : new ProductionBatch(batchId, plannerCase.CaseId, "B-1", "waiting", 5, null, 1, 1);
+            return Task.FromResult(new BatchMaterialReconciliation(
+                batch.BatchId, batch.CaseId, batch.BatchNumber, batch.PlannedQuantity,
+                batch.PlannedQuantity, 0, 0, batch.PlannedQuantity, "MISSING",
+                $"Production Batch requires {batch.PlannedQuantity} material piece(s).", [], []));
+        }
+
         public Task<byte[]?> GetCasePreviewAsync(
             string caseId,
             CancellationToken cancellationToken = default)

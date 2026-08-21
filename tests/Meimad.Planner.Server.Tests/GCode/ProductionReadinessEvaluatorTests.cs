@@ -76,7 +76,6 @@ public sealed class ProductionReadinessEvaluatorTests
     {
         var missingTable = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
         {
-            ActiveProcessRevisionId = null,
             ActiveToolTableReleaseId = null,
             Releases = [],
             SelectedGCodeReleaseId = null,
@@ -121,6 +120,35 @@ public sealed class ProductionReadinessEvaluatorTests
         Assert.Equal(ReadinessStates.Incompatible, Component(reassigned, "gcode").State);
         Assert.Equal(ReadinessStates.Blocked, Component(reassigned, "toolCapacity").State);
         Assert.Equal(ReadinessStates.Outdated, Component(reassigned, "toolOffsets").State);
+    }
+
+    [Fact]
+    public void Legacy_operation_bypasses_release_requirements_but_not_batch_material()
+    {
+        var missing = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
+        {
+            ActiveProcessRevisionId = null,
+            ActiveToolTableReleaseId = null,
+            Releases = [],
+            SelectedGCodeReleaseId = null,
+            ToolOffsetFacts = [],
+            MaterialStatus = ReadinessStates.Missing
+        });
+        Assert.False(missing.IsManaged);
+        Assert.False(missing.IsReadyForProduction);
+        Assert.Equal(ReadinessStates.NotRequired, Component(missing, "gcode").State);
+        Assert.Equal(ReadinessStates.Missing, Component(missing, "material").State);
+
+        var ready = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
+        {
+            ActiveProcessRevisionId = null,
+            ActiveToolTableReleaseId = null,
+            Releases = [],
+            SelectedGCodeReleaseId = null,
+            ToolOffsetFacts = []
+        });
+        Assert.False(ready.IsManaged);
+        Assert.True(ready.IsReadyForProduction);
     }
 
     private static ProductionReadinessContext ReadyContext() => new(

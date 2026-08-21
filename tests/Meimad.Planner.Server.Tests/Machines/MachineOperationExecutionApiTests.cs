@@ -393,6 +393,20 @@ public sealed class MachineOperationExecutionApiTests
             INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
             VALUES ('assignment-1', 'op-1', 'machine-1', 0),
                    ('assignment-2', 'op-2', 'machine-1', 1);
+            INSERT INTO verified_material_receipts (
+                id, case_id, quantity, received_at, verified_at, verified_by,
+                source, created_at, updated_at)
+            VALUES ('receipt-1', 'case-1', 2, '2026-08-11T00:00:00Z',
+                    '2026-08-11T00:00:00Z', 'test', 'LOCAL_VERIFIED',
+                    '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
+            INSERT INTO batch_material_reservations (
+                id, receipt_id, production_batch_id, quantity, reserved_at, reserved_by,
+                created_at, updated_at)
+            VALUES
+                ('reservation-1', 'receipt-1', 'batch-1', 1, '2026-08-11T00:00:00Z', 'test',
+                 '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z'),
+                ('reservation-2', 'receipt-1', 'batch-2', 1, '2026-08-11T00:00:00Z', 'test',
+                 '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
             UPDATE edit_tokens
             SET holder_client_id = 'execution-client', holder_user_id = 'planner',
                 generation = 1, acquired_at = '2026-08-11T00:00:00Z'

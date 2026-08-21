@@ -1097,6 +1097,57 @@ internal sealed record BatchAllocationCreate(
     int Quantity,
     string? DerivedOrderKey = null);
 
+internal sealed record VerifiedMaterialReceipt(
+    string ReceiptId,
+    string CaseId,
+    int Quantity,
+    string Unit,
+    DateTimeOffset ReceivedAt,
+    DateTimeOffset VerifiedAt,
+    string VerifiedBy,
+    string? ExternalReference,
+    string? Comment,
+    int ReservedQuantity,
+    int AvailableQuantity);
+
+internal sealed record BatchMaterialReservation(
+    string ReservationId,
+    string ReceiptId,
+    string ProductionBatchId,
+    int Quantity,
+    DateTimeOffset ReservedAt,
+    string ReservedBy,
+    string? Comment);
+
+internal sealed record BatchMaterialReconciliation(
+    string ProductionBatchId,
+    string CaseId,
+    string BatchNumber,
+    int PlannedQuantity,
+    int RequiredMaterialPieces,
+    int ReservedQuantity,
+    int VerifiedAvailableToBatch,
+    int ShortageQuantity,
+    string State,
+    string Message,
+    IReadOnlyList<VerifiedMaterialReceipt> Receipts,
+    IReadOnlyList<BatchMaterialReservation> Reservations);
+
+internal sealed record VerifiedMaterialReceiptCreate(
+    string CaseId,
+    int Quantity,
+    DateTimeOffset ReceivedAt,
+    string? ExternalReference,
+    string? Comment);
+
+internal sealed record MaterialReservationCreate(
+    string ReceiptId,
+    int Quantity,
+    string? Comment = null);
+
+internal sealed record MaterialReservationsReplace(
+    IReadOnlyList<MaterialReservationCreate> Reservations);
+
 internal sealed record PlanningBoardSnapshot(
     DateTimeOffset ReadAt,
     string ConflictCalculationStatus,

@@ -715,6 +715,19 @@ public sealed class MachineApiTests
                 ('op-a', 'batch-1', 'case-op-a', 10, 0, 'A', 'mill', 'not_started'),
                 ('op-b', 'batch-1', 'case-op-b', 20, 1, 'B', 'mill', 'not_started'),
                 ('op-laser', 'batch-1', 'case-op-laser', 30, 2, 'Laser', 'laser', 'not_started');
+
+            INSERT INTO verified_material_receipts (
+                id, case_id, quantity, received_at, verified_at, verified_by,
+                source, created_at, updated_at)
+            VALUES ('machine-api-receipt', 'case-1', 1, '2026-08-11T00:00:00Z',
+                    '2026-08-11T00:00:00Z', 'test', 'LOCAL_VERIFIED',
+                    '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
+            INSERT INTO batch_material_reservations (
+                id, receipt_id, production_batch_id, quantity, reserved_at, reserved_by,
+                created_at, updated_at)
+            VALUES ('machine-api-reservation', 'machine-api-receipt', 'batch-1', 1,
+                    '2026-08-11T00:00:00Z', 'test',
+                    '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
             """;
         await command.ExecuteNonQueryAsync();
     }

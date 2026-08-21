@@ -88,6 +88,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string newBatchPlannedQuantity = string.Empty;
     private string newBatchStockQuantity = string.Empty;
     private string newBatchScrapAllowance = string.Empty;
+    private BatchMaterialReconciliation? batchMaterial;
+    private string materialReceiptQuantity = string.Empty;
+    private string materialReceiptReference = string.Empty;
+    private string materialReceiptComment = string.Empty;
     private string componentQuantityPerParent = "1";
     private string componentNotes = string.Empty;
     private string componentDemandQuantity = "1";
@@ -126,6 +130,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditBatchCommand = new AsyncCommand(BeginEditBatchAsync, () => CanBeginEditBatch);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
+        RefreshBatchMaterialCommand = new AsyncCommand(LoadSelectedBatchMaterialSafeAsync,
+            () => SelectedBatch is not null && apiClient is not null && !IsBusy);
+        RecordMaterialReceiptCommand = new AsyncCommand(RecordMaterialReceiptAsync,
+            () => isEditor && SelectedCase is not null && SelectedBatch is not null && apiClient is not null && !IsBusy);
+        SaveMaterialReservationsCommand = new AsyncCommand(SaveMaterialReservationsAsync,
+            () => isEditor && SelectedBatch is not null && apiClient is not null && !IsBusy);
         SaveComponentCommand = new AsyncCommand(SaveComponentAsync,
             () => CanBeginChildCreate && (SelectedComponent is not null || SelectedComponentCase is not null));
         RemoveComponentCommand = new AsyncCommand(RemoveComponentAsync,
@@ -170,6 +180,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public ObservableCollection<BatchOrderAllocationViewModel> BatchOrderAllocations { get; } = [];
+
+    public ObservableCollection<MaterialReceiptReservationViewModel> MaterialReceiptReservations { get; } = [];
 
     public ObservableCollection<PlannerProcessRevision> ProcessRevisions { get; } = [];
 
@@ -225,6 +237,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand CancelCreateBatchCommand { get; }
 
     public AsyncCommand CreateBatchCommand { get; }
+
+    public AsyncCommand RefreshBatchMaterialCommand { get; }
+
+    public AsyncCommand RecordMaterialReceiptCommand { get; }
+
+    public AsyncCommand SaveMaterialReservationsCommand { get; }
 
     public AsyncCommand SaveComponentCommand { get; }
 
@@ -446,9 +464,35 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanBeginEditBatch));
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
+                BatchMaterial = null;
+                MaterialReceiptReservations.Clear();
+                RaiseCommandStates();
+                if (value is not null) _ = LoadSelectedBatchMaterialSafeAsync();
             }
         }
     }
+
+    public BatchMaterialReconciliation? BatchMaterial
+    {
+        get => batchMaterial;
+        private set
+        {
+            if (SetField(ref batchMaterial, value))
+            {
+                OnPropertyChanged(nameof(BatchMaterialMessage));
+                OnPropertyChanged(nameof(BatchMaterialState));
+                OnPropertyChanged(nameof(HasBatchMaterial));
+            }
+        }
+    }
+
+    public bool HasBatchMaterial => BatchMaterial is not null;
+    public string BatchMaterialState => BatchMaterial?.State ?? "Select a Batch";
+    public string BatchMaterialMessage => BatchMaterial?.Message
+        ?? "Select a Production Batch to reconcile its raw-material pieces.";
+    public string MaterialReceiptQuantity { get => materialReceiptQuantity; set => SetField(ref materialReceiptQuantity, value); }
+    public string MaterialReceiptReference { get => materialReceiptReference; set => SetField(ref materialReceiptReference, value); }
+    public string MaterialReceiptComment { get => materialReceiptComment; set => SetField(ref materialReceiptComment, value); }
 
     public CaseComponent? SelectedComponent
     {
@@ -1306,6 +1350,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 var index = Batches.IndexOf(original);
                 if (index >= 0) Batches[index] = saved;
                 SelectedBatch = saved;
+                ApplyBatchMaterial(await apiClient.GetBatchMaterialAsync(saved.BatchId));
             }
             else
             {
@@ -1328,6 +1373,97 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         {
             IsBusy = false;
             RaiseStateProperties();
+        }
+    }
+
+    internal async Task LoadSelectedBatchMaterialSafeAsync()
+    {
+        var batch = SelectedBatch;
+        if (apiClient is null || batch is null || IsBusy) return;
+        try
+        {
+            var value = await apiClient.GetBatchMaterialAsync(batch.BatchId);
+            if (SelectedBatch?.BatchId != batch.BatchId) return;
+            ApplyBatchMaterial(value);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+    }
+
+    internal async Task RecordMaterialReceiptAsync()
+    {
+        if (apiClient is null || SelectedCase is null || SelectedBatch is null || IsBusy) return;
+        if (!TryParsePositiveQuantity(MaterialReceiptQuantity, "Verified receipt quantity", out var quantity)) return;
+        IsBusy = true;
+        try
+        {
+            await apiClient.CreateVerifiedMaterialReceiptAsync(
+                new(SelectedCase.CaseId, quantity, DateTimeOffset.Now,
+                    NullIfBlank(MaterialReceiptReference), NullIfBlank(MaterialReceiptComment)),
+                clientId, editGeneration);
+            MaterialReceiptQuantity = string.Empty;
+            MaterialReceiptReference = string.Empty;
+            MaterialReceiptComment = string.Empty;
+            var value = await apiClient.GetBatchMaterialAsync(SelectedBatch.BatchId);
+            ApplyBatchMaterial(value);
+            StatusMessage = $"Recorded {quantity} locally verified material piece(s). No Kitaron receipt was used as trusted stock.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
+    internal async Task SaveMaterialReservationsAsync()
+    {
+        if (apiClient is null || SelectedBatch is null || IsBusy) return;
+        var reservations = new List<MaterialReservationCreate>();
+        foreach (var row in MaterialReceiptReservations)
+        {
+            if (!TryParseOptionalAllocation(row.ReserveQuantity,
+                    $"Reservation from receipt {row.ReferenceDisplay}", out var quantity)) return;
+            if (quantity > 0) reservations.Add(new(row.ReceiptId, quantity));
+        }
+
+        IsBusy = true;
+        try
+        {
+            var value = await apiClient.ReplaceBatchMaterialReservationsAsync(
+                SelectedBatch.BatchId, new(reservations), clientId, editGeneration);
+            ApplyBatchMaterial(value);
+            StatusMessage = value.State == "READY"
+                ? $"Material reconciled for Production Batch {value.BatchNumber}."
+                : value.Message;
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
+    private void ApplyBatchMaterial(BatchMaterialReconciliation value)
+    {
+        BatchMaterial = value;
+        MaterialReceiptReservations.Clear();
+        foreach (var receipt in value.Receipts)
+        {
+            var reserved = value.Reservations
+                .Where(item => item.ReceiptId == receipt.ReceiptId)
+                .Sum(item => item.Quantity);
+            MaterialReceiptReservations.Add(new(receipt, reserved));
         }
     }
 
@@ -2216,6 +2352,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditBatchCommand.RaiseCanExecuteChanged();
         CancelCreateBatchCommand.RaiseCanExecuteChanged();
         CreateBatchCommand.RaiseCanExecuteChanged();
+        RefreshBatchMaterialCommand.RaiseCanExecuteChanged();
+        RecordMaterialReceiptCommand.RaiseCanExecuteChanged();
+        SaveMaterialReservationsCommand.RaiseCanExecuteChanged();
         SaveComponentCommand.RaiseCanExecuteChanged();
         RemoveComponentCommand.RaiseCanExecuteChanged();
         PreviewComponentDemandCommand.RaiseCanExecuteChanged();
@@ -2237,6 +2376,43 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged(string? name) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+internal sealed class MaterialReceiptReservationViewModel : INotifyPropertyChanged
+{
+    private string reserveQuantity;
+
+    internal MaterialReceiptReservationViewModel(VerifiedMaterialReceipt receipt, int reservedForBatch)
+    {
+        ReceiptId = receipt.ReceiptId;
+        ReceivedAt = receipt.ReceivedAt;
+        Quantity = receipt.Quantity;
+        ReservedElsewhere = receipt.ReservedQuantity - reservedForBatch;
+        AvailableToThisBatch = receipt.AvailableQuantity + reservedForBatch;
+        ExternalReference = receipt.ExternalReference;
+        reserveQuantity = reservedForBatch == 0
+            ? string.Empty
+            : reservedForBatch.ToString(CultureInfo.InvariantCulture);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string ReceiptId { get; }
+    public DateTimeOffset ReceivedAt { get; }
+    public int Quantity { get; }
+    public int ReservedElsewhere { get; }
+    public int AvailableToThisBatch { get; }
+    public string? ExternalReference { get; }
+    public string ReferenceDisplay => ExternalReference ?? ReceiptId[..Math.Min(8, ReceiptId.Length)];
+    public string ReserveQuantity
+    {
+        get => reserveQuantity;
+        set
+        {
+            if (reserveQuantity == value) return;
+            reserveQuantity = value;
+            PropertyChanged?.Invoke(this, new(nameof(ReserveQuantity)));
+        }
+    }
 }
 
 internal sealed class BatchOrderAllocationViewModel : INotifyPropertyChanged

@@ -746,7 +746,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             ?? throw new BatchOperationNotFoundException(batchOperationId);
         if (context.ActiveProcessRevisionId is null)
         {
-            // Existing Operations without managed release history retain their pre-v35 execution behavior.
+            // Legacy work does not acquire production release pins, but it still requires
+            // current Batch-level material reconciliation introduced in schema v39.
+            var legacyReadiness = ProductionReadinessEvaluator.Evaluate(context);
+            if (!legacyReadiness.IsReadyForProduction)
+            {
+                var material = legacyReadiness.Components.Single(component =>
+                    component.Key == ReadinessComponentKeys.Material);
+                throw new ProductionReadinessException(
+                    ReadinessErrorCode(context, material), material.Message);
+            }
             return null;
         }
 

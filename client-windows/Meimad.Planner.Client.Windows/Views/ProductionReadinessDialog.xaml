@@ -36,20 +36,14 @@
             <ComboBox x:Name="Release" Margin="0,3,0,0" MinHeight="27"/>
         </StackPanel>
         <Grid Grid.Row="4" Margin="0,10,0,0">
-            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
             <StackPanel>
-                <CheckBox x:Name="MaterialReady" Content="Material physically confirmed" FontWeight="SemiBold"/>
-                <TextBox x:Name="MaterialComment" Margin="0,4,0,0" MinHeight="44" MaxLength="2000"
-                         AcceptsReturn="True" TextWrapping="Wrap" ToolTip="Optional physical material verification note."/>
-            </StackPanel>
-            <StackPanel Grid.Column="2">
                 <CheckBox x:Name="OffsetsReady" Content="Tool offsets confirmed" FontWeight="SemiBold"/>
                 <TextBox x:Name="OffsetsComment" Margin="0,4,0,0" MinHeight="44" MaxLength="2000"
                          AcceptsReturn="True" TextWrapping="Wrap" ToolTip="Optional offset verification note for this Machine, process revision, and G-code release."/>
             </StackPanel>
         </Grid>
         <TextBlock Grid.Row="5" Margin="0,9,0,0" Foreground="#5F6B76" TextWrapping="Wrap"
-                   Text="Confirmations apply only to the assigned Machine and current production configuration. A later process or G-code release may require new offset confirmation."/>
+                   Text="Material readiness is read-only here and comes from locally verified receipts reserved to the Production Batch. Offset confirmation applies only to the assigned Machine and current production configuration."/>
         <TextBlock x:Name="Validation" Grid.Row="6" Margin="0,7,0,0" Foreground="#B42318" TextWrapping="Wrap"/>
         <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button Content="Cancel" IsCancel="True" Margin="0,0,8,0"/>

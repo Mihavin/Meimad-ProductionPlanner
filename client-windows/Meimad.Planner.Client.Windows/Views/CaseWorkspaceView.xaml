@@ -239,6 +239,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -725,6 +726,46 @@
                                     <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />
                                 </DataGrid.Columns>
                             </DataGrid>
+                            <Border Grid.Row="3" Padding="12" Margin="0,10,0,0" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Refresh material" Command="{Binding RefreshBatchMaterialCommand}"/>
+                                            <Button Content="Apply explicit reservations" Command="{Binding SaveMaterialReservationsCommand}" Margin="8,0,0,0"/>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="Material reconciliation" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding BatchMaterialState}" FontWeight="SemiBold" Margin="0,3,0,0"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding BatchMaterialMessage}" TextWrapping="Wrap" Margin="0,7,0,8"/>
+                                    <TextBlock Text="Only locally verified receipts appear here. Historical Kitaron approvals never create trusted availability. Enter exactly how many pieces this Batch reserves from each receipt."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <DataGrid ItemsSource="{Binding MaterialReceiptReservations}" AutoGenerateColumns="False"
+                                              CanUserAddRows="False" MinHeight="90" MaxHeight="170" Margin="0,0,0,10">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Received" Binding="{Binding ReceivedAt, StringFormat={}{0:yyyy-MM-dd}}" IsReadOnly="True" Width="105"/>
+                                            <DataGridTextColumn Header="Reference" Binding="{Binding ReferenceDisplay}" IsReadOnly="True" Width="*"/>
+                                            <DataGridTextColumn Header="Verified" Binding="{Binding Quantity}" IsReadOnly="True" Width="80"/>
+                                            <DataGridTextColumn Header="Reserved elsewhere" Binding="{Binding ReservedElsewhere}" IsReadOnly="True" Width="115"/>
+                                            <DataGridTextColumn Header="Available here" Binding="{Binding AvailableToThisBatch}" IsReadOnly="True" Width="95"/>
+                                            <DataGridTextColumn Header="Reserve for Batch" Binding="{Binding ReserveQuantity, UpdateSourceTrigger=PropertyChanged}" Width="115"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <TextBlock Text="Record a new physically verified receipt" Style="{StaticResource FieldLabel}"/>
+                                    <UniformGrid Columns="3">
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Pieces" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialReceiptQuantity}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Receipt / lot reference" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialReceiptReference}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Verification note" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialReceiptComment}"/></StackPanel>
+                                    </UniformGrid>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Record verified receipt" Command="{Binding RecordMaterialReceiptCommand}"/>
+                                        <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                                   Text="If material is short: edit this Batch and its explicit allocations to reduce quantity; create a second Batch for a ready/waiting split; or keep the full quantity and wait. Quantity edits recalculate the timeline and readiness."/>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
                         </Grid>
                         </ScrollViewer>
                     </TabItem>

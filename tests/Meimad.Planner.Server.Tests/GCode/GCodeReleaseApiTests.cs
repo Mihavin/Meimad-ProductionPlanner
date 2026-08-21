@@ -15,6 +15,187 @@ namespace Meimad.Planner.Server.Tests.GCode;
 public sealed class GCodeReleaseApiTests
 {
     [Fact]
+    public async Task Task8_end_to_end_workflow_preserves_history_recalculates_readiness_and_audits_changes()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            await using (var setupConnection = await application.Services
+                             .GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var setup = setupConnection.CreateCommand())
+            {
+                setup.CommandText = """
+                    UPDATE postprocessors SET name = 'Doosan 3X' WHERE id = 'post-a';
+                    UPDATE postprocessors SET name = 'Doosan 4X' WHERE id = 'post-b';
+                    DELETE FROM machine_assignments WHERE batch_operation_id = 'batch-op-1';
+                    UPDATE batch_operations SET setup_seconds = 120, cycle_seconds = 300
+                    WHERE id = 'batch-op-1';
+                    """;
+                await setup.ExecuteNonQueryAsync();
+            }
+
+            using (var configure = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/machines/machine-1"))
+            {
+                configure.Headers.TryAddWithoutValidation("If-Match", "\"machine:machine-1:v1\"");
+                configure.Content = JsonContent.Create(new
+                {
+                    executionMode = "CNC_GCODE",
+                    supportedPostprocessorIds = new[] { "post-a" },
+                    usableToolPositions = 20,
+                    rapidRateMillimetersPerMinute = 12000,
+                    toolChangeTimeSeconds = 5,
+                    machineTimeFactor = 1.1
+                });
+                using var configured = await client.SendAsync(configure);
+                configured.EnsureSuccessStatusCode();
+            }
+
+            var fifteenTools = Encoding.UTF8.GetBytes("tool,position\n" + string.Join("\n",
+                Enumerable.Range(1, 15).Select(number => $"T{number},{number}")) + "\n");
+            var firstProgram = Encoding.UTF8.GetBytes("G21 G90\nG0 X1000\nG1 X1100 F500\nT1 M6\nG4 X1\nM30\n");
+            var first = await ReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Initial Doosan 3X production release",
+                firstProgram, fifteenTools, confirmNewProcess: true, reuseActiveTools: false,
+                processDescription: "Initial Doosan 3X process");
+
+            using (var assign = await client.PutAsJsonAsync(
+                       "/api/v1/batch-operations/batch-op-1/assignment",
+                       new { machineId = "machine-1", backlogPosition = 0 }))
+            {
+                assign.EnsureSuccessStatusCode();
+            }
+
+            var board = await BoardOperationAsync(client, "machine-1");
+            Assert.Equal("satisfied", board.GetProperty("toolCapacityStatus").GetString());
+            Assert.Equal(15, board.GetProperty("requiredToolCount").GetInt32());
+            Assert.Equal(20, board.GetProperty("availableToolPositions").GetInt32());
+            Assert.Equal("nc_estimate", board.GetProperty("planningCycleTimeSource").GetString());
+            Assert.True(board.GetProperty("ncEstimatedCycleTimePerPartSeconds").GetDouble() > 0);
+            Assert.True(board.GetProperty("totalSetupTimeSeconds").GetDouble() > 0);
+
+            using (var readinessResponse = await client.GetAsync(
+                       "/api/v1/batch-operations/batch-op-1/readiness"))
+            {
+                readinessResponse.EnsureSuccessStatusCode();
+                using var readiness = JsonDocument.Parse(await readinessResponse.Content.ReadAsStringAsync());
+                Assert.Equal("MISSING", ReadinessState(readiness.RootElement, "toolOffsets"));
+                Assert.Equal("MISSING", ReadinessState(readiness.RootElement, "material"));
+                Assert.False(readiness.RootElement.GetProperty("isReadyForProduction").GetBoolean());
+            }
+
+            await ReconcileMaterialAsync(client, 1);
+
+            using (var confirm = await client.PutAsJsonAsync(
+                       "/api/v1/batch-operations/batch-op-1/readiness-inputs",
+                       new
+                       {
+                           selectedGCodeReleaseId = first.ReleaseId,
+                           materialStatus = "READY",
+                           materialComment = (string?)null,
+                           toolOffsetStatus = "READY",
+                           toolOffsetComment = "Offsets verified on M-1"
+                       }))
+            {
+                confirm.EnsureSuccessStatusCode();
+                using var ready = JsonDocument.Parse(await confirm.Content.ReadAsStringAsync());
+                Assert.Equal("READY_FOR_PRODUCTION", ready.RootElement.GetProperty("overallState").GetString());
+                Assert.True(ready.RootElement.GetProperty("isReadyForProduction").GetBoolean());
+                Assert.Equal("Ready for production", ready.RootElement.GetProperty("summary").GetString());
+            }
+
+            var fourAxisSameProcess = await ReleaseAsync(
+                client, "post-b", "LOCAL_POST_REVISION", "Doosan 4X output for current process",
+                Encoding.UTF8.GetBytes("G21 G90\nG1 X10 F100\nM30\n"), null,
+                confirmNewProcess: false, reuseActiveTools: true);
+            Assert.Equal(first.ProcessRevisionId, fourAxisSameProcess.ProcessRevisionId);
+            var local = await ReleaseAsync(
+                client, "post-a", "LOCAL_POST_REVISION", "Doosan 3X local correction",
+                Encoding.UTF8.GetBytes("G21 G90\nG1 X20 F100\nM30\n"), null,
+                confirmNewProcess: false, reuseActiveTools: true);
+            Assert.Equal(2, local.PostSpecificRevision);
+
+            using (var catalogResponse = await client.GetAsync(
+                       "/api/v1/cases/case-1/operations/case-op-1/gcode"))
+            {
+                catalogResponse.EnsureSuccessStatusCode();
+                using var catalog = JsonDocument.Parse(await catalogResponse.Content.ReadAsStringAsync());
+                Assert.Equal("current", Status(catalog.RootElement, "post-a"));
+                Assert.Equal("current", Status(catalog.RootElement, "post-b"));
+            }
+
+            var secondProcess = await ReleaseAsync(
+                client, "post-b", "NEW_PROCESS_REVISION", "New Doosan 4X process",
+                Encoding.UTF8.GetBytes("G21 G90\nT2 M6\nG1 X30 F100\nM30\n"), fifteenTools,
+                confirmNewProcess: true, reuseActiveTools: false,
+                processDescription: "Manufacturing method changed to Doosan 4X");
+            Assert.NotEqual(first.ProcessRevisionId, secondProcess.ProcessRevisionId);
+            using (var incompatibleResponse = await client.GetAsync(
+                       "/api/v1/batch-operations/batch-op-1/readiness"))
+            {
+                incompatibleResponse.EnsureSuccessStatusCode();
+                using var incompatible = JsonDocument.Parse(await incompatibleResponse.Content.ReadAsStringAsync());
+                Assert.Equal("INCOMPATIBLE", ReadinessState(
+                    incompatible.RootElement, "machinePostprocessorCompatibility"));
+            }
+
+            using (var catalogResponse = await client.GetAsync(
+                       "/api/v1/cases/case-1/operations/case-op-1/gcode"))
+            {
+                catalogResponse.EnsureSuccessStatusCode();
+                using var catalog = JsonDocument.Parse(await catalogResponse.Content.ReadAsStringAsync());
+                Assert.Equal("stale", Status(catalog.RootElement, "post-a"));
+                Assert.Equal(4, catalog.RootElement.GetProperty("releases").GetArrayLength());
+            }
+
+            var twentyFiveTools = Encoding.UTF8.GetBytes("tool,position\n" + string.Join("\n",
+                Enumerable.Range(1, 25).Select(number => $"T{number},{number}")) + "\n");
+            await ReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Expanded 25-tool process",
+                Encoding.UTF8.GetBytes("G21 G90\nT25 M6\nG1 X40 F100\nM30\n"), twentyFiveTools,
+                confirmNewProcess: true, reuseActiveTools: false,
+                processDescription: "Tool requirement expanded to 25 prepared magazine tools");
+
+            var mismatch = await BoardOperationAsync(client, "machine-1");
+            Assert.Equal("tool_capacity_mismatch", mismatch.GetProperty("toolCapacityStatus").GetString());
+            Assert.Equal(
+                "Tool capacity mismatch: requires 25 tool positions; assigned machine supports 20.",
+                mismatch.GetProperty("toolCapacityMessage").GetString());
+            Assert.Equal("machine-1", mismatch.GetProperty("machineId").GetString());
+            Assert.Equal("not_started", mismatch.GetProperty("status").GetString());
+
+            Assert.Equal(firstProgram, await client.GetByteArrayAsync(
+                $"/api/v1/cases/case-1/operations/case-op-1/gcode-releases/{first.ReleaseId}/file"));
+            using (var finalCatalogResponse = await client.GetAsync(
+                       "/api/v1/cases/case-1/operations/case-op-1/gcode"))
+            {
+                finalCatalogResponse.EnsureSuccessStatusCode();
+                using var finalCatalog = JsonDocument.Parse(await finalCatalogResponse.Content.ReadAsStringAsync());
+                Assert.Equal(5, finalCatalog.RootElement.GetProperty("releases").GetArrayLength());
+                Assert.Equal(3, finalCatalog.RootElement.GetProperty("processRevisions").GetArrayLength());
+            }
+
+            await using var auditConnection = await application.Services
+                .GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var audit = auditConnection.CreateCommand();
+            audit.CommandText = "SELECT DISTINCT event_type FROM structured_event_log;";
+            var eventTypes = new HashSet<string>(StringComparer.Ordinal);
+            await using var auditReader = await audit.ExecuteReaderAsync();
+            while (await auditReader.ReadAsync()) eventTypes.Add(auditReader.GetString(0));
+            Assert.Contains("gcode_release_published", eventTypes);
+            Assert.Contains("tool_table_release_published", eventTypes);
+            Assert.Contains("process_revision_created", eventTypes);
+            Assert.Contains("process_revision_activated", eventTypes);
+            Assert.Contains("local_post_revision_published", eventTypes);
+            Assert.Contains("tool_offsets_confirmation_recorded", eventTypes);
+            Assert.Contains("production_readiness_transition", eventTypes);
+            Assert.Contains("machine_compatibility_failure", eventTypes);
+            Assert.Contains("tool_capacity_mismatch", eventTypes);
+            Assert.Contains("nc_estimate_recalculated", eventTypes);
+        });
+    }
+
+    [Fact]
     public async Task Released_nc_is_analyzed_once_and_evaluated_per_machine_without_overwriting_manual_cycle()
     {
         await RunAsync(async (application, client, _) =>
@@ -160,7 +341,7 @@ public sealed class GCodeReleaseApiTests
                 Assert.Equal("READY", ReadinessState(initial.RootElement, "gcode"));
                 Assert.Equal("READY", ReadinessState(initial.RootElement, "toolTable"));
                 Assert.Equal("MISSING", ReadinessState(initial.RootElement, "toolOffsets"));
-                Assert.Equal("UNVERIFIED", ReadinessState(initial.RootElement, "material"));
+                Assert.Equal("MISSING", ReadinessState(initial.RootElement, "material"));
             }
 
             await SetOperationTimesAsync(application.Services);
@@ -190,6 +371,7 @@ public sealed class GCodeReleaseApiTests
                 Encoding.UTF8.GetBytes("T1 M06\nM30\n"), null,
                 confirmNewProcess: false, reuseActiveTools: true);
             await AddMachinePostprocessorAsync(application.Services, "machine-1", "post-b");
+            await ReconcileMaterialAsync(client, 1);
 
             using (var multipleResponse = await client.GetAsync(
                        "/api/v1/batch-operations/batch-op-1/readiness"))
@@ -208,7 +390,7 @@ public sealed class GCodeReleaseApiTests
                        {
                            selectedGCodeReleaseId = first.ReleaseId,
                            materialStatus = "READY",
-                           materialComment = "Material physically checked",
+                           materialComment = (string?)null,
                            toolOffsetStatus = "READY",
                            toolOffsetComment = "Offsets checked on M-1"
                        }))
@@ -361,13 +543,15 @@ public sealed class GCodeReleaseApiTests
             Assert.Equal(1, first.PostSpecificRevision);
             Assert.Equal(Sha256(firstGCode), first.FileHash);
 
+            await ReconcileMaterialAsync(client, 1);
+
             using (var readiness = await client.PutAsJsonAsync(
                        "/api/v1/batch-operations/batch-op-1/readiness-inputs",
                        new
                        {
                            selectedGCodeReleaseId = first.ReleaseId,
                            materialStatus = "READY",
-                           materialComment = "Physically verified",
+                           materialComment = (string?)null,
                            toolOffsetStatus = "READY",
                            toolOffsetComment = "Offsets verified on Machine M-1"
                        }))
@@ -588,6 +772,25 @@ public sealed class GCodeReleaseApiTests
             .Single(machine => machine.GetProperty("machineId").GetString() == machineId)
             .GetProperty("backlog")[0]
             .Clone();
+    }
+
+    private static async Task ReconcileMaterialAsync(HttpClient client, int quantity)
+    {
+        using var receipt = await client.PostAsJsonAsync("/api/v1/material-receipts", new
+        {
+            caseId = "case-1",
+            quantity,
+            receivedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            externalReference = "TEST-VERIFIED",
+            comment = "Physically verified test receipt"
+        });
+        receipt.EnsureSuccessStatusCode();
+        using var receiptJson = JsonDocument.Parse(await receipt.Content.ReadAsStringAsync());
+        var receiptId = receiptJson.RootElement.GetProperty("receiptId").GetString();
+        using var reservation = await client.PutAsJsonAsync(
+            "/api/v1/batches/batch-1/material/reservations",
+            new { reservations = new[] { new { receiptId, quantity } } });
+        reservation.EnsureSuccessStatusCode();
     }
 
     private static async Task<string> ErrorCodeAsync(HttpResponseMessage response)

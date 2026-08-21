@@ -26,7 +26,6 @@ public partial class ProductionReadinessDialog : Window
         {
             Release.SelectedIndex = 0;
         }
-        MaterialReady.IsChecked = IsReady("material");
         OffsetsReady.IsChecked = IsReady("toolOffsets");
     }
 
@@ -47,10 +46,13 @@ public partial class ProductionReadinessDialog : Window
             string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         Value = new ProductionReadinessInputUpdate(
             selectedReleaseId,
-            MaterialReady.IsChecked == true ? "READY" : "UNVERIFIED",
-            Clean(MaterialComment.Text),
+            State("material"),
+            null,
             OffsetsReady.IsChecked == true ? "READY" : "UNVERIFIED",
             Clean(OffsetsComment.Text));
         DialogResult = true;
     }
+
+    private string State(string key) => readiness.Components
+        .FirstOrDefault(component => component.Key == key)?.State ?? "UNVERIFIED";
 }

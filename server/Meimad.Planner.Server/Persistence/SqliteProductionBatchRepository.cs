@@ -2,6 +2,7 @@ using System.Globalization;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.ProductionBatches;
 using Meimad.Planner.Server.Domain.ProductionBatches;
+using Meimad.Planner.Server.Domain.Readiness;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -134,7 +135,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
 
         if (!await ExistsAsync(
                 connection,
@@ -147,6 +148,8 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         {
             return null;
         }
+        var readinessBefore = await ReadReadinessAsync(
+            connection, transaction, batch.BatchId, cancellationToken);
 
         if (await BatchNumberExistsAsync(
                 connection,
@@ -157,6 +160,17 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                 batch.BatchId))
         {
             throw new ProductionBatchNumberConflictException(batch.CaseId, batch.BatchNumber);
+        }
+
+        var reservedMaterial = await ReadReservedMaterialAsync(
+            connection, transaction, batch.BatchId, cancellationToken);
+        if (reservedMaterial > batch.PlannedQuantity)
+        {
+            throw new ProductionBatchValidationException(
+            [
+                new("plannedQuantity", "material_reservation_exceeded",
+                    $"Release material reservations before reducing plannedQuantity below {reservedMaterial}.")
+            ]);
         }
 
         var orderReferences = await ReadOrderReferencesAsync(
@@ -207,6 +221,16 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             affectedOrders.Concat(newCandidates).ToArray(),
             batch.UpdatedAt,
             cancellationToken);
+        var readinessAfter = await ReadReadinessAsync(
+            connection, transaction, batch.BatchId, cancellationToken);
+        foreach (var pair in readinessAfter)
+        {
+            readinessBefore.TryGetValue(pair.Key, out var before);
+            await SqliteReadinessAudit.AppendEvaluationAsync(
+                connection, transaction, pair.Value.Context, before?.Result, pair.Value.Result,
+                batch.UpdatedAt, actor, "production_batch_quantity_or_allocations_changed",
+                cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         return batch;
     }
@@ -222,6 +246,23 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         command.CommandText = "SELECT EXISTS(SELECT 1 FROM case_operations WHERE case_id = $caseId);";
         command.Parameters.AddWithValue("$caseId", caseId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+    }
+
+    private static async Task<int> ReadReservedMaterialAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COALESCE(SUM(quantity), 0)
+            FROM batch_material_reservations
+            WHERE production_batch_id = $batchId;
+            """;
+        command.Parameters.AddWithValue("$batchId", batchId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
     }
 
     public async Task<ProductionBatch?> GetByIdAsync(
@@ -629,7 +670,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             CultureInfo.InvariantCulture) == 1;
     }
 
-    private static async Task EnsureEditAuthorityAsync(
+    private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         EditAuthority editAuthority,
@@ -642,7 +683,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
+        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
         {
@@ -652,13 +693,44 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         }
 
         if (!string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != editAuthority.Generation)
+            || reader.GetInt64(2) != editAuthority.Generation)
         {
             throw new EditModeMutationException(
                 "edit_generation_stale",
                 "This client does not hold the active Edit Mode generation.");
         }
+        return reader.IsDBNull(1) ? editAuthority.ClientId : reader.GetString(1);
     }
+
+    private static async Task<IReadOnlyDictionary<string, ReadinessSnapshot>> ReadReadinessAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchId,
+        CancellationToken token)
+    {
+        var ids = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT id FROM batch_operations WHERE production_batch_id = $batchId ORDER BY id;";
+            command.Parameters.AddWithValue("$batchId", batchId);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) ids.Add(reader.GetString(0));
+        }
+        var values = new Dictionary<string, ReadinessSnapshot>(StringComparer.Ordinal);
+        foreach (var id in ids)
+        {
+            var context = await SqliteProductionReadinessContextReader.ReadAsync(
+                connection, transaction, id, token);
+            if (context is not null)
+                values[id] = new(context, ProductionReadinessEvaluator.Evaluate(context));
+        }
+        return values;
+    }
+
+    private sealed record ReadinessSnapshot(
+        ProductionReadinessContext Context,
+        ProductionReadinessResult Result);
 
     private static ProductionBatch ReadBatch(SqliteDataReader reader) => new(
         reader.GetString(0),

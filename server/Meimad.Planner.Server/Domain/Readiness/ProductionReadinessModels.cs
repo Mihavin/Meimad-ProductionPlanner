@@ -76,7 +76,9 @@ internal sealed record ProductionReadinessResult(
     IReadOnlyList<ReadinessRelease> CompatibleGCodeReleases)
 {
     internal string Summary => !IsManaged
-        ? "Readiness is not managed because this legacy Operation has no released process revision."
+        ? IsReadyForProduction
+            ? "Ready for production; this legacy Operation has no managed G-code process revision."
+            : "Not ready: material is not reconciled for this legacy Operation's Production Batch."
         : IsReadyForProduction
         ? "Ready for production"
         : $"Not ready: {Components.Count(component => component.IsBlocking)} blocking component(s)";
