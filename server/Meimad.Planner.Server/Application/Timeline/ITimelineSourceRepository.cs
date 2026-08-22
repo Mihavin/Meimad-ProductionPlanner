@@ -98,7 +98,10 @@ internal sealed record TimelineSourceResource(
     string CalendarJson,
     IReadOnlyList<TimelineSourceResourceException> Exceptions,
     IReadOnlyList<string> Skills,
-    bool RespectMasterCalendar = true);
+    bool RespectMasterCalendar = true,
+    double ToolLoadSecondsPerTool = 60,
+    double? FixtureAssemblySeconds = null,
+    double FirstPartRunningSpeedPercent = 66.6666666667);
 
 internal sealed record TimelineSourceResourceException(
     DateOnly Date,

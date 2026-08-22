@@ -40,8 +40,9 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         var machines = await ReadMachinesAsync(connection, transaction, cancellationToken);
         var machinesElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
+        var resources = await ReadResourcesAsync(connection, transaction, horizonStart, horizonEnd, cancellationToken);
         var operations = await ReadOperationsAsync(
-            connection, transaction, setupEstimation, cancellationToken);
+            connection, transaction, setupEstimation, resources, cancellationToken);
         var operationsElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
         var downtimes = await ReadDowntimesAsync(
@@ -61,7 +62,6 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         var holidays = await ReadHolidaysAsync(connection, transaction, horizonStart, horizonEnd, cancellationToken);
         var holidaysElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
-        var resources = await ReadResourcesAsync(connection, transaction, horizonStart, horizonEnd, cancellationToken);
         var masterCalendar = await ReadMasterCalendarAsync(connection, transaction, cancellationToken);
         var resourcesElapsed = phase.ElapsedMilliseconds;
         await transaction.CommitAsync(cancellationToken);
@@ -125,6 +125,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         SqliteConnection connection,
         SqliteTransaction transaction,
         SetupEstimationOptions setupEstimation,
+        IReadOnlyList<TimelineSourceResource> resources,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -298,16 +299,20 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             var requiredToolCount = NullableInt(reader, 47);
             var ncCycleSeconds = status == "not_started" && !reader.IsDBNull(43)
                 ? reader.GetDouble(43) : (double?)null;
+            var assignedMachineId = NullableString(reader, 16);
+            var setupWorker = assignedMachineId is null ? null : resources
+                .Where(resource => resource.Role == "setup_worker" && (resource.Skills.Contains(assignedMachineId, StringComparer.OrdinalIgnoreCase) || resource.Skills.Contains("*", StringComparer.OrdinalIgnoreCase)))
+                .OrderBy(resource => resource.ResourceId, StringComparer.Ordinal).FirstOrDefault();
             var occupancy = status == "not_started" && hasManagedProcess
                 ? SetupOccupancyEstimator.Evaluate(new SetupOccupancyInput(
                     plannedQuantity,
                     requiredToolCount,
-                    fixtureSetupSeconds,
+                    setupWorker?.FixtureAssemblySeconds ?? fixtureSetupSeconds,
                     null,
                     ncCycleSeconds,
                     manualCycleSeconds,
-                    setupEstimation.DefaultToolLoadTimePerToolSeconds,
-                    setupEstimation.DefaultFirstPieceFactor))
+                    setupWorker?.ToolLoadSecondsPerTool ?? setupEstimation.DefaultToolLoadTimePerToolSeconds,
+                    setupWorker is null ? setupEstimation.DefaultFirstPieceFactor : 100d / setupWorker.FirstPartRunningSpeedPercent))
                 : null;
             var scheduledSetupSeconds = occupancy?.TotalSetupSeconds ?? fixtureSetupSeconds;
             var scheduledCycleSeconds = occupancy?.SelectedCycleSeconds
@@ -318,7 +323,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetString(4), reader.GetInt32(5), reader.GetString(6), status,
                 plannedQuantity, scheduledSetupSeconds, scheduledCycleSeconds,
                 reader.GetString(11), reader.GetString(12), NullableString(reader, 13),
-                NullableString(reader, 14), NullableString(reader, 15), NullableString(reader, 16), NullableInt(reader, 17),
+                NullableString(reader, 14), NullableString(reader, 15), assignedMachineId, NullableInt(reader, 17),
                 NullableString(reader, 18),
                 NullableString(reader, 34) is { } machineMovedAt ? Parse(machineMovedAt) : null,
                 reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21) == 1,
@@ -471,7 +476,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             SELECT employee_resources.id, employee_resources.resource_type,
                    working_calendars.time_zone_id, working_calendars.calendar_json,
                    employee_resources.skills_json,
-                   employee_resources.respect_master_calendar
+                   employee_resources.respect_master_calendar,
+                   employee_resources.tool_load_seconds_per_tool,
+                   employee_resources.fixture_assembly_seconds,
+                   employee_resources.first_part_running_speed_percent
             FROM employee_resources
             JOIN working_calendars ON working_calendars.id = employee_resources.assigned_calendar_id
             WHERE employee_resources.is_active = 1
@@ -483,7 +491,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             resources.Add(new TimelineSourceResource(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), [],
                 JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
-                reader.GetInt32(5) == 1));
+                reader.GetInt32(5) == 1,
+                reader.GetDouble(6), reader.IsDBNull(7) ? null : reader.GetDouble(7), reader.GetDouble(8)));
         }
         await reader.DisposeAsync();
 

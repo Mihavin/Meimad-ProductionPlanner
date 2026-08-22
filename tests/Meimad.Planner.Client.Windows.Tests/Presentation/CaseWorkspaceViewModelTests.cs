@@ -6,6 +6,27 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class CaseWorkspaceViewModelTests
 {
     [Fact]
+    public void Gcode_release_displays_each_machine_specific_calculated_cycle_time()
+    {
+        var analysis = new PlannerNcProgramAnalysis(
+            "nc-v1", "AVAILABLE", 50, 100, 1, 2, "mm", [], [], "HIGH", DateTimeOffset.UtcNow);
+        var release = new PlannerGCodeRelease(
+            "release-1", "process-1", 1, "post-1", "FANUC 4X", 1,
+            "O1000.NC", 100, new string('a', 64), DateTimeOffset.UtcNow,
+            "planner", "LOCAL_POST_REVISION", "Released", "tools-1", true, true,
+            analysis,
+            [
+                Estimate("machine-2", 75.1),
+                Estimate("machine-1", 61)
+            ]);
+
+        Assert.Equal(
+            $"machine-1: 00:01:01 / part{Environment.NewLine}machine-2: 00:01:16 / part",
+            release.NcCalculatedTimeSummary);
+        Assert.Contains("Parser confidence: HIGH", release.NcCalculatedTimeDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Gcode_release_scope_follows_whether_an_active_process_exists()
     {
         var api = new FakeApiClient(CreateCase());
@@ -37,6 +58,10 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.True(viewModel.ReuseActiveToolTable);
         Assert.Equal(process, viewModel.ActiveProcessRevision);
     }
+
+    private static PlannerNcMachineCycleEstimate Estimate(string machineId, double seconds) => new(
+        machineId, "nc-v1", 50, 100, 5, 1, 4, 2, 12000, 4, 1,
+        seconds, seconds, [], "HIGH", DateTimeOffset.UtcNow);
 
     [Fact]
     public async Task Loads_case_pool_details_and_tabs_only_through_api_client()

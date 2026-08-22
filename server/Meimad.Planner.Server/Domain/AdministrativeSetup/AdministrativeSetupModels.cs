@@ -5,7 +5,10 @@ internal sealed record EmployeeResource(
     string FirstName, string LastName, IReadOnlyList<string> Skills, string AssignedCalendarId,
     string? PhotoPath, string? Notes, bool IsActive, int Version, DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    bool RespectMasterCalendar = true)
+    bool RespectMasterCalendar = true,
+    double ToolLoadSecondsPerTool = 60,
+    double? FixtureAssemblySeconds = null,
+    double FirstPartRunningSpeedPercent = 66.6666666667)
 {
     internal bool IsAvailableForFuturePlanning => IsActive && !string.IsNullOrWhiteSpace(AssignedCalendarId);
 }
@@ -30,7 +33,8 @@ internal static class EmployeeResourceRole
 internal sealed record EmployeeResourceValues(
     string? EmployeeNumber, string? FirstName, string? LastName, string? ResourceType,
     IReadOnlyList<string?>? Skills, string? AssignedCalendarId, string? PhotoPath, string? Notes,
-    string? Email, bool IsActive)
+    string? Email, bool IsActive, double ToolLoadSecondsPerTool = 60,
+    double? FixtureAssemblySeconds = null, double FirstPartRunningSpeedPercent = 66.6666666667)
 {
     internal string Name => $"{FirstName} {LastName}".Trim();
 }

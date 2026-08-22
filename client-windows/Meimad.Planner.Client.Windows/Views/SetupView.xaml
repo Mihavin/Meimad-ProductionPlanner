@@ -479,6 +479,12 @@
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Email" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceEmail}"/></StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Photo path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourcePhotoPath}"/></StackPanel>
                             </UniformGrid>
+                            <TextBlock Text="SETUP SKILLS (applied when this setup worker is qualified for the assigned Machine)" Style="{StaticResource SetupFieldLabel}" Margin="0,8,0,2"/>
+                            <UniformGrid Columns="3">
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Tool load sec/tool" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceToolLoadSecondsPerTool}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Fixture assembly sec" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceFixtureAssemblySeconds}" ToolTip="Leave blank to use the operation fixture setup time."/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="First part speed %" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ResourceFirstPartRunningSpeedPercent}" ToolTip="100% equals the regular cycle time."/></StackPanel>
+                            </UniformGrid>
                             <StackPanel Style="{StaticResource SetupField}">
                                 <TextBlock Text="Machines this employee knows how to operate" Style="{StaticResource SetupFieldLabel}"/>
                                 <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="8" MinHeight="44" MaxHeight="150">

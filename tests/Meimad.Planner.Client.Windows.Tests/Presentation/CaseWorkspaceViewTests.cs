@@ -84,6 +84,37 @@ public sealed class CaseWorkspaceViewTests
     }
 
     [Fact]
+    public void Batches_tab_defines_every_layout_row_used_by_its_content()
+    {
+        var path = Path.Combine(
+            FindRepositoryRoot(),
+            "client-windows",
+            "Meimad.Planner.Client.Windows",
+            "Views",
+            "CaseWorkspaceView.xaml");
+        var document = System.Xml.Linq.XDocument.Load(path);
+        System.Xml.Linq.XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        System.Xml.Linq.XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var batchScroller = document
+            .Descendants(presentation + "ScrollViewer")
+            .Single(element => (string?)element.Attribute(xaml + "Name") == "BatchesTabScroll");
+        var layout = batchScroller.Elements(presentation + "Grid").Single();
+        var definedRows = layout
+            .Element(presentation + "Grid.RowDefinitions")!
+            .Elements(presentation + "RowDefinition")
+            .Count();
+        var highestUsedRow = layout.Elements()
+            .Select(element => (string?)element.Attribute("Grid.Row"))
+            .Where(value => int.TryParse(value, out _))
+            .Select(value => int.Parse(value!, System.Globalization.CultureInfo.InvariantCulture))
+            .DefaultIfEmpty(0)
+            .Max();
+
+        Assert.Equal(4, definedRows);
+        Assert.True(highestUsedRow < definedRows);
+    }
+
+    [Fact]
     public void Operation_gcode_area_exposes_release_and_history_without_a_draft_action()
     {
         var caseView = File.ReadAllText(Path.Combine(
@@ -97,6 +128,8 @@ public sealed class CaseWorkspaceViewTests
         Assert.Contains("Postprocessor matrix", caseView, StringComparison.Ordinal);
         Assert.Contains("Process-revision history", caseView, StringComparison.Ordinal);
         Assert.Contains("Local post-revision history", caseView, StringComparison.Ordinal);
+        Assert.Contains("Header=\"Calculated cycle / part\"", caseView, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding NcCalculatedTimeSummary}\"", caseView, StringComparison.Ordinal);
         Assert.Contains("Current file", caseView, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"Save Draft\"", caseView, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Content=\"Draft\"", caseView, StringComparison.OrdinalIgnoreCase);

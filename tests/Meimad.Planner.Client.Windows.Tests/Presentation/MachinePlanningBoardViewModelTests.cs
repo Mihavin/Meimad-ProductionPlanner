@@ -30,11 +30,15 @@ public sealed class MachinePlanningBoardViewModelTests
             "operation-nc", "batch-1", "B-1", "case-1", "PN-1", 10, "Mill",
             "mill", 0, 300, "not_started", "machine-1", 0,
             EstimatedTimeSeconds: 132,
+            NcEstimatedCycleTimePerPartSeconds: 41.2,
+            PlanningCycleTimePerPartSeconds: 41.2,
             PlanningCycleTimeSource: "nc_estimate",
             NcEstimateConfidence: "LOW",
             NcEstimateWarnings: ["Estimate excludes unsupported canned cycle G81."]));
 
         Assert.Equal("Time 00:02:12", operation.EstimatedTimeText);
+        Assert.Equal("NC cycle 00:00:42 / part", operation.CycleTimeText);
+        Assert.Contains("00:00:42 per part", operation.EstimatedTimeDetail, StringComparison.Ordinal);
         Assert.Contains("NC-based", operation.EstimatedTimeDetail, StringComparison.Ordinal);
         Assert.Contains("LOW", operation.EstimatedTimeDetail, StringComparison.Ordinal);
         Assert.Contains("G81", operation.EstimatedTimeDetail, StringComparison.Ordinal);
@@ -48,6 +52,8 @@ public sealed class MachinePlanningBoardViewModelTests
             "mill", 300, 100, "not_started", "machine-1", 0,
             PlannedQuantity: 4,
             EstimatedTimeSeconds: 870,
+            NcEstimatedCycleTimePerPartSeconds: 100,
+            PlanningCycleTimePerPartSeconds: 100,
             PlanningCycleTimeSource: "nc_estimate",
             NcEstimateConfidence: "HIGH",
             ToolLoadingTimeSeconds: 120,
@@ -60,6 +66,7 @@ public sealed class MachinePlanningBoardViewModelTests
             UsesSetupOccupancyEstimate: true));
 
         Assert.Equal("Setup 00:09:30", operation.SetupEstimateText);
+        Assert.Equal("NC cycle 00:01:40 / part", operation.CycleTimeText);
         Assert.Contains("Prepared-tool magazine loading: 00:02:00", operation.EstimatedTimeDetail, StringComparison.Ordinal);
         Assert.Contains("First-piece prove-out: 00:02:30", operation.EstimatedTimeDetail, StringComparison.Ordinal);
         Assert.Contains("Remaining production (3 parts): 00:05:00", operation.EstimatedTimeDetail, StringComparison.Ordinal);

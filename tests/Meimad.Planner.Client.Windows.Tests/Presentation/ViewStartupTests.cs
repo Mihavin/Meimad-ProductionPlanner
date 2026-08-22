@@ -23,6 +23,7 @@ public sealed class ViewStartupTests
         var timelineWindowWasReused = false;
         var timelineWindowReopenedAfterClose = false;
         var timelineWindowWasReadOnlyAndSecondMonitorReady = false;
+        var externalTimelineContainsOnlyGraphAndLegend = false;
         var closedTimelineWasDetached = false;
         var mainViewRemainedVisible = false;
         var serverIndicatorWasCompactAndAccessible = false;
@@ -468,6 +469,15 @@ public sealed class ViewStartupTests
                 timelineWindowWasReadOnlyAndSecondMonitorReady = timelineWindow.ResizeMode == ResizeMode.CanResizeWithGrip
                     && timelineWindow.ShowInTaskbar
                     && Descendants<UIElement>(timelineWindow).All(element => !element.AllowDrop);
+                var externalTimelineView = Descendants<TimelineView>(timelineWindow).Single();
+                externalTimelineContainsOnlyGraphAndLegend = externalTimelineView.FindName("TimelineHeaderPanel") is FrameworkElement header
+                    && header.Visibility == Visibility.Collapsed
+                    && externalTimelineView.FindName("TimelineDetailsPanel") is FrameworkElement details
+                    && details.Visibility == Visibility.Collapsed
+                    && externalTimelineView.FindName("TimelineLegendPanel") is FrameworkElement legend
+                    && legend.Visibility == Visibility.Visible
+                    && externalTimelineView.FindName("TimelineGraphPanel") is FrameworkElement graph
+                    && graph.Visibility == Visibility.Visible;
 
                 openMethod.Invoke(plannerWindow, [plannerWindow, new RoutedEventArgs()]);
                 timelineWindowWasReused = ReferenceEquals(
@@ -514,6 +524,7 @@ public sealed class ViewStartupTests
         Assert.True(timelineWindowWasReused);
         Assert.True(timelineWindowReopenedAfterClose);
         Assert.True(timelineWindowWasReadOnlyAndSecondMonitorReady);
+        Assert.True(externalTimelineContainsOnlyGraphAndLegend);
         Assert.True(closedTimelineWasDetached);
         Assert.True(mainViewRemainedVisible);
         Assert.True(serverIndicatorWasCompactAndAccessible);

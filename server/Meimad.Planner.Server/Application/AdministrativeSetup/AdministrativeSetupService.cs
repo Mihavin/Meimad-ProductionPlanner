@@ -24,11 +24,11 @@ internal sealed class AdministrativeSetupService
     {
         var values = AdministrativeSetupValidator.Validate(new EmployeeResourceValues(
             command.EmployeeNumber, command.FirstName, command.LastName, command.ResourceType, command.Skills,
-            command.AssignedCalendarId, command.PhotoPath, command.Notes, command.Email, command.IsActive));
+            command.AssignedCalendarId, command.PhotoPath, command.Notes, command.Email, command.IsActive, command.ToolLoadSecondsPerTool, command.FixtureAssemblySeconds, command.FirstPartRunningSpeedPercent));
         await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
         await EnsureMachineSkillsAsync(values.Skills!, token);
         var now = timeProvider.GetUtcNow();
-        return await repository.CreateResourceAsync(new(Guid.NewGuid().ToString("N"), values.EmployeeNumber!, values.Name, values.ResourceType!, values.Email, values.FirstName!, values.LastName!, values.Skills!, values.AssignedCalendarId!, values.PhotoPath, values.Notes, values.IsActive, 1, now, now, command.RespectMasterCalendar), authority, token);
+        return await repository.CreateResourceAsync(new(Guid.NewGuid().ToString("N"), values.EmployeeNumber!, values.Name, values.ResourceType!, values.Email, values.FirstName!, values.LastName!, values.Skills!, values.AssignedCalendarId!, values.PhotoPath, values.Notes, values.IsActive, 1, now, now, command.RespectMasterCalendar, values.ToolLoadSecondsPerTool, values.FixtureAssemblySeconds, values.FirstPartRunningSpeedPercent), authority, token);
     }
     internal async Task<EmployeeResource> UpdateResourceAsync(string id, int expectedVersion, UpdateEmployeeResourceCommand command, EditAuthority authority, CancellationToken token = default)
     {
@@ -38,10 +38,13 @@ internal sealed class AdministrativeSetupService
             Select(command.LastName, current.LastName), Select(command.ResourceType, current.ResourceType),
             Select(command.Skills, current.Skills.Select(value => (string?)value).ToArray()),
             Select(command.AssignedCalendarId, current.AssignedCalendarId), Select(command.PhotoPath, current.PhotoPath),
-            Select(command.Notes, current.Notes), Select(command.Email, current.Email), Select(command.IsActive, current.IsActive) ?? false));
+            Select(command.Notes, current.Notes), Select(command.Email, current.Email), Select(command.IsActive, current.IsActive) ?? false,
+            Select(command.ToolLoadSecondsPerTool, current.ToolLoadSecondsPerTool) ?? 60,
+            Select(command.FixtureAssemblySeconds, current.FixtureAssemblySeconds),
+            Select(command.FirstPartRunningSpeedPercent, current.FirstPartRunningSpeedPercent) ?? 66.6666666667));
         await EnsureAssignedCalendarAsync(values.AssignedCalendarId!, values.ResourceType!, token);
         if (command.Skills.IsSpecified) await EnsureMachineSkillsAsync(values.Skills!, token);
-        var candidate = current with { EmployeeNumber = values.EmployeeNumber!, Name = values.Name, ResourceType = values.ResourceType!, FirstName = values.FirstName!, LastName = values.LastName!, Skills = values.Skills!, AssignedCalendarId = values.AssignedCalendarId!, PhotoPath = values.PhotoPath, Notes = values.Notes, Email = values.Email, IsActive = values.IsActive, RespectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar) ?? true, Version = expectedVersion + 1, UpdatedAt = timeProvider.GetUtcNow() };
+        var candidate = current with { EmployeeNumber = values.EmployeeNumber!, Name = values.Name, ResourceType = values.ResourceType!, FirstName = values.FirstName!, LastName = values.LastName!, Skills = values.Skills!, AssignedCalendarId = values.AssignedCalendarId!, PhotoPath = values.PhotoPath, Notes = values.Notes, Email = values.Email, IsActive = values.IsActive, RespectMasterCalendar = Select(command.RespectMasterCalendar, current.RespectMasterCalendar) ?? true, ToolLoadSecondsPerTool = values.ToolLoadSecondsPerTool, FixtureAssemblySeconds = values.FixtureAssemblySeconds, FirstPartRunningSpeedPercent = values.FirstPartRunningSpeedPercent, Version = expectedVersion + 1, UpdatedAt = timeProvider.GetUtcNow() };
         return await repository.UpdateResourceAsync(candidate, expectedVersion, authority, token) ?? throw new AdministrativeVersionConflictException("Employee Resource", id, expectedVersion);
     }
     internal Task<bool> DeleteResourceAsync(string id, EditAuthority authority, CancellationToken token = default) => repository.DeleteResourceAsync(id, authority, token);

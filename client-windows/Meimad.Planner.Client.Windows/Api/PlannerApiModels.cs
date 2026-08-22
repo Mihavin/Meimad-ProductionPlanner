@@ -593,7 +593,10 @@ internal sealed record PlannerResource(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    bool RespectMasterCalendar = true)
+    bool RespectMasterCalendar = true,
+    double ToolLoadSecondsPerTool = 60,
+    double? FixtureAssemblySeconds = null,
+    double FirstPartRunningSpeedPercent = 66.6666666667)
 {
     public string DisplayName => $"{EmployeeNumber} - {Name}";
 }
@@ -611,7 +614,9 @@ internal sealed record ResourceCreate(
     string? Notes,
     string? Email,
     bool IsActive,
-    bool RespectMasterCalendar = true);
+    bool RespectMasterCalendar = true,
+    double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
+    double FirstPartRunningSpeedPercent = 66.6666666667);
 
 internal sealed record ResourceUpdate(
     string EmployeeNumber,
@@ -624,7 +629,9 @@ internal sealed record ResourceUpdate(
     string? Notes,
     string? Email,
     bool IsActive,
-    bool RespectMasterCalendar = true);
+    bool RespectMasterCalendar = true,
+    double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
+    double FirstPartRunningSpeedPercent = 66.6666666667);
 
 internal sealed record EmployeeCalendarException(
     string ExceptionId,
@@ -871,6 +878,49 @@ internal sealed record PlannerGCodeRelease(
     public string NcWarningSummary => NcAnalysis?.Warnings.Count > 0
         ? string.Join(Environment.NewLine, NcAnalysis.Warnings)
         : "No parser warnings.";
+    public string NcCalculatedTimeSummary
+    {
+        get
+        {
+            var calculated = (MachineCycleEstimates ?? [])
+                .Where(value => value.EstimatedCycleSeconds.HasValue)
+                .OrderBy(value => value.MachineId, StringComparer.Ordinal)
+                .ToArray();
+            return calculated.Length == 0
+                ? "Calculated time unavailable"
+                : string.Join(
+                    Environment.NewLine,
+                    calculated.Select(value =>
+                        $"{value.MachineId}: {CycleDuration(value.EstimatedCycleSeconds)} / part"));
+        }
+    }
+    public string NcCalculatedTimeDetail
+    {
+        get
+        {
+            var lines = new List<string>();
+            if (NcAnalysis is not null)
+            {
+                lines.Add($"Parser confidence: {NcAnalysis.Confidence}");
+                lines.AddRange(NcAnalysis.Warnings);
+            }
+            foreach (var estimate in MachineCycleEstimates ?? [])
+            {
+                lines.AddRange(estimate.Warnings.Select(value => $"{estimate.MachineId}: {value}"));
+            }
+
+            return lines.Count == 0
+                ? "No parser or Machine-estimate warnings."
+                : string.Join(Environment.NewLine, lines.Distinct(StringComparer.Ordinal));
+        }
+    }
+
+    private static string CycleDuration(double? seconds) => seconds.HasValue
+        && double.IsFinite(seconds.Value)
+        && seconds.Value >= 0
+        && seconds.Value <= long.MaxValue
+            ? Formatting.DurationText.Format((long)Math.Ceiling(seconds.Value))
+            : "unavailable";
 }
 
 internal sealed record PlannerNcProgramAnalysis(

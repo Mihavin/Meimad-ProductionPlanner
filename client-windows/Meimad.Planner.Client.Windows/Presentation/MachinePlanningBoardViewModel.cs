@@ -1200,6 +1200,8 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         EffectiveGCodeReleaseId = operation.EffectiveGCodeReleaseId;
         RequiresExplicitGCodeSelection = operation.RequiresExplicitGCodeSelection;
         CompatibleGCodeReleases = operation.CompatibleGCodeReleases ?? [];
+        NcEstimatedCycleTimePerPartSeconds = operation.NcEstimatedCycleTimePerPartSeconds;
+        PlanningCycleTimePerPartSeconds = operation.PlanningCycleTimePerPartSeconds;
         PlanningCycleTimeSource = operation.PlanningCycleTimeSource;
         NcEstimateConfidence = operation.NcEstimateConfidence;
         NcEstimateWarnings = operation.NcEstimateWarnings ?? [];
@@ -1248,6 +1250,8 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string? EffectiveGCodeReleaseId { get; }
     public bool RequiresExplicitGCodeSelection { get; }
     public IReadOnlyList<PlannerReadinessRelease> CompatibleGCodeReleases { get; }
+    public double? NcEstimatedCycleTimePerPartSeconds { get; }
+    public double? PlanningCycleTimePerPartSeconds { get; }
     public string PlanningCycleTimeSource { get; }
     public string? NcEstimateConfidence { get; }
     public IReadOnlyList<string> NcEstimateWarnings { get; }
@@ -1306,6 +1310,29 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string EstimatedTimeText => EstimatedTimeSeconds.HasValue
         ? $"Time {Formatting.DurationText.Format(EstimatedTimeSeconds.Value)}"
         : "Time unavailable";
+    public string CycleTimeText
+    {
+        get
+        {
+            var seconds = PlanningCycleTimePerPartSeconds
+                ?? (PlanningCycleTimeSource == "nc_estimate"
+                    ? NcEstimatedCycleTimePerPartSeconds
+                    : null);
+            if (!seconds.HasValue || !double.IsFinite(seconds.Value) || seconds.Value < 0)
+            {
+                return "Cycle unavailable";
+            }
+
+            var source = PlanningCycleTimeSource switch
+            {
+                "nc_estimate" => "NC cycle",
+                "manager_override" => "Override cycle",
+                "manual" => "Manual cycle",
+                _ => "Cycle"
+            };
+            return $"{source} {Duration(seconds)} / part";
+        }
+    }
     public string EstimatedTimeDetail => BuildEstimatedTimeDetail();
     public string SetupEstimateText => UsesSetupOccupancyEstimate && TotalSetupTimeSeconds.HasValue
         ? $"Setup {Duration(TotalSetupTimeSeconds)}"
@@ -1417,9 +1444,9 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     {
         var cycleSummary = PlanningCycleTimeSource switch
         {
-            "manager_override" => "Manager override cycle estimate.",
-            "nc_estimate" => $"NC-based cycle estimate ({NcEstimateConfidence ?? "unknown"} confidence).",
-            "manual" => "Manual operation cycle estimate.",
+            "manager_override" => $"Manager override cycle estimate: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
+            "nc_estimate" => $"NC-based cycle estimate: {Duration(PlanningCycleTimePerPartSeconds ?? NcEstimatedCycleTimePerPartSeconds)} per part ({NcEstimateConfidence ?? "unknown"} confidence).",
+            "manual" => $"Manual operation cycle estimate: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
             _ => "Cycle estimate unavailable."
         };
         if (!UsesSetupOccupancyEstimate)

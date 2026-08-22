@@ -10,16 +10,18 @@ namespace Meimad.Planner.Server.Api.AdministrativeSetup;
 internal sealed record CreateEmployeeResourceRequest(
     string? EmployeeNumber, string? FirstName, string? LastName, string? Role,
     IReadOnlyList<string?>? Skills, string? AssignedCalendarId, string? PhotoPath, string? Notes,
-    string? Email, bool IsActive, bool RespectMasterCalendar = true)
-{ internal CreateEmployeeResourceCommand ToCommand() => new(EmployeeNumber, FirstName, LastName, Role, Skills, AssignedCalendarId, PhotoPath, Notes, Email, IsActive, RespectMasterCalendar); }
+    string? Email, bool IsActive, bool RespectMasterCalendar = true,
+    double ToolLoadSecondsPerTool = 60, double? FixtureAssemblySeconds = null,
+    double FirstPartRunningSpeedPercent = 66.6666666667)
+{ internal CreateEmployeeResourceCommand ToCommand() => new(EmployeeNumber, FirstName, LastName, Role, Skills, AssignedCalendarId, PhotoPath, Notes, Email, IsActive, RespectMasterCalendar, ToolLoadSecondsPerTool, FixtureAssemblySeconds, FirstPartRunningSpeedPercent); }
 
 internal sealed class PatchEmployeeResourceRequest
 {
     [JsonExtensionData] public Dictionary<string, JsonElement> Fields { get; init; } = new(StringComparer.Ordinal);
     internal UpdateEmployeeResourceCommand ToCommand()
     {
-        var reader = new AdministrativePatchReader(Fields, new HashSet<string>(["employeeNumber","firstName","lastName","role","skills","assignedCalendarId","photoPath","notes","email","isActive","respectMasterCalendar"], StringComparer.Ordinal));
-        var result = new UpdateEmployeeResourceCommand(reader.String("employeeNumber"), reader.String("firstName"), reader.String("lastName"), reader.String("role"), reader.StringArray("skills"), reader.String("assignedCalendarId"), reader.String("photoPath"), reader.String("notes"), reader.String("email"), reader.Boolean("isActive"), reader.Boolean("respectMasterCalendar"));
+        var reader = new AdministrativePatchReader(Fields, new HashSet<string>(["employeeNumber","firstName","lastName","role","skills","assignedCalendarId","photoPath","notes","email","isActive","respectMasterCalendar","toolLoadSecondsPerTool","fixtureAssemblySeconds","firstPartRunningSpeedPercent"], StringComparer.Ordinal));
+        var result = new UpdateEmployeeResourceCommand(reader.String("employeeNumber"), reader.String("firstName"), reader.String("lastName"), reader.String("role"), reader.StringArray("skills"), reader.String("assignedCalendarId"), reader.String("photoPath"), reader.String("notes"), reader.String("email"), reader.Boolean("isActive"), reader.Boolean("respectMasterCalendar"), reader.Number("toolLoadSecondsPerTool"), reader.Number("fixtureAssemblySeconds"), reader.Number("firstPartRunningSpeedPercent"));
         reader.ThrowIfInvalid(); return result;
     }
 }
@@ -57,8 +59,9 @@ internal sealed record UpdateReportEmailSettingsRequest(
 internal sealed record EmployeeResourceResponse(
     string ResourceId, string EmployeeNumber, string Name, string FirstName, string LastName, string Role, IReadOnlyList<string> Skills,
     string AssignedCalendarId, string? PhotoPath, string? Notes, string? Email, bool IsActive,
-    int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool RespectMasterCalendar)
-{ internal static EmployeeResourceResponse FromDomain(EmployeeResource value) => new(value.ResourceId,value.EmployeeNumber,value.Name,value.FirstName,value.LastName,value.ResourceType,value.Skills,value.AssignedCalendarId,value.PhotoPath,value.Notes,value.Email,value.IsActive,value.Version,value.CreatedAt,value.UpdatedAt,value.RespectMasterCalendar); }
+    int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool RespectMasterCalendar,
+    double ToolLoadSecondsPerTool, double? FixtureAssemblySeconds, double FirstPartRunningSpeedPercent)
+{ internal static EmployeeResourceResponse FromDomain(EmployeeResource value) => new(value.ResourceId,value.EmployeeNumber,value.Name,value.FirstName,value.LastName,value.ResourceType,value.Skills,value.AssignedCalendarId,value.PhotoPath,value.Notes,value.Email,value.IsActive,value.Version,value.CreatedAt,value.UpdatedAt,value.RespectMasterCalendar,value.ToolLoadSecondsPerTool,value.FixtureAssemblySeconds,value.FirstPartRunningSpeedPercent); }
 internal sealed record EmployeeResourceListResponse(IReadOnlyList<EmployeeResourceResponse> Items, string? NextCursor);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -156,6 +159,8 @@ internal sealed class AdministrativePatchReader
         foreach(var item in value.EnumerateArray()){if(item.ValueKind==JsonValueKind.String)values.Add(item.GetString());else {issues.Add(new($"{name}[{index}]","invalid_type",$"Field '{name}' must contain strings."));}index++;}
         return AdminField<IReadOnlyList<string?>?>.Specified(values);
     }
+    internal AdminField<double?> Number(string name)
+    { if(!fields.TryGetValue(name,out var value)) return AdminField<double?>.Unspecified; if(value.ValueKind==JsonValueKind.Null)return AdminField<double?>.Specified(null); if(value.ValueKind==JsonValueKind.Number&&value.TryGetDouble(out var number))return AdminField<double?>.Specified(number); issues.Add(new(name,"invalid_type",$"Field '{name}' must be a number or null.")); return AdminField<double?>.Unspecified; }
     internal AdminField<DateOnly?> Date(string name)
     { if(!fields.TryGetValue(name,out var value)) return AdminField<DateOnly?>.Unspecified; if(value.ValueKind==JsonValueKind.Null)return AdminField<DateOnly?>.Specified(null); if(value.ValueKind==JsonValueKind.String&&DateOnly.TryParseExact(value.GetString(),"yyyy-MM-dd",CultureInfo.InvariantCulture,DateTimeStyles.None,out var date))return AdminField<DateOnly?>.Specified(date); issues.Add(new(name,"invalid_date",$"Field '{name}' must use yyyy-MM-dd.")); return AdminField<DateOnly?>.Unspecified; }
     internal void ThrowIfInvalid(){if(issues.Count>0)throw new AdministrativeRequestException(issues);}

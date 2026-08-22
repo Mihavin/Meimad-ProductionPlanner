@@ -20,8 +20,14 @@ internal static class AdministrativeSetupValidator
         var notes = Optional(values.Notes, 4000, "notes", issues);
         var email = Optional(values.Email, 320, "email", issues);
         if (email is not null && !IsEmail(email)) issues.Add(new("email", "invalid_email", "email must be a valid email address."));
+        if (!double.IsFinite(values.ToolLoadSecondsPerTool) || values.ToolLoadSecondsPerTool < 0)
+            issues.Add(new("toolLoadSecondsPerTool", "out_of_range", "toolLoadSecondsPerTool must be a finite non-negative number."));
+        if (values.FixtureAssemblySeconds.HasValue && (!double.IsFinite(values.FixtureAssemblySeconds.Value) || values.FixtureAssemblySeconds.Value < 0))
+            issues.Add(new("fixtureAssemblySeconds", "out_of_range", "fixtureAssemblySeconds must be a finite non-negative number."));
+        if (!double.IsFinite(values.FirstPartRunningSpeedPercent) || values.FirstPartRunningSpeedPercent <= 0 || values.FirstPartRunningSpeedPercent > 100)
+            issues.Add(new("firstPartRunningSpeedPercent", "out_of_range", "firstPartRunningSpeedPercent must be greater than 0 and at most 100."));
         Throw(issues);
-        return new(number!, firstName!, lastName!, type!, skills, calendarId!, photoPath, notes, email, values.IsActive);
+        return new(number!, firstName!, lastName!, type!, skills, calendarId!, photoPath, notes, email, values.IsActive, values.ToolLoadSecondsPerTool, values.FixtureAssemblySeconds, values.FirstPartRunningSpeedPercent);
     }
 
     internal static EmployeeCalendarExceptionValues Validate(EmployeeCalendarExceptionValues values)

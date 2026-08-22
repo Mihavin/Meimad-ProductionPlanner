@@ -63,6 +63,7 @@
 
                     <WrapPanel Grid.Row="2" Margin="0,3,0,0">
                         <TextBlock Text="{Binding PlannedQuantityText}" FontWeight="SemiBold" Margin="0,0,9,0" />
+                        <TextBlock Text="{Binding CycleTimeText}" ToolTip="{Binding EstimatedTimeDetail}" FontWeight="SemiBold" Margin="0,0,9,0" />
                         <TextBlock Text="{Binding EstimatedTimeText}" ToolTip="{Binding EstimatedTimeDetail}" FontWeight="SemiBold" Margin="0,0,9,0" />
                         <TextBlock Text="{Binding SetupEstimateText}" ToolTip="{Binding EstimatedTimeDetail}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,9,0" />
                         <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}"
@@ -242,6 +243,7 @@
                     <StackPanel Grid.Column="3" Margin="5,0,0,0" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,2">
                             <TextBlock Text="{Binding PlannedQuantityText}" FontSize="10" FontWeight="SemiBold" Margin="0,0,5,0" />
+                            <TextBlock Text="{Binding CycleTimeText}" ToolTip="{Binding EstimatedTimeDetail}" FontSize="10" FontWeight="SemiBold" Margin="0,0,5,0" />
                             <TextBlock Text="{Binding EstimatedTimeText}" ToolTip="{Binding EstimatedTimeDetail}" FontSize="10" FontWeight="SemiBold" Margin="0,0,5,0" />
                             <TextBlock Text="{Binding SetupEstimateText}" ToolTip="{Binding EstimatedTimeDetail}" FontSize="9" Foreground="{StaticResource MutedTextBrush}" />
                         </StackPanel>

@@ -482,11 +482,12 @@
                                             <DataGridTextColumn Header="Post rev" Binding="{Binding PostSpecificRevision}" Width="70"/>
                                             <DataGridTextColumn Header="Original filename" Binding="{Binding OriginalFileName}" Width="180"/>
                                             <DataGridTextColumn Header="SHA-256" Binding="{Binding ShortHash}" Width="110"/>
-                                            <DataGridTemplateColumn Header="NC estimate" Width="160">
+                                            <DataGridTemplateColumn Header="Calculated cycle / part" Width="230">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
-                                                        <TextBlock Text="{Binding NcEstimateSummary}"
-                                                                   ToolTip="{Binding NcWarningSummary}" />
+                                                        <TextBlock Text="{Binding NcCalculatedTimeSummary}"
+                                                                   ToolTip="{Binding NcCalculatedTimeDetail}"
+                                                                   TextWrapping="Wrap" />
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
@@ -664,6 +665,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

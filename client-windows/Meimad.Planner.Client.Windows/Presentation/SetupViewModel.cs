@@ -102,6 +102,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string resourceEmail = string.Empty;
     private bool resourceIsActive = true;
     private bool resourceRespectMasterCalendar = true;
+    private string resourceToolLoadSecondsPerTool = "60";
+    private string resourceFixtureAssemblySeconds = string.Empty;
+    private string resourceFirstPartRunningSpeedPercent = "66.6667";
     private EmployeeCalendarException? selectedResourceException;
     private string? editingResourceExceptionId;
     private string resourceExceptionDate = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
@@ -520,6 +523,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string ResourceEmail { get => resourceEmail; set => SetField(ref resourceEmail, value); }
     public bool ResourceIsActive { get => resourceIsActive; set => SetField(ref resourceIsActive, value); }
     public bool ResourceRespectMasterCalendar { get => resourceRespectMasterCalendar; set => SetField(ref resourceRespectMasterCalendar, value); }
+    public string ResourceToolLoadSecondsPerTool { get => resourceToolLoadSecondsPerTool; set => SetField(ref resourceToolLoadSecondsPerTool, value); }
+    public string ResourceFixtureAssemblySeconds { get => resourceFixtureAssemblySeconds; set => SetField(ref resourceFixtureAssemblySeconds, value); }
+    public string ResourceFirstPartRunningSpeedPercent { get => resourceFirstPartRunningSpeedPercent; set => SetField(ref resourceFirstPartRunningSpeedPercent, value); }
     public string ResourceFormHeading => editingResourceId is null ? "New employee / resource" : "Edit employee / resource";
     public string ResourceSaveActionText => editingResourceId is null ? "Save employee / resource" : "Save employee / resource changes";
     public EmployeeCalendarException? SelectedResourceException
@@ -1247,6 +1253,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourcePhotoPath = string.Empty;
         ResourceNotes = string.Empty;
         ResourceEmail = string.Empty;
+        ResourceToolLoadSecondsPerTool = "60";
+        ResourceFixtureAssemblySeconds = string.Empty;
+        ResourceFirstPartRunningSpeedPercent = "66.6667";
         ResourceIsActive = true;
         ResourceRespectMasterCalendar = true;
         OnPropertyChanged(nameof(ResourceFormHeading));
@@ -1282,7 +1291,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         var update = new ResourceUpdate(ResourceEmployeeNumber.Trim(), ResourceFirstName.Trim(), ResourceLastName.Trim(), ResourceRole,
             ResourceMachineSkills.Where(value => value.IsSelected).Select(value => value.MachineId).ToArray(),
             SelectedResourceCalendar.WorkingCalendarId, NullIfBlank(ResourcePhotoPath),
-            NullIfBlank(ResourceNotes), NullIfBlank(ResourceEmail), ResourceIsActive, ResourceRespectMasterCalendar);
+            NullIfBlank(ResourceNotes), NullIfBlank(ResourceEmail), ResourceIsActive, ResourceRespectMasterCalendar,
+            double.Parse(ResourceToolLoadSecondsPerTool, CultureInfo.InvariantCulture),
+            string.IsNullOrWhiteSpace(ResourceFixtureAssemblySeconds) ? null : double.Parse(ResourceFixtureAssemblySeconds, CultureInfo.InvariantCulture),
+            double.Parse(ResourceFirstPartRunningSpeedPercent, CultureInfo.InvariantCulture));
         var succeeded = false;
         IsBusy = true;
         try
@@ -1685,6 +1697,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourcePhotoPath = value.PhotoPath ?? string.Empty;
         ResourceNotes = value.Notes ?? string.Empty;
         ResourceEmail = value.Email ?? string.Empty;
+        ResourceToolLoadSecondsPerTool = value.ToolLoadSecondsPerTool.ToString(CultureInfo.InvariantCulture);
+        ResourceFixtureAssemblySeconds = value.FixtureAssemblySeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        ResourceFirstPartRunningSpeedPercent = value.FirstPartRunningSpeedPercent.ToString(CultureInfo.InvariantCulture);
         ResourceIsActive = value.IsActive;
         ResourceRespectMasterCalendar = value.RespectMasterCalendar;
         OnPropertyChanged(nameof(ResourceFormHeading));

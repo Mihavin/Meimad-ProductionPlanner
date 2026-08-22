@@ -8,6 +8,7 @@ public partial class TimelineWindow : Window
     internal TimelineWindow(TimelineViewModel timeline)
     {
         InitializeComponent();
+        ExternalTimelineView.ShowGraphAndLegendOnly();
         Title = "Meimad Planner \u2014 Timeline";
         DataContext = timeline;
         Closed += (_, _) => DataContext = null;

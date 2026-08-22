@@ -9,6 +9,6 @@
         Foreground="{StaticResource PrimaryTextBrush}"
         FontFamily="Segoe UI">
     <Grid Margin="12">
-        <views:TimelineView />
+        <views:TimelineView x:Name="ExternalTimelineView" />
     </Grid>
 </Window>

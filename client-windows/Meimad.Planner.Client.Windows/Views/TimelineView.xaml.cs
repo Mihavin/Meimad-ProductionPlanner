@@ -54,6 +54,15 @@ public partial class TimelineView : UserControl
         SizeChanged += OnSizeChanged;
     }
 
+    internal void ShowGraphAndLegendOnly()
+    {
+        TimelineHeaderPanel.Visibility = Visibility.Collapsed;
+        TimelineDetailsPanel.Visibility = Visibility.Collapsed;
+        TimelineLayout.RowDefinitions[0].Height = new GridLength(0);
+        TimelineLayout.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
+        TimelineGraphScrollViewer.MaxHeight = double.PositiveInfinity;
+    }
+
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs args)
     {
         DetachViewModel();
