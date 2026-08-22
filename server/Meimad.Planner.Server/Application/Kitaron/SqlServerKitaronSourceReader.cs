@@ -10,10 +10,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     public async Task<KitaronSourceSnapshot> ReadAsync(
         StoredKitaronConnectionSettings settings,
         string password,
-        IReadOnlyList<string> columns,
+        IReadOnlyList<string> workColumns,
+        IReadOnlyList<string> materialColumns,
         CancellationToken cancellationToken)
     {
-        if (columns.Count == 0)
+        if (workColumns.Count == 0)
             throw new KitaronSyncBlockedException("The ready mapping has no readable source columns.");
 
         var builder = new SqlConnectionStringBuilder
@@ -31,10 +32,13 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         };
         await using var connection = new SqlConnection(builder.ConnectionString);
         await connection.OpenAsync(cancellationToken);
-        var workRows = await ReadWorkRowsAsync(connection, settings, columns, cancellationToken);
+        var workRows = await ReadWorkRowsAsync(connection, settings, workColumns, cancellationToken);
         var orders = await ReadOrdersAsync(connection, settings, cancellationToken);
         var components = await ReadComponentsAsync(connection, cancellationToken);
-        return new KitaronSourceSnapshot(workRows, orders, components);
+        var materialRows = materialColumns.Count == 0
+            ? []
+            : await ReadMaterialRowsAsync(connection, materialColumns, cancellationToken);
+        return new KitaronSourceSnapshot(workRows, orders, components, materialRows);
     }
 
     private static async Task<IReadOnlyList<KitaronSourceRow>> ReadWorkRowsAsync(
@@ -83,6 +87,30 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                 reader.IsDBNull(5) ? null : Convert.ToDouble(reader.GetValue(5), CultureInfo.InvariantCulture),
                 reader.IsDBNull(6) ? null : reader.GetDateTime(6),
                 reader.GetBoolean(7)));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<KitaronSourceRow>> ReadMaterialRowsAsync(
+        SqlConnection connection,
+        IReadOnlyList<string> columns,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = BuildMaterialQuery(columns);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<KitaronSourceRow>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            EnsureWithinLimit(result.Count);
+            var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < reader.FieldCount; index++)
+            {
+                values[reader.GetName(index)] = await reader.IsDBNullAsync(index, cancellationToken)
+                    ? null
+                    : reader.GetValue(index);
+            }
+            result.Add(new KitaronSourceRow(values));
         }
         return result;
     }
@@ -146,6 +174,47 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         WHERE NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL
           AND NULLIF(LTRIM(RTRIM(o.OrderNumber)), N'') IS NOT NULL
         ORDER BY so.RecordID;
+        """;
+
+    internal static string BuildMaterialQuery(IReadOnlyList<string> columns) => $$"""
+        WITH material_orders AS (
+            SELECT purchase_row.BuyRowID,
+                   purchase_row.BuyMainID,
+                   purchase_row.NumberOfString,
+                   purchase_row.RowMaterialID,
+                   purchase_row.Information,
+                   purchase_main.SupplyerName,
+                   purchase_row.Amount,
+                   COALESCE(receipts.ReceivedAmount, 0) AS ReceivedAmount,
+                   purchase_row.MeasureUnit,
+                   purchase_row.DateToRecept,
+                   approval.AppDate AS SupplierDate,
+                   approval.Amount AS SupplierAmount,
+                   approval.Remark AS SupplierRemark,
+                   purchase_row.Status,
+                   CONVERT(bit, CASE WHEN purchase_row.RowClosed = 1 OR purchase_main.OrderClosed = 1
+                                    OR purchase_main.Closed = 1 THEN 1 ELSE 0 END) AS Closed
+            FROM dbo.TBuyRow purchase_row WITH (NOLOCK)
+            JOIN dbo.TBuyMain purchase_main WITH (NOLOCK)
+              ON purchase_main.BuyMainID = purchase_row.BuyMainID
+            OUTER APPLY (
+                SELECT TOP (1) candidate.AppDate, candidate.Amount, candidate.Remark
+                FROM dbo.TAppCostOfferBySupplier candidate WITH (NOLOCK)
+                WHERE candidate.BuyMainID = purchase_row.BuyMainID
+                  AND candidate.BuyID = purchase_row.BuyRowID
+                  AND candidate.SupplierName = purchase_main.SupplyerName
+                ORDER BY candidate.PresentDate DESC, candidate.AppCostOfferID DESC
+            ) approval
+            LEFT JOIN (
+                SELECT BuyMainID, BuyID, SUM(COALESCE(BuyRecieved, 0)) AS ReceivedAmount
+                FROM dbo.TBuyReceptionHeader WITH (NOLOCK)
+                GROUP BY BuyMainID, BuyID
+            ) receipts ON receipts.BuyMainID = purchase_row.BuyMainID
+                      AND receipts.BuyID = purchase_row.BuyRowID
+        )
+        SELECT {{string.Join(", ", columns.Select(Quote))}}
+        FROM material_orders
+        ORDER BY BuyMainID, NumberOfString, BuyRowID;
         """;
 
     private const string ComponentQuery = """

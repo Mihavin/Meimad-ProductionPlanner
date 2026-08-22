@@ -33,6 +33,11 @@ The requested database `KitaronData2550OLAP` cannot be opened by the configured 
 | Operation master | `TOperation` | `OperationID` | operation label/default timing candidates |
 | Work-order operation | `TSubRootCard` | `NUMBER + ActionNumber` | operation description, route link, station, execution fields |
 | Station/work center | `TStation` | `StationID` | station name/type and capacity metadata |
+| Raw-material purchase line | `TBuyRow` + `TBuyMain` | `TBuyRow.BuyRowID` | purchase order/line, `RowMaterialID`, description, ordered quantity, requested delivery, status |
+| Supplier delivery approval | `TAppCostOfferBySupplier` | latest `AppCostOfferID` for purchase order/row/supplier | `AppDate`, acknowledged `Amount`, `Remark`, `PresentDate` |
+| Material receipt history | `TBuyReceptionHeader` | `BuyReceptionID` | purchase order/row, historical received quantity, closed state |
+
+The raw-material purchase source was revalidated on 2026-08-22 against live bounded reads. `TBuyRow` contains current material purchase lines, while the generic `Q*BuyStringUnion` report views are session/filter dependent and returned no rows in a direct connector session. The connector therefore uses a deterministic base-table join and selects the latest supplier-approval row by `PresentDate DESC, AppCostOfferID DESC`. These imported receipt and approval facts remain advisory and never become locally verified material availability.
 
 The accessible active projection contains 312 rows representing 135 production work orders, 127 items, 37 sales orders, 312 unique work-order operation keys, and 18 stations. None of these rows is missing its work-order ID, operation number, station, supply date, or positive production quantity.
 

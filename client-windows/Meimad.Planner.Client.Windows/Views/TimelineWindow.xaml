@@ -3,12 +3,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
         Title="Meimad Planner — Timeline"
-        Width="1320" Height="780" MinWidth="900" MinHeight="600"
+        Width="1320" Height="780" MinWidth="900" MinHeight="600" WindowState="Maximized"
         ResizeMode="CanResizeWithGrip" ShowInTaskbar="True"
         Background="{StaticResource CanvasBrush}"
         Foreground="{StaticResource PrimaryTextBrush}"
         FontFamily="Segoe UI">
-    <Grid Margin="12">
+    <Grid Margin="0">
         <views:TimelineView x:Name="ExternalTimelineView" />
     </Grid>
 </Window>

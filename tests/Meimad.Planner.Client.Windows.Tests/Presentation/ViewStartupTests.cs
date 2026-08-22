@@ -477,7 +477,10 @@ public sealed class ViewStartupTests
                     && externalTimelineView.FindName("TimelineLegendPanel") is FrameworkElement legend
                     && legend.Visibility == Visibility.Visible
                     && externalTimelineView.FindName("TimelineGraphPanel") is FrameworkElement graph
-                    && graph.Visibility == Visibility.Visible;
+                    && graph.Visibility == Visibility.Visible
+                    && externalTimelineView.FindName("TimelineLayout") is Grid layout
+                    && layout.RowDefinitions[2].Height.IsStar
+                    && layout.RowDefinitions[3].Height.Value == 0;
 
                 openMethod.Invoke(plannerWindow, [plannerWindow, new RoutedEventArgs()]);
                 timelineWindowWasReused = ReferenceEquals(

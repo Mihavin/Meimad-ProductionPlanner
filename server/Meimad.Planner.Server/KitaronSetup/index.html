@@ -24,7 +24,9 @@
     <section class="notice">
       <strong>One-way boundary:</strong> Kitaron is always opened with <code>ApplicationIntent=ReadOnly</code>.
       Synchronization may create or update linked Cases, Orders, reusable Case Operations, and Case Components in Meimad only.
+      It also imports raw-material purchase lines and the latest supplier delivery approval into a separate advisory register.
       Kitaron StopProduction orders become cancelled; component Cases never receive automatic Orders or Batches.
+      Imported receipts and approvals never become verified Planner stock, material reservations, or production readiness.
       It never writes to Kitaron, creates Production Batches or assignments, or reorders a Machine backlog.
     </section>
 
@@ -33,7 +35,7 @@
         <div>
           <p class="step">STEP 1</p>
           <h2>Connection and source object</h2>
-          <p class="hint">Save credentials on this Server, then test the exact database, schema, and view.</p>
+          <p class="hint">Save credentials on this Server, then test the planning view and canonical raw-material purchase sources.</p>
         </div>
       </div>
       <form id="connectionForm" class="embedded-form">
@@ -106,7 +108,7 @@
         <div>
           <p class="step">STEP 3</p>
           <h2>Field mapping</h2>
-          <p class="hint">Required rows cannot be disabled. Optional uncertain rows may stay disabled or blocked in a draft.</p>
+          <p class="hint">Required rows cannot be disabled. The material_orders group maps TBuyRow purchase lines and supplier delivery approval fields.</p>
         </div>
         <div class="actions no-margin">
           <button id="suggestButton" type="button" class="secondary">Auto-suggest detected columns</button>

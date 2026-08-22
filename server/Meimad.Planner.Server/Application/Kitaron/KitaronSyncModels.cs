@@ -26,14 +26,16 @@ internal sealed record KitaronSourceComponent(
 internal sealed record KitaronSourceSnapshot(
     IReadOnlyList<KitaronSourceRow> WorkRows,
     IReadOnlyList<KitaronSourceOrder> Orders,
-    IReadOnlyList<KitaronSourceComponent> Components);
+    IReadOnlyList<KitaronSourceComponent> Components,
+    IReadOnlyList<KitaronSourceRow>? MaterialRows = null);
 
 internal interface IKitaronSourceReader
 {
     Task<KitaronSourceSnapshot> ReadAsync(
         StoredKitaronConnectionSettings settings,
         string password,
-        IReadOnlyList<string> columns,
+        IReadOnlyList<string> workColumns,
+        IReadOnlyList<string> materialColumns,
         CancellationToken cancellationToken);
 }
 
@@ -74,6 +76,24 @@ internal sealed record KitaronSyncOperation(
     int? CycleSeconds,
     string SourceHash);
 
+internal sealed record KitaronSyncMaterialOrder(
+    string SourceKey,
+    string PurchaseOrderNumber,
+    string LineNumber,
+    string MaterialNumber,
+    string? Description,
+    string? Supplier,
+    double OrderedQuantity,
+    double? ReceivedQuantity,
+    string? Unit,
+    DateOnly? RequestedDeliveryDate,
+    DateOnly? ApprovedDeliveryDate,
+    double? ApprovedQuantity,
+    string? ApprovalNote,
+    string? Status,
+    bool Closed,
+    string SourceHash);
+
 internal sealed record KitaronSyncPlan(
     int SourceRows,
     IReadOnlyList<KitaronSyncCase> Cases,
@@ -82,7 +102,8 @@ internal sealed record KitaronSyncPlan(
     IReadOnlyList<KitaronSyncComponent> Components,
     IReadOnlySet<string> KnownComponentSourceKeys,
     IReadOnlyList<string> Warnings,
-    int MappingVersion);
+    int MappingVersion,
+    IReadOnlyList<KitaronSyncMaterialOrder>? MaterialOrders = null);
 
 internal sealed record KitaronSyncStatus(
     string Status,

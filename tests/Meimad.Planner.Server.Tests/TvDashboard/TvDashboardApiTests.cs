@@ -78,7 +78,7 @@ public sealed class TvDashboardApiTests
             Assert.Contains("server-status-connected", css, StringComparison.Ordinal);
             Assert.Contains("machine.current", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.next", javascript, StringComparison.Ordinal);
-            Assert.Contains("machine.third", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("machine.third", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("connection-banner", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);

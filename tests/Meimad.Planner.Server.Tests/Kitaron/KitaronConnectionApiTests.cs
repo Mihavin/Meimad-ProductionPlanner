@@ -90,7 +90,7 @@ public sealed class KitaronConnectionApiTests
             using var mappingJson = JsonDocument.Parse(await mapping.Content.ReadAsStringAsync());
             Assert.Equal("domain_aligned", mappingJson.RootElement.GetProperty("modelMode").GetString());
             Assert.Equal("draft", mappingJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal(22, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
+            Assert.Equal(37, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
             Assert.Equal(3, mappingJson.RootElement.GetProperty("detectedColumns").GetArrayLength());
 
             using var after = await client.GetAsync("/api/v1/kitaron/connection");
@@ -149,7 +149,7 @@ public sealed class KitaronConnectionApiTests
                     SELECT mapping_status || '/' || json_array_length(mappings_json)
                     FROM kitaron_mapping_settings WHERE id = 1;
                     """;
-                Assert.Equal("draft/22", await command.ExecuteScalarAsync());
+                Assert.Equal("draft/37", await command.ExecuteScalarAsync());
 
                 command.CommandText = """
                     SELECT COUNT(*) FROM sqlite_master
@@ -282,6 +282,22 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
+    public void Canonical_material_order_query_reads_latest_delivery_approval_without_mutating_kitaron()
+    {
+        var query = SqlServerKitaronSourceReader.BuildMaterialQuery(
+            ["BuyRowID", "BuyMainID", "RowMaterialID", "SupplierDate", "SupplierAmount"]);
+
+        Assert.Contains("dbo.TBuyRow", query, StringComparison.Ordinal);
+        Assert.Contains("dbo.TAppCostOfferBySupplier", query, StringComparison.Ordinal);
+        Assert.Contains("TOP (1)", query, StringComparison.Ordinal);
+        Assert.Contains("candidate.PresentDate DESC", query, StringComparison.Ordinal);
+        Assert.Contains("[SupplierDate]", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE", query, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DELETE", query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Ready_mapping_synchronizes_cases_orders_and_operations_idempotently_without_planning_data()
     {
         var reader = new CapturingSourceReader();
@@ -359,7 +375,9 @@ public sealed class KitaronConnectionApiTests
                     (SELECT COUNT(*) FROM case_operations), (SELECT COUNT(*) FROM production_batches),
                     (SELECT COUNT(*) FROM machine_assignments), (SELECT COUNT(*) FROM kitaron_sync_links),
                     (SELECT COUNT(*) FROM case_components WHERE is_active=1),
-                    (SELECT status FROM orders LIMIT 1);
+                    (SELECT status FROM orders LIMIT 1),
+                    (SELECT COUNT(*) FROM kitaron_material_orders WHERE active=1),
+                    (SELECT approved_delivery_date FROM kitaron_material_orders LIMIT 1);
                 """;
             await using var counts = await command.ExecuteReaderAsync();
             Assert.True(await counts.ReadAsync());
@@ -367,6 +385,7 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(2, counts.GetInt32(2)); Assert.Equal(0, counts.GetInt32(3));
             Assert.Equal(0, counts.GetInt32(4)); Assert.Equal(6, counts.GetInt32(5));
             Assert.Equal(0, counts.GetInt32(6)); Assert.Equal("cancelled", counts.GetString(7));
+            Assert.Equal(1, counts.GetInt32(8)); Assert.Equal("2026-08-28", counts.GetString(9));
         }, reader);
         Assert.Equal(4, reader.ReadCount);
     }
@@ -657,7 +676,13 @@ public sealed class KitaronConnectionApiTests
                 new("CompanyName", "nvarchar"), new("OrderNumber", "nvarchar"), new("OrdAmount", "int"),
                 new("SupplyDate", "date"), new("ActionNumber", "int"), new("ActionDescription", "nvarchar"),
                 new("Station", "nvarchar"), new("DirectionTimeP", "decimal"), new("TimeProductionP", "decimal"),
-                new("RootID", "nvarchar"), new("ProductionAmount", "int"), new("RecordID", "int")]);
+                new("RootID", "nvarchar"), new("ProductionAmount", "int"), new("RecordID", "int"),
+                new("BuyRowID", "int"), new("BuyMainID", "int"), new("NumberOfString", "float"),
+                new("RowMaterialID", "int"), new("Information", "nvarchar"), new("SupplyerName", "nvarchar"),
+                new("Amount", "float"), new("ReceivedAmount", "float"), new("MeasureUnit", "nvarchar"),
+                new("DateToRecept", "datetime"), new("SupplierDate", "datetime"),
+                new("SupplierAmount", "float"), new("SupplierRemark", "nvarchar"),
+                new("Status", "nvarchar"), new("Closed", "bit")]);
     }
 
     private sealed class CapturingSourceReader : IKitaronSourceReader
@@ -667,6 +692,7 @@ public sealed class KitaronConnectionApiTests
         internal bool IncludeComponent { get; set; } = true;
         public Task<KitaronSourceSnapshot> ReadAsync(
             StoredKitaronConnectionSettings settings, string password, IReadOnlyList<string> columns,
+            IReadOnlyList<string> materialColumns,
             CancellationToken cancellationToken)
         {
             ReadCount++;
@@ -687,7 +713,18 @@ public sealed class KitaronConnectionApiTests
                 [new KitaronSourceOrder(
                     "9001", "PART-100", "Test Part", "A", "SO-100", 12,
                     new DateTime(2026, 9, 1), StopProduction)],
-                components));
+                components,
+                [new KitaronSourceRow(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BuyRowID"] = 40805, ["BuyMainID"] = 76493, ["NumberOfString"] = 1d,
+                    ["RowMaterialID"] = 748, ["Information"] = "AL 7050 plate",
+                    ["SupplyerName"] = "Material supplier", ["Amount"] = 22d,
+                    ["ReceivedAmount"] = 5d, ["MeasureUnit"] = "piece",
+                    ["DateToRecept"] = new DateTime(2026, 8, 20),
+                    ["SupplierDate"] = new DateTime(2026, 8, 28),
+                    ["SupplierAmount"] = 22d, ["SupplierRemark"] = "Confirmed",
+                    ["Status"] = "approved", ["Closed"] = false
+                })]));
         }
 
         private static KitaronSourceRow Row(int operation, string name, int position) => new(
@@ -705,6 +742,7 @@ public sealed class KitaronConnectionApiTests
     {
         public Task<KitaronSourceSnapshot> ReadAsync(
             StoredKitaronConnectionSettings settings, string password, IReadOnlyList<string> columns,
+            IReadOnlyList<string> materialColumns,
             CancellationToken cancellationToken)
         {
             Assert.Equal("sync-secret", password);

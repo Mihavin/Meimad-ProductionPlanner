@@ -60,6 +60,7 @@ public partial class TimelineView : UserControl
         TimelineDetailsPanel.Visibility = Visibility.Collapsed;
         TimelineLayout.RowDefinitions[0].Height = new GridLength(0);
         TimelineLayout.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
+        TimelineLayout.RowDefinitions[3].Height = new GridLength(0);
         TimelineGraphScrollViewer.MaxHeight = double.PositiveInfinity;
     }
 

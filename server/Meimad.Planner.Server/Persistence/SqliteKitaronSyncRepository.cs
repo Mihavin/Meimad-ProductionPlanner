@@ -80,6 +80,7 @@ internal sealed class SqliteKitaronSyncRepository(
         await using var transaction = connection.BeginTransaction(deferred: false);
         var counts = new MutableCounts();
         var caseIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await DeactivateMaterialOrdersAsync(connection, transaction, now, cancellationToken);
 
         foreach (var item in plan.Cases)
         {
@@ -108,6 +109,8 @@ internal sealed class SqliteKitaronSyncRepository(
             await ResolveComponentAsync(
                 connection, transaction, item, parentCaseId, childCaseId, now, counts, cancellationToken);
         }
+        foreach (var item in plan.MaterialOrders ?? [])
+            await UpsertMaterialOrderAsync(connection, transaction, item, now, cancellationToken);
         await DeactivateMissingComponentsAsync(
             connection, transaction, plan.KnownComponentSourceKeys, now, counts, cancellationToken);
         await SynchronizeNotStartedBatchOperationTimesAsync(
@@ -116,6 +119,7 @@ internal sealed class SqliteKitaronSyncRepository(
         var message = $"Synchronized {plan.SourceRows:N0} source rows: " +
             $"{counts.CasesCreated} Case(s), {counts.OrdersCreated} Order(s), and " +
             $"{counts.OperationsCreated} Case Operation(s), and {counts.ComponentsCreated} Case Component(s) created. " +
+            $"{plan.MaterialOrders?.Count ?? 0:N0} Kitaron material order line(s) with delivery approval data imported as advisory records. " +
             "Existing or linked records were reused safely.";
         await using (var command = connection.CreateCommand())
         {
@@ -155,6 +159,85 @@ internal sealed class SqliteKitaronSyncRepository(
         var result = await ReadStatusAsync(connection, transaction, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
+    }
+
+    private static async Task DeactivateMaterialOrdersAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE kitaron_material_orders
+            SET active = 0, updated_at = $now
+            WHERE active = 1;
+            """;
+        command.Parameters.AddWithValue("$now", now.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task UpsertMaterialOrderAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        KitaronSyncMaterialOrder item,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO kitaron_material_orders (
+                source_key, purchase_order_number, line_number, material_number,
+                description, supplier, ordered_quantity, received_quantity, unit,
+                requested_delivery_date, approved_delivery_date, approved_quantity,
+                approval_note, status, closed, active, source_hash,
+                first_imported_at, last_imported_at, updated_at)
+            VALUES (
+                $sourceKey, $purchaseOrder, $line, $material,
+                $description, $supplier, $ordered, $received, $unit,
+                $requestedDate, $approvedDate, $approvedQuantity,
+                $approvalNote, $status, $closed, 1, $sourceHash,
+                $now, $now, $now)
+            ON CONFLICT(source_key) DO UPDATE SET
+                purchase_order_number = excluded.purchase_order_number,
+                line_number = excluded.line_number,
+                material_number = excluded.material_number,
+                description = excluded.description,
+                supplier = excluded.supplier,
+                ordered_quantity = excluded.ordered_quantity,
+                received_quantity = excluded.received_quantity,
+                unit = excluded.unit,
+                requested_delivery_date = excluded.requested_delivery_date,
+                approved_delivery_date = excluded.approved_delivery_date,
+                approved_quantity = excluded.approved_quantity,
+                approval_note = excluded.approval_note,
+                status = excluded.status,
+                closed = excluded.closed,
+                active = 1,
+                source_hash = excluded.source_hash,
+                last_imported_at = excluded.last_imported_at,
+                updated_at = excluded.updated_at;
+            """;
+        command.Parameters.AddWithValue("$sourceKey", item.SourceKey);
+        command.Parameters.AddWithValue("$purchaseOrder", item.PurchaseOrderNumber);
+        command.Parameters.AddWithValue("$line", item.LineNumber);
+        command.Parameters.AddWithValue("$material", item.MaterialNumber);
+        command.Parameters.AddWithValue("$description", (object?)item.Description ?? DBNull.Value);
+        command.Parameters.AddWithValue("$supplier", (object?)item.Supplier ?? DBNull.Value);
+        command.Parameters.AddWithValue("$ordered", item.OrderedQuantity);
+        command.Parameters.AddWithValue("$received", (object?)item.ReceivedQuantity ?? DBNull.Value);
+        command.Parameters.AddWithValue("$unit", (object?)item.Unit ?? DBNull.Value);
+        command.Parameters.AddWithValue("$requestedDate", item.RequestedDeliveryDate?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$approvedDate", item.ApprovedDeliveryDate?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$approvedQuantity", (object?)item.ApprovedQuantity ?? DBNull.Value);
+        command.Parameters.AddWithValue("$approvalNote", (object?)item.ApprovalNote ?? DBNull.Value);
+        command.Parameters.AddWithValue("$status", (object?)item.Status ?? DBNull.Value);
+        command.Parameters.AddWithValue("$closed", item.Closed ? 1 : 0);
+        command.Parameters.AddWithValue("$sourceHash", item.SourceHash);
+        command.Parameters.AddWithValue("$now", now.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task SynchronizeNotStartedBatchOperationTimesAsync(

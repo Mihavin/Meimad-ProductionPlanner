@@ -57,7 +57,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(39L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(41L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -150,6 +150,18 @@ public sealed class MigrationTests
         Assert.Equal("nc_cycle_estimates", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 39;";
         Assert.Equal("verified_material_receipts_and_batch_reservations", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 40;";
+        Assert.Equal("employee_setup_skills", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 41;";
+        Assert.Equal("kitaron_material_orders_and_delivery_approvals", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
+            WHERE name IN ('source_key', 'purchase_order_number', 'material_number',
+                           'requested_delivery_date', 'approved_delivery_date',
+                           'approved_quantity', 'approval_note', 'active', 'source_hash');
+            """;
+        Assert.Equal(9L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM sqlite_master
@@ -231,7 +243,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(39L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(41L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -242,6 +254,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE kitaron_material_orders;
+                DELETE FROM schema_migrations WHERE version = 41;
+                ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
+                ALTER TABLE employee_resources DROP COLUMN fixture_assembly_seconds;
+                ALTER TABLE employee_resources DROP COLUMN tool_load_seconds_per_tool;
+                DELETE FROM schema_migrations WHERE version = 40;
                 DROP TRIGGER batch_material_reservation_batch_capacity_insert;
                 DROP TRIGGER batch_material_reservation_receipt_capacity_insert;
                 DROP TRIGGER batch_material_reservation_case_match_insert;
@@ -632,6 +650,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE kitaron_material_orders;
+                DELETE FROM schema_migrations WHERE version = 41;
+                ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
+                ALTER TABLE employee_resources DROP COLUMN fixture_assembly_seconds;
+                ALTER TABLE employee_resources DROP COLUMN tool_load_seconds_per_tool;
+                DELETE FROM schema_migrations WHERE version = 40;
                 DROP TRIGGER batch_material_reservation_batch_capacity_insert;
                 DROP TRIGGER batch_material_reservation_receipt_capacity_insert;
                 DROP TRIGGER batch_material_reservation_case_match_insert;
@@ -817,6 +841,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE kitaron_material_orders;
+                DELETE FROM schema_migrations WHERE version = 41;
+                ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
+                ALTER TABLE employee_resources DROP COLUMN fixture_assembly_seconds;
+                ALTER TABLE employee_resources DROP COLUMN tool_load_seconds_per_tool;
+                DELETE FROM schema_migrations WHERE version = 40;
                 DROP TRIGGER batch_material_reservation_batch_capacity_insert;
                 DROP TRIGGER batch_material_reservation_receipt_capacity_insert;
                 DROP TRIGGER batch_material_reservation_case_match_insert;
@@ -1003,6 +1033,12 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE kitaron_material_orders;
+                DELETE FROM schema_migrations WHERE version = 41;
+                ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
+                ALTER TABLE employee_resources DROP COLUMN fixture_assembly_seconds;
+                ALTER TABLE employee_resources DROP COLUMN tool_load_seconds_per_tool;
+                DELETE FROM schema_migrations WHERE version = 40;
                 DROP TRIGGER batch_material_reservation_batch_capacity_insert;
                 DROP TRIGGER batch_material_reservation_receipt_capacity_insert;
                 DROP TRIGGER batch_material_reservation_case_match_insert;
@@ -1176,7 +1212,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 40;";
+            command.CommandText = "PRAGMA user_version = 42;";
             await command.ExecuteNonQueryAsync();
         }
 

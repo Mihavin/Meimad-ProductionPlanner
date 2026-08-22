@@ -26,32 +26,21 @@ function setServerStatus(status, description) {
   indicator.title = description;
 }
 
-function statusClass(code) {
-  return ["current", "setup", "conflict", "downtime"].includes(code)
-    ? code
-    : "idle";
-}
-
 function renderMachine(machine) {
-  const code = statusClass(String(machine.status?.code ?? "idle"));
   const number = escapeHtml(machine.number);
   const name = escapeHtml(machine.name);
-  const label = escapeHtml(machine.status?.label ?? "Unknown");
   const job = (value, prefix) => value
     ? `<div class="job ${prefix}"><span class="job-prefix">${prefix === "current" ? "Current" : prefix === "next" ? "Next" : "After"}:</span> ${escapeHtml(value.partNumber)} <span class="job-op">OP${escapeHtml(value.operationNumber)}</span> <span class="job-name">${escapeHtml(value.operationName)}</span></div>`
     : `<div class="job ${prefix} empty">${prefix === "current" ? "No current work" : "—"}</div>`;
   const preview = machine.current?.previewUrl
     ? `<img class="job-preview" src="${escapeHtml(machine.current.previewUrl)}" alt="" loading="lazy" onerror="this.hidden=true">`
     : `<span class="job-preview placeholder" aria-hidden="true"></span>`;
-  return `<article class="machine-row status-${code}" aria-label="${number} ${name}: ${label}">
+  return `<article class="machine-row" aria-label="${number} ${name}">
     <div class="machine-number">${number}</div>
     <div class="machine-name">${name}</div>
     ${preview}
     ${job(machine.current, "current")}
-    <div class="machine-status">${label}</div>
     ${job(machine.next, "next")}
-    ${job(machine.third, "third")}
-    <div class="warning-indicator" title="${escapeHtml(machine.conflicts?.[0]?.message ?? "")}">${machine.conflicts?.length ? "▲" : ""}</div>
   </article>`;
 }
 

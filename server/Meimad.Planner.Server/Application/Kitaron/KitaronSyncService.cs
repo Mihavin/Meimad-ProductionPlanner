@@ -82,16 +82,24 @@ internal sealed class KitaronSyncService
                 var active = mapping.Fields
                     .Where(field => field.Enabled
                         && field.ModelModes.Contains(mapping.ModelMode, StringComparer.Ordinal)
-                        && field.TargetEntity is "cases" or "orders" or "case_operations")
+                        && field.TargetEntity is "cases" or "orders" or "case_operations" or "material_orders")
                     .ToArray();
-                var columns = active
+                var workFields = active.Where(field => field.TargetEntity != "material_orders").ToArray();
+                var materialFields = active.Where(field => field.TargetEntity == "material_orders").ToArray();
+                var columns = workFields
                     .Where(field => field.SourceColumn is not null
                         && !StringComparer.OrdinalIgnoreCase.Equals(field.SourceColumn, "auto")
                         && field.Transform != "generated_working_folder")
                     .Select(field => field.SourceColumn!)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-                var snapshot = await sourceReader.ReadAsync(connection, password, columns, cancellationToken);
+                var materialColumns = materialFields
+                    .Where(field => field.SourceColumn is not null)
+                    .Select(field => field.SourceColumn!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var snapshot = await sourceReader.ReadAsync(
+                    connection, password, columns, materialColumns, cancellationToken);
                 var existingCasePartNumbers = await syncRepository.GetExistingCasePartNumbersAsync(cancellationToken);
                 var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version);
                 return await syncRepository.ApplyAsync(plan, timeProvider.GetUtcNow(), cancellationToken);
@@ -250,11 +258,52 @@ internal sealed class KitaronSyncService
                     Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds))))
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
+        var materialRows = snapshot.MaterialRows ?? [];
+        var materialOrders = materialRows.Select(row =>
+            {
+                var sourceKey = Text(row, Field("material_orders", "source_key"));
+                var purchaseOrder = Text(row, Field("material_orders", "purchase_order_number"));
+                var line = Text(row, Field("material_orders", "line_number"));
+                var material = Text(row, Field("material_orders", "material_number"));
+                var ordered = OptionalNumber(row, byTarget, "material_orders.ordered_quantity");
+                if (sourceKey is null || purchaseOrder is null || line is null || material is null
+                    || ordered is null || ordered <= 0 || !double.IsFinite(ordered.Value))
+                {
+                    AddWarning(warnings, "A Kitaron material purchase row with an invalid key, material, or quantity was skipped.");
+                    return null;
+                }
+                var item = new KitaronSyncMaterialOrder(
+                    sourceKey, purchaseOrder, line, material,
+                    OptionalText(row, byTarget, "material_orders.description"),
+                    OptionalText(row, byTarget, "material_orders.supplier"),
+                    ordered.Value,
+                    OptionalNumber(row, byTarget, "material_orders.received_quantity"),
+                    OptionalText(row, byTarget, "material_orders.unit"),
+                    OptionalDate(row, byTarget, "material_orders.requested_delivery_date"),
+                    OptionalDate(row, byTarget, "material_orders.approved_delivery_date"),
+                    OptionalNumber(row, byTarget, "material_orders.approved_quantity"),
+                    OptionalText(row, byTarget, "material_orders.approval_note"),
+                    OptionalText(row, byTarget, "material_orders.status"),
+                    OptionalBoolean(row, byTarget, "material_orders.closed"),
+                    "");
+                return item with { SourceHash = Hash(
+                    item.SourceKey, item.PurchaseOrderNumber, item.LineNumber, item.MaterialNumber,
+                    item.Description, item.Supplier, item.OrderedQuantity, item.ReceivedQuantity,
+                    item.Unit, item.RequestedDeliveryDate, item.ApprovedDeliveryDate,
+                    item.ApprovedQuantity, item.ApprovalNote, item.Status, item.Closed) };
+            })
+            .Where(item => item is not null)
+            .Cast<KitaronSyncMaterialOrder>()
+            .GroupBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         return new KitaronSyncPlan(
-            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count,
+            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count,
             cases, orders, operations, components,
             snapshot.Components.Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
-            warnings, mappingVersion);
+            warnings, mappingVersion, materialOrders);
     }
 
     private static string? OptionalText(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields,
@@ -263,6 +312,22 @@ internal sealed class KitaronSyncService
 
     private static int? OptionalInt(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields, string key) =>
         fields.TryGetValue(key, out var field) ? Integer(Value(row, field)) : null;
+
+    private static double? OptionalNumber(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields, string key)
+    {
+        if (!fields.TryGetValue(key, out var field)) return null;
+        var number = Decimal(Value(row, field));
+        return number is null ? null : (double)number.Value;
+    }
+
+    private static bool OptionalBoolean(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields, string key)
+    {
+        if (!fields.TryGetValue(key, out var field)) return false;
+        var value = Value(row, field);
+        if (value is bool result) return result;
+        var number = Decimal(value);
+        return number is not null && number != 0;
+    }
 
     private static DateOnly? OptionalDate(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields, string key) =>
         fields.TryGetValue(key, out var field) ? Date(Value(row, field)) : null;

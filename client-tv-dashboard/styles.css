@@ -10,8 +10,6 @@
   --idle: #71808b;
   --current: #1687e8;
   --setup: #e5b72f;
-  --conflict: #ef5350;
-  --downtime: #e24a4a;
   --machine-count: 1;
 }
 
@@ -93,7 +91,7 @@ h1 {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(62px, 5vw) minmax(120px, 10vw) minmax(42px, 4vw) minmax(220px, 1.4fr) minmax(100px, .55fr) minmax(190px, 1.1fr) minmax(190px, 1.1fr) 24px;
+  grid-template-columns: minmax(62px, 5vw) minmax(120px, 10vw) minmax(42px, 4vw) minmax(240px, 1.4fr) minmax(240px, 1.4fr);
   align-items: center;
   padding: 2px 8px;
   overflow: hidden;
@@ -102,10 +100,6 @@ h1 {
   border-radius: 3px;
 }
 
-.machine-row.status-current { border-color: var(--current); }
-.machine-row.status-setup { border-color: var(--setup); }
-.machine-row.status-conflict { border-color: var(--conflict); }
-.machine-row.status-downtime { border-color: var(--downtime); }
 
 .machine-identity {
   min-width: 0;
@@ -134,33 +128,14 @@ h1 {
   white-space: nowrap;
 }
 
-.machine-status {
-  margin: 0 8px;
-  padding: 3px 6px;
-  overflow: hidden;
-  font-size: clamp(12px, .85vw, 17px);
-  font-weight: 900;
-  line-height: 1;
-  text-align: center;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .job { min-width: 0; overflow: hidden; padding: 0 8px; color: var(--text); font-size: clamp(12px, .9vw, 18px); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.job.next, .job.third { color: #d5dde3; border-left: 1px solid var(--panel-border); }
+.job.next { color: #d5dde3; border-left: 1px solid var(--panel-border); }
 .job-prefix { color: var(--muted); font-weight: 600; }
 .job-op { color: #8dccff; font-weight: 800; }
 .job-name { color: var(--muted); }
 .job.empty { color: #82909a; font-weight: 500; }
 .job-preview { width: 38px; height: 38px; object-fit: contain; border-radius: 2px; background: #eef2f4; }
 .job-preview.placeholder { display: block; background: #1b2d3a; }
-.warning-indicator { color: #ffca58; font-size: 16px; text-align: center; }
-
-.status-current .machine-status { color: #74bdff; }
-.status-setup .machine-status { color: #ffe17a; }
-.status-conflict .machine-status,
-.status-downtime .machine-status { color: #ff8b88; }
 
 .empty-state {
   grid-column: 1 / -1;
