@@ -227,7 +227,8 @@ internal sealed record GCodeReleaseResponse(
     bool IsCurrentForProcessAndPost,
     bool IsForActiveProcess,
     NcProgramAnalysisResponse? NcAnalysis,
-    IReadOnlyList<NcMachineCycleEstimateResponse> MachineCycleEstimates)
+    IReadOnlyList<NcMachineCycleEstimateResponse> MachineCycleEstimates,
+    NcHeaderMetadataResponse? HeaderMetadata)
 {
     internal static GCodeReleaseResponse FromDomain(GCodeRelease value) => new(
         value.GCodeReleaseId, value.ProcessRevisionId, value.ProcessRevisionNumber,
@@ -237,7 +238,17 @@ internal sealed record GCodeReleaseResponse(
         value.ToolTableReleaseId, value.IsCurrentForProcessAndPost,
         value.IsForActiveProcess,
         value.NcAnalysis is null ? null : NcProgramAnalysisResponse.FromDomain(value.NcAnalysis),
-        (value.MachineCycleEstimates ?? []).Select(NcMachineCycleEstimateResponse.FromDomain).ToArray());
+        (value.MachineCycleEstimates ?? []).Select(NcMachineCycleEstimateResponse.FromDomain).ToArray(),
+        value.HeaderMetadata is null ? null : NcHeaderMetadataResponse.FromDomain(value.HeaderMetadata));
+}
+
+internal sealed record NcHeaderMetadataResponse(
+    string Status, string? PartName, string? CaseNumber, string? Operation,
+    string? Revision, string? ProgramNumber, string RawHeader, string ParserVersion)
+{
+    internal static NcHeaderMetadataResponse FromDomain(Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata value) =>
+        new(value.Status, value.PartName, value.CaseNumber, value.Operation,
+            value.Revision, value.ProgramNumber, value.RawHeader, value.ParserVersion);
 }
 
 internal sealed record NcProgramAnalysisResponse(

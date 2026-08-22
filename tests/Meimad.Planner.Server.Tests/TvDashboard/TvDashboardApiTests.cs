@@ -76,6 +76,10 @@ public sealed class TvDashboardApiTests
             using var script = await client.GetAsync("/tv-dashboard/app.js");
             var javascript = await script.Content.ReadAsStringAsync();
             Assert.Contains("setTimeout(refresh", javascript, StringComparison.Ordinal);
+            Assert.Contains("new WebSocket(liveUrl())", javascript, StringComparison.Ordinal);
+            Assert.Contains("/api/v1/machines/live", javascript, StringComparison.Ordinal);
+            Assert.Contains("type: \"subscribe\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("machineIds", javascript, StringComparison.Ordinal);
             Assert.Contains("fitGrid(machines.length)", javascript, StringComparison.Ordinal);
             Assert.Contains("server-status-connected", css, StringComparison.Ordinal);
             Assert.Contains("machine.current", javascript, StringComparison.Ordinal);
@@ -87,6 +91,10 @@ public sealed class TvDashboardApiTests
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("connection-banner", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("?Q500", javascript, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("?Q600", javascript, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("5051", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("smb://", javascript, StringComparison.OrdinalIgnoreCase);
 
             using var post = await client.PostAsync("/api/v1/tv-dashboard", null);
             Assert.Equal(HttpStatusCode.MethodNotAllowed, post.StatusCode);

@@ -457,6 +457,83 @@ internal sealed record MachineCreate(
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0);
 
+internal sealed record HaasConnectionSettings(
+    string MachineId, string Host, int MdcPort, int MtConnectPort,
+    bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
+    int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
+    int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
+    int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
+    bool Enabled, int Version, DateTimeOffset? UpdatedAt);
+
+internal sealed record HaasConnectionUpdate(
+    string Host, int MdcPort, int MtConnectPort,
+    bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
+    int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
+    int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
+    int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
+    bool Enabled, int Version);
+
+internal sealed record HaasConnectionTest(
+    bool Succeeded, string Message, string? ProgramNumber, string? MachineStatus,
+    int? Parts, PlannerNcHeaderMetadata? Header);
+
+internal sealed record HaasVariableRead(
+    int VariableNumber, int LegacyAlias, int Value, DateTimeOffset ReadAt);
+
+internal sealed record HaasMachineSnapshot(
+    string MachineId, DateTimeOffset Timestamp, string ConnectivityState,
+    string? MachineStatus, string? ProgramNumber, string? MachineHeaderPartName,
+    string? MachineHeaderSourcePath, DateTimeOffset? HeaderReadAt,
+    int ProductionVariableNumber, int ProductionVariableValue,
+    DateTimeOffset? ProductionVariableChangedAt, int? PartCounter,
+    string? RawMdcStatus, string? LastError, DateTimeOffset? LastSeenAt, int Version);
+
+internal sealed record HaasBenchSession(
+    string BenchId, string BatchOperationId, string MachineId, string State,
+    string MachineProgramNumber, string MachinePartName, DateTimeOffset SetupStartedAt,
+    DateTimeOffset? SetupEndedAt, DateTimeOffset? ProductionStartedAt,
+    bool PartCountingEnabled, int? PartCounterBaseline, int? PreviousPartCounter,
+    int ProducedQuantity, DateTimeOffset? CompletedAt, int Version,
+    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+
+internal sealed record HaasMachineMonitor(
+    HaasConnectionSettings Settings, HaasMachineSnapshot? Snapshot,
+    HaasBenchSession? ActiveBench, IReadOnlyList<HaasBenchStateInterval> Intervals,
+    IReadOnlyList<HaasEvent> RecentEvents, double ActualSetupSeconds,
+    double ActualProductionSeconds);
+
+internal sealed record HaasBenchStateInterval(
+    string IntervalId, string BenchId, string State, DateTimeOffset StartedAt,
+    DateTimeOffset? EndedAt, string Source);
+
+internal sealed record HaasEvent(
+    string EventId, string EventType, string MachineId, string? BenchId,
+    DateTimeOffset Timestamp, string PayloadJson, string DedupeKey);
+
+internal sealed record CncAdapterDefinition(
+    string Id,
+    string DisplayName,
+    bool Implemented,
+    CncAdapterCapabilities Capabilities)
+{
+    public string ChoiceLabel => DisplayName;
+}
+
+internal sealed record CncAdapterCapabilities(
+    bool CanReadMachineState,
+    bool CanReadActiveProgram,
+    bool CanReadProgramHeader,
+    bool CanReadVariables,
+    bool CanWriteVariables,
+    bool CanReadPartCounter,
+    bool CanReadToolData,
+    bool CanWriteToolData,
+    bool CanReadAlarms,
+    bool CanReadFeed,
+    bool CanReadSpindle,
+    bool CanUploadNcProgram,
+    bool CanDownloadNcProgram);
+
 internal sealed record WorkingCalendar(
     string WorkingCalendarId,
     string Name,
@@ -868,7 +945,8 @@ internal sealed record PlannerGCodeRelease(
     bool IsCurrentForProcessAndPost,
     bool IsForActiveProcess,
     PlannerNcProgramAnalysis? NcAnalysis = null,
-    IReadOnlyList<PlannerNcMachineCycleEstimate>? MachineCycleEstimates = null)
+    IReadOnlyList<PlannerNcMachineCycleEstimate>? MachineCycleEstimates = null,
+    PlannerNcHeaderMetadata? HeaderMetadata = null)
 {
     public string DisplayName => $"Process r{ProcessRevisionNumber} / {PostprocessorName} r{PostSpecificRevision} — {OriginalFileName}";
     public string ShortHash => FileHash.Length > 12 ? FileHash[..12] : FileHash;
@@ -878,6 +956,10 @@ internal sealed record PlannerGCodeRelease(
     public string NcWarningSummary => NcAnalysis?.Warnings.Count > 0
         ? string.Join(Environment.NewLine, NcAnalysis.Warnings)
         : "No parser warnings.";
+    public string HeaderPartName => HeaderMetadata?.PartName ?? "Header invalid";
+    public string HeaderStatusMessage => HeaderMetadata?.Status == "VALID"
+        ? $"Part identity from NC header: {HeaderMetadata.PartName}"
+        : "Part name could not be extracted from NC header.";
     public string NcCalculatedTimeSummary
     {
         get
@@ -922,6 +1004,10 @@ internal sealed record PlannerGCodeRelease(
             ? Formatting.DurationText.Format((long)Math.Ceiling(seconds.Value))
             : "unavailable";
 }
+
+internal sealed record PlannerNcHeaderMetadata(
+    string Status, string? PartName, string? CaseNumber, string? Operation,
+    string? Revision, string? ProgramNumber, string RawHeader, string ParserVersion);
 
 internal sealed record PlannerNcProgramAnalysis(
     string ParserVersion,

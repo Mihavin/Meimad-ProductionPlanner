@@ -288,6 +288,55 @@
                                 </StackPanel>
                                 <TextBlock Text="The Server blocks unsafe deactivation/deletion when planning assignments or other references exist."
                                            Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                <Expander Header="CNC Connection" IsExpanded="False" Margin="0,16,0,0">
+                                    <StackPanel Margin="0,10,0,0">
+                                        <TextBlock Text="Adapter Type" Style="{StaticResource SetupFieldLabel}"/>
+                                        <ComboBox ItemsSource="{Binding CncAdapters}" SelectedItem="{Binding SelectedCncAdapter}"
+                                                  DisplayMemberPath="ChoiceLabel" Margin="0,2,0,3"/>
+                                        <TextBlock Text="{Binding CncAdapterAvailability}" Foreground="{StaticResource MutedTextBrush}"
+                                                   TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Haas NGC configuration" FontWeight="Bold" Margin="0,0,0,6"/>
+                                        <TextBlock Text="Machine-side identity comes only from the active NC program header. File name and O-number are displayed separately and never identify the Part."
+                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <UniformGrid Columns="2">
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="IP / Hostname" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasHost}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MDC Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMdcPort}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MTConnect Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMtConnectPort}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Production mode variable (NGC)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasProductionVariable}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Legacy alias" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasLegacyVariableAlias}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part counter source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasPartCounterSources}" SelectedItem="{Binding HaasPartCounterSource}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Polling interval (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasPollingIntervalMs}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Connection timeout (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasConnectionTimeoutMs}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Local Net Share path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasLocalNetSharePath}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Credential reference (no password)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasCredentialsReference}"/></StackPanel>
+                                        </UniformGrid>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                            <CheckBox Content="Local Net Share enabled" IsChecked="{Binding HaasLocalNetShareEnabled}" Margin="0,0,18,0"/>
+                                            <CheckBox Content="Enable Server polling" IsChecked="{Binding HaasEnabled}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="Production Variable" FontWeight="Bold"/>
+                                        <TextBlock Margin="0,2,0,8"><Run Text="#"/><Run Text="{Binding HaasProductionVariable}" FontWeight="Bold"/><Run Text="   Legacy: #"/><Run Text="{Binding HaasLegacyVariableAlias}"/></TextBlock>
+                                        <WrapPanel>
+                                            <Button Content="Load configuration" Command="{Binding LoadHaasConfigurationCommand}"/>
+                                            <Button Content="Save Haas configuration" Command="{Binding SaveHaasConfigurationCommand}"/>
+                                            <Button Content="Test Connection" Command="{Binding TestHaasMdcCommand}"/>
+                                            <Button Content="Test MDC" Command="{Binding TestHaasMdcCommand}"/>
+                                            <Button Content="Test Net Share" Command="{Binding TestHaasNetShareCommand}"/>
+                                            <Button Content="Read Variable" Command="{Binding ReadHaasVariableCommand}"/>
+                                            <Button Content="Refresh monitoring" Command="{Binding RefreshHaasMonitorCommand}" Margin="0"/>
+                                            <Button Content="Reconnect" Command="{Binding ReconnectCncCommand}" Margin="8,0,0,0"/>
+                                        </WrapPanel>
+                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="9" Margin="0,10,0,0">
+                                            <TextBlock Text="{Binding HaasDiagnostics}" TextWrapping="Wrap"/>
+                                        </Border>
+                                        <TextBlock Text="BENCH TIMELINE" FontWeight="Bold" Margin="0,10,0,4"/>
+                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="9">
+                                            <TextBlock Text="{Binding HaasTimeline}" TextWrapping="Wrap" FontFamily="Consolas"/>
+                                        </Border>
+                                        <TextBlock Text="Changing the production variable is blocked while a Bench is active. The connector has no generic macro-write command; only audited Tool Table reset to 0 is permitted."
+                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    </StackPanel>
+                                </Expander>
                             </StackPanel>
                         </ScrollViewer>
                     </Border>

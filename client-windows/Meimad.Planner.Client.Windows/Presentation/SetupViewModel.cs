@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using Meimad.Planner.Client.Windows.Api;
@@ -71,6 +72,22 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string machineRapidRateMillimetersPerMinute = string.Empty;
     private string machineToolChangeTimeSeconds = string.Empty;
     private string machineTimeFactor = "1";
+    private string haasHost = string.Empty;
+    private CncAdapterDefinition? selectedCncAdapter;
+    private string haasMdcPort = "5051";
+    private string haasMtConnectPort = "8082";
+    private bool haasLocalNetShareEnabled;
+    private string haasLocalNetSharePath = string.Empty;
+    private string haasCredentialsReference = string.Empty;
+    private string haasProductionVariable = "10605";
+    private string haasLegacyVariableAlias = "605";
+    private string haasPartCounterSource = "Q500";
+    private string haasPollingIntervalMs = "2000";
+    private string haasConnectionTimeoutMs = "3000";
+    private bool haasEnabled;
+    private int haasSettingsVersion;
+    private string haasDiagnostics = "Load Haas configuration to view connection status.";
+    private string haasTimeline = "No Haas Bench events loaded.";
     private MachineDowntime? selectedDowntime;
     private string? editingDowntimeId;
     private PlannerMachine? selectedDowntimeMachine;
@@ -169,6 +186,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveMachineCommand = new AsyncCommand(SaveMachineAsync, CanSaveMachine);
         DeactivateMachineCommand = new AsyncCommand(DeactivateSelectedMachineAsync, CanDeactivateMachine);
         DeleteMachineCommand = new AsyncCommand(DeleteSelectedMachineAsync, CanDeleteMachine);
+        LoadHaasConfigurationCommand = new AsyncCommand(LoadHaasConfigurationAsync, CanReadHaas);
+        SaveHaasConfigurationCommand = new AsyncCommand(SaveHaasConfigurationAsync, CanManageHaas);
+        TestHaasMdcCommand = new AsyncCommand(TestHaasMdcAsync, CanReadHaas);
+        TestHaasNetShareCommand = new AsyncCommand(TestHaasNetShareAsync, CanReadHaas);
+        ReadHaasVariableCommand = new AsyncCommand(ReadHaasVariableAsync, CanReadHaas);
+        RefreshHaasMonitorCommand = new AsyncCommand(RefreshHaasMonitorAsync, CanReadHaas);
+        ReconnectCncCommand = new AsyncCommand(ReconnectCncAsync, CanManageHaas);
         NewPlannedMaintenanceCommand = new AsyncCommand(BeginNewPlannedMaintenanceAsync, CanManage);
         ReportBreakdownCommand = new AsyncCommand(BeginNewBreakdownAsync, CanManage);
         SaveDowntimeCommand = new AsyncCommand(SaveDowntimeAsync, CanSaveDowntime);
@@ -254,6 +278,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand SaveMachineCommand { get; }
     public AsyncCommand DeactivateMachineCommand { get; }
     public AsyncCommand DeleteMachineCommand { get; }
+    public AsyncCommand LoadHaasConfigurationCommand { get; }
+    public AsyncCommand SaveHaasConfigurationCommand { get; }
+    public AsyncCommand TestHaasMdcCommand { get; }
+    public AsyncCommand TestHaasNetShareCommand { get; }
+    public AsyncCommand ReadHaasVariableCommand { get; }
+    public AsyncCommand RefreshHaasMonitorCommand { get; }
+    public AsyncCommand ReconnectCncCommand { get; }
     public AsyncCommand NewPlannedMaintenanceCommand { get; }
     public AsyncCommand ReportBreakdownCommand { get; }
     public AsyncCommand SaveDowntimeCommand { get; }
@@ -425,6 +456,36 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string MachineToolChangeTimeSeconds { get => machineToolChangeTimeSeconds; set => SetField(ref machineToolChangeTimeSeconds, value); }
     public string MachineTimeFactor { get => machineTimeFactor; set => SetField(ref machineTimeFactor, value); }
     public string MachineFormHeading => editingMachineId is null ? "New machine" : "Edit machine";
+    public ObservableCollection<CncAdapterDefinition> CncAdapters { get; } = [];
+    public CncAdapterDefinition? SelectedCncAdapter
+    {
+        get => selectedCncAdapter;
+        set
+        {
+            if (SetField(ref selectedCncAdapter, value))
+                OnPropertyChanged(nameof(CncAdapterAvailability));
+        }
+    }
+    public string CncAdapterAvailability => SelectedCncAdapter is null
+        ? "Load configuration to read the Server adapter registry."
+        : SelectedCncAdapter.Implemented
+            ? $"{SelectedCncAdapter.DisplayName} is implemented."
+            : $"{SelectedCncAdapter.DisplayName} is registered but unsupported.";
+    public string HaasHost { get => haasHost; set => SetField(ref haasHost, value); }
+    public string HaasMdcPort { get => haasMdcPort; set => SetField(ref haasMdcPort, value); }
+    public string HaasMtConnectPort { get => haasMtConnectPort; set => SetField(ref haasMtConnectPort, value); }
+    public bool HaasLocalNetShareEnabled { get => haasLocalNetShareEnabled; set => SetField(ref haasLocalNetShareEnabled, value); }
+    public string HaasLocalNetSharePath { get => haasLocalNetSharePath; set => SetField(ref haasLocalNetSharePath, value); }
+    public string HaasCredentialsReference { get => haasCredentialsReference; set => SetField(ref haasCredentialsReference, value); }
+    public string HaasProductionVariable { get => haasProductionVariable; set => SetField(ref haasProductionVariable, value); }
+    public string HaasLegacyVariableAlias { get => haasLegacyVariableAlias; set => SetField(ref haasLegacyVariableAlias, value); }
+    public string HaasPartCounterSource { get => haasPartCounterSource; set => SetField(ref haasPartCounterSource, value); }
+    public IReadOnlyList<string> HaasPartCounterSources { get; } = ["Q500", "M30_COUNTER_1", "M30_COUNTER_2"];
+    public string HaasPollingIntervalMs { get => haasPollingIntervalMs; set => SetField(ref haasPollingIntervalMs, value); }
+    public string HaasConnectionTimeoutMs { get => haasConnectionTimeoutMs; set => SetField(ref haasConnectionTimeoutMs, value); }
+    public bool HaasEnabled { get => haasEnabled; set => SetField(ref haasEnabled, value); }
+    public string HaasDiagnostics { get => haasDiagnostics; private set => SetField(ref haasDiagnostics, value); }
+    public string HaasTimeline { get => haasTimeline; private set => SetField(ref haasTimeline, value); }
 
     public MachineDowntime? SelectedDowntime
     {
@@ -879,6 +940,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineRapidRateMillimetersPerMinute = string.Empty;
         MachineToolChangeTimeSeconds = string.Empty;
         MachineTimeFactor = "1";
+        ResetHaasForm();
         RebuildMachinePostprocessors([]);
         OnPropertyChanged(nameof(MachineFormHeading));
         StatusMessage = "Enter the Machine master data.";
@@ -957,6 +1019,97 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             ConfigurationChanged?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    internal async Task LoadHaasConfigurationAsync()
+    {
+        if (!CanReadHaas()) return;
+        await RunHaasReadAsync(async () =>
+        {
+            var adapters = await apiClient!.ListCncAdaptersAsync();
+            CncAdapters.Clear();
+            foreach (var adapter in adapters) CncAdapters.Add(adapter);
+            SelectedCncAdapter = CncAdapters.FirstOrDefault(value => value.Id == "HAAS_NGC");
+            var value = await apiClient!.GetHaasConnectionAsync(SelectedMachine!.MachineId);
+            PopulateHaasConfiguration(value);
+            HaasDiagnostics = value.Version == 0
+                ? "Haas NGC is not configured for this Machine."
+                : $"Configuration loaded. Production variable #{value.ProductionModeVariable}; legacy #{value.LegacyVariableAlias}.";
+        });
+    }
+
+    internal async Task SaveHaasConfigurationAsync()
+    {
+        if (!CanManageHaas()) return;
+        if (SelectedCncAdapter is { Implemented: false } || SelectedCncAdapter?.Id is not (null or "HAAS_NGC"))
+        {
+            HaasDiagnostics = "The selected adapter is registered for future use and cannot be enabled or saved.";
+            return;
+        }
+        if (!int.TryParse(HaasMdcPort, out var mdcPort)
+            || !int.TryParse(HaasMtConnectPort, out var mtPort)
+            || !int.TryParse(HaasProductionVariable, out var variable)
+            || !int.TryParse(HaasLegacyVariableAlias, out var legacy)
+            || !int.TryParse(HaasPollingIntervalMs, out var polling)
+            || !int.TryParse(HaasConnectionTimeoutMs, out var timeout))
+        {
+            HaasDiagnostics = "Haas ports, macro variables, polling, and timeout must be numeric.";
+            return;
+        }
+        await RunHaasReadAsync(async () =>
+        {
+            var value = await apiClient!.UpdateHaasConnectionAsync(SelectedMachine!.MachineId,
+                new HaasConnectionUpdate(HaasHost, mdcPort, mtPort, HaasLocalNetShareEnabled,
+                    NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
+                    variable, legacy, HaasPartCounterSource, polling, timeout, 2, 50, 32768,
+                    [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion),
+                clientId, editGeneration);
+            PopulateHaasConfiguration(value);
+            HaasDiagnostics = "Haas NGC configuration saved by the Server.";
+        });
+    }
+
+    internal Task TestHaasMdcAsync() => RunHaasReadAsync(async () =>
+    {
+        var result = await apiClient!.TestHaasMdcAsync(SelectedMachine!.MachineId);
+        HaasDiagnostics = result.Succeeded
+            ? $"MDC: Connected | Program: {result.ProgramNumber ?? "none"} | Status: {result.MachineStatus} | Parts: {result.Parts}"
+            : $"MDC: {result.Message}";
+    });
+
+    internal Task TestHaasNetShareAsync() => RunHaasReadAsync(async () =>
+    {
+        var result = await apiClient!.TestHaasNetShareAsync(SelectedMachine!.MachineId);
+        HaasDiagnostics = result.Succeeded
+            ? $"Net Share: Connected | Program: {result.ProgramNumber} | Part: {result.Header?.PartName}"
+            : $"Net Share: {result.Message}";
+    });
+
+    internal Task ReadHaasVariableAsync() => RunHaasReadAsync(async () =>
+    {
+        var value = await apiClient!.ReadHaasProductionVariableAsync(SelectedMachine!.MachineId);
+        HaasDiagnostics = $"Last Variable Read: #{value.VariableNumber} = {value.Value} ({value.ReadAt.ToLocalTime():HH:mm:ss})";
+    });
+
+    internal Task RefreshHaasMonitorAsync() => RunHaasReadAsync(async () =>
+    {
+        var value = await apiClient!.GetHaasMonitorAsync(SelectedMachine!.MachineId);
+        var snapshot = value.Snapshot;
+        HaasDiagnostics = snapshot is null
+            ? "No Haas telemetry snapshot has been received."
+            : $"{snapshot.ConnectivityState} | Part: {snapshot.MachineHeaderPartName ?? "unverified"} | Program: {snapshot.ProgramNumber ?? "none"} | File: {Path.GetFileName(snapshot.MachineHeaderSourcePath) ?? "unavailable"} | Bench: {value.ActiveBench?.BatchOperationId ?? "none"} | Mode: {value.ActiveBench?.State ?? "WAITING"} | #{snapshot.ProductionVariableNumber} = {snapshot.ProductionVariableValue} | Parts: {value.ActiveBench?.ProducedQuantity ?? 0} | Last Poll: {snapshot.Timestamp.ToLocalTime():HH:mm:ss}";
+        HaasTimeline = value.RecentEvents.Count == 0
+            ? "No Haas Bench events recorded."
+            : string.Join(Environment.NewLine, value.RecentEvents.Reverse().Select(item =>
+                $"{item.Timestamp.ToLocalTime():HH:mm:ss}  {item.EventType}"));
+        if (value.ActiveBench is not null)
+            HaasTimeline += $"{Environment.NewLine}Actual Setup: {TimeSpan.FromSeconds(value.ActualSetupSeconds):g} | Actual Production: {TimeSpan.FromSeconds(value.ActualProductionSeconds):g}";
+    });
+
+    internal Task ReconnectCncAsync() => RunHaasReadAsync(async () =>
+    {
+        await apiClient!.ReconnectCncAsync(SelectedMachine!.MachineId, clientId, editGeneration);
+        HaasDiagnostics = "Server-side CNC reconnect requested. Browser/client connectivity is unchanged.";
+    });
 
     internal async Task DeleteSelectedMachineAsync()
     {
@@ -1650,7 +1803,46 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineToolChangeTimeSeconds = value.ToolChangeTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineTimeFactor = value.MachineTimeFactor.ToString(CultureInfo.InvariantCulture);
         RebuildMachinePostprocessors(value.SupportedPostprocessorIds ?? []);
+        ResetHaasForm();
         OnPropertyChanged(nameof(MachineFormHeading));
+    }
+
+    private void PopulateHaasConfiguration(HaasConnectionSettings value)
+    {
+        HaasHost = value.Host;
+        HaasMdcPort = value.MdcPort.ToString(CultureInfo.InvariantCulture);
+        HaasMtConnectPort = value.MtConnectPort.ToString(CultureInfo.InvariantCulture);
+        HaasLocalNetShareEnabled = value.LocalNetShareEnabled;
+        HaasLocalNetSharePath = value.LocalNetSharePath ?? string.Empty;
+        HaasCredentialsReference = value.CredentialsReference ?? string.Empty;
+        HaasProductionVariable = value.ProductionModeVariable.ToString(CultureInfo.InvariantCulture);
+        HaasLegacyVariableAlias = value.LegacyVariableAlias.ToString(CultureInfo.InvariantCulture);
+        HaasPartCounterSource = value.PartCounterSource;
+        HaasPollingIntervalMs = value.PollingIntervalMs.ToString(CultureInfo.InvariantCulture);
+        HaasConnectionTimeoutMs = value.ConnectionTimeoutMs.ToString(CultureInfo.InvariantCulture);
+        HaasEnabled = value.Enabled;
+        haasSettingsVersion = value.Version;
+    }
+
+    private void ResetHaasForm()
+    {
+        HaasHost = string.Empty;
+        HaasMdcPort = "5051";
+        HaasMtConnectPort = "8082";
+        HaasLocalNetShareEnabled = false;
+        HaasLocalNetSharePath = string.Empty;
+        HaasCredentialsReference = string.Empty;
+        HaasProductionVariable = "10605";
+        HaasLegacyVariableAlias = "605";
+        HaasPartCounterSource = "Q500";
+        HaasPollingIntervalMs = "2000";
+        HaasConnectionTimeoutMs = "3000";
+        HaasEnabled = false;
+        haasSettingsVersion = 0;
+        HaasDiagnostics = editingMachineId is null
+            ? "Save the Machine before configuring Haas NGC."
+            : "Load Haas configuration to view connection status.";
+        HaasTimeline = "No Haas Bench events loaded.";
     }
 
     private void PopulateDowntimeForm(MachineDowntime value)
@@ -1919,6 +2111,18 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     private Task<bool> TryDeleteAsync(Func<Task> delete) => TryMutationAsync(delete);
 
+    private async Task RunHaasReadAsync(Func<Task> action)
+    {
+        if (apiClient is null || SelectedMachine is null) return;
+        IsBusy = true;
+        try { await action(); }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            HaasDiagnostics = FriendlyMessage(exception);
+        }
+        finally { IsBusy = false; }
+    }
+
     private bool CanRead() => apiClient is not null && !IsBusy;
     private bool CanManage() => apiClient is not null && isEditor && !IsBusy;
     private bool CanSaveCalendar() => CanManage() && IsCalendarEditable;
@@ -1930,6 +2134,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool CanSaveMachine() => CanManage() && SelectedMachineCalendar is not null;
     private bool CanDeactivateMachine() => CanManage() && SelectedMachine is { IsActive: true };
     private bool CanDeleteMachine() => CanManage() && SelectedMachine is not null;
+    private bool CanReadHaas() => CanRead() && SelectedMachine is not null;
+    private bool CanManageHaas() => CanManage() && SelectedMachine is not null;
     private bool CanSaveDowntime() => CanManage() && SelectedDowntimeMachine is not null
         && (editingDowntimeId is null || IsPlannedMaintenance);
     private bool CanRestoreBreakdown() => CanManage()
@@ -1963,6 +2169,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveMachineCommand.RaiseCanExecuteChanged();
         DeactivateMachineCommand.RaiseCanExecuteChanged();
         DeleteMachineCommand.RaiseCanExecuteChanged();
+        LoadHaasConfigurationCommand.RaiseCanExecuteChanged();
+        SaveHaasConfigurationCommand.RaiseCanExecuteChanged();
+        TestHaasMdcCommand.RaiseCanExecuteChanged();
+        TestHaasNetShareCommand.RaiseCanExecuteChanged();
+        ReadHaasVariableCommand.RaiseCanExecuteChanged();
+        RefreshHaasMonitorCommand.RaiseCanExecuteChanged();
+        ReconnectCncCommand.RaiseCanExecuteChanged();
         NewPlannedMaintenanceCommand.RaiseCanExecuteChanged();
         ReportBreakdownCommand.RaiseCanExecuteChanged();
         SaveDowntimeCommand.RaiseCanExecuteChanged();

@@ -187,6 +187,25 @@ internal interface IPlannerApiClient : IDisposable
         string downtimeId, PlannedMaintenanceUpdate update, string entityTag,
         string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
+
+    Task<HaasConnectionSettings> GetHaasConnectionAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasConnectionSettings> UpdateHaasConnectionAsync(
+        string machineId, HaasConnectionUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasConnectionTest> TestHaasMdcAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasConnectionTest> TestHaasNetShareAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasVariableRead> ReadHaasProductionVariableAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasMachineMonitor> GetHaasMonitorAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<IReadOnlyList<CncAdapterDefinition>> ListCncAdaptersAsync(
+        CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<CncAdapterDefinition>>([]);
+    Task ReconnectCncAsync(
+        string machineId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<MachineDowntimeResource> RestoreBreakdownAsync(
         string downtimeId, BreakdownRestore restore, string entityTag,
         string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
@@ -1260,6 +1279,78 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return new WorkingCalendarResource(
             await ReadSuccessAsync<WorkingCalendar>(response, cancellationToken),
             RequiredEntityTag(response));
+    }
+
+    public async Task<HaasConnectionSettings> GetHaasConnectionAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/connection", cancellationToken);
+        return await ReadSuccessAsync<HaasConnectionSettings>(response, cancellationToken);
+    }
+
+    public async Task<HaasConnectionSettings> UpdateHaasConnectionAsync(
+        string machineId, HaasConnectionUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/connection", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<HaasConnectionSettings>(response, cancellationToken);
+    }
+
+    public async Task<HaasConnectionTest> TestHaasMdcAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-mdc", null, cancellationToken);
+        return await ReadSuccessAsync<HaasConnectionTest>(response, cancellationToken);
+    }
+
+    public async Task<HaasConnectionTest> TestHaasNetShareAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-net-share", null, cancellationToken);
+        return await ReadSuccessAsync<HaasConnectionTest>(response, cancellationToken);
+    }
+
+    public async Task<HaasVariableRead> ReadHaasProductionVariableAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/production-variable", cancellationToken);
+        return await ReadSuccessAsync<HaasVariableRead>(response, cancellationToken);
+    }
+
+    public async Task<HaasMachineMonitor> GetHaasMonitorAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/monitor", cancellationToken);
+        return await ReadSuccessAsync<HaasMachineMonitor>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<CncAdapterDefinition>> ListCncAdaptersAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/cnc-adapters", cancellationToken);
+        return await ReadSuccessAsync<IReadOnlyList<CncAdapterDefinition>>(response, cancellationToken);
+    }
+
+    public async Task ReconnectCncAsync(
+        string machineId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/cnc-connection/reconnect", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        _ = await ReadSuccessAsync<JsonElement>(response, cancellationToken);
     }
 
     public async Task<WorkingCalendarResource> UpdateWorkingCalendarAsync(

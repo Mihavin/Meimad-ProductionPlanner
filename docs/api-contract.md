@@ -1309,6 +1309,39 @@ Only active Machines with `display_enabled = true` appear. `current` prefers the
 
 The implemented route is GET-only; POST/PUT/PATCH/DELETE do not match it. Credential-class enforcement and `403` behavior remain pending the authentication layer. The web client calls no Edit Mode or mutation route, sends conditional ETags, and preserves its last rendered snapshot when a refresh fails. Offline-display telemetry and plan revisions remain unimplemented.
 
+### 7.4 Haas NGC connection and monitoring
+
+The following Machine-scoped endpoints are implemented. Connection mutation requires Windows Edit Mode. Test, read, and monitor routes are operational reads. There is no generic macro-write endpoint.
+
+| Method | Route | Behavior |
+|---|---|---|
+| `GET` | `/api/v1/machines/{machineId}/haas/connection` | Read settings; an unconfigured Machine returns defaults with `version: 0`. |
+| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update host, MDC/MTConnect ports, read-only share reference, configurable macro/legacy alias, counter source, poll/timeout/debounce/header limits and patterns. |
+| `POST` | `/api/v1/machines/{machineId}/haas/test-mdc` | Read typed Q500 status without changing planning state. |
+| `POST` | `/api/v1/machines/{machineId}/haas/test-net-share` | Read the active machine-side bounded header and parse Part identity. |
+| `GET` | `/api/v1/machines/{machineId}/haas/production-variable` | Read the configured binary Q600 macro. |
+| `GET` | `/api/v1/machines/{machineId}/haas/monitor` | Return settings, last snapshot, active/latest Bench, state intervals/events, and actual Setup/Production seconds. |
+| `POST` | `/api/v1/machines/{machineId}/haas/tool-table-reset` | With Edit Mode and explicit successful-transfer confirmation, audit, write only configured macro value `0`, read back, and report success/failure. |
+
+The `/haas/*` routes remain compatibility/commissioning endpoints. New monitoring and configuration consumers use the protocol-independent CNC contract.
+
+### 7.5 CNC connection platform
+
+| Method | Route | Contract |
+|---|---|---|
+| `GET` | `/api/v1/cnc-adapters` | Registry metadata and static capabilities. Only `HAAS_NGC` has `implemented: true`. |
+| `GET` | `/api/v1/machines/{machineId}/cnc-connection` | Primary connection metadata and sanitized typed configuration. Secret IDs and values are omitted; configured booleans are returned. |
+| `PUT` | `/api/v1/machines/{machineId}/cnc-connection` | Edit-Mode create/update with adapter type, permissions, polling/timeout/backoff/retention and typed protocol configuration. Unsupported adapters cannot be enabled. |
+| `POST` | `/api/v1/machines/{machineId}/cnc-connection/test` | Structured, protocol-aware checks (`mdc`, `variableRead`, `programAccess`) and overall `ONLINE`/`DEGRADED`/`OFFLINE` result. |
+| `POST` | `/api/v1/machines/{machineId}/cnc-connection/reconnect` | Edit-Mode request to restart only that Server-side Machine worker. It does not affect browser connections. |
+| `GET` | `/api/v1/machines/{machineId}/snapshot` | Last normalized current snapshot, including freshness, component health and runtime capability availability. |
+| `GET` | `/api/v1/machines/{machineId}/cnc-diagnostics?limit=50` | Bounded recent raw protocol diagnostics; no credentials or complete NC files. |
+| `WS` | `/api/v1/machines/live` | First client message is `{ "type": "subscribe", "machineIds": [...] }` (1-100 IDs). Server messages are `MachineSnapshotUpdated`, `MachineConnectionChanged`, or `BenchStateChanged`. |
+
+WebSocket is Server-to-client monitoring transport only. It exposes no CNC command or generic macro-write message. Initial screen state always comes from the relevant GET endpoint before live incremental updates.
+
+`partCounterSource` is `Q500`, `M30_COUNTER_1`, or `M30_COUNTER_2`. `productionModeVariable` is configurable in the permitted NGC global range and must equal `legacyVariableAlias + 10000` for this integration. Connection state is `ONLINE`, `OFFLINE`, or `ERROR`; Bench state is independently `WAITING`, `SETUP`, `PRODUCTION`, or `COMPLETED`. Automatic matching uses normalized parsed header `partName` against planned assigned Case Part numbers. Zero or multiple matches never mutate a Batch. Repeated observations are idempotent through persisted prior snapshots and unique event dedupe keys.
+
 ## 7.6 Official job package generation
 
 `POST /api/v1/job-packages` is implemented for an active Windows editor. It is an official publication command, not a tablet endpoint. It requires `X-Meimad-Client-Id` and `X-Meimad-Edit-Generation`; the Server checks authority before reading source files and again in the publication transaction.

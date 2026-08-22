@@ -1,6 +1,16 @@
 "use strict";
 
-const state = { etag: null, refreshSeconds: 15, timer: null, hasSnapshot: false, machineCount: 0 };
+const state = {
+  etag: null,
+  refreshSeconds: 60,
+  timer: null,
+  liveRefreshTimer: null,
+  socket: null,
+  reconnectTimer: null,
+  hasSnapshot: false,
+  machineCount: 0,
+  machineIds: []
+};
 const byId = (id) => document.getElementById(id);
 
 function escapeHtml(value) {
@@ -58,12 +68,54 @@ function render(data) {
   const machines = Array.isArray(data.machines) ? data.machines : [];
   state.hasSnapshot = true;
   state.machineCount = machines.length;
-  state.refreshSeconds = Math.max(5, Number(data.refreshAfterSeconds) || 15);
+  state.machineIds = machines.map((machine) => machine.machineId).filter(Boolean);
+  state.refreshSeconds = Math.max(60, Number(data.refreshAfterSeconds) || 60);
   byId("machine-grid").innerHTML = machines.length
     ? machines.map(renderMachine).join("")
     : `<div class="empty-state">No display-enabled machines</div>`;
   byId("machine-grid").setAttribute("aria-busy", "false");
   fitGrid(machines.length);
+  subscribeToVisibleMachines();
+}
+
+function liveUrl() {
+  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${window.location.host}/api/v1/machines/live`;
+}
+
+function subscribeToVisibleMachines() {
+  if (!state.socket || state.socket.readyState !== WebSocket.OPEN || state.machineIds.length === 0) return;
+  state.socket.send(JSON.stringify({ type: "subscribe", machineIds: state.machineIds }));
+}
+
+function scheduleLiveRefresh() {
+  clearTimeout(state.liveRefreshTimer);
+  state.liveRefreshTimer = setTimeout(refresh, 150);
+}
+
+function connectLive() {
+  clearTimeout(state.reconnectTimer);
+  if (state.socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(state.socket.readyState)) return;
+  const socket = new WebSocket(liveUrl());
+  state.socket = socket;
+  socket.addEventListener("open", () => {
+    setServerStatus("connected", "Connected — live updates active");
+    subscribeToVisibleMachines();
+    refresh();
+  });
+  socket.addEventListener("message", (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      if (["MachineSnapshotUpdated", "MachineConnectionChanged", "BenchStateChanged"].includes(message.type)) {
+        scheduleLiveRefresh();
+      }
+    } catch { /* Ignore malformed server messages and retain last-known-good content. */ }
+  });
+  socket.addEventListener("close", () => {
+    setServerStatus("disconnected", "Live connection lost; showing stale status while reconnecting");
+    state.reconnectTimer = setTimeout(connectLive, 2000);
+  });
+  socket.addEventListener("error", () => socket.close());
 }
 
 async function refresh() {
@@ -93,4 +145,4 @@ async function refresh() {
 }
 
 window.addEventListener("resize", () => fitGrid(state.machineCount));
-refresh();
+refresh().finally(connectLive);

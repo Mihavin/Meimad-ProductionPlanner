@@ -481,6 +481,7 @@
                                             <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="130"/>
                                             <DataGridTextColumn Header="Post rev" Binding="{Binding PostSpecificRevision}" Width="70"/>
                                             <DataGridTextColumn Header="Original filename" Binding="{Binding OriginalFileName}" Width="180"/>
+                                            <DataGridTextColumn Header="Header Part" Binding="{Binding HeaderPartName}" Width="150"/>
                                             <DataGridTextColumn Header="SHA-256" Binding="{Binding ShortHash}" Width="110"/>
                                             <DataGridTemplateColumn Header="Calculated cycle / part" Width="230">
                                                 <DataGridTemplateColumn.CellTemplate>

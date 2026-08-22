@@ -35,6 +35,7 @@ internal sealed record PublishGCodeReleaseCommand(
     StoredReleaseFile? ToolTableFile,
     ReleasedToolTableDefinition? ToolTableDefinition,
     NcProgramAnalysis NcAnalysis,
+    Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata HeaderMetadata,
     DateTimeOffset ReleasedAt);
 
 internal sealed record ReleasedFileDownload(

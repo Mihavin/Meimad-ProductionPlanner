@@ -27,8 +27,9 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         var processes = await ReadProcessRevisionsAsync(connection, caseOperationId, cancellationToken);
         var nc = await SqliteNcCycleEstimateStore.ReadForOperationAsync(
             connection, caseOperationId, cancellationToken);
+        var headers = await ReadHeadersAsync(connection, caseOperationId, cancellationToken);
         var releases = await ReadReleasesAsync(
-            connection, caseOperationId, nc.Analyses, nc.Estimates, cancellationToken);
+            connection, caseOperationId, nc.Analyses, nc.Estimates, headers, cancellationToken);
         var active = processes.FirstOrDefault(value => value.IsActive);
         var postprocessors = await ReadPostprocessorStatusesAsync(
             connection,
@@ -171,13 +172,16 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             true,
             process.IsActive);
         await InsertReleaseAsync(connection, transaction, release, cancellationToken);
+        await InsertHeaderAsync(connection, transaction, release.GCodeReleaseId,
+            command.HeaderMetadata, command.ReleasedAt, cancellationToken);
         var ncEstimates = await SqliteNcCycleEstimateStore.InsertAnalysisAndEstimatesAsync(
             connection, transaction, release, command.NcAnalysis,
             releasedBy, command.ChangeScope, cancellationToken);
         release = release with
         {
             NcAnalysis = command.NcAnalysis,
-            MachineCycleEstimates = ncEstimates
+            MachineCycleEstimates = ncEstimates,
+            HeaderMetadata = command.HeaderMetadata
         };
         await AppendReleaseAuditAsync(
             connection, transaction, release, process, toolTable,
@@ -294,6 +298,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         string operationId,
         IReadOnlyDictionary<string, NcProgramAnalysis> analyses,
         IReadOnlyDictionary<string, IReadOnlyList<NcMachineCycleEstimate>> estimates,
+        IReadOnlyDictionary<string, Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata> headers,
         CancellationToken token)
     {
         await using var command = connection.CreateCommand();
@@ -326,11 +331,67 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             values.Add(release with
             {
                 NcAnalysis = analyses.GetValueOrDefault(release.GCodeReleaseId),
-                MachineCycleEstimates = estimates.GetValueOrDefault(release.GCodeReleaseId, [])
+                MachineCycleEstimates = estimates.GetValueOrDefault(release.GCodeReleaseId, []),
+                HeaderMetadata = headers.GetValueOrDefault(release.GCodeReleaseId)
             });
         }
 
         return values;
+    }
+
+    private static async Task<IReadOnlyDictionary<string, Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata>> ReadHeadersAsync(
+        SqliteConnection connection, string operationId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT header.gcode_release_id, header.status, header.part_name,
+                   header.case_number, header.operation, header.revision,
+                   header.program_number, header.raw_header, header.parser_version
+            FROM nc_program_headers header
+            JOIN gcode_releases release ON release.id = header.gcode_release_id
+            WHERE release.case_operation_id = $operationId;
+            """;
+        command.Parameters.AddWithValue("$operationId", operationId);
+        var values = new Dictionary<string, Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+        {
+            values[reader.GetString(0)] = new Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata(
+                reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetString(7), reader.GetString(8));
+        }
+        return values;
+    }
+
+    private static async Task InsertHeaderAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string releaseId,
+        Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata value, DateTimeOffset at,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO nc_program_headers
+                (gcode_release_id, status, part_name, case_number, operation,
+                 revision, program_number, raw_header, parser_version, parsed_at)
+            VALUES ($id, $status, $part, $case, $operation, $revision,
+                    $program, $raw, $parser, $at);
+            """;
+        command.Parameters.AddWithValue("$id", releaseId);
+        command.Parameters.AddWithValue("$status", value.Status);
+        command.Parameters.AddWithValue("$part", (object?)value.PartName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$case", (object?)value.CaseNumber ?? DBNull.Value);
+        command.Parameters.AddWithValue("$operation", (object?)value.Operation ?? DBNull.Value);
+        command.Parameters.AddWithValue("$revision", (object?)value.Revision ?? DBNull.Value);
+        command.Parameters.AddWithValue("$program", (object?)value.ProgramNumber ?? DBNull.Value);
+        command.Parameters.AddWithValue("$raw", value.RawHeader);
+        command.Parameters.AddWithValue("$parser", value.ParserVersion);
+        command.Parameters.AddWithValue("$at", at.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private static async Task<IReadOnlyList<PostprocessorReleaseStatus>> ReadPostprocessorStatusesAsync(

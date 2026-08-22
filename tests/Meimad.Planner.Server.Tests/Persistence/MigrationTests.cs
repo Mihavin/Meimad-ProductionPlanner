@@ -57,7 +57,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(41L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(43L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -154,6 +154,10 @@ public sealed class MigrationTests
         Assert.Equal("employee_setup_skills", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 41;";
         Assert.Equal("kitaron_material_orders_and_delivery_approvals", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 42;";
+        Assert.Equal("haas_ngc_integration", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 43;";
+        Assert.Equal("cnc_connection_platform", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
@@ -243,7 +247,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(41L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(43L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -254,6 +258,24 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE machine_telemetry_raw;
+                DROP TABLE machine_connection_events;
+                DROP TABLE machine_state_history;
+                DROP TABLE machine_current_state;
+                DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 43;
+                DROP TRIGGER nc_program_headers_immutable_update;
+                DROP TRIGGER nc_program_headers_immutable_delete;
+                DROP TRIGGER haas_events_immutable_update;
+                DROP TRIGGER haas_events_immutable_delete;
+                DROP TABLE haas_macro_write_audits;
+                DROP TABLE haas_events;
+                DROP TABLE haas_bench_state_intervals;
+                DROP TABLE haas_bench_sessions;
+                DROP TABLE haas_machine_snapshots;
+                DROP TABLE haas_connection_settings;
+                DROP TABLE nc_program_headers;
+                DELETE FROM schema_migrations WHERE version = 42;
                 DROP TABLE kitaron_material_orders;
                 DELETE FROM schema_migrations WHERE version = 41;
                 ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
@@ -650,6 +672,24 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE machine_telemetry_raw;
+                DROP TABLE machine_connection_events;
+                DROP TABLE machine_state_history;
+                DROP TABLE machine_current_state;
+                DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 43;
+                DROP TRIGGER nc_program_headers_immutable_update;
+                DROP TRIGGER nc_program_headers_immutable_delete;
+                DROP TRIGGER haas_events_immutable_update;
+                DROP TRIGGER haas_events_immutable_delete;
+                DROP TABLE haas_macro_write_audits;
+                DROP TABLE haas_events;
+                DROP TABLE haas_bench_state_intervals;
+                DROP TABLE haas_bench_sessions;
+                DROP TABLE haas_machine_snapshots;
+                DROP TABLE haas_connection_settings;
+                DROP TABLE nc_program_headers;
+                DELETE FROM schema_migrations WHERE version = 42;
                 DROP TABLE kitaron_material_orders;
                 DELETE FROM schema_migrations WHERE version = 41;
                 ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
@@ -841,6 +881,24 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE machine_telemetry_raw;
+                DROP TABLE machine_connection_events;
+                DROP TABLE machine_state_history;
+                DROP TABLE machine_current_state;
+                DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 43;
+                DROP TRIGGER nc_program_headers_immutable_update;
+                DROP TRIGGER nc_program_headers_immutable_delete;
+                DROP TRIGGER haas_events_immutable_update;
+                DROP TRIGGER haas_events_immutable_delete;
+                DROP TABLE haas_macro_write_audits;
+                DROP TABLE haas_events;
+                DROP TABLE haas_bench_state_intervals;
+                DROP TABLE haas_bench_sessions;
+                DROP TABLE haas_machine_snapshots;
+                DROP TABLE haas_connection_settings;
+                DROP TABLE nc_program_headers;
+                DELETE FROM schema_migrations WHERE version = 42;
                 DROP TABLE kitaron_material_orders;
                 DELETE FROM schema_migrations WHERE version = 41;
                 ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
@@ -1033,6 +1091,24 @@ public sealed class MigrationTests
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
+                DROP TABLE machine_telemetry_raw;
+                DROP TABLE machine_connection_events;
+                DROP TABLE machine_state_history;
+                DROP TABLE machine_current_state;
+                DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 43;
+                DROP TRIGGER nc_program_headers_immutable_update;
+                DROP TRIGGER nc_program_headers_immutable_delete;
+                DROP TRIGGER haas_events_immutable_update;
+                DROP TRIGGER haas_events_immutable_delete;
+                DROP TABLE haas_macro_write_audits;
+                DROP TABLE haas_events;
+                DROP TABLE haas_bench_state_intervals;
+                DROP TABLE haas_bench_sessions;
+                DROP TABLE haas_machine_snapshots;
+                DROP TABLE haas_connection_settings;
+                DROP TABLE nc_program_headers;
+                DELETE FROM schema_migrations WHERE version = 42;
                 DROP TABLE kitaron_material_orders;
                 DELETE FROM schema_migrations WHERE version = 41;
                 ALTER TABLE employee_resources DROP COLUMN first_part_running_speed_percent;
@@ -1212,7 +1288,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 42;";
+            command.CommandText = "PRAGMA user_version = 44;";
             await command.ExecuteNonQueryAsync();
         }
 

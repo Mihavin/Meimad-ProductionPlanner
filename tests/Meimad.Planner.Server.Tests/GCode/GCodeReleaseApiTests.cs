@@ -53,11 +53,13 @@ public sealed class GCodeReleaseApiTests
 
             var fifteenTools = Encoding.UTF8.GetBytes("tool,position\n" + string.Join("\n",
                 Enumerable.Range(1, 15).Select(number => $"T{number},{number}")) + "\n");
-            var firstProgram = Encoding.UTF8.GetBytes("G21 G90\nG0 X1000\nG1 X1100 F500\nT1 M6\nG4 X1\nM30\n");
+            var firstProgram = Encoding.UTF8.GetBytes("O1234\n(PART: PART-100)\nG21 G90\nG0 X1000\nG1 X1100 F500\nT1 M6\nG4 X1\nM30\n");
             var first = await ReleaseAsync(
                 client, "post-a", "NEW_PROCESS_REVISION", "Initial Doosan 3X production release",
                 firstProgram, fifteenTools, confirmNewProcess: true, reuseActiveTools: false,
                 processDescription: "Initial Doosan 3X process");
+            Assert.Equal("VALID", first.HeaderStatus);
+            Assert.Equal("PART-100", first.HeaderPartName);
 
             using (var assign = await client.PutAsJsonAsync(
                        "/api/v1/batch-operations/batch-op-1/assignment",
@@ -984,7 +986,10 @@ public sealed class GCodeReleaseApiTests
             root.GetProperty("processRevisionNumber").GetInt32(),
             root.GetProperty("postSpecificRevision").GetInt32(),
             root.GetProperty("toolTableReleaseId").GetString()!,
-            root.GetProperty("fileHash").GetString()!);
+            root.GetProperty("fileHash").GetString()!,
+            root.GetProperty("headerMetadata").GetProperty("status").GetString()!,
+            root.GetProperty("headerMetadata").GetProperty("partName").ValueKind == JsonValueKind.Null
+                ? null : root.GetProperty("headerMetadata").GetProperty("partName").GetString());
     }
 
     private static Task<HttpResponseMessage> SendReleaseAsync(
@@ -1107,5 +1112,7 @@ public sealed class GCodeReleaseApiTests
         int ProcessRevisionNumber,
         int PostSpecificRevision,
         string ToolTableReleaseId,
-        string FileHash);
+        string FileHash,
+        string HeaderStatus,
+        string? HeaderPartName);
 }

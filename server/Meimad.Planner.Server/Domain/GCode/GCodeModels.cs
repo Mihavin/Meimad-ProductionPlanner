@@ -69,7 +69,8 @@ internal sealed record GCodeRelease(
     bool IsCurrentForProcessAndPost,
     bool IsForActiveProcess,
     NcProgramAnalysis? NcAnalysis = null,
-    IReadOnlyList<NcMachineCycleEstimate>? MachineCycleEstimates = null);
+    IReadOnlyList<NcMachineCycleEstimate>? MachineCycleEstimates = null,
+    Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata? HeaderMetadata = null);
 
 internal static class NcAnalysisStatus
 {

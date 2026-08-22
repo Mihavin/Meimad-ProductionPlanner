@@ -1,6 +1,7 @@
 using System.Reflection;
 using Meimad.Planner.Server.Backup;
 using Meimad.Planner.Server.Api.Cases;
+using Meimad.Planner.Server.Api.Cnc;
 using Meimad.Planner.Server.Api.AdministrativeSetup;
 using Meimad.Planner.Server.Api.EditMode;
 using Meimad.Planner.Server.Api.EventLogging;
@@ -9,6 +10,7 @@ using Meimad.Planner.Server.Api.Downtimes;
 using Meimad.Planner.Server.Api.EInk;
 using Meimad.Planner.Server.Api.JobPackages;
 using Meimad.Planner.Server.Api.GCode;
+using Meimad.Planner.Server.Api.Haas;
 using Meimad.Planner.Server.Api.Kitaron;
 using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
@@ -25,6 +27,7 @@ using Meimad.Planner.Server.Api.Timeline;
 using Meimad.Planner.Server.Api.TvDashboard;
 using Meimad.Planner.Server.Api.WorkingCalendars;
 using Meimad.Planner.Server.Application.Cases;
+using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Application.AdministrativeSetup;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.EventLogging;
@@ -33,6 +36,7 @@ using Meimad.Planner.Server.Application.Downtimes;
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.JobPackages;
 using Meimad.Planner.Server.Application.GCode;
+using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Application.LegacyImport;
 using Meimad.Planner.Server.Application.MachineAssignments;
@@ -51,6 +55,8 @@ using Meimad.Planner.Server.Application.WorkingCalendars;
 using Meimad.Planner.Server.Domain.Timeline;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
+using Meimad.Planner.Server.Infrastructure.Haas;
+using Meimad.Planner.Server.Infrastructure.Cnc;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
@@ -164,6 +170,22 @@ public static class ServerApplication
         builder.Services.AddSingleton<IGCodeRepository, SqliteGCodeRepository>();
         builder.Services.AddSingleton<GCodeArtifactStore>();
         builder.Services.AddSingleton<GCodeService>();
+        builder.Services.AddSingleton<INcHeaderParser, NcHeaderParser>();
+        builder.Services.AddSingleton<IHaasMdcClientFactory, HaasMdcClientFactory>();
+        builder.Services.AddSingleton<LocalNetShareHaasProgramReader>();
+        builder.Services.AddSingleton<IHaasProgramReader>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());
+        builder.Services.AddSingleton<INcProgramFileProvider>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());
+        builder.Services.AddSingleton<IHaasIntegrationRepository, SqliteHaasIntegrationRepository>();
+        builder.Services.AddSingleton<HaasIntegrationService>();
+        builder.Services.AddSingleton<ICncConnectionRepository, SqliteCncConnectionRepository>();
+        builder.Services.AddSingleton<CncAdapterRegistry>();
+        builder.Services.AddSingleton<ICncAdapterFactory, CncAdapterFactory>();
+        builder.Services.AddSingleton<ICncSnapshotConsumer, BenchAutomationService>();
+        builder.Services.AddSingleton<ICncLivePublisher, CncLivePublisher>();
+        builder.Services.AddSingleton<CncConnectionManager>();
+        builder.Services.AddSingleton<ICncConnectionManager>(services => services.GetRequiredService<CncConnectionManager>());
+        builder.Services.AddHostedService(services => services.GetRequiredService<CncConnectionManager>());
+        builder.Services.AddSingleton<CncConnectionService>();
         builder.Services.AddHostedService<GCodeStorageRecoveryService>();
         builder.Services.AddSingleton<OpenXmlLegacyWorkbookReader>();
         builder.Services.AddSingleton<ILegacyImportRepository, SqliteLegacyImportRepository>();
@@ -197,6 +219,10 @@ public static class ServerApplication
 
         var application = builder.Build();
 
+        application.UseWebSockets(new WebSocketOptions
+        {
+            KeepAliveInterval = TimeSpan.FromSeconds(30)
+        });
         application.UseMiddleware<EInkReadOnlyGuardMiddleware>();
 
         application.Use(async (context, next) =>
@@ -265,6 +291,8 @@ public static class ServerApplication
         application.MapProductionBatchEndpoints();
         application.MapMaterialReconciliationEndpoints();
         application.MapMachineEndpoints();
+        application.MapCncEndpoints();
+        application.MapHaasEndpoints();
         application.MapMachineDowntimeEndpoints();
         application.MapMachineTypeEndpoints();
         application.MapPostprocessorEndpoints();

@@ -1,5 +1,7 @@
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Domain.GCode;
+using Meimad.Planner.Server.Domain.Haas;
 
 namespace Meimad.Planner.Server.Application.GCode;
 
@@ -8,17 +10,20 @@ internal sealed class GCodeService
     private readonly IGCodeRepository repository;
     private readonly GCodeArtifactStore artifactStore;
     private readonly TimeProvider timeProvider;
+    private readonly INcHeaderParser headerParser;
     private readonly ILogger<GCodeService> logger;
 
     public GCodeService(
         IGCodeRepository repository,
         GCodeArtifactStore artifactStore,
         TimeProvider timeProvider,
+        INcHeaderParser headerParser,
         ILogger<GCodeService> logger)
     {
         this.repository = repository;
         this.artifactStore = artifactStore;
         this.timeProvider = timeProvider;
+        this.headerParser = headerParser;
         this.logger = logger;
     }
 
@@ -101,11 +106,25 @@ internal sealed class GCodeService
             }
 
             var releasedAt = timeProvider.GetUtcNow();
+            var storedGCodePath = artifactStore.ResolveStoredPath(gcodePublication.File.StoredRelativePath);
+            NcHeaderMetadata headerMetadata;
+            try
+            {
+                headerMetadata = headerParser.Parse(File.ReadLines(storedGCodePath).Take(50));
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(exception,
+                    "NC header parsing failed for released artifact {ReleaseId}.",
+                    gcodePublication.File.ArtifactId);
+                headerMetadata = new NcHeaderMetadata("HEADER_INVALID", null, null, null,
+                    null, null, string.Empty, NcHeaderParser.CurrentVersion);
+            }
             NcProgramAnalysis analysis;
             try
             {
                 analysis = await NcProgramParser.ParseAsync(
-                    artifactStore.ResolveStoredPath(gcodePublication.File.StoredRelativePath),
+                    storedGCodePath,
                     releasedAt,
                     cancellationToken);
             }
@@ -134,6 +153,7 @@ internal sealed class GCodeService
                 toolPublication?.File,
                 toolDefinition,
                 analysis,
+                headerMetadata,
                 releasedAt), authority, cancellationToken);
             logger.LogInformation(
                 "Released G-code {ReleaseId} for Operation {OperationId}, Process Revision {ProcessRevisionNumber}, Postprocessor {PostprocessorId}, Post Revision {PostRevision}.",

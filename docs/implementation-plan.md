@@ -280,6 +280,12 @@ Implemented deterministic tests use fixed UTC timestamps and cover same- and dif
 - Target TV resolutions, browser/kiosk environment, viewing distance, and refresh cadence pass visual acceptance.
 - Status remains legible without color.
 
+## Haas VF-3 NGC integration phases 1-2
+
+**Implementation status:** Protocol-independent Server connection platform and Haas production adapter implemented; real VF-3 acceptance pending. Schema v43 adds one primary `MachineConnection`, normalized current state, meaningful-change history, connection events, and retained raw telemetry on top of the v42 immutable header/Bench/audit tables. `ICncMachineAdapter`, capabilities, the central registry/factory, composite `HaasNgcAdapter`, isolated per-Machine workers, bounded reconnect, `BenchAutomationService`, generic API, subscribed WebSocket, initial-state/live browser flow, and fake-adapter integration coverage are implemented. MTConnect, OPC UA, and Custom remain registry-only unsupported options. The Windows Machine Setup view reads the registry, shows Haas protocol fields, and offers explicit Server-side reconnect. Filename and Cycle Start have no business-transition role.
+
+The real-machine Definition of Done is intentionally not claimed. Haas publicly documents Q500/Q600/E and Local Net Share, but not a guaranteed active MEMORY/USB/Remote-Net-Share program-to-SMB-file mapping. Complete and record the read-only VF-3 tests in `haas-active-program-header.md` before enabling production polling. Tool Table transfer transport remains site/controller-specific; the implemented reset endpoint requires explicit successful-transfer confirmation before the audited zero/write/read-back sequence.
+
 ## 14. Phase 11 - E-Ink API and simulator
 
 **Status:** Server official package generator/read side and browser simulator implemented. Approval/retention, physical-device behavior, full offline fixture simulation, and API stability approval remain open.
