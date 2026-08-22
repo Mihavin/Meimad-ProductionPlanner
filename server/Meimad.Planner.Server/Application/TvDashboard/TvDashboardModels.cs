@@ -48,7 +48,18 @@ internal sealed record TvJob(
     DateTimeOffset? ProjectedFinish,
     bool Urgent,
     string? WorkFinishDate,
-    string? PreviewUrl);
+    string? PreviewUrl,
+    TvOperationProgress Progress);
+
+internal sealed record TvOperationProgress(
+    string StatusCode,
+    string StatusLabel,
+    string Phase,
+    string CompletionLabel,
+    int? CompletionPercent,
+    int? SetupPercent,
+    int? CurrentPart,
+    int PlannedParts);
 
 internal sealed record TvDowntime(
     string DowntimeId,

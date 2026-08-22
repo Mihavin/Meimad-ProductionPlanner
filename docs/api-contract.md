@@ -1273,7 +1273,18 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
         "status": "not_started",
         "projectedFinish": "2026-08-11T15:20:00Z",
         "urgent": true,
-        "workFinishDate": "2026-08-12"
+        "workFinishDate": "2026-08-12",
+        "previewUrl": "/api/v1/cases/case-1/preview",
+        "progress": {
+          "statusCode": "waiting",
+          "statusLabel": "Waiting",
+          "phase": "setup",
+          "completionLabel": "Setup 0%",
+          "completionPercent": 0,
+          "setupPercent": 0,
+          "currentPart": null,
+          "plannedParts": 100
+        }
       },
       "next": {
         "operationId": "operation-2",
@@ -1288,20 +1299,13 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
         "workFinishDate": null
       },
       "downtime": null,
-      "conflicts": [
-        {
-          "conflictId": "missing_timing:operation-2:machine-1",
-          "code": "missing_timing",
-          "severity": "blocking",
-          "message": "Batch B-2026-0088 OP10 is missing setup or cycle timing."
-        }
-      ]
+      "conflicts": []
     }
   ]
 }
 ```
 
-Only active Machines with `display_enabled = true` appear. Until an execution lifecycle exists, `current` is the first unfinished stored backlog item and `next` is the second. Urgent Batches serve an active Order whose `workFinishDate` falls within `TvDashboard:UrgentWithinHours` using the current UTC-date baseline; the default is 48 hours. `refreshAfterSeconds` defaults to 15. `projectedFinish` comes from the Server Timeline projection when calculable. The dashboard projection contains only shop-floor display data and omits Working Folder paths, package links, customer details, credentials, edit authority, and mutation links.
+Only active Machines with `display_enabled = true` appear. `current` prefers the active `in_progress` or `suspended` Operation, otherwise the first unfinished backlog item; if the backlog is fully finished, it may retain the latest completed Operation. `progress.statusCode` maps execution to `started`, `paused`, `waiting`, or `completed`. Setup percentage is elapsed active time divided by setup seconds. Production uses elapsed active time after setup divided by per-part cycle seconds to derive the displayed current part and Batch percentage; closed pauses are subtracted and an active pause freezes elapsed time at its start. Missing timing reports `Progress unavailable` rather than inventing a count. The TV web client renders only `current`, its preview and progress; it deliberately omits `next`, `third`, conflicts, downtime, urgent lists, and summary panels even when compatibility fields remain in the projection. Conflict arrays are empty in this display projection. Urgent Batches serve an active Order whose `workFinishDate` falls within `TvDashboard:UrgentWithinHours` using the current UTC-date baseline; the default is 48 hours. `refreshAfterSeconds` defaults to 15. `projectedFinish` comes from the Server Timeline projection when calculable. The dashboard projection contains only shop-floor display data and omits Working Folder paths, package links, customer details, credentials, edit authority, and mutation links.
 
 The implemented route is GET-only; POST/PUT/PATCH/DELETE do not match it. Credential-class enforcement and `403` behavior remain pending the authentication layer. The web client calls no Edit Mode or mutation route, sends conditional ETags, and preserves its last rendered snapshot when a refresh fails. Offline-display telemetry and plan revisions remain unimplemented.
 

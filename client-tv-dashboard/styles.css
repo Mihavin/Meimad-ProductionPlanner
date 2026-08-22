@@ -10,6 +10,8 @@
   --idle: #71808b;
   --current: #1687e8;
   --setup: #e5b72f;
+  --paused: #ffb020;
+  --completed: #39d353;
   --machine-count: 1;
 }
 
@@ -91,7 +93,7 @@ h1 {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(62px, 5vw) minmax(120px, 10vw) minmax(42px, 4vw) minmax(240px, 1.4fr) minmax(240px, 1.4fr);
+  grid-template-columns: minmax(62px, 5vw) minmax(120px, 10vw) minmax(54px, 6vw) minmax(280px, 1.2fr) minmax(320px, 1.5fr);
   align-items: center;
   padding: 2px 8px;
   overflow: hidden;
@@ -128,14 +130,27 @@ h1 {
   white-space: nowrap;
 }
 
-.job { min-width: 0; overflow: hidden; padding: 0 8px; color: var(--text); font-size: clamp(12px, .9vw, 18px); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.job.next { color: #d5dde3; border-left: 1px solid var(--panel-border); }
-.job-prefix { color: var(--muted); font-weight: 600; }
+.operation { min-width: 0; overflow: hidden; padding: 0 10px; }
+.operation.empty { color: #82909a; font-size: clamp(14px, 1.1vw, 22px); }
+.operation-title, .operation-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operation-title { font-size: clamp(15px, 1.25vw, 24px); }
+.operation-name { margin-top: 4px; color: var(--muted); font-size: clamp(12px, .95vw, 18px); }
+.batch { margin-left: 12px; color: #d5dde3; font-weight: 650; }
 .job-op { color: #8dccff; font-weight: 800; }
-.job-name { color: var(--muted); }
-.job.empty { color: #82909a; font-weight: 500; }
-.job-preview { width: 38px; height: 38px; object-fit: contain; border-radius: 2px; background: #eef2f4; }
+.job-preview { width: clamp(46px, 5vw, 80px); height: min(clamp(46px, 5vw, 80px), calc((100vh - 90px) / var(--machine-count))); object-fit: contain; border-radius: 4px; background: #eef2f4; }
 .job-preview.placeholder { display: block; background: #1b2d3a; }
+
+.execution { min-width: 0; padding: 0 12px; }
+.execution-line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-width: 0; }
+.status-label { flex: 0 0 auto; color: #8dccff; font-size: clamp(15px, 1.2vw, 24px); font-weight: 900; text-transform: uppercase; }
+.completion-label { overflow: hidden; color: var(--text); font-size: clamp(14px, 1.1vw, 22px); font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.status-paused .status-label { color: var(--paused); }
+.status-completed .status-label { color: var(--completed); }
+.status-waiting .status-label { color: var(--muted); }
+.progress-track { height: clamp(8px, .8vh, 14px); margin-top: 8px; overflow: hidden; border-radius: 999px; background: #263947; }
+.progress-track > span { display: block; width: var(--progress, 0%); height: 100%; background: var(--current); }
+.status-paused .progress-track > span { background: var(--paused); }
+.status-completed .progress-track > span { background: var(--completed); }
 
 .empty-state {
   grid-column: 1 / -1;

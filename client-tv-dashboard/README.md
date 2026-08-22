@@ -2,7 +2,7 @@
 
 The Meimad Planner Server serves this read-only kiosk UI at `/tv-dashboard/` and its projection at `GET /api/v1/tv-dashboard`.
 
-The dashboard is dependency-free and requires no separate web host or build step. Its no-scroll grid displays each display-enabled active Machine's number, name, current part, next part, and the current-part preview when available. Grid dimensions and text density adapt to the Machine count and viewport, and a small green/yellow/red dot is the only visible Server state. It deliberately does not render conflicts, warnings, status, or a third job; it has no host text, summaries, configuration, forms, edit controls, Edit Mode calls, or planning mutation code.
+The dashboard is dependency-free and requires no separate web host or build step. Its no-scroll grid displays each display-enabled active Machine's number, name, current operation, current-part preview, execution state, and calculated completion. Setup displays a percentage; production displays the current part against Batch quantity and overall Batch percentage. Pauses freeze progress at the pause time. It deliberately does not render conflicts, warnings, next/third jobs, host text, summaries, configuration, forms, edit controls, Edit Mode calls, or planning mutation code.
 
 The richer dashboard projection remains Server-owned and continues to derive Machine status from authoritative planning state. The kiosk deliberately renders only the status result; it does not calculate or mutate planning state in the browser.
 

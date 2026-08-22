@@ -26,7 +26,14 @@ internal sealed record TvSourceOperation(
     int OperationNumber,
     string OperationName,
     string Status,
-    int BacklogPosition);
+    int BacklogPosition,
+    int PlannedQuantity,
+    int? SetupSeconds,
+    int? CycleSeconds,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    double ClosedPauseSeconds,
+    DateTimeOffset? ActivePauseStartedAt);
 
 internal sealed record TvSourceDowntime(
     string DowntimeId,

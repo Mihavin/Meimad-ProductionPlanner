@@ -11,7 +11,7 @@ namespace Meimad.Planner.Server.Tests.TvDashboard;
 public sealed class TvDashboardApiTests
 {
     [Fact]
-    public async Task Read_projection_contains_machine_jobs_urgency_downtime_and_conflicts()
+    public async Task Read_projection_contains_current_operation_picture_status_and_setup_progress_without_conflicts()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -32,11 +32,13 @@ public sealed class TvDashboardApiTests
             var machine = Assert.Single(root.GetProperty("machines").EnumerateArray());
             Assert.Equal("M-TV-1", machine.GetProperty("number").GetString());
             Assert.Equal("op-current", machine.GetProperty("current").GetProperty("operationId").GetString());
-            Assert.Equal("op-next", machine.GetProperty("next").GetProperty("operationId").GetString());
             Assert.True(machine.GetProperty("current").GetProperty("urgent").GetBoolean());
+            Assert.Equal("started", machine.GetProperty("current").GetProperty("progress").GetProperty("statusCode").GetString());
+            Assert.Equal("setup", machine.GetProperty("current").GetProperty("progress").GetProperty("phase").GetString());
+            Assert.InRange(machine.GetProperty("current").GetProperty("progress").GetProperty("setupPercent").GetInt32(), 45, 55);
+            Assert.Contains("/api/v1/cases/case-tv/preview", machine.GetProperty("current").GetProperty("previewUrl").GetString(), StringComparison.Ordinal);
             Assert.True(machine.GetProperty("downtime").GetProperty("isCurrent").GetBoolean());
-            Assert.NotEmpty(machine.GetProperty("conflicts").EnumerateArray());
-            Assert.Equal("downtime", machine.GetProperty("status").GetProperty("code").GetString());
+            Assert.Empty(machine.GetProperty("conflicts").EnumerateArray());
 
             using var conditional = new HttpRequestMessage(HttpMethod.Get, "/api/v1/tv-dashboard");
             conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!);
@@ -77,8 +79,11 @@ public sealed class TvDashboardApiTests
             Assert.Contains("fitGrid(machines.length)", javascript, StringComparison.Ordinal);
             Assert.Contains("server-status-connected", css, StringComparison.Ordinal);
             Assert.Contains("machine.current", javascript, StringComparison.Ordinal);
-            Assert.Contains("machine.next", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("machine.next", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("machine.third", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("conflict", javascript, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("completionLabel", javascript, StringComparison.Ordinal);
+            Assert.Contains("progress-track", css, StringComparison.Ordinal);
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("connection-banner", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
@@ -131,12 +136,12 @@ public sealed class TvDashboardApiTests
             INSERT INTO batch_operations (
                 id, production_batch_id, source_case_operation_id,
                 operation_number, route_position, name, required_machine_type,
-                setup_seconds, cycle_seconds, status)
+                setup_seconds, cycle_seconds, status, actual_start, actual_machine_id)
             VALUES
                 ('op-current', 'batch-tv', 'case-op-current', 10, 0,
-                 'Rough mill', 'mill', 600, 900, 'not_started'),
+                 'Rough mill', 'mill', 600, 900, 'in_progress', $actualStart, 'machine-tv'),
                 ('op-next', 'batch-tv', 'case-op-next', 20, 1,
-                 'Finish mill', 'mill', NULL, NULL, 'not_started');
+                 'Finish mill', 'mill', NULL, NULL, 'not_started', NULL, NULL);
             INSERT INTO machine_assignments (
                 id, batch_operation_id, machine_id, backlog_position)
             VALUES
@@ -151,6 +156,7 @@ public sealed class TvDashboardApiTests
         command.Parameters.AddWithValue("$due", due.ToString("yyyy-MM-dd"));
         command.Parameters.AddWithValue("$downtimeStart", now.AddMinutes(-10).ToString("O"));
         command.Parameters.AddWithValue("$downtimeEnd", now.AddMinutes(50).ToString("O"));
+        command.Parameters.AddWithValue("$actualStart", now.AddMinutes(-5).ToString("O"));
         await command.ExecuteNonQueryAsync();
     }
 

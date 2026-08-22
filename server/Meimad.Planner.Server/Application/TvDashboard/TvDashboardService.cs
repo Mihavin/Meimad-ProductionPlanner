@@ -59,7 +59,6 @@ internal sealed class TvDashboardService
             machine,
             now,
             source.Downtimes,
-            timeline.Conflicts,
             urgentDueByBatch,
             projectedFinishByOperation)).ToArray();
         var machineNumberByBatch = source.Machines
@@ -77,7 +76,7 @@ internal sealed class TvDashboardService
                 value.WorkFinishDate < today,
                 machineNumberByBatch.GetValueOrDefault(value.BatchId)))
             .ToArray();
-        var criticalConflictCount = timeline.Conflicts.Count(conflict => conflict.Severity == "blocking");
+        var criticalConflictCount = 0;
         var projection = new TvDashboardProjection(
             1,
             now,
@@ -97,15 +96,18 @@ internal sealed class TvDashboardService
         TvSourceMachine machine,
         DateTimeOffset now,
         IReadOnlyList<TvSourceDowntime> allDowntimes,
-        IReadOnlyList<TimelineProjectionConflict> allConflicts,
         IReadOnlyDictionary<string, TvSourceBatchDueDate> urgentDueByBatch,
         IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation)
     {
         var unfinished = machine.Backlog
-            .Where(operation => operation.Status is not "complete" and not "cancelled")
+            .Where(operation => operation.Status is not "completed" and not "complete" and not "cancelled")
             .OrderBy(operation => operation.BacklogPosition)
             .ToArray();
-        var currentSource = unfinished.FirstOrDefault();
+        var currentSource = unfinished.FirstOrDefault(operation => operation.Status is "in_progress" or "suspended")
+            ?? unfinished.FirstOrDefault()
+            ?? machine.Backlog.Where(operation => operation.Status is "completed" or "complete")
+                .OrderByDescending(operation => operation.BacklogPosition)
+                .FirstOrDefault();
         var nextSource = unfinished.Skip(1).FirstOrDefault();
         var thirdSource = unfinished.Skip(2).FirstOrDefault();
         var downtimeSource = allDowntimes
@@ -118,30 +120,23 @@ internal sealed class TvDashboardService
             downtimeSource.EndsAt,
             downtimeSource.Reason,
             downtimeSource.StartsAt <= now && downtimeSource.EndsAt > now);
-        var conflicts = allConflicts
-            .Where(conflict => conflict.MachineIds.Contains(machine.MachineId, StringComparer.Ordinal))
-            .Select(conflict => new TvConflict(
-                conflict.ConflictId,
-                conflict.Code,
-                conflict.Severity,
-                conflict.Message))
-            .ToArray();
-        var status = Status(downtime, currentSource, conflicts);
+        var status = Status(null, currentSource);
         return new TvMachine(
             machine.MachineId,
             machine.Number,
             machine.Name,
             machine.ProcessType,
             status,
-            Job(currentSource, urgentDueByBatch, projectedFinishByOperation),
-            Job(nextSource, urgentDueByBatch, projectedFinishByOperation),
-            Job(thirdSource, urgentDueByBatch, projectedFinishByOperation),
+            Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation),
+            Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation),
+            Job(thirdSource, now, urgentDueByBatch, projectedFinishByOperation),
             downtime,
-            conflicts);
+            []);
     }
 
     private static TvJob? Job(
         TvSourceOperation? operation,
+        DateTimeOffset now,
         IReadOnlyDictionary<string, TvSourceBatchDueDate> urgentDueByBatch,
         IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation)
     {
@@ -162,22 +157,77 @@ internal sealed class TvDashboardService
             projectedFinishByOperation.GetValueOrDefault(operation.OperationId),
             urgent is not null,
             urgent?.WorkFinishDate.ToString("yyyy-MM-dd"),
-            $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview");
+            $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview",
+            Progress(operation, now));
+    }
+
+    private static TvOperationProgress Progress(TvSourceOperation operation, DateTimeOffset now)
+    {
+        var statusCode = operation.Status switch
+        {
+            "in_progress" => "started",
+            "suspended" => "paused",
+            "completed" or "complete" => "completed",
+            _ => "waiting"
+        };
+        var statusLabel = statusCode switch
+        {
+            "started" => "Started",
+            "paused" => "Paused",
+            "completed" => "Completed",
+            _ => "Waiting"
+        };
+        var quantity = Math.Max(0, operation.PlannedQuantity);
+        if (statusCode == "completed")
+        {
+            return new TvOperationProgress(
+                statusCode, statusLabel, "completed", $"Part {quantity}/{quantity} | 100% of Batch",
+                100, null, quantity, quantity);
+        }
+
+        var setupSeconds = Math.Max(0, operation.SetupSeconds ?? 0);
+        var effectiveEnd = statusCode == "paused"
+            ? operation.ActivePauseStartedAt ?? now
+            : now;
+        var elapsedSeconds = operation.ActualStart is { } start
+            ? Math.Max(0, (effectiveEnd - start).TotalSeconds - Math.Max(0, operation.ClosedPauseSeconds))
+            : 0;
+        if (setupSeconds > 0 && elapsedSeconds < setupSeconds)
+        {
+            var percent = statusCode == "waiting"
+                ? 0
+                : Math.Clamp((int)Math.Round(elapsedSeconds / setupSeconds * 100), 0, 99);
+            return new TvOperationProgress(
+                statusCode, statusLabel, "setup", $"Setup {percent}%",
+                percent, percent, null, quantity);
+        }
+
+        if (quantity > 0 && operation.CycleSeconds is > 0)
+        {
+            var productionSeconds = Math.Max(0, elapsedSeconds - setupSeconds);
+            var fractionalParts = productionSeconds / operation.CycleSeconds.Value;
+            var currentPart = Math.Clamp((int)Math.Floor(fractionalParts) + 1, 1, quantity);
+            var percent = statusCode == "waiting"
+                ? 0
+                : Math.Clamp((int)Math.Round(fractionalParts / quantity * 100), 0, 99);
+            return new TvOperationProgress(
+                statusCode, statusLabel, "production",
+                $"Part {currentPart}/{quantity} | {percent}% of Batch",
+                percent, null, currentPart, quantity);
+        }
+
+        return new TvOperationProgress(
+            statusCode, statusLabel, statusCode == "waiting" ? "waiting" : "unknown",
+            "Progress unavailable", null, null, null, quantity);
     }
 
     private static TvStatus Status(
         TvDowntime? downtime,
-        TvSourceOperation? current,
-        IReadOnlyList<TvConflict> conflicts)
+        TvSourceOperation? current)
     {
         if (downtime?.IsCurrent == true)
         {
             return new TvStatus("downtime", "Downtime", "●", "#C62828");
-        }
-
-        if (conflicts.Any(conflict => conflict.Severity == "blocking"))
-        {
-            return new TvStatus("conflict", "Blocking conflict", "▲", "#C62828");
         }
 
         if (current is not null)

@@ -1,22 +1,11 @@
 "use strict";
 
-const state = {
-  etag: null,
-  refreshSeconds: 15,
-  timer: null,
-  hasSnapshot: false,
-  machineCount: 0
-};
-
+const state = { etag: null, refreshSeconds: 15, timer: null, hasSnapshot: false, machineCount: 0 };
 const byId = (id) => document.getElementById(id);
 
 function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 }
 
 function setServerStatus(status, description) {
@@ -29,30 +18,39 @@ function setServerStatus(status, description) {
 function renderMachine(machine) {
   const number = escapeHtml(machine.number);
   const name = escapeHtml(machine.name);
-  const job = (value, prefix) => value
-    ? `<div class="job ${prefix}"><span class="job-prefix">${prefix === "current" ? "Current" : prefix === "next" ? "Next" : "After"}:</span> ${escapeHtml(value.partNumber)} <span class="job-op">OP${escapeHtml(value.operationNumber)}</span> <span class="job-name">${escapeHtml(value.operationName)}</span></div>`
-    : `<div class="job ${prefix} empty">${prefix === "current" ? "No current work" : "—"}</div>`;
   const preview = machine.current?.previewUrl
     ? `<img class="job-preview" src="${escapeHtml(machine.current.previewUrl)}" alt="" loading="lazy" onerror="this.hidden=true">`
     : `<span class="job-preview placeholder" aria-hidden="true"></span>`;
+  if (!machine.current) {
+    return `<article class="machine-row idle" aria-label="${number} ${name}">
+      <div class="machine-number">${number}</div><div class="machine-name">${name}</div>${preview}
+      <div class="operation empty">No current operation</div></article>`;
+  }
+
+  const operation = machine.current;
+  const progress = operation.progress || {};
+  const percent = Number.isFinite(progress.completionPercent)
+    ? Math.max(0, Math.min(100, progress.completionPercent)) : null;
+  const progressStyle = percent === null ? "" : ` style="--progress:${percent}%"`;
   return `<article class="machine-row" aria-label="${number} ${name}">
-    <div class="machine-number">${number}</div>
-    <div class="machine-name">${name}</div>
-    ${preview}
-    ${job(machine.current, "current")}
-    ${job(machine.next, "next")}
+    <div class="machine-number">${number}</div><div class="machine-name">${name}</div>${preview}
+    <div class="operation">
+      <div class="operation-title"><strong>${escapeHtml(operation.partNumber)}</strong> <span class="batch">Batch ${escapeHtml(operation.batchNumber)}</span> <span class="job-op">OP${escapeHtml(operation.operationNumber)}</span></div>
+      <div class="operation-name">${escapeHtml(operation.operationName)}</div>
+    </div>
+    <div class="execution status-${escapeHtml(progress.statusCode || "waiting")}">
+      <div class="execution-line"><span class="status-label">${escapeHtml(progress.statusLabel || "Waiting")}</span><span class="completion-label">${escapeHtml(progress.completionLabel || "Progress unavailable")}</span></div>
+      <div class="progress-track"${progressStyle}><span></span></div>
+    </div>
   </article>`;
 }
 
 function fitGrid(machineCount) {
   const grid = byId("machine-grid");
   if (machineCount < 1) {
-    grid.style.setProperty("--grid-columns", "1");
-    grid.style.setProperty("--grid-rows", "1");
-    grid.style.setProperty("--density", "1");
+    grid.style.setProperty("--machine-count", "1");
     return;
   }
-
   grid.style.setProperty("--machine-count", String(machineCount));
 }
 

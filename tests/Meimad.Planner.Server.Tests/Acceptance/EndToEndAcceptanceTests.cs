@@ -72,14 +72,15 @@ public sealed class EndToEndAcceptanceTests
                 var root = tv.RootElement;
                 Assert.Equal(15, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
                 Assert.True(root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32() >= 1);
-                Assert.True(root.GetProperty("summary").GetProperty("criticalConflictCount").GetInt32() >= 1);
+                Assert.Equal(0, root.GetProperty("summary").GetProperty("criticalConflictCount").GetInt32());
                 Assert.Contains(
                     root.GetProperty("machines").EnumerateArray(),
                     machine => machine.GetProperty("downtime").ValueKind == JsonValueKind.Object);
                 Assert.Contains(
                     root.GetProperty("machines").EnumerateArray(),
                     machine => machine.GetProperty("current").ValueKind == JsonValueKind.Object
-                        && machine.GetProperty("next").ValueKind == JsonValueKind.Object);
+                        && machine.GetProperty("current").GetProperty("progress").ValueKind == JsonValueKind.Object
+                        && machine.GetProperty("conflicts").GetArrayLength() == 0);
             }
 
             using (var forbiddenTvWrite = await client.PostAsync("/api/v1/tv-dashboard", null))

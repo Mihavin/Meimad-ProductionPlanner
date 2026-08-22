@@ -265,12 +265,12 @@ Implemented deterministic tests use fixed UTC timestamps and cover same- and dif
 
 ## 13. Phase 10 - TV Dashboard
 
-**Implementation status:** Core LAN-served dashboard implemented. The dependency-free fullscreen UI has large rows per display-enabled Machine, top-backlog current/next work and their Server-owned execution status, calculated conflicts, urgent Batches, current/upcoming downtime, conditional auto-refresh, visible offline retention, and no edit controls. The GET-only projection supports ETags. Authentication, display groups, offline-device telemetry, target-TV visual acceptance, and managed kiosk deployment remain pending.
+**Implementation status:** Core LAN-served dashboard implemented. The dependency-free fullscreen UI has one large row per display-enabled Machine and shows only its current Operation, part picture, Started/Paused/Waiting/Completed state, and setup or calculated part/Batch completion. Conflicts and queued Operations are intentionally hidden. It conditionally auto-refreshes, visibly retains the last snapshot while offline, and has no edit controls. The GET-only projection supports ETags. Authentication, display groups, offline-device telemetry, target-TV visual acceptance, and managed kiosk deployment remain pending.
 
 ### Scope
 
 - Create a read-only web/kiosk dashboard under `client-tv-dashboard/`.
-- Show server freshness, current time, per-Machine current/next/projected finish or conflict/idle/setup state, and factory summary counts.
+- Show the current Operation per Machine with its picture, execution state, and setup or calculated part/Batch completion.
 - Implement approved automatic refresh, offline detection, reconnect, and kiosk deployment.
 
 ### Tests and exit gate

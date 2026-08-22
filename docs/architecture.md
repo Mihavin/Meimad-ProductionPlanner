@@ -210,7 +210,7 @@ The Server owns timing aggregation, derived Order/Batch lifecycle, allocation-sa
 
 ### 4.11 TV Dashboard read-only web UI
 
-The implemented `client-tv-dashboard/` component is a dependency-free, read-only fullscreen/kiosk web surface served by the Meimad Server at `/tv-dashboard/`. It consumes only `GET /api/v1/tv-dashboard`, conditionally refreshes using ETags, and retains the last rendered snapshot during a connection failure. Its viewport-fitted grid renders only Machine number, name, and status. A small green/yellow/red dot is the only visible connection state; Server/host text, operational detail strips, summaries, controls, and scrolling are absent.
+The implemented `client-tv-dashboard/` component is a dependency-free, read-only fullscreen/kiosk web surface served by the Meimad Server at `/tv-dashboard/`. It consumes only `GET /api/v1/tv-dashboard`, conditionally refreshes using ETags, and retains the last rendered snapshot during a connection failure. Its viewport-fitted grid renders each Machine's current Operation, picture, execution state, and setup or Batch completion. Conflicts and queued Operations are omitted from the TV surface. A small green/yellow/red dot is the only visible connection state; Server/host text, summaries, controls, and scrolling are absent.
 
 It contains no forms, mutation workflow, or Edit Mode call. Static assets and the projection are hosted by the existing LAN-only Server, so no cloud or separate web runtime is introduced. Human/dashboard authentication, kiosk browser management, screen-resolution acceptance, offline-display telemetry, and plan-revision-consistent composition remain pending.
 
@@ -335,7 +335,7 @@ Windows, TV, and E-Ink views should consume purpose-built read projections rathe
 
 - **Windows board projection:** pool, Machine backlogs, assignments, planned quantity, allocated Order references, input-derived estimated time, conflicts, and edit state.
 - **Timeline projection:** operations and reservations on a normalized time axis with dependency/conflict annotations.
-- **TV projection:** concise Machine current/next and factory summary.
+- **TV projection:** current-operation identity, preview, execution state, and calculated setup/Batch progress per Machine.
 - **E-Ink projection:** small version token, Machine screen, current package manifest/files, and work-window configuration.
 
 Projection generation may initially be synchronous. Caching/background workers should be added only when measured scale requires them and must not create a second authority.

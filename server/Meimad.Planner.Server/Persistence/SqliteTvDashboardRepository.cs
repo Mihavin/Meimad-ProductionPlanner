@@ -82,7 +82,23 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                    batch_operations.operation_number,
                    batch_operations.name,
                    batch_operations.status,
-                   machine_assignments.backlog_position
+                   machine_assignments.backlog_position,
+                   production_batches.planned_quantity,
+                   batch_operations.setup_seconds,
+                   batch_operations.cycle_seconds,
+                   batch_operations.actual_start,
+                   batch_operations.actual_end,
+                   COALESCE((
+                       SELECT SUM((julianday(pause_ended_at) - julianday(pause_started_at)) * 86400.0)
+                       FROM operation_pause_events
+                       WHERE batch_operation_id = batch_operations.id
+                         AND pause_ended_at IS NOT NULL), 0),
+                   (SELECT pause_started_at
+                    FROM operation_pause_events
+                    WHERE batch_operation_id = batch_operations.id
+                      AND status = 'active'
+                    ORDER BY pause_started_at DESC, id DESC
+                    LIMIT 1)
             FROM machine_assignments
             JOIN machines ON machines.id = machine_assignments.machine_id
             JOIN batch_operations
@@ -102,7 +118,13 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                 new TvSourceOperation(
                     reader.GetString(1), reader.GetString(2), reader.GetString(3),
                     reader.GetString(4), reader.GetString(5), reader.GetInt32(6), reader.GetString(7),
-                    reader.GetString(8), reader.GetInt32(9))));
+                    reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10),
+                    reader.IsDBNull(11) ? null : reader.GetInt32(11),
+                    reader.IsDBNull(12) ? null : reader.GetInt32(12),
+                    reader.IsDBNull(13) ? null : ParseInstant(reader.GetString(13)),
+                    reader.IsDBNull(14) ? null : ParseInstant(reader.GetString(14)),
+                    reader.GetDouble(15),
+                    reader.IsDBNull(16) ? null : ParseInstant(reader.GetString(16)))));
         }
 
         return values;
