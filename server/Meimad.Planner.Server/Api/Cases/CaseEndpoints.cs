@@ -1,6 +1,7 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.Cases;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Microsoft.Extensions.Primitives;
@@ -449,10 +450,14 @@ internal static class CaseEndpoints
         string caseId,
         HttpContext httpContext,
         CaseService service,
+        ServerFilePathResolver pathResolver,
         CancellationToken cancellationToken)
     {
         var plannerCase = await service.GetByIdAsync(caseId, cancellationToken);
-        if (plannerCase?.PreviewPath is null || !File.Exists(plannerCase.PreviewPath))
+        var previewPath = plannerCase?.PreviewPath is null
+            ? null
+            : pathResolver.ResolveExistingFile(plannerCase.PreviewPath, plannerCase.WorkingFolderPath);
+        if (previewPath is null)
         {
             return Error(
                 StatusCodes.Status404NotFound,
@@ -461,7 +466,7 @@ internal static class CaseEndpoints
                 httpContext);
         }
 
-        var contentType = Path.GetExtension(plannerCase.PreviewPath).ToLowerInvariant() switch
+        var contentType = Path.GetExtension(previewPath).ToLowerInvariant() switch
         {
             ".png" => "image/png",
             ".jpg" or ".jpeg" => "image/jpeg",
@@ -479,7 +484,7 @@ internal static class CaseEndpoints
         }
 
         return Results.File(
-            plannerCase.PreviewPath,
+            previewPath,
             contentType,
             enableRangeProcessing: true);
     }

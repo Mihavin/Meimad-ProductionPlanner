@@ -2,6 +2,7 @@ namespace Meimad.Planner.Server.Application.TvDashboard;
 
 internal sealed record TvDashboardProjection(
     int SchemaVersion,
+    string DashboardBuild,
     DateTimeOffset GeneratedAt,
     string Freshness,
     int RefreshAfterSeconds,
@@ -28,12 +29,19 @@ internal sealed record TvMachine(
     string Number,
     string Name,
     string ProcessType,
+    TvConnectionStatus Connection,
     TvStatus Status,
     TvJob? Current,
     TvJob? Next,
     TvJob? Third,
     TvDowntime? Downtime,
     IReadOnlyList<TvConflict> Conflicts);
+
+internal sealed record TvConnectionStatus(
+    string Code,
+    string Label,
+    bool Online,
+    string SourceCode);
 
 internal sealed record TvStatus(string Code, string Label, string Icon, string Color);
 

@@ -1,5 +1,7 @@
 "use strict";
 
+const DASHBOARD_BUILD = "0.1.22";
+
 const state = {
   etag: null,
   refreshSeconds: 60,
@@ -25,15 +27,34 @@ function setServerStatus(status, description) {
   indicator.title = description;
 }
 
+function previewUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value, `${window.location.origin}/`);
+    return url.origin === window.location.origin ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderPreview(job) {
+  const url = previewUrl(job?.previewUrl);
+  const label = escapeHtml(job?.partNumber || "part");
+  if (!url) {
+    return `<div class="preview-frame"><span class="job-preview placeholder" aria-label="No picture available">No image</span></div>`;
+  }
+  return `<div class="preview-frame"><img class="job-preview" src="${escapeHtml(url)}" alt="${label} part picture" loading="eager" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="job-preview placeholder" aria-label="Picture unavailable" hidden>No image</span></div>`;
+}
+
 function renderMachine(machine) {
   const number = escapeHtml(machine.number);
   const name = escapeHtml(machine.name);
-  const preview = machine.current?.previewUrl
-    ? `<img class="job-preview" src="${escapeHtml(machine.current.previewUrl)}" alt="" loading="lazy" onerror="this.hidden=true">`
-    : `<span class="job-preview placeholder" aria-hidden="true"></span>`;
+  const preview = renderPreview(machine.current);
+  const online = machine.connection?.online === true;
+  const connection = `<div class="machine-connection connection-${online ? "online" : "offline"}"><span aria-hidden="true"></span>${online ? "Online" : "Offline"}</div>`;
   if (!machine.current) {
     return `<article class="machine-row idle" aria-label="${number} ${name}">
-      <div class="machine-number">${number}</div><div class="machine-name">${name}</div>${preview}
+      <div class="machine-number">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${preview}
       <div class="operation empty">No current operation</div></article>`;
   }
 
@@ -43,7 +64,7 @@ function renderMachine(machine) {
     ? Math.max(0, Math.min(100, progress.completionPercent)) : null;
   const progressStyle = percent === null ? "" : ` style="--progress:${percent}%"`;
   return `<article class="machine-row" aria-label="${number} ${name}">
-    <div class="machine-number">${number}</div><div class="machine-name">${name}</div>${preview}
+    <div class="machine-number" title="${number}">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${preview}
     <div class="operation">
       <div class="operation-title"><strong>${escapeHtml(operation.partNumber)}</strong> <span class="batch">Batch ${escapeHtml(operation.batchNumber)}</span> <span class="job-op">OP${escapeHtml(operation.operationNumber)}</span></div>
       <div class="operation-name">${escapeHtml(operation.operationName)}</div>
@@ -65,6 +86,16 @@ function fitGrid(machineCount) {
 }
 
 function render(data) {
+  if (data.dashboardBuild && data.dashboardBuild !== DASHBOARD_BUILD) {
+    window.location.reload();
+    return;
+  }
+  if (Number(data.schemaVersion) < 2) {
+    state.hasSnapshot = true;
+    byId("machine-grid").innerHTML = `<div class="empty-state">Dashboard update required</div>`;
+    byId("machine-grid").setAttribute("aria-busy", "false");
+    return;
+  }
   const machines = Array.isArray(data.machines) ? data.machines : [];
   state.hasSnapshot = true;
   state.machineCount = machines.length;

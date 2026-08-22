@@ -83,6 +83,7 @@ public static class ServerApplication
         var databaseOptions = DatabaseOptions.FromConfiguration(
             builder.Configuration,
             builder.Environment.ContentRootPath);
+        var serverFileAccessOptions = ServerFileAccessOptions.FromConfiguration(builder.Configuration);
         var editModeOptions = EditModeOptions.FromConfiguration(builder.Configuration);
         var backupOptions = BackupOptions.FromConfiguration(
             builder.Configuration,
@@ -101,6 +102,8 @@ public static class ServerApplication
 
         builder.Services.AddSingleton(serverOptions);
         builder.Services.AddSingleton(databaseOptions);
+        builder.Services.AddSingleton(serverFileAccessOptions);
+        builder.Services.AddSingleton<ServerFilePathResolver>();
         builder.Services.AddSingleton(editModeOptions);
         builder.Services.AddSingleton(backupOptions);
         builder.Services.AddSingleton(tvDashboardOptions);
@@ -243,7 +246,8 @@ public static class ServerApplication
         application.UseStaticFiles(new StaticFileOptions
         {
             RequestPath = "/tv-dashboard",
-            FileProvider = new PhysicalFileProvider(tvDashboardRoot)
+            FileProvider = new PhysicalFileProvider(tvDashboardRoot),
+            OnPrepareResponse = context => SetDashboardNoCacheHeaders(context.Context.Response)
         });
         var eInkSimulatorRoot = Path.Combine(
             AppContext.BaseDirectory,
@@ -271,9 +275,13 @@ public static class ServerApplication
             version = GetServiceVersion(),
             serverTimeUtc = DateTimeOffset.UtcNow
         }));
-        application.MapGet("/tv-dashboard/", () => Results.File(
-            Path.Combine(tvDashboardRoot, "index.html"),
-            "text/html; charset=utf-8"));
+        application.MapGet("/tv-dashboard/", (HttpContext context) =>
+        {
+            SetDashboardNoCacheHeaders(context.Response);
+            return Results.File(
+                Path.Combine(tvDashboardRoot, "index.html"),
+                "text/html; charset=utf-8");
+        });
         application.MapGet("/eink-simulator/", () => Results.File(
             Path.Combine(eInkSimulatorRoot, "index.html"),
             "text/html; charset=utf-8"));
@@ -324,6 +332,13 @@ public static class ServerApplication
             .InformationalVersion
             ?? typeof(ServerApplication).Assembly.GetName().Version?.ToString()
             ?? "unknown";
+    }
+
+    private static void SetDashboardNoCacheHeaders(HttpResponse response)
+    {
+        response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+        response.Headers.Pragma = "no-cache";
+        response.Headers.Expires = "0";
     }
 
     private static void RegisterLifecycleLogging(

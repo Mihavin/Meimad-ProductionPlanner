@@ -78,7 +78,8 @@ internal sealed class TvDashboardService
             .ToArray();
         var criticalConflictCount = 0;
         var projection = new TvDashboardProjection(
-            1,
+            2,
+            "0.1.22",
             now,
             "current",
             options.RefreshAfterSeconds,
@@ -126,6 +127,7 @@ internal sealed class TvDashboardService
             machine.Number,
             machine.Name,
             machine.ProcessType,
+            Connection(machine.ConnectionStatus),
             status,
             Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation),
             Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation),
@@ -157,8 +159,33 @@ internal sealed class TvDashboardService
             projectedFinishByOperation.GetValueOrDefault(operation.OperationId),
             urgent is not null,
             urgent?.WorkFinishDate.ToString("yyyy-MM-dd"),
-            $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview",
+            PreviewUrl(operation),
             Progress(operation, now));
+    }
+
+    private static TvConnectionStatus Connection(string sourceCode)
+    {
+        var online = sourceCode is "ONLINE" or "DEGRADED";
+        return new TvConnectionStatus(
+            online ? "online" : "offline",
+            online ? "Online" : "Offline",
+            online,
+            sourceCode);
+    }
+
+    private static string? PreviewUrl(TvSourceOperation operation)
+    {
+        if (string.IsNullOrWhiteSpace(operation.PreviewPath))
+        {
+            return null;
+        }
+
+        if (Path.GetExtension(operation.PreviewPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg" or ".bmp" or ".gif"))
+        {
+            return null;
+        }
+
+        return $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview?v=2";
     }
 
     private static TvOperationProgress Progress(TvSourceOperation operation, DateTimeOffset now)
@@ -245,6 +272,7 @@ internal sealed class TvDashboardService
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new
         {
             projection.SchemaVersion,
+            projection.DashboardBuild,
             projection.Freshness,
             projection.RefreshAfterSeconds,
             projection.Summary,

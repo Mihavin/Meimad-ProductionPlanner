@@ -93,7 +93,7 @@ h1 {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(62px, 5vw) minmax(120px, 10vw) minmax(54px, 6vw) minmax(280px, 1.2fr) minmax(320px, 1.5fr);
+  grid-template-columns: minmax(130px, 8vw) minmax(240px, 17vw) minmax(110px, 8vw) minmax(64px, 6vw) minmax(260px, 1fr) minmax(300px, 1.25fr);
   align-items: center;
   padding: 2px 8px;
   overflow: hidden;
@@ -130,6 +130,29 @@ h1 {
   white-space: nowrap;
 }
 
+.machine-connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: clamp(13px, 1vw, 20px);
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.machine-connection > span {
+  width: clamp(10px, .75vw, 15px);
+  height: clamp(10px, .75vw, 15px);
+  border-radius: 50%;
+  background: var(--disconnected);
+  box-shadow: 0 0 8px var(--disconnected);
+}
+
+.connection-online { color: var(--connected); }
+.connection-online > span { background: var(--connected); box-shadow: 0 0 8px var(--connected); }
+.connection-offline { color: #ff8a8c; }
+
 .operation { min-width: 0; overflow: hidden; padding: 0 10px; }
 .operation.empty { color: #82909a; font-size: clamp(14px, 1.1vw, 22px); }
 .operation-title, .operation-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -137,8 +160,10 @@ h1 {
 .operation-name { margin-top: 4px; color: var(--muted); font-size: clamp(12px, .95vw, 18px); }
 .batch { margin-left: 12px; color: #d5dde3; font-weight: 650; }
 .job-op { color: #8dccff; font-weight: 800; }
-.job-preview { width: clamp(46px, 5vw, 80px); height: min(clamp(46px, 5vw, 80px), calc((100vh - 90px) / var(--machine-count))); object-fit: contain; border-radius: 4px; background: #eef2f4; }
-.job-preview.placeholder { display: block; background: #1b2d3a; }
+.preview-frame { display: grid; place-items: center; min-width: 0; min-height: 0; }
+.job-preview { width: clamp(54px, 5.5vw, 96px); height: min(clamp(54px, 5.5vw, 96px), calc((100vh - 90px) / var(--machine-count))); object-fit: contain; border-radius: 4px; background: #eef2f4; }
+.job-preview.placeholder { display: grid; place-items: center; background: #1b2d3a; color: #91a0aa; font-size: clamp(9px, .7vw, 13px); font-weight: 700; text-align: center; }
+.job-preview[hidden] { display: none; }
 
 .execution { min-width: 0; padding: 0 12px; }
 .execution-line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-width: 0; }

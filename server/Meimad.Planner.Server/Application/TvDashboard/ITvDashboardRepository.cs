@@ -15,6 +15,7 @@ internal sealed record TvSourceMachine(
     string Number,
     string Name,
     string ProcessType,
+    string ConnectionStatus,
     IReadOnlyList<TvSourceOperation> Backlog);
 
 internal sealed record TvSourceOperation(
@@ -30,6 +31,8 @@ internal sealed record TvSourceOperation(
     int PlannedQuantity,
     int? SetupSeconds,
     int? CycleSeconds,
+    string? PreviewPath,
+    string WorkingFolderPath,
     DateTimeOffset? ActualStart,
     DateTimeOffset? ActualEnd,
     double ClosedPauseSeconds,

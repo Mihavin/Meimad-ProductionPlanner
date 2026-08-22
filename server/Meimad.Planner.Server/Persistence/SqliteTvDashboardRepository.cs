@@ -48,10 +48,17 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT id, number, name, machine_type
+            SELECT machines.id, machines.number, machines.name, machines.machine_type,
+                   COALESCE(machine_current_state.connection_status,
+                            machine_connections.connection_status,
+                            'OFFLINE')
             FROM machines
+            LEFT JOIN machine_connections
+              ON machine_connections.machine_id = machines.id
+            LEFT JOIN machine_current_state
+              ON machine_current_state.machine_id = machines.id
             WHERE is_active = 1 AND display_enabled = 1
-            ORDER BY number COLLATE NOCASE, id;
+            ORDER BY machines.number COLLATE NOCASE, machines.id;
             """;
         var values = new List<TvSourceMachine>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -59,7 +66,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
         {
             values.Add(new TvSourceMachine(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), []));
+                reader.GetString(3), reader.GetString(4), []));
         }
 
         return values;
@@ -86,6 +93,8 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                    production_batches.planned_quantity,
                    batch_operations.setup_seconds,
                    batch_operations.cycle_seconds,
+                   cases.preview_reference,
+                   cases.working_folder_path,
                    batch_operations.actual_start,
                    batch_operations.actual_end,
                    COALESCE((
@@ -121,10 +130,12 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                     reader.GetString(8), reader.GetInt32(9), reader.GetInt32(10),
                     reader.IsDBNull(11) ? null : reader.GetInt32(11),
                     reader.IsDBNull(12) ? null : reader.GetInt32(12),
-                    reader.IsDBNull(13) ? null : ParseInstant(reader.GetString(13)),
-                    reader.IsDBNull(14) ? null : ParseInstant(reader.GetString(14)),
-                    reader.GetDouble(15),
-                    reader.IsDBNull(16) ? null : ParseInstant(reader.GetString(16)))));
+                    reader.IsDBNull(13) ? null : reader.GetString(13),
+                    reader.GetString(14),
+                    reader.IsDBNull(15) ? null : ParseInstant(reader.GetString(15)),
+                    reader.IsDBNull(16) ? null : ParseInstant(reader.GetString(16)),
+                    reader.GetDouble(17),
+                    reader.IsDBNull(18) ? null : ParseInstant(reader.GetString(18)))));
         }
 
         return values;

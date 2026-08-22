@@ -15,14 +15,15 @@ public sealed class TvDashboardApiTests
     {
         await RunWithServerAsync(async (application, client) =>
         {
-            await SeedAsync(application.Services);
+            var previewPath = await SeedAsync(application.Services);
 
             using var response = await client.GetAsync("/api/v1/tv-dashboard");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.NotNull(response.Headers.ETag);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
-            Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal("0.1.22", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -31,6 +32,8 @@ public sealed class TvDashboardApiTests
 
             var machine = Assert.Single(root.GetProperty("machines").EnumerateArray());
             Assert.Equal("M-TV-1", machine.GetProperty("number").GetString());
+            Assert.True(machine.GetProperty("connection").GetProperty("online").GetBoolean());
+            Assert.Equal("Online", machine.GetProperty("connection").GetProperty("label").GetString());
             Assert.Equal("op-current", machine.GetProperty("current").GetProperty("operationId").GetString());
             Assert.True(machine.GetProperty("current").GetProperty("urgent").GetBoolean());
             Assert.Equal("started", machine.GetProperty("current").GetProperty("progress").GetProperty("statusCode").GetString());
@@ -45,6 +48,11 @@ public sealed class TvDashboardApiTests
             using var unchanged = await client.SendAsync(conditional);
             Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
             Assert.Empty(await unchanged.Content.ReadAsByteArrayAsync());
+
+            using var preview = await client.GetAsync(machine.GetProperty("current").GetProperty("previewUrl").GetString());
+            Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+            Assert.Equal("image/png", preview.Content.Headers.ContentType?.MediaType);
+            Directory.Delete(Path.GetDirectoryName(previewPath)!, recursive: true);
         });
     }
 
@@ -55,6 +63,7 @@ public sealed class TvDashboardApiTests
         {
             using var page = await client.GetAsync("/tv-dashboard/");
             Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+            Assert.Contains("no-store", page.Headers.CacheControl?.ToString(), StringComparison.Ordinal);
             var html = await page.Content.ReadAsStringAsync();
             Assert.Contains("<h1>Machine status</h1>", html, StringComparison.Ordinal);
             Assert.Contains("id=\"server-status\"", html, StringComparison.Ordinal);
@@ -67,6 +76,7 @@ public sealed class TvDashboardApiTests
             Assert.DoesNotContain("Current job", html, StringComparison.OrdinalIgnoreCase);
 
             using var styles = await client.GetAsync("/tv-dashboard/styles.css");
+            Assert.Contains("no-store", styles.Headers.CacheControl?.ToString(), StringComparison.Ordinal);
             var css = await styles.Content.ReadAsStringAsync();
             Assert.Contains("overflow: hidden", css, StringComparison.Ordinal);
             Assert.Contains("grid-template-rows: repeat(var(--machine-count)", css, StringComparison.Ordinal);
@@ -88,6 +98,13 @@ public sealed class TvDashboardApiTests
             Assert.DoesNotContain("conflict", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("completionLabel", javascript, StringComparison.Ordinal);
             Assert.Contains("progress-track", css, StringComparison.Ordinal);
+            Assert.Contains(".machine-connection", css, StringComparison.Ordinal);
+            Assert.Contains("minmax(240px, 17vw)", css, StringComparison.Ordinal);
+            Assert.Contains("renderPreview(machine.current)", javascript, StringComparison.Ordinal);
+            Assert.Contains("loading=\"eager\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.22\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("connection-banner", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
@@ -101,7 +118,7 @@ public sealed class TvDashboardApiTests
         });
     }
 
-    private static async Task SeedAsync(IServiceProvider services)
+    private static async Task<string> SeedAsync(IServiceProvider services)
     {
         var now = DateTimeOffset.UtcNow;
         var start = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
@@ -111,6 +128,10 @@ public sealed class TvDashboardApiTests
         {
             availability = new[] { new { startsAt = start, endsAt = end } }
         });
+        var workingFolder = Path.Combine(Path.GetTempPath(), $"meimad-tv-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingFolder);
+        var previewPath = Path.Combine(workingFolder, "preview.png");
+        await File.WriteAllBytesAsync(previewPath, [137, 80, 78, 71, 13, 10, 26, 10]);
         var database = services.GetRequiredService<SqliteDatabase>();
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -124,8 +145,15 @@ public sealed class TvDashboardApiTests
                 is_active, display_enabled)
             VALUES ('machine-tv', 'M-TV-1', 'Display Mill', 'mill', 'calendar-tv',
                     'active', 1, 1);
-            INSERT INTO cases (id, part_number, name, working_folder_path)
-            VALUES ('case-tv', 'PN-TV', 'TV Part', 'C:\Cases\PN-TV');
+            INSERT INTO machine_connections (
+                id, machine_id, adapter_type, enabled, connection_status,
+                polling_interval_ms, connection_timeout_ms, maximum_reconnect_backoff_ms,
+                allow_read, allow_write, configuration_json, raw_telemetry_retention_days,
+                version, created_at, updated_at)
+            VALUES ('connection-tv', 'machine-tv', 'HAAS_NGC', 1, 'ONLINE',
+                    1000, 1000, 30000, 1, 0, '{}', 14, 1, $now, $now);
+            INSERT INTO cases (id, part_number, name, preview_reference, working_folder_path)
+            VALUES ('case-tv', 'PN-TV', 'TV Part', 'preview.png', $workingFolder);
             INSERT INTO orders (
                 id, case_id, order_reference, quantity, work_finish_date, status)
             VALUES ('order-tv', 'case-tv', 'ORDER-TV', 2, $due, 'active');
@@ -165,7 +193,10 @@ public sealed class TvDashboardApiTests
         command.Parameters.AddWithValue("$downtimeStart", now.AddMinutes(-10).ToString("O"));
         command.Parameters.AddWithValue("$downtimeEnd", now.AddMinutes(50).ToString("O"));
         command.Parameters.AddWithValue("$actualStart", now.AddMinutes(-5).ToString("O"));
+        command.Parameters.AddWithValue("$now", now.ToString("O"));
+        command.Parameters.AddWithValue("$workingFolder", workingFolder);
         await command.ExecuteNonQueryAsync();
+        return previewPath;
     }
 
     private static async Task RunWithServerAsync(Func<WebApplication, HttpClient, Task> test)
