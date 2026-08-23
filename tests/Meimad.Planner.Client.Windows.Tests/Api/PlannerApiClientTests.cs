@@ -1329,6 +1329,132 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Haas_connection_tests_preserve_typed_diagnostics_returned_with_bad_gateway()
+    {
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.BadGateway, """
+                {
+                  "succeeded": false,
+                  "message": "MDC connection to 192.168.0.56:5051 was refused.",
+                  "programNumber": null,
+                  "machineStatus": null,
+                  "parts": null,
+                  "header": null
+                }
+                """),
+            Json(HttpStatusCode.BadGateway, """
+                {
+                  "succeeded": false,
+                  "message": "The configured Local Net Share is unavailable.",
+                  "programNumber": null,
+                  "machineStatus": null,
+                  "parts": null,
+                  "header": null
+                }
+                """));
+        using var api = CreateClient(handler);
+
+        var mdc = await api.TestHaasMdcAsync("machine/haas");
+        var share = await api.TestHaasNetShareAsync("machine/haas");
+
+        Assert.False(mdc.Succeeded);
+        Assert.Equal("MDC connection to 192.168.0.56:5051 was refused.", mdc.Message);
+        Assert.False(share.Succeeded);
+        Assert.Equal("The configured Local Net Share is unavailable.", share.Message);
+        Assert.Equal("/api/v1/machines/machine%2Fhaas/haas/test-mdc", handler.Requests[0].Path);
+        Assert.Equal("/api/v1/machines/machine%2Fhaas/haas/test-net-share", handler.Requests[1].Path);
+    }
+
+    [Fact]
+    public async Task Haas_MTConnect_connection_test_posts_to_dedicated_endpoint()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "succeeded": true,
+              "message": "MTConnect agent connection succeeded.",
+              "programNumber": "1500.CNC",
+              "machineStatus": "STOPPED",
+              "parts": 9300,
+              "header": null
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var result = await api.TestHaasMtConnectAsync("machine/haas");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("1500.CNC", result.ProgramNumber);
+        Assert.Equal("STOPPED", result.MachineStatus);
+        Assert.Equal(9300, result.Parts);
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/machines/machine%2Fhaas/haas/test-mtconnect", handler.Requests[0].Path);
+    }
+
+    [Fact]
+    public async Task Haas_connection_update_serializes_selected_telemetry_provider()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "machineId": "machine-haas",
+              "host": "192.168.0.56",
+              "mdcPort": 5051,
+              "mtConnectPort": 8082,
+              "localNetShareEnabled": false,
+              "localNetSharePath": null,
+              "credentialsReference": null,
+              "productionModeVariable": 10605,
+              "legacyVariableAlias": 605,
+              "partCounterSource": "Q500",
+              "pollingIntervalMs": 2000,
+              "connectionTimeoutMs": 3000,
+              "stableProgramPolls": 2,
+              "headerLineLimit": 50,
+              "headerByteLimit": 32768,
+              "headerPartPatterns": ["PART"],
+              "enabled": true,
+              "version": 2,
+              "updatedAt": "2026-08-23T12:00:00Z",
+              "telemetryProvider": "MTCONNECT"
+            }
+            """));
+        using var api = CreateClient(handler);
+        var update = new HaasConnectionUpdate(
+            "192.168.0.56", 5051, 8082, 8080, false, null, null,
+            10605, 605, "Q500", 2000, 3000, 2, 50, 32768,
+            ["PART"], true, 1, "MTCONNECT");
+
+        var result = await api.UpdateHaasConnectionAsync(
+            "machine/haas", update, "windows-1", 19);
+
+        Assert.Equal("MTCONNECT", result.TelemetryProvider);
+        Assert.Equal(HttpMethod.Put, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/machines/machine%2Fhaas/haas/connection", handler.Requests[0].Path);
+        Assert.Equal("19", handler.Requests[0].Generation);
+        Assert.Contains("\"telemetryProvider\":\"MTCONNECT\"", handler.Requests[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Haas_connection_test_still_surfaces_standard_API_error_envelopes()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.NotFound, """
+            {
+              "error": {
+                "code": "haas_settings_not_found",
+                "message": "Haas NGC is not configured for this Machine."
+              }
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<PlannerApiException>(() =>
+            api.TestHaasMdcAsync("machine-haas"));
+
+        Assert.Equal(HttpStatusCode.NotFound, exception.StatusCode);
+        Assert.Equal("haas_settings_not_found", exception.Code);
+        Assert.Equal("Haas NGC is not configured for this Machine.", exception.Message);
+    }
+
+    [Fact]
     public async Task Case_pool_and_details_are_read_only_api_queries()
     {
         var handler = new RecordingHandler(

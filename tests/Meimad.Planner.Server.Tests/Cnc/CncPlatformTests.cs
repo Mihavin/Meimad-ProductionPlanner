@@ -2,14 +2,17 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Cnc;
+using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Domain.Cnc;
+using Meimad.Planner.Server.Domain.Haas;
 using Meimad.Planner.Server.Persistence;
 using Meimad.Planner.Server.Tests.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Meimad.Planner.Server.Tests.Cnc;
 
@@ -109,6 +112,122 @@ public sealed class CncPlatformTests
     }
 
     [Fact]
+    public async Task Degraded_stale_missing_and_nonbinary_macro_snapshots_cannot_start_Bench()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedBenchAsync(fixture.Database);
+        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
+        var consumer = new BenchAutomationService(repository);
+
+        var degraded = AutomationSnapshot(null, 10) with
+        {
+            ConnectionStatus = CncConnectionStates.Degraded
+        };
+        var stale = AutomationSnapshot(0, 10);
+        stale = stale with
+        {
+            Production = stale.Production with
+            {
+                ModeVariableValue = new(0, DateTimeOffset.UtcNow, true)
+            }
+        };
+        var missing = AutomationSnapshot(null, 10);
+        var missingNumber = AutomationSnapshot(0, 10);
+        missingNumber = missingNumber with
+        {
+            Production = missingNumber.Production with { ModeVariableNumber = null }
+        };
+        var nonbinary = AutomationSnapshot(5, 10);
+
+        foreach (var snapshot in new[] { degraded, stale, missing, missingNumber, nonbinary })
+        {
+            var result = await consumer.ConsumeAsync(snapshot, default);
+            Assert.Empty(result.DomainEvents);
+            var monitor = await repository.ReadMonitorAsync(
+                "machine-live", DateTimeOffset.UtcNow, default);
+            Assert.Null(monitor!.ActiveBench);
+        }
+
+        var valid = await consumer.ConsumeAsync(AutomationSnapshot(0, 10), default);
+        Assert.Contains("BenchAutoStarted", valid.DomainEvents);
+    }
+
+    [Fact]
+    public async Task Invalid_current_macro_snapshots_never_use_previous_value_or_credit_parts()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedBenchAsync(fixture.Database);
+        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
+        var consumer = new BenchAutomationService(repository);
+
+        await consumer.ConsumeAsync(AutomationSnapshot(0, 10), default);
+        var production = await consumer.ConsumeAsync(AutomationSnapshot(1, 10), default);
+        Assert.Contains("BenchProductionStarted", production.DomainEvents);
+
+        var degraded = AutomationSnapshot(null, 11) with
+        {
+            ConnectionStatus = CncConnectionStates.Degraded
+        };
+        var stale = AutomationSnapshot(1, 12);
+        stale = stale with
+        {
+            Production = stale.Production with
+            {
+                ModeVariableValue = stale.Production.ModeVariableValue with { Stale = true }
+            }
+        };
+        var missing = AutomationSnapshot(null, 13);
+        var nonbinary = AutomationSnapshot(5, 14);
+        var staleCounter = AutomationSnapshot(1, 15);
+        staleCounter = staleCounter with
+        {
+            PartCounter = staleCounter.PartCounter with { Stale = true }
+        };
+
+        foreach (var snapshot in new[] { degraded, stale, missing, nonbinary, staleCounter })
+        {
+            var result = await consumer.ConsumeAsync(snapshot, default);
+            Assert.Empty(result.DomainEvents);
+        }
+
+        var unchanged = await repository.ReadMonitorAsync(
+            "machine-live", DateTimeOffset.UtcNow, default);
+        Assert.Equal(HaasBenchStates.Production, unchanged!.ActiveBench!.State);
+        Assert.Equal(0, unchanged.ActiveBench.ProducedQuantity);
+        Assert.Equal(10, unchanged.ActiveBench.PreviousPartCounter);
+
+        var recovered = await consumer.ConsumeAsync(AutomationSnapshot(1, 15), default);
+        Assert.Contains("PartCompleted", recovered.DomainEvents);
+        var monitor = await repository.ReadMonitorAsync(
+            "machine-live", DateTimeOffset.UtcNow, default);
+        Assert.Equal(5, monitor!.ActiveBench!.ProducedQuantity);
+    }
+
+    [Fact]
+    public async Task Degraded_optional_capability_does_not_discard_fresh_binary_macro_and_counter()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedBenchAsync(fixture.Database);
+        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
+        var consumer = new BenchAutomationService(repository);
+
+        await consumer.ConsumeAsync(AutomationSnapshot(0, 10), default);
+        await consumer.ConsumeAsync(AutomationSnapshot(1, 10), default);
+        var degraded = AutomationSnapshot(1, 11) with
+        {
+            ConnectionStatus = CncConnectionStates.Degraded,
+            LastError = "Optional program-header access is unavailable."
+        };
+
+        var result = await consumer.ConsumeAsync(degraded, default);
+
+        Assert.Contains("PartCompleted", result.DomainEvents);
+        var monitor = await repository.ReadMonitorAsync(
+            "machine-live", DateTimeOffset.UtcNow, default);
+        Assert.Equal(1, monitor!.ActiveBench!.ProducedQuantity);
+    }
+
+    [Fact]
     public async Task Fake_adapter_contract_supports_connect_disconnect_failure_and_capabilities()
     {
         await using var adapter = new FakeCncMachineAdapter("machine", "connection");
@@ -122,6 +241,69 @@ public sealed class CncPlatformTests
         Assert.False(adapter.Connected);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             adapter.ConnectAsync(new CancellationToken(canceled: true)));
+    }
+
+    [Fact]
+    public async Task Reconcile_restarts_a_faulted_same_version_worker_lease()
+    {
+        var replacement = new LifecycleAdapter("machine-lifecycle", "cnc-machine-lifecycle");
+        var factory = new LifecycleAdapterFactory((invocation, _) => invocation == 1
+            ? throw new InvalidOperationException("Adapter construction failed.")
+            : replacement);
+        var manager = LifecycleManager(factory);
+        var connection = LifecycleConnection(1, "MDC");
+
+        await manager.ReconcileWorkersAsync([connection]);
+        Assert.Equal(1, factory.CreateCount);
+
+        await manager.ReconcileWorkersAsync([connection]);
+        await replacement.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, factory.CreateCount);
+        Assert.Equal([1, 1], factory.CreatedVersions);
+        await manager.ReconcileWorkersAsync([]);
+    }
+
+    [Fact]
+    public async Task Changed_provider_waits_for_old_worker_to_finish_before_starting_new_version()
+    {
+        var oldAdapter = new LifecycleAdapter(
+            "machine-lifecycle", "cnc-machine-lifecycle", blockDisposal: true);
+        var newAdapter = new LifecycleAdapter("machine-lifecycle", "cnc-machine-lifecycle");
+        var factory = new LifecycleAdapterFactory((invocation, _) =>
+            invocation == 1 ? oldAdapter : newAdapter);
+        var manager = LifecycleManager(factory);
+
+        await manager.ReconcileWorkersAsync([LifecycleConnection(1, "MDC")]);
+        await oldAdapter.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var replacement = manager.ReconcileWorkersAsync([LifecycleConnection(2, "MTCONNECT")]);
+        await oldAdapter.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(replacement.IsCompleted);
+        Assert.Equal(1, factory.CreateCount);
+
+        oldAdapter.ReleaseDisposal();
+        await replacement.WaitAsync(TimeSpan.FromSeconds(5));
+        await newAdapter.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, factory.CreateCount);
+        Assert.Equal([1, 2], factory.CreatedVersions);
+        Assert.Equal(["MDC", "MTCONNECT"], factory.CreatedProviders);
+        await manager.ReconcileWorkersAsync([]);
+    }
+
+    private static CncConnectionManager LifecycleManager(ICncAdapterFactory factory) => new(
+        new LifecycleRepository(), factory, [], new CncLivePublisher(), TimeProvider.System,
+        NullLoggerFactory.Instance, NullLogger<CncConnectionManager>.Instance);
+
+    private static MachineConnection LifecycleConnection(int version, string provider)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new("cnc-machine-lifecycle", "machine-lifecycle", CncAdapterType.HaasNgc, true,
+            CncConnectionStates.Offline, null, null, null, null, 60000, 3000, 30000,
+            true, provider == "MDC", JsonSerializer.Serialize(new { telemetryProvider = provider }),
+            null, null, 14, version, now, now);
     }
 
     private static async Task<MachineConnection> SeedConnectionAsync(SqliteDatabase database)
@@ -160,6 +342,35 @@ public sealed class CncPlatformTests
         return new("cnc-machine-cnc", "machine-cnc", CncAdapterType.HaasNgc, false,
             CncConnectionStates.Disabled, null, null, null, null, 1000, 3000, 30000,
             true, false, configuration, null, null, 14, 1, now, now);
+    }
+
+    private static MachineSnapshot AutomationSnapshot(int? variable, int counter)
+    {
+        var at = DateTimeOffset.UtcNow;
+        return new MachineSnapshot(
+            "machine-live", "cnc-machine-live", CncAdapterTypes.HaasNgc, at,
+            CncConnectionStates.Online, at,
+            new("RUNNING", at, false),
+            new(new("O1234", at, false), new("PART-LIVE", at, false),
+                new("MACHINE.NC", at, false)),
+            new(variable switch { 0 => "SETUP", 1 => "PRODUCTION", _ => null },
+                10605, new(variable, variable is null ? null : at, false)),
+            new(counter, at, false),
+            new(null, null, null, null),
+            new Dictionary<string, string>
+            {
+                ["MTCONNECT"] = CncComponentStates.Available,
+                ["PROGRAM_ACCESS"] = CncComponentStates.Available
+            },
+            new Dictionary<string, string>
+            {
+                ["machineState"] = CncComponentStates.Available,
+                ["programHeader"] = CncComponentStates.Available,
+                ["macroVariables"] = variable is 0 or 1
+                    ? CncComponentStates.Available : CncComponentStates.Unavailable,
+                ["partCounter"] = CncComponentStates.Available
+            },
+            variable is 0 or 1 ? null : "Production variable is unavailable or nonbinary.");
     }
 
     private static async Task SeedBenchAsync(SqliteDatabase database)
@@ -210,6 +421,136 @@ public sealed class CncPlatformTests
         Assert.Equal(WebSocketMessageType.Text, result.MessageType);
         using var document = JsonDocument.Parse(bytes.AsMemory(0, result.Count));
         return document.RootElement.Clone();
+    }
+
+    private sealed class LifecycleRepository : ICncConnectionRepository
+    {
+        public Task<IReadOnlyList<MachineConnection>> ListConnectionsAsync(
+            bool enabledOnly, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MachineConnection>>([]);
+
+        public Task<MachineConnection?> GetConnectionAsync(
+            string machineId, CancellationToken cancellationToken) =>
+            Task.FromResult<MachineConnection?>(null);
+
+        public Task<MachineConnection> UpsertConnectionAsync(
+            MachineConnection connection, int expectedVersion, EditAuthority authority,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task UpdateConnectionStateAsync(
+            string connectionId, string state, DateTimeOffset at, bool successfulPoll,
+            string? error, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        public Task<MachineSnapshot?> GetCurrentSnapshotAsync(
+            string machineId, CancellationToken cancellationToken) =>
+            Task.FromResult<MachineSnapshot?>(null);
+
+        public Task<bool> SaveSnapshotAsync(
+            MachineConnection connection, MachineSnapshot snapshot,
+            IReadOnlyList<RawCncTelemetry> rawTelemetry, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
+        public Task<IReadOnlyList<RawCncTelemetry>> ReadDiagnosticsAsync(
+            string machineId, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RawCncTelemetry>>([]);
+    }
+
+    private sealed class LifecycleAdapterFactory(
+        Func<int, MachineConnection, ICncMachineAdapter> create) : ICncAdapterFactory
+    {
+        private readonly List<int> createdVersions = [];
+        private readonly List<string> createdProviders = [];
+        private int createCount;
+
+        internal int CreateCount => Volatile.Read(ref createCount);
+        internal IReadOnlyList<int> CreatedVersions
+        {
+            get { lock (createdVersions) return createdVersions.ToArray(); }
+        }
+        internal IReadOnlyList<string> CreatedProviders
+        {
+            get { lock (createdVersions) return createdProviders.ToArray(); }
+        }
+
+        public ICncMachineAdapter CreateAdapter(MachineConnection connection)
+        {
+            var invocation = Interlocked.Increment(ref createCount);
+            using var json = JsonDocument.Parse(connection.ConfigurationJson);
+            lock (createdVersions)
+            {
+                createdVersions.Add(connection.Version);
+                createdProviders.Add(json.RootElement.GetProperty("telemetryProvider").GetString()!);
+            }
+            return create(invocation, connection);
+        }
+    }
+
+    private sealed class LifecycleAdapter(
+        string machineId,
+        string connectionId,
+        bool blockDisposal = false) : ICncMachineAdapter
+    {
+        private readonly TaskCompletionSource disposeRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string ConnectionId { get; } = connectionId;
+        public string MachineId { get; } = machineId;
+        public CncAdapterType AdapterType => CncAdapterType.HaasNgc;
+
+        public CncAdapterCapabilities GetCapabilities() => new(
+            true, false, false, false, false, false, false,
+            false, false, false, false, false, false);
+
+        public Task ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        public Task DisconnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<CncConnectionTestResult> TestConnectionAsync(
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public async Task<CncAdapterSnapshot> ReadSnapshotAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("The lifecycle test adapter should be canceled.");
+        }
+
+        public Task<CncOperationResult<CncProgramSnapshot>> ReadActiveProgramInfoAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(CncOperationResult<CncProgramSnapshot>.Unsupported());
+
+        public Task<CncOperationResult<int>> ReadVariableAsync(
+            int variable, CancellationToken cancellationToken = default) =>
+            Task.FromResult(CncOperationResult<int>.Unsupported());
+
+        public Task<CncOperationResult<string>> WriteVariableAsync(
+            int variable, int value, CancellationToken cancellationToken = default) =>
+            Task.FromResult(CncOperationResult<string>.Unsupported());
+
+        public Task<CncOperationResult<int>> ReadPartCounterAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(CncOperationResult<int>.Unsupported());
+
+        public async ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            if (blockDisposal) await disposeRelease.Task;
+        }
+
+        internal void ReleaseDisposal() => disposeRelease.TrySetResult();
     }
 }
 

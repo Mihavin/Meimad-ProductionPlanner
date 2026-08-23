@@ -1257,6 +1257,13 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
       "number": "M-07",
       "name": "Five-axis mill 7",
       "processType": "fiveAxisMill",
+      "connection": {
+        "code": "online",
+        "label": "Online",
+        "online": true,
+        "sourceCode": "ONLINE"
+      },
+      "machineStatus": "ACTIVE",
       "status": {
         "code": "inProgress",
         "label": "In progress",
@@ -1305,7 +1312,7 @@ The list response wraps conflicts with `planRevision`, `calculatedAt`, `freshnes
 }
 ```
 
-Only active Machines with `display_enabled = true` appear. `current` prefers the active `in_progress` or `suspended` Operation, otherwise the first unfinished backlog item; if the backlog is fully finished, it may retain the latest completed Operation. `progress.statusCode` maps execution to `started`, `paused`, `waiting`, or `completed`. Setup percentage is elapsed active time divided by setup seconds. Production uses elapsed active time after setup divided by per-part cycle seconds to derive the displayed current part and Batch percentage; closed pauses are subtracted and an active pause freezes elapsed time at its start. Missing timing reports `Progress unavailable` rather than inventing a count. The TV web client renders only `current`, its preview and progress; it deliberately omits `next`, `third`, conflicts, downtime, urgent lists, and summary panels even when compatibility fields remain in the projection. Conflict arrays are empty in this display projection. Urgent Batches serve an active Order whose `workFinishDate` falls within `TvDashboard:UrgentWithinHours` using the current UTC-date baseline; the default is 48 hours. `refreshAfterSeconds` defaults to 15. `projectedFinish` comes from the Server Timeline projection when calculable. The dashboard projection contains only shop-floor display data and omits Working Folder paths, package links, customer details, credentials, edit authority, and mutation links.
+Only active Machines with `display_enabled = true` appear. `machineStatus` is the latest normalized telemetry state—for MTConnect, the agent's reported machine state such as `ACTIVE`, `IDLE`, or `STOPPED`; it is null when no state has been received. `current` prefers the active `in_progress` or `suspended` Operation, otherwise the first unfinished backlog item; if the backlog is fully finished, it may retain the latest completed Operation. `progress.statusCode` maps execution to `started`, `paused`, `waiting`, or `completed`. Setup percentage is elapsed active time divided by setup seconds. Production uses elapsed active time after setup divided by per-part cycle seconds to derive the displayed current part and Batch percentage; closed pauses are subtracted and an active pause freezes elapsed time at its start. Missing timing reports `Progress unavailable` rather than inventing a count. The TV web client renders only `current`, its preview and progress; it deliberately omits `next`, `third`, conflicts, downtime, urgent lists, and summary panels even when compatibility fields remain in the projection. Conflict arrays are empty in this display projection. Urgent Batches serve an active Order whose `workFinishDate` falls within `TvDashboard:UrgentWithinHours` using the current UTC-date baseline; the default is 48 hours. `refreshAfterSeconds` defaults to 15. `projectedFinish` comes from the Server Timeline projection when calculable. The dashboard projection contains only shop-floor display data and omits Working Folder paths, package links, customer details, credentials, edit authority, and mutation links.
 
 The implemented route is GET-only; POST/PUT/PATCH/DELETE do not match it. Credential-class enforcement and `403` behavior remain pending the authentication layer. The web client calls no Edit Mode or mutation route, sends conditional ETags, and preserves its last rendered snapshot when a refresh fails. Offline-display telemetry and plan revisions remain unimplemented.
 
@@ -1316,7 +1323,8 @@ The following Machine-scoped endpoints are implemented. Connection mutation requ
 | Method | Route | Behavior |
 |---|---|---|
 | `GET` | `/api/v1/machines/{machineId}/haas/connection` | Read settings; an unconfigured Machine returns defaults with `version: 0`. |
-| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update host, MDC/MTConnect ports, read-only share reference, configurable macro/legacy alias, counter source, poll/timeout/debounce/header limits and patterns. |
+| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update host, explicit `telemetryProvider` (`MDC` or `MTCONNECT`), MDC/MTConnect/DPRNT ports, read-only share reference, configurable macro/legacy alias, counter source, poll/timeout/debounce/header limits and patterns. |
+| `POST` | `/api/v1/machines/{machineId}/haas/test-mtconnect` | Fetch unfiltered `/probe` and `/current`, validate MTConnect XML/device availability, and return typed program/state/counter diagnostics without changing planning state. A reachable/available agent returns connectivity success, while the message prominently reports `DEGRADED` and blocked Bench automation when the configured macro is missing or nonbinary. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-mdc` | Read typed Q500 status without changing planning state. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-net-share` | Read the active machine-side bounded header and parse Part identity. |
 | `GET` | `/api/v1/machines/{machineId}/haas/production-variable` | Read the configured binary Q600 macro. |
@@ -1325,6 +1333,8 @@ The following Machine-scoped endpoints are implemented. Connection mutation requ
 
 The `/haas/*` routes remain compatibility/commissioning endpoints. New monitoring and configuration consumers use the protocol-independent CNC contract.
 
+`dprntPort` defaults to `8080`. The Server persistently subscribes to this read-only Haas DPRNT output and accepts a complete part-number-shaped line as the preferred `MachineHeaderPartName`; it never derives Part identity from a filename or O-number.
+
 ### 7.5 CNC connection platform
 
 | Method | Route | Contract |
@@ -1332,7 +1342,7 @@ The `/haas/*` routes remain compatibility/commissioning endpoints. New monitorin
 | `GET` | `/api/v1/cnc-adapters` | Registry metadata and static capabilities. Only `HAAS_NGC` has `implemented: true`. |
 | `GET` | `/api/v1/machines/{machineId}/cnc-connection` | Primary connection metadata and sanitized typed configuration. Secret IDs and values are omitted; configured booleans are returned. |
 | `PUT` | `/api/v1/machines/{machineId}/cnc-connection` | Edit-Mode create/update with adapter type, permissions, polling/timeout/backoff/retention and typed protocol configuration. Unsupported adapters cannot be enabled. |
-| `POST` | `/api/v1/machines/{machineId}/cnc-connection/test` | Structured, protocol-aware checks (`mdc`, `variableRead`, `programAccess`) and overall `ONLINE`/`DEGRADED`/`OFFLINE` result. |
+| `POST` | `/api/v1/machines/{machineId}/cnc-connection/test` | Structured checks for the explicitly selected Haas provider (`mdc` or `mtconnect`), `variableRead`, and `programAccess`, with overall `ONLINE`/`DEGRADED`/`OFFLINE` result. |
 | `POST` | `/api/v1/machines/{machineId}/cnc-connection/reconnect` | Edit-Mode request to restart only that Server-side Machine worker. It does not affect browser connections. |
 | `GET` | `/api/v1/machines/{machineId}/snapshot` | Last normalized current snapshot, including freshness, component health and runtime capability availability. |
 | `GET` | `/api/v1/machines/{machineId}/cnc-diagnostics?limit=50` | Bounded recent raw protocol diagnostics; no credentials or complete NC files. |
@@ -1340,7 +1350,7 @@ The `/haas/*` routes remain compatibility/commissioning endpoints. New monitorin
 
 WebSocket is Server-to-client monitoring transport only. It exposes no CNC command or generic macro-write message. Initial screen state always comes from the relevant GET endpoint before live incremental updates.
 
-`partCounterSource` is `Q500`, `M30_COUNTER_1`, or `M30_COUNTER_2`. `productionModeVariable` is configurable in the permitted NGC global range and must equal `legacyVariableAlias + 10000` for this integration. Connection state is `ONLINE`, `OFFLINE`, or `ERROR`; Bench state is independently `WAITING`, `SETUP`, `PRODUCTION`, or `COMPLETED`. Automatic matching uses normalized parsed header `partName` against planned assigned Case Part numbers. Zero or multiple matches never mutate a Batch. Repeated observations are idempotent through persisted prior snapshots and unique event dedupe keys.
+`partCounterSource` is `Q500`, `M30_COUNTER_1`, or `M30_COUNTER_2`. With MTConnect, `Q500` compatibility prefers a numeric standard `PartCount` observation and otherwise a numeric M30 counter; explicit M30 choices select their named feed items and should be commissioned against the intended physical counter. `productionModeVariable` is configurable in the permitted NGC global range and must equal `legacyVariableAlias + 10000`. MTConnect accepts it only when probe `Source` range metadata proves the positional mapping and the current value is exactly `0` or `1`; otherwise capability health is unavailable and no Bench mutation or part credit occurs. Current inputs must also have a read timestamp and not be stale; previous macro/counter values are never substituted. Connection state is `ONLINE`, `DEGRADED`, `OFFLINE`, or `ERROR`; Bench state is independently `WAITING`, `SETUP`, `PRODUCTION`, or `COMPLETED`. Automatic matching uses normalized parsed header `partName` against planned assigned Case Part numbers. Zero or multiple matches never mutate a Batch. Repeated valid observations are idempotent through persisted prior snapshots and unique event dedupe keys.
 
 ## 7.6 Official job package generation
 

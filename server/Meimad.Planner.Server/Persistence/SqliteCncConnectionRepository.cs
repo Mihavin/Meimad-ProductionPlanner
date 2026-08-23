@@ -244,10 +244,10 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
             prune.Transaction = transaction;
             prune.CommandText = """
                 DELETE FROM machine_telemetry_raw
-                WHERE connection_id = $connectionId
+                WHERE machine_id = $machineId
                   AND julianday(observed_at) < julianday($cutoff);
                 """;
-            prune.Parameters.AddWithValue("$connectionId", value.ConnectionId);
+            prune.Parameters.AddWithValue("$machineId", value.MachineId);
             prune.Parameters.AddWithValue("$cutoff", Format(value.Timestamp.AddDays(-connectionValue.RawTelemetryRetentionDays)));
             await prune.ExecuteNonQueryAsync(token);
         }
@@ -324,11 +324,12 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
                 legacy_variable_alias, part_counter_source, polling_interval_ms,
                 connection_timeout_ms, stable_program_polls, header_line_limit,
                 header_byte_limit, header_part_patterns_json, enabled, version, created_at, updated_at)
-            VALUES ($machineId, $host, $mdcPort, 8082, $shareEnabled, $sharePath,
+            VALUES ($machineId, $host, $mdcPort, $mtConnectPort, $shareEnabled, $sharePath,
                 $credential, $variable, $legacy, $counterSource, $polling, $timeout,
                 $stable, $lineLimit, $byteLimit, $patterns, $enabled, 1, $createdAt, $updatedAt)
             ON CONFLICT(machine_id) DO UPDATE SET
                 host = excluded.host, mdc_port = excluded.mdc_port,
+                mtconnect_port = excluded.mtconnect_port,
                 local_net_share_enabled = excluded.local_net_share_enabled,
                 local_net_share_path = excluded.local_net_share_path,
                 credentials_reference = excluded.credentials_reference,
@@ -347,6 +348,7 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         command.Parameters.AddWithValue("$machineId", value.MachineId);
         command.Parameters.AddWithValue("$host", configuration.Host);
         command.Parameters.AddWithValue("$mdcPort", configuration.Mdc.Port);
+        command.Parameters.AddWithValue("$mtConnectPort", configuration.MtConnect?.Port ?? 8082);
         command.Parameters.AddWithValue("$shareEnabled", configuration.ProgramAccess.Enabled);
         command.Parameters.AddWithValue("$sharePath", Db(configuration.ProgramAccess.SharePath));
         command.Parameters.AddWithValue("$credential", Db(value.UsernameSecretId));

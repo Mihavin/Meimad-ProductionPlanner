@@ -1,6 +1,6 @@
 "use strict";
 
-const DASHBOARD_BUILD = "0.1.27";
+const DASHBOARD_BUILD = "0.1.33";
 const translations = {
   en: {
     machineStatus: "Machine status", language: "Language", waitingForStatus: "Waiting for machine status",
@@ -136,10 +136,13 @@ function renderMachine(machine) {
   const name = escapeHtml(machine.name);
   const preview = renderPreview(machine.current);
   const online = machine.connection?.online === true;
-  const connection = `<div class="machine-connection connection-${online ? "online" : "offline"}"><span aria-hidden="true"></span>${escapeHtml(online ? t.online : t.offline)}</div>`;
+  const connectionState = online ? t.online : t.offline;
+  const connection = `<div class="machine-connection connection-${online ? "online" : "offline"}" role="img" aria-label="${escapeHtml(connectionState)}" title="${escapeHtml(connectionState)}"><span aria-hidden="true"></span></div>`;
+  const machineState = String(machine.machineStatus || "").trim();
+  const telemetry = `<div class="machine-telemetry${machineState ? "" : " unavailable"}" title="MTConnect machine state">MT: ${escapeHtml(machineState || "—")}</div>`;
   if (!machine.current) {
     return `<article class="machine-row idle" aria-label="${number} ${name}">
-      <div class="machine-number">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${preview}
+      <div class="machine-number">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${telemetry}${preview}
       <div class="operation empty">${escapeHtml(t.noCurrentOperation)}</div></article>`;
   }
 
@@ -149,7 +152,7 @@ function renderMachine(machine) {
     ? Math.max(0, Math.min(100, progress.completionPercent)) : null;
   const progressStyle = percent === null ? "" : ` style="--progress:${percent}%"`;
   return `<article class="machine-row" aria-label="${number} ${name}">
-    <div class="machine-number" title="${number}">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${preview}
+    <div class="machine-number" title="${number}">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${telemetry}${preview}
     <div class="operation">
       <div class="operation-title"><strong>${escapeHtml(operation.partNumber)}</strong> <span class="batch">${escapeHtml(t.batch)} ${escapeHtml(operation.batchNumber)}</span> <span class="job-op">OP${escapeHtml(operation.operationNumber)}</span></div>
       <div class="operation-name">${escapeHtml(operation.operationName)}</div>

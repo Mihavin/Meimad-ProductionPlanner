@@ -14,37 +14,35 @@ internal sealed class CncConnectionManager(
     ILogger<CncConnectionManager> logger) : BackgroundService, ICncConnectionManager
 {
     private readonly ConcurrentDictionary<string, WorkerLease> workers = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim workerLifecycle = new(1, 1);
     private CancellationToken managerToken;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         managerToken = stoppingToken;
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var enabled = await repository.ListConnectionsAsync(true, stoppingToken);
-                var currentIds = enabled.Select(value => value.MachineId).ToHashSet(StringComparer.Ordinal);
-                foreach (var stale in workers.Keys.Where(id => !currentIds.Contains(id)).ToArray())
-                    StopWorker(stale);
-                foreach (var connection in enabled)
+                try
                 {
-                    if (!workers.TryGetValue(connection.MachineId, out var lease)
-                        || lease.Version != connection.Version)
-                    {
-                        StopWorker(connection.MachineId);
-                        StartWorker(connection, stoppingToken);
-                    }
+                    var enabled = await repository.ListConnectionsAsync(true, stoppingToken);
+                    await ReconcileWorkersAsync(enabled, stoppingToken);
                 }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    logger.LogError(exception, "Unable to reconcile configured CNC connection workers.");
+                }
+                await Task.Delay(TimeSpan.FromSeconds(1), timeProvider, stoppingToken);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                logger.LogError(exception, "Unable to reconcile configured CNC connection workers.");
-            }
-            await Task.Delay(TimeSpan.FromSeconds(1), timeProvider, stoppingToken);
         }
-        foreach (var machineId in workers.Keys.ToArray()) StopWorker(machineId);
-        await Task.WhenAll(workers.Values.Select(value => value.Task));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            await StopAllWorkersAsync();
+        }
     }
 
     public Task<MachineSnapshot?> GetCurrentSnapshotAsync(
@@ -53,11 +51,21 @@ internal sealed class CncConnectionManager(
 
     public async Task RequestReconnectAsync(string machineId, CancellationToken token = default)
     {
-        var connection = await repository.GetConnectionAsync(machineId, token)
-            ?? throw new CncConnectionNotFoundException(machineId);
-        if (!connection.Enabled) throw new CncValidationException("enabled", "Enable the CNC connection before reconnecting it.");
-        StopWorker(machineId);
-        StartWorker(connection, managerToken);
+        await workerLifecycle.WaitAsync(token);
+        try
+        {
+            var connection = await repository.GetConnectionAsync(machineId, token)
+                ?? throw new CncConnectionNotFoundException(machineId);
+            if (!connection.Enabled)
+                throw new CncValidationException("enabled", "Enable the CNC connection before reconnecting it.");
+            await StopWorkerAsync(machineId);
+            token.ThrowIfCancellationRequested();
+            StartWorker(connection, managerToken);
+        }
+        finally
+        {
+            workerLifecycle.Release();
+        }
     }
 
     public async Task<CncConnectionTestResult> TestConnectionAsync(
@@ -67,6 +75,34 @@ internal sealed class CncConnectionManager(
             ?? throw new CncConnectionNotFoundException(machineId);
         await using var adapter = adapterFactory.CreateAdapter(connection);
         return await adapter.TestConnectionAsync(token);
+    }
+
+    internal async Task ReconcileWorkersAsync(
+        IReadOnlyList<MachineConnection> enabled,
+        CancellationToken token = default)
+    {
+        await workerLifecycle.WaitAsync(token);
+        try
+        {
+            var currentIds = enabled.Select(value => value.MachineId).ToHashSet(StringComparer.Ordinal);
+            foreach (var stale in workers.Keys.Where(id => !currentIds.Contains(id)).ToArray())
+                await StopWorkerAsync(stale);
+            foreach (var connection in enabled)
+            {
+                if (!workers.TryGetValue(connection.MachineId, out var lease)
+                    || lease.Version != connection.Version
+                    || lease.Task.IsCompleted)
+                {
+                    await StopWorkerAsync(connection.MachineId);
+                    token.ThrowIfCancellationRequested();
+                    StartWorker(connection, token);
+                }
+            }
+        }
+        finally
+        {
+            workerLifecycle.Release();
+        }
     }
 
     private void StartWorker(MachineConnection connection, CancellationToken hostToken)
@@ -84,11 +120,42 @@ internal sealed class CncConnectionManager(
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    private void StopWorker(string machineId)
+    private async Task StopWorkerAsync(string machineId)
     {
         if (!workers.TryRemove(machineId, out var lease)) return;
-        lease.Cancellation.Cancel();
-        lease.Cancellation.Dispose();
+        try
+        {
+            lease.Cancellation.Cancel();
+            try
+            {
+                await lease.Task;
+            }
+            catch (OperationCanceledException) when (lease.Cancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception)
+            {
+                // StartWorker logs unexpected completion. Observing it here permits a clean replacement.
+            }
+        }
+        finally
+        {
+            lease.Cancellation.Dispose();
+        }
+    }
+
+    private async Task StopAllWorkersAsync()
+    {
+        await workerLifecycle.WaitAsync();
+        try
+        {
+            foreach (var machineId in workers.Keys.ToArray())
+                await StopWorkerAsync(machineId);
+        }
+        finally
+        {
+            workerLifecycle.Release();
+        }
     }
 
     private sealed record WorkerLease(int Version, CancellationTokenSource Cancellation, Task Task);

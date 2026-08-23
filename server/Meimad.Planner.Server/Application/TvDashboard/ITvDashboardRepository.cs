@@ -16,6 +16,9 @@ internal sealed record TvSourceMachine(
     string Name,
     string ProcessType,
     string ConnectionStatus,
+    string? MachineStatus,
+    int? ProductionModeVariableValue,
+    DateTimeOffset? ProductionStartedAt,
     IReadOnlyList<TvSourceOperation> Backlog);
 
 internal sealed record TvSourceOperation(

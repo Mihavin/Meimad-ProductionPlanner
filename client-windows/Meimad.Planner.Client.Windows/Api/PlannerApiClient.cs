@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.IO;
@@ -193,6 +194,8 @@ internal interface IPlannerApiClient : IDisposable
     Task<HaasConnectionSettings> UpdateHaasConnectionAsync(
         string machineId, HaasConnectionUpdate update, string clientId, long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasConnectionTest> TestHaasMtConnectAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<HaasConnectionTest> TestHaasMdcAsync(
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<HaasConnectionTest> TestHaasNetShareAsync(
@@ -1307,7 +1310,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     {
         using var response = await httpClient.PostAsync(
             $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-mdc", null, cancellationToken);
-        return await ReadSuccessAsync<HaasConnectionTest>(response, cancellationToken);
+        return await ReadHaasConnectionTestAsync(response, cancellationToken);
+    }
+
+    public async Task<HaasConnectionTest> TestHaasMtConnectAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-mtconnect", null, cancellationToken);
+        return await ReadHaasConnectionTestAsync(response, cancellationToken);
     }
 
     public async Task<HaasConnectionTest> TestHaasNetShareAsync(
@@ -1315,7 +1326,7 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     {
         using var response = await httpClient.PostAsync(
             $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-net-share", null, cancellationToken);
-        return await ReadSuccessAsync<HaasConnectionTest>(response, cancellationToken);
+        return await ReadHaasConnectionTestAsync(response, cancellationToken);
     }
 
     public async Task<HaasVariableRead> ReadHaasProductionVariableAsync(
@@ -2052,6 +2063,35 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         }
     }
 
+    private static async Task<HaasConnectionTest> ReadHaasConnectionTestAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var payload = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        HaasConnectionTest? result = null;
+        try
+        {
+            result = JsonSerializer.Deserialize<HaasConnectionTest>(payload, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            // A non-test error envelope is handled by the normal safe API-error path below.
+        }
+
+        // Connection-test failures deliberately return HTTP 502 with the typed diagnostic body.
+        // Preserve that result so Setup can show the actual failed component instead of replacing
+        // it with the generic "Server returned HTTP 502" fallback.
+        if ((response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.BadGateway)
+            && result is not null
+            && !string.IsNullOrWhiteSpace(result.Message))
+            return result;
+
+        if (!response.IsSuccessStatusCode)
+            ThrowApiError(response, payload);
+
+        throw new PlannerProtocolException("Server returned an invalid HaasConnectionTest response.");
+    }
+
     private async Task<IReadOnlyList<T>> ReadListAsync<T>(
         string path,
         CancellationToken cancellationToken)
@@ -2074,12 +2114,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
+        var payload = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        ThrowApiError(response, payload);
+    }
+
+    private static void ThrowApiError(HttpResponseMessage response, byte[] payload)
+    {
         ErrorEnvelope? error = null;
         try
         {
-            error = await response.Content.ReadFromJsonAsync<ErrorEnvelope>(
-                JsonOptions,
-                cancellationToken);
+            error = JsonSerializer.Deserialize<ErrorEnvelope>(payload, JsonOptions);
         }
         catch (JsonException)
         {

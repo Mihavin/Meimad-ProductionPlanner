@@ -1174,8 +1174,11 @@ public partial class TimelineView : UserControl
         if (HasRenderablePhases(interval))
         {
             var hostDurationSeconds = (clippedHostEnd - clippedHostStart).TotalSeconds;
-            foreach (var phase in interval.Phases!.Where(phase =>
-                         phase.EndsAt > phase.StartsAt && IsRenderablePhaseType(phase.Type)))
+            foreach (var phase in interval.Phases!
+                         .Where(phase => phase.EndsAt > phase.StartsAt && IsRenderablePhaseType(phase.Type))
+                         .OrderBy(phase => phase.StartsAt)
+                         .ThenBy(phase => phase.EndsAt)
+                         .ThenBy(phase => PhaseOrder(phase.Type)))
             {
                 var phaseStart = phase.StartsAt < clippedHostStart ? clippedHostStart : phase.StartsAt;
                 var phaseEnd = phase.EndsAt > clippedHostEnd ? clippedHostEnd : phase.EndsAt;
@@ -1220,6 +1223,15 @@ public partial class TimelineView : UserControl
         "setup" or "qa" or "qc" or "qualitycontrol" or "quality_control"
         or "loadunload" or "load_unload" or "load/unload" or "partreload" or "part_reload"
         or "production" or "operation" or "reserved";
+
+    private static int PhaseOrder(string type) => type.Trim().ToLowerInvariant() switch
+    {
+        "setup" => 0,
+        "qa" or "qc" or "qualitycontrol" or "quality_control" => 1,
+        "loadunload" or "load_unload" or "load/unload" or "partreload" or "part_reload" => 2,
+        "production" or "operation" => 3,
+        _ => 4
+    };
 
     internal static string PhaseLabel(string type) => type.Trim().ToLowerInvariant() switch
     {

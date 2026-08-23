@@ -296,12 +296,14 @@
                                         <TextBlock Text="{Binding CncAdapterAvailability}" Foreground="{StaticResource MutedTextBrush}"
                                                    TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <TextBlock Text="Haas NGC configuration" FontWeight="Bold" Margin="0,0,0,6"/>
-                                        <TextBlock Text="Machine-side identity comes only from the active NC program header. File name and O-number are displayed separately and never identify the Part."
+                                        <TextBlock Text="Machine-side identity comes from a direct DPRNT PartName or the active NC program header. File name and O-number remain separate and never identify the Part."
                                                    Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <UniformGrid Columns="2">
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="IP / Hostname" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasHost}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MDC Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMdcPort}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MTConnect Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMtConnectPort}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT PartName Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasDprntPort}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine telemetry source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasTelemetryProviders}" SelectedItem="{Binding HaasTelemetryProvider}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Production mode variable (NGC)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasProductionVariable}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Legacy alias" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasLegacyVariableAlias}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part counter source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasPartCounterSources}" SelectedItem="{Binding HaasPartCounterSource}"/></StackPanel>
@@ -310,6 +312,8 @@
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Local Net Share path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasLocalNetSharePath}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Credential reference (no password)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasCredentialsReference}"/></StackPanel>
                                         </UniformGrid>
+                                        <TextBlock Text="MTConnect and DPRNT are read-only. Set the DPRNT output port configured on the Haas; MDC remains required for audited variable resets."
+                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                             <CheckBox Content="Local Net Share enabled" IsChecked="{Binding HaasLocalNetShareEnabled}" Margin="0,0,18,0"/>
                                             <CheckBox Content="Enable Server polling" IsChecked="{Binding HaasEnabled}"/>
@@ -319,7 +323,8 @@
                                         <WrapPanel>
                                             <Button Content="Load configuration" Command="{Binding LoadHaasConfigurationCommand}"/>
                                             <Button Content="Save Haas configuration" Command="{Binding SaveHaasConfigurationCommand}"/>
-                                            <Button Content="Test Connection" Command="{Binding TestHaasMdcCommand}"/>
+                                            <Button Content="Test Connection" Command="{Binding TestHaasConnectionCommand}"/>
+                                            <Button Content="Test MTConnect" Command="{Binding TestHaasMtConnectCommand}"/>
                                             <Button Content="Test MDC" Command="{Binding TestHaasMdcCommand}"/>
                                             <Button Content="Test Net Share" Command="{Binding TestHaasNetShareCommand}"/>
                                             <Button Content="Read Variable" Command="{Binding ReadHaasVariableCommand}"/>

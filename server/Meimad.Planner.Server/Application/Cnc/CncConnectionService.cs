@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Cnc;
+using Meimad.Planner.Server.Domain.Haas;
 
 namespace Meimad.Planner.Server.Application.Cnc;
 
@@ -98,6 +99,20 @@ internal sealed class CncConnectionService(
         Range(value.Mdc.Port, 1, 65535, "configuration.mdc.port");
         if (value.Mdc.TimeoutMs != update.ConnectionTimeoutMs)
             throw new CncValidationException("configuration.mdc.timeoutMs", "MDC timeout must match the connection timeout.");
+        if (value.MtConnect is { } mtConnect)
+        {
+            Range(mtConnect.Port, 1, 65535, "configuration.mtConnect.port");
+            if (mtConnect.TimeoutMs != update.ConnectionTimeoutMs)
+                throw new CncValidationException("configuration.mtConnect.timeoutMs", "MTConnect timeout must match the connection timeout.");
+        }
+        var telemetryProvider = string.IsNullOrWhiteSpace(value.TelemetryProvider)
+            ? HaasTelemetryProviders.Mdc : value.TelemetryProvider.Trim().ToUpperInvariant();
+        if (!HaasTelemetryProviders.IsSupported(telemetryProvider))
+            throw new CncValidationException("configuration.telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
+        if (telemetryProvider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
+            throw new CncValidationException("configuration.mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
+        if (telemetryProvider == HaasTelemetryProviders.MtConnect && update.AllowWrite)
+            throw new CncValidationException("allowWrite", "MTConnect is read-only; disable CNC write permission or select MDC.");
         if (value.Production.VariableNumber is < 10000 or > 10999
             || value.Production.LegacyVariableAlias is < 600 or > 699
             || value.Production.VariableNumber != value.Production.LegacyVariableAlias + 10000)
@@ -109,6 +124,7 @@ internal sealed class CncConnectionService(
             throw new CncValidationException("configuration.programAccess.sharePath", "Share path is required when program access is enabled.");
         var sanitized = value with
         {
+            TelemetryProvider = telemetryProvider,
             ProgramAccess = value.ProgramAccess with
             {
                 UsernameSecretId = Optional(update.UsernameSecretId),

@@ -181,6 +181,8 @@ internal static class CncEndpoints
         {
             value.Host,
             value.Mdc,
+            value.MtConnect,
+            value.TelemetryProvider,
             programAccess = new
             {
                 value.ProgramAccess.Provider,

@@ -57,6 +57,7 @@ using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
 using Meimad.Planner.Server.Infrastructure.Haas;
 using Meimad.Planner.Server.Infrastructure.Cnc;
+using Meimad.Planner.Server.Infrastructure.MtConnect;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
@@ -175,6 +176,9 @@ public static class ServerApplication
         builder.Services.AddSingleton<GCodeService>();
         builder.Services.AddSingleton<INcHeaderParser, NcHeaderParser>();
         builder.Services.AddSingleton<IHaasMdcClientFactory, HaasMdcClientFactory>();
+        builder.Services.AddHttpClient<IMtConnectClient, MtConnectHttpClient>(client =>
+            client.Timeout = Timeout.InfiniteTimeSpan);
+        builder.Services.AddSingleton<IHaasMtConnectReader, HaasMtConnectReader>();
         builder.Services.AddSingleton<LocalNetShareHaasProgramReader>();
         builder.Services.AddSingleton<IHaasProgramReader>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());
         builder.Services.AddSingleton<INcProgramFileProvider>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());

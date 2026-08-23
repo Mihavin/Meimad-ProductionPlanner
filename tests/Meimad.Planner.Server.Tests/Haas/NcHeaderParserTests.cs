@@ -22,6 +22,16 @@ public sealed class NcHeaderParserTests
     }
 
     [Fact]
+    public void Shared_parser_extracts_part_identity_from_meimad_cam_program_line()
+    {
+        var value = parser.Parse(["%", "O1000 (16E2509-7PSOFI-1_NC1)"]);
+
+        Assert.True(value.IsValid);
+        Assert.Equal("16E2509-7PSOFI-1", value.PartName);
+        Assert.Equal("O1000", value.ProgramNumber);
+    }
+
+    [Fact]
     public void Parser_extracts_structured_fields_and_program_number()
     {
         var value = parser.Parse(["%", "O1234", "(PART: PART-X)",

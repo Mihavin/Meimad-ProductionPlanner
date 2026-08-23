@@ -25,11 +25,20 @@ internal static class HaasPartCounterSources
         value is Q500 or M30Counter1 or M30Counter2;
 }
 
+internal static class HaasTelemetryProviders
+{
+    internal const string Mdc = "MDC";
+    internal const string MtConnect = "MTCONNECT";
+
+    internal static bool IsSupported(string value) => value is Mdc or MtConnect;
+}
+
 internal sealed record HaasConnectionSettings(
     string MachineId,
     string Host,
     int MdcPort,
     int MtConnectPort,
+    int DprntPort,
     bool LocalNetShareEnabled,
     string? LocalNetSharePath,
     string? CredentialsReference,
@@ -45,7 +54,8 @@ internal sealed record HaasConnectionSettings(
     bool Enabled,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string TelemetryProvider = HaasTelemetryProviders.Mdc);
 
 internal sealed record HaasProgramStatus(
     string? ProgramNumber,

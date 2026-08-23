@@ -79,7 +79,7 @@ internal sealed class TvDashboardService
         var criticalConflictCount = 0;
         var projection = new TvDashboardProjection(
             2,
-            "0.1.27",
+            "0.1.33",
             now,
             "current",
             options.RefreshAfterSeconds,
@@ -128,10 +128,12 @@ internal sealed class TvDashboardService
             machine.Name,
             machine.ProcessType,
             Connection(machine.ConnectionStatus),
+            NormalizeMachineStatus(machine.MachineStatus),
             status,
-            Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation),
-            Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation),
-            Job(thirdSource, now, urgentDueByBatch, projectedFinishByOperation),
+            Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation,
+                machine.ProductionModeVariableValue, machine.ProductionStartedAt),
+            Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation, null, null),
+            Job(thirdSource, now, urgentDueByBatch, projectedFinishByOperation, null, null),
             downtime,
             []);
     }
@@ -140,7 +142,9 @@ internal sealed class TvDashboardService
         TvSourceOperation? operation,
         DateTimeOffset now,
         IReadOnlyDictionary<string, TvSourceBatchDueDate> urgentDueByBatch,
-        IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation)
+        IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation,
+        int? productionModeVariableValue,
+        DateTimeOffset? productionStartedAt)
     {
         if (operation is null)
         {
@@ -160,7 +164,7 @@ internal sealed class TvDashboardService
             urgent is not null,
             urgent?.WorkFinishDate.ToString("yyyy-MM-dd"),
             PreviewUrl(operation),
-            Progress(operation, now));
+            Progress(operation, now, productionModeVariableValue, productionStartedAt));
     }
 
     private static TvConnectionStatus Connection(string sourceCode)
@@ -171,6 +175,12 @@ internal sealed class TvDashboardService
             online ? "Online" : "Offline",
             online,
             sourceCode);
+    }
+
+    private static string? NormalizeMachineStatus(string? sourceCode)
+    {
+        var value = sourceCode?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value.ToUpperInvariant();
     }
 
     private static string? PreviewUrl(TvSourceOperation operation)
@@ -188,7 +198,11 @@ internal sealed class TvDashboardService
         return $"/api/v1/cases/{Uri.EscapeDataString(operation.CaseId)}/preview?v=2";
     }
 
-    private static TvOperationProgress Progress(TvSourceOperation operation, DateTimeOffset now)
+    private static TvOperationProgress Progress(
+        TvSourceOperation operation,
+        DateTimeOffset now,
+        int? productionModeVariableValue,
+        DateTimeOffset? productionStartedAt)
     {
         var statusCode = operation.Status switch
         {
@@ -212,6 +226,17 @@ internal sealed class TvDashboardService
                 100, null, quantity, quantity);
         }
 
+        // The live Haas production-mode variable is authoritative: 0 is setup and 1 is production.
+        // Timing remains only a progress estimate inside the selected phase.
+        if (statusCode is "started" or "paused" && productionModeVariableValue == 1)
+        {
+            var productionEffectiveEnd = statusCode == "paused" ? operation.ActivePauseStartedAt ?? now : now;
+            var productionSeconds = productionStartedAt is { } startedAt
+                ? Math.Max(0, (productionEffectiveEnd - startedAt).TotalSeconds - Math.Max(0, operation.ClosedPauseSeconds))
+                : 0;
+            return ProductionProgress(statusCode, statusLabel, quantity, operation.CycleSeconds, productionSeconds);
+        }
+
         var setupSeconds = Math.Max(0, operation.SetupSeconds ?? 0);
         var effectiveEnd = statusCode == "paused"
             ? operation.ActivePauseStartedAt ?? now
@@ -219,7 +244,7 @@ internal sealed class TvDashboardService
         var elapsedSeconds = operation.ActualStart is { } start
             ? Math.Max(0, (effectiveEnd - start).TotalSeconds - Math.Max(0, operation.ClosedPauseSeconds))
             : 0;
-        if (setupSeconds > 0 && elapsedSeconds < setupSeconds)
+        if (productionModeVariableValue == 0 || (setupSeconds > 0 && elapsedSeconds < setupSeconds))
         {
             var percent = statusCode == "waiting"
                 ? 0
@@ -230,22 +255,26 @@ internal sealed class TvDashboardService
         }
 
         if (quantity > 0 && operation.CycleSeconds is > 0)
-        {
-            var productionSeconds = Math.Max(0, elapsedSeconds - setupSeconds);
-            var fractionalParts = productionSeconds / operation.CycleSeconds.Value;
-            var currentPart = Math.Clamp((int)Math.Floor(fractionalParts) + 1, 1, quantity);
-            var percent = statusCode == "waiting"
-                ? 0
-                : Math.Clamp((int)Math.Round(fractionalParts / quantity * 100), 0, 99);
-            return new TvOperationProgress(
-                statusCode, statusLabel, "production",
-                $"Part {currentPart}/{quantity} | {percent}% of Batch",
-                percent, null, currentPart, quantity);
-        }
+            return ProductionProgress(statusCode, statusLabel, quantity, operation.CycleSeconds,
+                Math.Max(0, elapsedSeconds - setupSeconds));
 
         return new TvOperationProgress(
             statusCode, statusLabel, statusCode == "waiting" ? "waiting" : "unknown",
             "Progress unavailable", null, null, null, quantity);
+    }
+
+    private static TvOperationProgress ProductionProgress(
+        string statusCode, string statusLabel, int quantity, int? cycleSeconds, double productionSeconds)
+    {
+        if (quantity <= 0 || cycleSeconds is not > 0)
+            return new TvOperationProgress(statusCode, statusLabel, "production",
+                "Production in progress", null, null, null, quantity);
+        var fractionalParts = productionSeconds / cycleSeconds.Value;
+        var currentPart = Math.Clamp((int)Math.Floor(fractionalParts) + 1, 1, quantity);
+        var percent = Math.Clamp((int)Math.Round(fractionalParts / quantity * 100), 0, 99);
+        return new TvOperationProgress(statusCode, statusLabel, "production",
+            $"Part {currentPart}/{quantity} | {percent}% of Batch",
+            percent, null, currentPart, quantity);
     }
 
     private static TvStatus Status(

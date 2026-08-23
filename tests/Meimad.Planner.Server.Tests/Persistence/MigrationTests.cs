@@ -57,7 +57,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(43L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(44L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -158,6 +158,8 @@ public sealed class MigrationTests
         Assert.Equal("haas_ngc_integration", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 43;";
         Assert.Equal("cnc_connection_platform", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 44;";
+        Assert.Equal("haas_dprnt_part_port", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
@@ -247,7 +249,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(43L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(44L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -263,6 +265,7 @@ public sealed class MigrationTests
                 DROP TABLE machine_state_history;
                 DROP TABLE machine_current_state;
                 DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 44;
                 DELETE FROM schema_migrations WHERE version = 43;
                 DROP TRIGGER nc_program_headers_immutable_update;
                 DROP TRIGGER nc_program_headers_immutable_delete;
@@ -677,6 +680,7 @@ public sealed class MigrationTests
                 DROP TABLE machine_state_history;
                 DROP TABLE machine_current_state;
                 DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 44;
                 DELETE FROM schema_migrations WHERE version = 43;
                 DROP TRIGGER nc_program_headers_immutable_update;
                 DROP TRIGGER nc_program_headers_immutable_delete;
@@ -886,6 +890,7 @@ public sealed class MigrationTests
                 DROP TABLE machine_state_history;
                 DROP TABLE machine_current_state;
                 DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 44;
                 DELETE FROM schema_migrations WHERE version = 43;
                 DROP TRIGGER nc_program_headers_immutable_update;
                 DROP TRIGGER nc_program_headers_immutable_delete;
@@ -1096,6 +1101,7 @@ public sealed class MigrationTests
                 DROP TABLE machine_state_history;
                 DROP TABLE machine_current_state;
                 DROP TABLE machine_connections;
+                DELETE FROM schema_migrations WHERE version = 44;
                 DELETE FROM schema_migrations WHERE version = 43;
                 DROP TRIGGER nc_program_headers_immutable_update;
                 DROP TRIGGER nc_program_headers_immutable_delete;
@@ -1288,7 +1294,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 44;";
+            command.CommandText = "PRAGMA user_version = 45;";
             await command.ExecuteNonQueryAsync();
         }
 

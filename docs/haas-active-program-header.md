@@ -2,7 +2,7 @@
 
 ## Decision
 
-Automatic Bench identification is enabled only when Meimad reads a bounded header from the Haas-accessible Local Net Share and proves that the active MDC O-number maps to exactly one readable machine-side file. The filename is never a Part identifier. The shared `INcHeaderParser` extracts `PART` from that machine file, and only that parsed value may match planned work.
+Automatic Bench identification is enabled only when Meimad reads a bounded header from the Haas-accessible Local Net Share and proves that the active program locator maps to exactly one readable machine-side file. MDC normally supplies an O-number. MTConnect may instead supply a filename-like `PROGRAM` value, which remains informational until a site test proves a unique header mapping. The filename is never a Part identifier. The shared `INcHeaderParser` extracts `PART` from that machine file, and only that parsed value may match planned work.
 
 There is no server-release fallback. If the machine file is absent, unreadable, duplicated by O-number, or has no valid Part header, Meimad records an error/anomaly and does not start or switch a Bench.
 
@@ -16,15 +16,21 @@ There is no server-release fallback. If the machine file is absent, unreadable, 
 
 `LocalNetShareHaasProgramReader` runs on Meimad Server under the Windows Service account:
 
-1. Read `Q500` and normalize the active `Oxxxxx` locator.
+1. Read the active locator. MDC supplies an `Oxxxxx` number. MTConnect may supply a numeric filename such as `1500.CNC`; Meimad accepts that only when it finds that exact filename and its header contains the matching `O1500` number.
 2. Require the same locator in the configured number of consecutive polls.
 3. Enumerate the configured Haas share read-only.
 4. Read at most the configured byte and line limits from candidate files (defaults: 32 KiB and 50 lines).
-5. Match the O-number found inside each candidate header.
+5. Match the O-number found inside each candidate header; for MTConnect filename locators, also match the exact filename.
 6. Continue only when exactly one candidate exists.
-7. Parse that candidate with the same `INcHeaderParser` used during server G-code release.
+7. Parse that candidate with the same `INcHeaderParser` used during server G-code release. The default parser accepts both `(PART: 30P283003300-002)` and the Meimad CAM form `O1500 (30P283003300-002_NC1)`.
 
 The share credential field is a reference only. No password is stored in the Machine or Haas settings tables. Access is expected to be provisioned for the Server service account or by a future approved secret provider.
+
+## MTConnect commissioning evidence (2026-08-23)
+
+The configured VF-3SS agent returned HTTP 200 and MTConnect 1.2 XML from both root `/probe` and `/current`. Meimad's production reader and the full `/haas/test-mtconnect` API path were executed against that agent successfully. The feed reported one device (`VF-3SS`), `AVAILABLE`, controller mode `AUTOMATIC`, execution state, `PROGRAM=1500.CNC`, M30 counters, spindle observations, and Haas macro-range `Source` metadata. The adapter deliberately fetches unfiltered documents because this agent's XPath query behavior is not relied upon.
+
+The probe says `MacroRange5` covers variables `#10600` through `#10799`, so the sixth CSV value maps to configured `#10605`. At commissioning time that value was `5.0`, not the required binary `0` or `1`. Meimad therefore reports live connectivity and counter/state data as `DEGRADED`, leaves Setup/Production mode unavailable, and creates no macro-driven Bench transition. `MacroDispl1=0` is not substituted because the feed does not prove that display item represents `#10605`. Correct the controller variable/mapping and rerun the test before relying on automatic Production transitions.
 
 ## Required VF-3 validation before production enablement
 
@@ -52,8 +58,8 @@ O1234
 (PART: HAAS-SPIKE-PART-A)
 ```
 
-1. Configure the VF-3 IP, Setting 143 MDC port, read-only share path, `#10605`/legacy `#605`, and a two-poll debounce.
-2. Use **Test MDC**; record Q500 Program/Status/Parts.
+1. Configure the VF-3 IP, explicitly select MDC or MTConnect as the read source, configure its port, the read-only share path, `#10605`/legacy `#605`, and a two-poll debounce.
+2. Use **Test Connection** for the selected provider. When commissioning MDC separately, use **Test MDC**; when commissioning MTConnect separately, use **Test MTConnect**.
 3. Use **Test Net Share**; verify Program `O1234`, Part `HAAS-SPIKE-PART-A`, and the exact machine source path.
 4. Select the program twice without running it. Confirm the planned Batch Operation starts once in `SETUP`.
 5. Press Cycle Start repeatedly while the variable is `0`. Confirm it remains `SETUP`.

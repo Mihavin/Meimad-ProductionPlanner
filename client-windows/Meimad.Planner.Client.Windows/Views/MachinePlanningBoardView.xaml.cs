@@ -226,8 +226,18 @@ public partial class MachinePlanningBoardView : UserControl
             }
         }
 
-        await viewModel.AssignOrMoveAsync(payload.Operation, machine, position);
-        e.Handled = true;
+        try
+        {
+            await viewModel.AssignOrMoveAsync(payload.Operation, machine, position);
+        }
+        catch (Exception exception)
+        {
+            viewModel.ReportMoveFailure(exception);
+        }
+        finally
+        {
+            e.Handled = true;
+        }
     }
 
     private void Pool_DragOver(object sender, DragEventArgs e)
@@ -244,7 +254,14 @@ public partial class MachinePlanningBoardView : UserControl
             && payload.Operation.MachineId is not null
             && DataContext is MachinePlanningBoardViewModel viewModel)
         {
-            await viewModel.UnassignAsync(payload.Operation);
+            try
+            {
+                await viewModel.UnassignAsync(payload.Operation);
+            }
+            catch (Exception exception)
+            {
+                viewModel.ReportMoveFailure(exception);
+            }
         }
 
         e.Handled = true;

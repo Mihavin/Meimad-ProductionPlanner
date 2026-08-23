@@ -665,6 +665,9 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    internal void ReportMoveFailure(Exception exception) =>
+        StatusMessage = $"Operation move was not applied: {FriendlyMessage(exception)}";
+
     internal async Task<PlannerProductionReadiness?> ReadProductionReadinessAsync(
         PlanningOperationViewModel operation)
     {

@@ -458,20 +458,20 @@ internal sealed record MachineCreate(
     double MachineTimeFactor = 1.0);
 
 internal sealed record HaasConnectionSettings(
-    string MachineId, string Host, int MdcPort, int MtConnectPort,
+    string MachineId, string Host, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
     int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
-    bool Enabled, int Version, DateTimeOffset? UpdatedAt);
+    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC");
 
 internal sealed record HaasConnectionUpdate(
-    string Host, int MdcPort, int MtConnectPort,
+    string Host, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
     int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
-    bool Enabled, int Version);
+    bool Enabled, int Version, string TelemetryProvider);
 
 internal sealed record HaasConnectionTest(
     bool Succeeded, string Message, string? ProgramNumber, string? MachineStatus,

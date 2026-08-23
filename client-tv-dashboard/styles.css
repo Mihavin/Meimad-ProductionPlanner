@@ -110,7 +110,7 @@ h1 {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(130px, 8vw) minmax(240px, 17vw) minmax(110px, 8vw) minmax(64px, 6vw) minmax(260px, 1fr) minmax(300px, 1.25fr);
+  grid-template-columns: minmax(130px, 8vw) minmax(240px, 17vw) minmax(110px, 8vw) minmax(105px, 9vw) minmax(64px, 6vw) minmax(260px, 1fr) minmax(300px, 1.25fr);
   align-items: center;
   padding: 2px 8px;
   overflow: hidden;
@@ -151,7 +151,7 @@ h1 {
 .machine-connection {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   color: var(--muted);
   font-size: clamp(13px, 1vw, 20px);
   font-weight: 800;
@@ -170,6 +170,19 @@ h1 {
 .connection-online { color: var(--connected); }
 .connection-online > span { background: var(--connected); box-shadow: 0 0 8px var(--connected); }
 .connection-offline { color: #ff8a8c; }
+
+.machine-telemetry {
+  overflow: hidden;
+  color: #8dccff;
+  font-size: clamp(12px, .9vw, 18px);
+  font-weight: 900;
+  letter-spacing: .02em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.machine-telemetry.unavailable { color: #82909a; }
 
 .operation { min-width: 0; overflow: hidden; padding: 0 10px; }
 .operation.empty { color: #82909a; font-size: clamp(14px, 1.1vw, 22px); }

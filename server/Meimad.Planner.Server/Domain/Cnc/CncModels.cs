@@ -98,6 +98,7 @@ internal sealed record MachineConnection(
     DateTimeOffset UpdatedAt);
 
 internal sealed record HaasMdcConfiguration(int Port, int TimeoutMs);
+internal sealed record HaasMtConnectConfiguration(int Port, int TimeoutMs, int DprntPort = 8080);
 internal sealed record HaasProgramAccessConfiguration(
     string Provider,
     bool Enabled,
@@ -121,7 +122,9 @@ internal sealed record HaasNgcConnectionConfiguration(
     HaasMdcConfiguration Mdc,
     HaasProgramAccessConfiguration ProgramAccess,
     HaasProductionConfiguration Production,
-    HaasMonitoringConfiguration Monitoring);
+    HaasMonitoringConfiguration Monitoring,
+    HaasMtConnectConfiguration? MtConnect = null,
+    string TelemetryProvider = "MDC");
 
 internal sealed record CncFreshValue<T>(T? Value, DateTimeOffset? ReadAt, bool Stale);
 internal sealed record CncProgramSnapshot(

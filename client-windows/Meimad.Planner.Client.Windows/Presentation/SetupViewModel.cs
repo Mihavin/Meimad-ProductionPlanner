@@ -76,6 +76,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private CncAdapterDefinition? selectedCncAdapter;
     private string haasMdcPort = "5051";
     private string haasMtConnectPort = "8082";
+    private string haasDprntPort = "8080";
+    private string haasTelemetryProvider = "MTCONNECT";
     private bool haasLocalNetShareEnabled;
     private string haasLocalNetSharePath = string.Empty;
     private string haasCredentialsReference = string.Empty;
@@ -188,6 +190,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DeleteMachineCommand = new AsyncCommand(DeleteSelectedMachineAsync, CanDeleteMachine);
         LoadHaasConfigurationCommand = new AsyncCommand(LoadHaasConfigurationAsync, CanReadHaas);
         SaveHaasConfigurationCommand = new AsyncCommand(SaveHaasConfigurationAsync, CanManageHaas);
+        TestHaasConnectionCommand = new AsyncCommand(TestHaasConnectionAsync, CanReadHaas);
+        TestHaasMtConnectCommand = new AsyncCommand(TestHaasMtConnectAsync, CanReadHaas);
         TestHaasMdcCommand = new AsyncCommand(TestHaasMdcAsync, CanReadHaas);
         TestHaasNetShareCommand = new AsyncCommand(TestHaasNetShareAsync, CanReadHaas);
         ReadHaasVariableCommand = new AsyncCommand(ReadHaasVariableAsync, CanReadHaas);
@@ -280,6 +284,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand DeleteMachineCommand { get; }
     public AsyncCommand LoadHaasConfigurationCommand { get; }
     public AsyncCommand SaveHaasConfigurationCommand { get; }
+    public AsyncCommand TestHaasConnectionCommand { get; }
+    public AsyncCommand TestHaasMtConnectCommand { get; }
     public AsyncCommand TestHaasMdcCommand { get; }
     public AsyncCommand TestHaasNetShareCommand { get; }
     public AsyncCommand ReadHaasVariableCommand { get; }
@@ -474,6 +480,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string HaasHost { get => haasHost; set => SetField(ref haasHost, value); }
     public string HaasMdcPort { get => haasMdcPort; set => SetField(ref haasMdcPort, value); }
     public string HaasMtConnectPort { get => haasMtConnectPort; set => SetField(ref haasMtConnectPort, value); }
+    public string HaasDprntPort { get => haasDprntPort; set => SetField(ref haasDprntPort, value); }
+    public string HaasTelemetryProvider { get => haasTelemetryProvider; set => SetField(ref haasTelemetryProvider, value); }
+    public IReadOnlyList<string> HaasTelemetryProviders { get; } = ["MTCONNECT", "MDC"];
     public bool HaasLocalNetShareEnabled { get => haasLocalNetShareEnabled; set => SetField(ref haasLocalNetShareEnabled, value); }
     public string HaasLocalNetSharePath { get => haasLocalNetSharePath; set => SetField(ref haasLocalNetSharePath, value); }
     public string HaasCredentialsReference { get => haasCredentialsReference; set => SetField(ref haasCredentialsReference, value); }
@@ -1058,6 +1067,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
         if (!int.TryParse(HaasMdcPort, out var mdcPort)
             || !int.TryParse(HaasMtConnectPort, out var mtPort)
+            || !int.TryParse(HaasDprntPort, out var dprntPort)
             || !int.TryParse(HaasProductionVariable, out var variable)
             || !int.TryParse(HaasLegacyVariableAlias, out var legacy)
             || !int.TryParse(HaasPollingIntervalMs, out var polling)
@@ -1069,10 +1079,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         await RunHaasReadAsync(async () =>
         {
             var value = await apiClient!.UpdateHaasConnectionAsync(SelectedMachine!.MachineId,
-                new HaasConnectionUpdate(HaasHost, mdcPort, mtPort, HaasLocalNetShareEnabled,
+                new HaasConnectionUpdate(HaasHost, mdcPort, mtPort, dprntPort, HaasLocalNetShareEnabled,
                     NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
                     variable, legacy, HaasPartCounterSource, polling, timeout, 2, 50, 32768,
-                    [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion),
+                    [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion,
+                    HaasTelemetryProvider),
                 clientId, editGeneration);
             PopulateHaasConfiguration(value);
             HaasDiagnostics = "Haas NGC configuration saved by the Server.";
@@ -1085,6 +1096,22 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasDiagnostics = result.Succeeded
             ? $"MDC: Connected | Program: {result.ProgramNumber ?? "none"} | Status: {result.MachineStatus} | Parts: {result.Parts}"
             : $"MDC: {result.Message}";
+    });
+
+    internal Task TestHaasConnectionAsync() =>
+        string.Equals(HaasTelemetryProvider, "MTCONNECT", StringComparison.OrdinalIgnoreCase)
+            ? TestHaasMtConnectAsync()
+            : TestHaasMdcAsync();
+
+    internal Task TestHaasMtConnectAsync() => RunHaasReadAsync(async () =>
+    {
+        var result = await apiClient!.TestHaasMtConnectAsync(SelectedMachine!.MachineId);
+        var program = result.ProgramNumber ?? "none";
+        var machineStatus = result.MachineStatus ?? "unknown";
+        var parts = result.Parts?.ToString(CultureInfo.InvariantCulture) ?? "unavailable";
+        HaasDiagnostics = result.Succeeded
+            ? $"MTConnect: {result.Message} | Program: {program} | Status: {machineStatus} | Parts: {parts}"
+            : $"MTConnect: {result.Message}";
     });
 
     internal Task TestHaasNetShareAsync() => RunHaasReadAsync(async () =>
@@ -1823,6 +1850,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasHost = value.Host;
         HaasMdcPort = value.MdcPort.ToString(CultureInfo.InvariantCulture);
         HaasMtConnectPort = value.MtConnectPort.ToString(CultureInfo.InvariantCulture);
+        HaasDprntPort = value.DprntPort.ToString(CultureInfo.InvariantCulture);
+        HaasTelemetryProvider = value.TelemetryProvider;
         HaasLocalNetShareEnabled = value.LocalNetShareEnabled;
         HaasLocalNetSharePath = value.LocalNetSharePath ?? string.Empty;
         HaasCredentialsReference = value.CredentialsReference ?? string.Empty;
@@ -1840,6 +1869,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasHost = string.Empty;
         HaasMdcPort = "5051";
         HaasMtConnectPort = "8082";
+        HaasDprntPort = "8080";
+        HaasTelemetryProvider = "MTCONNECT";
         HaasLocalNetShareEnabled = false;
         HaasLocalNetSharePath = string.Empty;
         HaasCredentialsReference = string.Empty;
@@ -2182,6 +2213,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DeleteMachineCommand.RaiseCanExecuteChanged();
         LoadHaasConfigurationCommand.RaiseCanExecuteChanged();
         SaveHaasConfigurationCommand.RaiseCanExecuteChanged();
+        TestHaasConnectionCommand.RaiseCanExecuteChanged();
+        TestHaasMtConnectCommand.RaiseCanExecuteChanged();
         TestHaasMdcCommand.RaiseCanExecuteChanged();
         TestHaasNetShareCommand.RaiseCanExecuteChanged();
         ReadHaasVariableCommand.RaiseCanExecuteChanged();

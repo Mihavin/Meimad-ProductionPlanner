@@ -56,7 +56,7 @@ public sealed class HaasIntegrationTests
         Assert.Contains(monitor.RecentEvents, value => value.EventType == "PartCounterReset");
 
         var service = new HaasIntegrationService(repository, new FakeHaasMdcClientFactory(fake),
-            reader, new NcHeaderParser(), TimeProvider.System);
+            new FakeHaasMtConnectReader(), reader, new NcHeaderParser(), TimeProvider.System);
         var reset = await service.ResetProductionVariableAfterToolTableAsync(
             "machine-haas", "tool-table-r1", "planner-test");
         Assert.True(reset.Succeeded);
@@ -114,6 +114,59 @@ public sealed class HaasIntegrationTests
 
         Assert.Equal("PART-A",
             (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!.ActiveBench!.MachinePartName);
+    }
+
+    [Fact]
+    public async Task Dedicated_MTConnect_test_uses_saved_host_and_port_and_returns_typed_status()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database, ambiguous: false);
+        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
+        var mtConnect = new FakeHaasMtConnectReader
+        {
+            Result = new("dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC",
+                "1500.CNC", 9302, 0, null, DateTimeOffset.UtcNow,
+                0, null, 0, "{}")
+        };
+        var service = new HaasIntegrationService(repository,
+            new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }),
+            mtConnect, new FakeHaasProgramReader("unused.nc", []),
+            new NcHeaderParser(), TimeProvider.System);
+
+        var result = await service.TestMtConnectAsync("machine-haas");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("1500.CNC", result.ProgramNumber);
+        Assert.Equal("STOPPED", result.MachineStatus);
+        Assert.Equal(9302, result.Parts);
+        Assert.Contains("production telemetry is ready", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, mtConnect.CallCount);
+    }
+
+    [Fact]
+    public async Task Dedicated_MTConnect_test_reports_connected_but_degraded_when_macro_is_not_binary()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database, ambiguous: false);
+        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
+        var mtConnect = new FakeHaasMtConnectReader
+        {
+            Result = new("dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC",
+                "1500.CNC", 9302, null,
+                "MTConnect reported configured variable #10605 as '5.0'; Setup/Production requires exactly 0 or 1.",
+                DateTimeOffset.UtcNow, 0, null, 0, "{}")
+        };
+        var service = new HaasIntegrationService(repository,
+            new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }),
+            mtConnect, new FakeHaasProgramReader("unused.nc", []),
+            new NcHeaderParser(), TimeProvider.System);
+
+        var result = await service.TestMtConnectAsync("machine-haas");
+
+        Assert.True(result.Succeeded);
+        Assert.Contains("DEGRADED", result.Message, StringComparison.Ordinal);
+        Assert.Contains("Bench automation is blocked", result.Message, StringComparison.Ordinal);
+        Assert.Contains("exactly 0 or 1", result.Message, StringComparison.Ordinal);
     }
 
     private static HaasObservationHarness Worker(
@@ -201,6 +254,28 @@ internal sealed class FakeHaasMdcClient : IHaasMdcClient
 internal sealed class FakeHaasMdcClientFactory(FakeHaasMdcClient client) : IHaasMdcClientFactory
 {
     public IHaasMdcClient Create(HaasConnectionSettings settings) => client;
+}
+
+internal sealed class FakeHaasMtConnectReader : IHaasMtConnectReader
+{
+    internal HaasMtConnectRead? Result { get; set; }
+    internal Exception? Error { get; set; }
+    internal int CallCount { get; private set; }
+
+    public Task<HaasMtConnectRead> ReadAsync(
+        string host,
+        int port,
+        int timeoutMs,
+        int productionVariableNumber,
+        string partCounterSource,
+        CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        if (Error is not null) throw Error;
+        return Task.FromResult(Result ?? new HaasMtConnectRead(
+            "dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC", "O1234",
+            0, 0, null, DateTimeOffset.UtcNow, 0, null, 0, "{}"));
+    }
 }
 
 internal sealed class FakeHaasProgramReader(string sourcePath, IReadOnlyList<string> lines) : IHaasProgramReader

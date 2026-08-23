@@ -10,11 +10,21 @@ internal sealed class BenchAutomationService(IHaasIntegrationRepository reposito
     public async Task<CncSnapshotConsumptionResult> ConsumeAsync(
         MachineSnapshot snapshot, CancellationToken token)
     {
-        if (snapshot.ConnectionStatus is not (CncConnectionStates.Online or CncConnectionStates.Degraded))
+        var currentVariable = snapshot.Production.ModeVariableValue;
+        var variable = currentVariable.Value;
+        var variableNumber = snapshot.Production.ModeVariableNumber;
+        if (snapshot.ConnectionStatus is not (CncConnectionStates.Online or CncConnectionStates.Degraded)
+            || currentVariable.Stale
+            || currentVariable.ReadAt is null
+            || variable is not (0 or 1)
+            || variableNumber is null)
             return CncSnapshotConsumptionResult.None;
+
+        var currentCounter = snapshot.PartCounter;
+        var partCounter = !currentCounter.Stale && currentCounter.ReadAt is not null
+            ? currentCounter.Value
+            : null;
         var previous = await repository.GetSnapshotAsync(snapshot.MachineId, token);
-        var variable = snapshot.Production.ModeVariableValue.Value ?? previous?.ProductionVariableValue;
-        if (variable is null) return CncSnapshotConsumptionResult.None;
         var normalized = new HaasMachineSnapshot(
             snapshot.MachineId,
             snapshot.Timestamp,
@@ -24,10 +34,10 @@ internal sealed class BenchAutomationService(IHaasIntegrationRepository reposito
             snapshot.Program.PartName.Stale ? null : snapshot.Program.PartName.Value,
             snapshot.Program.HeaderSourcePath.Stale ? null : snapshot.Program.HeaderSourcePath.Value,
             snapshot.Program.PartName.Stale ? null : snapshot.Program.PartName.ReadAt,
-            snapshot.Production.ModeVariableNumber ?? previous?.ProductionVariableNumber ?? 10605,
+            variableNumber.Value,
             variable.Value,
             previous?.ProductionVariableChangedAt,
-            snapshot.PartCounter.Value ?? previous?.PartCounter,
+            partCounter,
             null,
             snapshot.LastError,
             snapshot.LastSeenAt,

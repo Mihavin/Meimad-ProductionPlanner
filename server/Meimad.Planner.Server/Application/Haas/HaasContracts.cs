@@ -25,6 +25,33 @@ internal interface IHaasMdcClientFactory
     IHaasMdcClient Create(HaasConnectionSettings settings);
 }
 
+internal interface IHaasMtConnectReader
+{
+    Task<HaasMtConnectRead> ReadAsync(
+        string host,
+        int port,
+        int timeoutMs,
+        int productionVariableNumber,
+        string partCounterSource,
+        CancellationToken cancellationToken = default);
+}
+
+internal sealed record HaasMtConnectRead(
+    string? DeviceId,
+    string? DeviceName,
+    string Availability,
+    string? MachineStatus,
+    string? ControllerMode,
+    string? ProgramNumber,
+    int? Parts,
+    int? ProductionVariableValue,
+    string? ProductionVariableError,
+    DateTimeOffset ReadAt,
+    decimal? SpindleRpm,
+    decimal? FeedRate,
+    int? ActiveAlarmCount,
+    string DiagnosticPayload);
+
 internal interface IHaasProgramReader : INcProgramFileProvider;
 
 internal interface IHaasIntegrationRepository
@@ -56,6 +83,7 @@ internal sealed record HaasSettingsUpdate(
     string? Host,
     int MdcPort,
     int MtConnectPort,
+    int DprntPort,
     bool LocalNetShareEnabled,
     string? LocalNetSharePath,
     string? CredentialsReference,
@@ -69,7 +97,8 @@ internal sealed record HaasSettingsUpdate(
     int HeaderByteLimit,
     IReadOnlyList<string>? HeaderPartPatterns,
     bool Enabled,
-    int ExpectedVersion);
+    int ExpectedVersion,
+    string? TelemetryProvider);
 
 internal sealed class HaasValidationException(string field, string message) : Exception(message)
 {

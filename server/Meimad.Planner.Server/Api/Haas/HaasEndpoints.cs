@@ -11,6 +11,7 @@ internal static class HaasEndpoints
         var group = endpoints.MapGroup("/api/v1/machines/{machineId}/haas");
         group.MapGet("/connection", GetConnectionAsync);
         group.MapPut("/connection", UpdateConnectionAsync);
+        group.MapPost("/test-mtconnect", TestMtConnectAsync);
         group.MapPost("/test-mdc", TestMdcAsync);
         group.MapPost("/test-net-share", TestNetShareAsync);
         group.MapGet("/production-variable", ReadVariableAsync);
@@ -23,7 +24,7 @@ internal static class HaasEndpoints
     {
         var value = await service.GetSettingsAsync(machineId, token);
         return value is null ? Results.Ok(new HaasConnectionResponse(machineId, string.Empty,
-            5051, 8082, false, null, null, 10605, 605, HaasPartCounterSources.Q500,
+            5051, 8082, 8080, false, null, null, 10605, 605, HaasPartCounterSources.Q500,
             2000, 3000, 2, 50, 32768, NcHeaderParser.DefaultPartPatterns, false, 0, null))
             : Results.Ok(Response(value));
     }
@@ -38,11 +39,13 @@ internal static class HaasEndpoints
         {
             var value = await service.UpdateSettingsAsync(machineId, new HaasSettingsUpdate(
                 request.Host, request.MdcPort, request.MtConnectPort,
+                request.DprntPort is > 0 ? request.DprntPort : 8080,
                 request.LocalNetShareEnabled, request.LocalNetSharePath, request.CredentialsReference,
                 request.ProductionModeVariable, request.LegacyVariableAlias,
                 request.PartCounterSource, request.PollingIntervalMs, request.ConnectionTimeoutMs,
-                request.StableProgramPolls, request.HeaderLineLimit, request.HeaderByteLimit,
-                request.HeaderPartPatterns, request.Enabled, request.Version), authority!, token);
+             request.StableProgramPolls, request.HeaderLineLimit, request.HeaderByteLimit,
+                request.HeaderPartPatterns, request.Enabled, request.Version,
+                request.TelemetryProvider), authority!, token);
             return Results.Ok(Response(value));
         }
         catch (HaasValidationException exception)
@@ -65,6 +68,10 @@ internal static class HaasEndpoints
     private static async Task<IResult> TestMdcAsync(
         string machineId, HaasIntegrationService service, CancellationToken token) =>
         TestResult(await service.TestMdcAsync(machineId, token));
+
+    private static async Task<IResult> TestMtConnectAsync(
+        string machineId, HaasIntegrationService service, CancellationToken token) =>
+        TestResult(await service.TestMtConnectAsync(machineId, token));
 
     private static async Task<IResult> TestNetShareAsync(
         string machineId, HaasIntegrationService service, CancellationToken token) =>
@@ -119,29 +126,29 @@ internal static class HaasEndpoints
         ? Results.Ok(value) : Results.Json(value, statusCode: StatusCodes.Status502BadGateway);
 
     private static HaasConnectionResponse Response(HaasConnectionSettings value) => new(
-        value.MachineId, value.Host, value.MdcPort, value.MtConnectPort,
+        value.MachineId, value.Host, value.MdcPort, value.MtConnectPort, value.DprntPort,
         value.LocalNetShareEnabled, value.LocalNetSharePath, value.CredentialsReference,
         value.ProductionModeVariable, value.LegacyVariableAlias, value.PartCounterSource,
         value.PollingIntervalMs, value.ConnectionTimeoutMs, value.StableProgramPolls,
         value.HeaderLineLimit, value.HeaderByteLimit, value.HeaderPartPatterns,
-        value.Enabled, value.Version, value.UpdatedAt);
+        value.Enabled, value.Version, value.UpdatedAt, value.TelemetryProvider);
 }
 
 internal sealed record HaasConnectionUpdateRequest(
-    string? Host, int MdcPort, int MtConnectPort, bool LocalNetShareEnabled,
+    string? Host, int MdcPort, int MtConnectPort, int DprntPort, bool LocalNetShareEnabled,
     string? LocalNetSharePath, string? CredentialsReference,
     int ProductionModeVariable, int LegacyVariableAlias, string? PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string>? HeaderPartPatterns,
-    bool Enabled, int Version);
+    bool Enabled, int Version, string? TelemetryProvider);
 
 internal sealed record HaasConnectionResponse(
-    string MachineId, string Host, int MdcPort, int MtConnectPort,
+    string MachineId, string Host, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
     int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
-    bool Enabled, int Version, DateTimeOffset? UpdatedAt);
+    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = HaasTelemetryProviders.Mdc);
 
 internal sealed record HaasToolTableResetRequest(
     string? ToolTableId,

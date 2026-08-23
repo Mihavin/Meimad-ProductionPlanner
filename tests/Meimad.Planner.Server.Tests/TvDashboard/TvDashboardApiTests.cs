@@ -23,7 +23,7 @@ public sealed class TvDashboardApiTests
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
             Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-            Assert.Equal("0.1.27", root.GetProperty("dashboardBuild").GetString());
+            Assert.Equal("0.1.33", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -34,11 +34,12 @@ public sealed class TvDashboardApiTests
             Assert.Equal("M-TV-1", machine.GetProperty("number").GetString());
             Assert.True(machine.GetProperty("connection").GetProperty("online").GetBoolean());
             Assert.Equal("Online", machine.GetProperty("connection").GetProperty("label").GetString());
+            Assert.Equal("ACTIVE", machine.GetProperty("machineStatus").GetString());
             Assert.Equal("op-current", machine.GetProperty("current").GetProperty("operationId").GetString());
             Assert.True(machine.GetProperty("current").GetProperty("urgent").GetBoolean());
             Assert.Equal("started", machine.GetProperty("current").GetProperty("progress").GetProperty("statusCode").GetString());
-            Assert.Equal("setup", machine.GetProperty("current").GetProperty("progress").GetProperty("phase").GetString());
-            Assert.InRange(machine.GetProperty("current").GetProperty("progress").GetProperty("setupPercent").GetInt32(), 45, 55);
+            Assert.Equal("production", machine.GetProperty("current").GetProperty("progress").GetProperty("phase").GetString());
+            Assert.Equal(JsonValueKind.Null, machine.GetProperty("current").GetProperty("progress").GetProperty("setupPercent").ValueKind);
             Assert.Contains("/api/v1/cases/case-tv/preview", machine.GetProperty("current").GetProperty("previewUrl").GetString(), StringComparison.Ordinal);
             Assert.True(machine.GetProperty("downtime").GetProperty("isCurrent").GetBoolean());
             Assert.Empty(machine.GetProperty("conflicts").EnumerateArray());
@@ -101,11 +102,14 @@ public sealed class TvDashboardApiTests
             Assert.Contains("progressLabel(progress)", javascript, StringComparison.Ordinal);
             Assert.Contains("progress-track", css, StringComparison.Ordinal);
             Assert.Contains(".machine-connection", css, StringComparison.Ordinal);
+            Assert.Contains(".machine-telemetry", css, StringComparison.Ordinal);
             Assert.Contains("minmax(240px, 17vw)", css, StringComparison.Ordinal);
             Assert.Contains("renderPreview(machine.current)", javascript, StringComparison.Ordinal);
             Assert.Contains("loading=\"eager\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
-            Assert.Contains("DASHBOARD_BUILD = \"0.1.27\"", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain(">${escapeHtml(connectionState)}</div>", javascript, StringComparison.Ordinal);
+            Assert.Contains("machine.machineStatus", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.33\"", javascript, StringComparison.Ordinal);
             Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"מצב מכונות\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"Состояние станков\"", javascript, StringComparison.Ordinal);
@@ -158,6 +162,16 @@ public sealed class TvDashboardApiTests
                 version, created_at, updated_at)
             VALUES ('connection-tv', 'machine-tv', 'HAAS_NGC', 1, 'ONLINE',
                     1000, 1000, 30000, 1, 0, '{}', 14, 1, $now, $now);
+            INSERT INTO machine_current_state (
+                machine_id, connection_id, adapter_type, observed_at, connection_status,
+                last_seen_at, machine_state, component_health_json, capability_health_json,
+                snapshot_json, version)
+            VALUES ('machine-tv', 'connection-tv', 'HAAS_NGC', $now, 'ONLINE',
+                    $now, 'ACTIVE', '{}', '{}', '{}', 1);
+            INSERT INTO haas_machine_snapshots (
+                machine_id, observed_at, connectivity_state, machine_status, program_number,
+                production_variable_number, production_variable_value, version)
+            VALUES ('machine-tv', $now, 'ONLINE', 'ACTIVE', 'O1000', 10699, 1, 1);
             INSERT INTO cases (id, part_number, name, preview_reference, working_folder_path)
             VALUES ('case-tv', 'PN-TV', 'TV Part', 'preview.png', $workingFolder);
             INSERT INTO orders (

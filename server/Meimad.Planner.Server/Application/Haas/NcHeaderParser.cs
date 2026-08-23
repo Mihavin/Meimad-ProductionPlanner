@@ -7,7 +7,11 @@ internal sealed class NcHeaderParser : INcHeaderParser
 {
     internal const string CurrentVersion = "haas-header-v1";
     internal static readonly IReadOnlyList<string> DefaultPartPatterns =
-        [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"];
+        [
+            @"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)",
+            // Meimad CAM output: O1000 (16E2509-7PSOFI-1_NC1)
+            @"(?im)^\s*O\d{1,8}\s*\(\s*([A-Za-z0-9][A-Za-z0-9.-]*)(?:_NC\d+)?\s*\)"
+        ];
 
     public NcHeaderMetadata Parse(
         IEnumerable<string> lines,

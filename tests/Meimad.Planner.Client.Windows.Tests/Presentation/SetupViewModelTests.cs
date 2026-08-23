@@ -131,6 +131,36 @@ public sealed class SetupViewModelTests
     }
 
     [Fact]
+    public async Task Haas_test_connection_uses_the_selected_telemetry_provider()
+    {
+        var api = new FakeApiClient();
+        var viewModel = CreateViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(11));
+        await viewModel.EnsureLoadedAsync();
+        await viewModel.BeginNewMachineAsync();
+        viewModel.MachineNumber = "M56";
+        viewModel.MachineName = "Haas VF-3SS";
+        viewModel.SelectedMachineTypeForMachine = viewModel.MachineTypes.Single();
+        viewModel.SelectedMachineCalendar = viewModel.WorkingCalendars.Single();
+        await viewModel.SaveMachineAsync();
+        viewModel.SelectedMachine = viewModel.Machines.Single();
+
+        viewModel.HaasTelemetryProvider = "MTCONNECT";
+        await viewModel.TestHaasConnectionAsync();
+
+        Assert.Equal(1, api.MtConnectTestCount);
+        Assert.Equal(0, api.MdcTestCount);
+        Assert.StartsWith("MTConnect: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+
+        viewModel.HaasTelemetryProvider = "MDC";
+        await viewModel.TestHaasConnectionAsync();
+
+        Assert.Equal(1, api.MtConnectTestCount);
+        Assert.Equal(1, api.MdcTestCount);
+        Assert.StartsWith("MDC: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Editor_can_plan_maintenance_report_breakdown_and_restore_machine()
     {
         var api = new FakeApiClient();
@@ -421,6 +451,8 @@ public sealed class SetupViewModelTests
         internal ResourceUpdate? LastResourceUpdate { get; private set; }
         internal string? LastResourceEntityTag { get; private set; }
         internal EmployeeCalendarExceptionCreate? LastResourceExceptionCreate { get; private set; }
+        internal int MtConnectTestCount { get; private set; }
+        internal int MdcTestCount { get; private set; }
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
             CancellationToken cancellationToken = default) =>
@@ -549,6 +581,25 @@ public sealed class SetupViewModelTests
         {
             machines.RemoveAll(value => value.MachineId == machineId);
             return Task.CompletedTask;
+        }
+
+        public Task<HaasConnectionTest> TestHaasMtConnectAsync(
+            string machineId,
+            CancellationToken cancellationToken = default)
+        {
+            MtConnectTestCount++;
+            return Task.FromResult(new HaasConnectionTest(
+                true, "Connected to MTConnect for VF-3SS; production telemetry is ready.",
+                "1500.CNC", "STOPPED", 9300, null));
+        }
+
+        public Task<HaasConnectionTest> TestHaasMdcAsync(
+            string machineId,
+            CancellationToken cancellationToken = default)
+        {
+            MdcTestCount++;
+            return Task.FromResult(new HaasConnectionTest(
+                true, "MDC connection succeeded.", "O1500", "RUNNING", 9300, null));
         }
 
         public Task<IReadOnlyList<MachineDowntime>> ListDowntimesAsync(string? machineId = null, CancellationToken cancellationToken = default) =>

@@ -6,6 +6,7 @@ namespace Meimad.Planner.Server.Application.Haas;
 internal sealed class HaasIntegrationService(
     IHaasIntegrationRepository repository,
     IHaasMdcClientFactory clientFactory,
+    IHaasMtConnectReader mtConnectReader,
     IHaasProgramReader programReader,
     INcHeaderParser headerParser,
     TimeProvider timeProvider)
@@ -22,6 +23,13 @@ internal sealed class HaasIntegrationService(
         var host = Required(update.Host, "host");
         Port(update.MdcPort, "mdcPort");
         Port(update.MtConnectPort, "mtConnectPort");
+        Port(update.DprntPort, "dprntPort");
+        var current = await repository.GetSettingsAsync(machineId, token);
+        var telemetryProvider = update.TelemetryProvider?.Trim().ToUpperInvariant()
+            ?? current?.TelemetryProvider
+            ?? HaasTelemetryProviders.Mdc;
+        if (!HaasTelemetryProviders.IsSupported(telemetryProvider))
+            throw new HaasValidationException("telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
         if (update.ProductionModeVariable is < 10000 or > 10999)
             throw new HaasValidationException("productionModeVariable", "NGC production variable must be between 10000 and 10999.");
         if (update.LegacyVariableAlias is < 600 or > 699
@@ -43,17 +51,16 @@ internal sealed class HaasIntegrationService(
         // Compile/validate configurable expressions through the exact shared parser.
         headerParser.Parse(["O1", "(PART: validation)"], patterns);
         var now = timeProvider.GetUtcNow();
-        var current = await repository.GetSettingsAsync(machineId, token);
         var monitor = current is null ? null : await repository.ReadMonitorAsync(machineId, now, token);
         if (monitor?.ActiveBench is { State: HaasBenchStates.Setup or HaasBenchStates.Production }
             && current!.ProductionModeVariable != update.ProductionModeVariable)
             throw new HaasValidationException("productionModeVariable", "Finish the active Bench before changing its production variable.");
-        var value = new HaasConnectionSettings(machineId, host, update.MdcPort, update.MtConnectPort,
+        var value = new HaasConnectionSettings(machineId, host, update.MdcPort, update.MtConnectPort, update.DprntPort,
             update.LocalNetShareEnabled, Optional(update.LocalNetSharePath), Optional(update.CredentialsReference),
             update.ProductionModeVariable, update.LegacyVariableAlias, counterSource,
             update.PollingIntervalMs, update.ConnectionTimeoutMs, update.StableProgramPolls,
             update.HeaderLineLimit, update.HeaderByteLimit, patterns, update.Enabled,
-            current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now);
+            current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now, telemetryProvider);
         return await repository.UpsertSettingsAsync(value, update.ExpectedVersion, authority, token);
     }
 
@@ -74,21 +81,56 @@ internal sealed class HaasIntegrationService(
         }
     }
 
+    internal async Task<HaasConnectionTest> TestMtConnectAsync(
+        string machineId,
+        CancellationToken token = default)
+    {
+        var settings = await RequiredSettingsAsync(machineId, token);
+        try
+        {
+            var status = await ReadMtConnectAsync(settings, token);
+            var available = status.Availability == "AVAILABLE";
+            var identity = status.DeviceName ?? status.DeviceId ?? "the configured machine";
+            var message = available && status.ProductionVariableValue is not null
+                ? $"Connected to MTConnect for {identity}; production telemetry is ready."
+                : available
+                    ? $"Connected to MTConnect for {identity}, but production telemetry is DEGRADED: "
+                      + $"{status.ProductionVariableError ?? "the production variable is unavailable"} "
+                      + "Machine status remains readable; Bench automation is blocked."
+                    : $"MTConnect agent responded, but machine availability is {status.Availability}.";
+            return new HaasConnectionTest(available, message, status.ProgramNumber,
+                status.MachineStatus ?? status.Availability, status.Parts, null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return new HaasConnectionTest(false, Safe(exception.Message), null, null, null, null);
+        }
+    }
+
     internal async Task<HaasConnectionTest> TestNetShareAsync(string machineId, CancellationToken token = default)
     {
         var settings = await RequiredSettingsAsync(machineId, token);
         try
         {
-            await using var client = clientFactory.Create(settings);
-            var program = await client.GetCurrentProgramAsync(token)
-                ?? throw new HaasProgramHeaderUnavailableException("Haas Q500 did not report an active O-number.");
-            var header = await programReader.ReadActiveProgramHeaderAsync(settings, program, token);
+            string? program;
+            if (UsesMtConnect(settings))
+            {
+                program = (await ReadMtConnectAsync(settings, token)).ProgramNumber;
+            }
+            else
+            {
+                await using var client = clientFactory.Create(settings);
+                program = await client.GetCurrentProgramAsync(token);
+            }
+            var activeProgram = program ?? throw new HaasProgramHeaderUnavailableException(
+                "The selected Haas telemetry provider did not report an active program.");
+            var header = await programReader.ReadActiveProgramHeaderAsync(settings, activeProgram, token);
             var metadata = headerParser.Parse(header.FirstLines, settings.HeaderPartPatterns);
             if (!metadata.IsValid)
                 return new HaasConnectionTest(false, "Part name could not be extracted from NC header.",
-                    program, null, null, metadata);
+                    activeProgram, null, null, metadata);
             return new HaasConnectionTest(true, "Machine-side NC header read succeeded.",
-                program, null, null, metadata);
+                activeProgram, null, null, metadata);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -99,8 +141,19 @@ internal sealed class HaasIntegrationService(
     internal async Task<HaasVariableRead> ReadProductionVariableAsync(string machineId, CancellationToken token = default)
     {
         var settings = await RequiredSettingsAsync(machineId, token);
-        await using var client = clientFactory.Create(settings);
-        var value = await client.ReadMacroAsync(settings.ProductionModeVariable, token);
+        int value;
+        if (UsesMtConnect(settings))
+        {
+            var status = await ReadMtConnectAsync(settings, token);
+            value = status.ProductionVariableValue
+                ?? throw new IOException(status.ProductionVariableError
+                    ?? $"MTConnect did not expose variable #{settings.ProductionModeVariable}.");
+        }
+        else
+        {
+            await using var client = clientFactory.Create(settings);
+            value = await client.ReadMacroAsync(settings.ProductionModeVariable, token);
+        }
         return new HaasVariableRead(settings.ProductionModeVariable, settings.LegacyVariableAlias,
             value, timeProvider.GetUtcNow());
     }
@@ -112,6 +165,12 @@ internal sealed class HaasIntegrationService(
         string machineId, string toolTableId, string initiatedBy, CancellationToken token = default)
     {
         var settings = await RequiredSettingsAsync(machineId, token);
+        if (UsesMtConnect(settings))
+        {
+            return new HaasMacroWriteResult(false, settings.ProductionModeVariable, null, 0,
+                string.Empty,
+                "MTConnect is read-only. Select MDC and verify it before an audited production-variable reset.");
+        }
         var monitor = await repository.ReadMonitorAsync(machineId, timeProvider.GetUtcNow(), token);
         var benchId = monitor?.ActiveBench?.BenchId;
         await using var client = clientFactory.Create(settings);
@@ -141,6 +200,21 @@ internal sealed class HaasIntegrationService(
     private async Task<HaasConnectionSettings> RequiredSettingsAsync(string machineId, CancellationToken token) =>
         await repository.GetSettingsAsync(Required(machineId, "machineId"), token)
         ?? throw new HaasSettingsNotFoundException(machineId);
+
+    private Task<HaasMtConnectRead> ReadMtConnectAsync(
+        HaasConnectionSettings settings,
+        CancellationToken token) => mtConnectReader.ReadAsync(
+            settings.Host,
+            settings.MtConnectPort,
+            settings.ConnectionTimeoutMs,
+            settings.ProductionModeVariable,
+            settings.PartCounterSource,
+            token);
+
+    private static bool UsesMtConnect(HaasConnectionSettings settings) => string.Equals(
+        settings.TelemetryProvider,
+        HaasTelemetryProviders.MtConnect,
+        StringComparison.OrdinalIgnoreCase);
 
     private static string Required(string? value, string field)
     {

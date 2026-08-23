@@ -9,8 +9,11 @@ public sealed class HaasSetupViewTests
 
         Assert.Contains("Header=\"CNC Connection\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding CncAdapters}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding HaasTelemetryProviders}\" SelectedItem=\"{Binding HaasTelemetryProvider}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ReconnectCncCommand", xaml, StringComparison.Ordinal);
-        Assert.Contains("TestHaasMdcCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Test Connection\" Command=\"{Binding TestHaasConnectionCommand}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Test MTConnect\" Command=\"{Binding TestHaasMtConnectCommand}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Test MDC\" Command=\"{Binding TestHaasMdcCommand}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("TestHaasNetShareCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("ReadHaasVariableCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("HaasDiagnostics", xaml, StringComparison.Ordinal);

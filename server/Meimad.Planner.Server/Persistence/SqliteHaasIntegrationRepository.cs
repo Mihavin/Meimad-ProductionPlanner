@@ -16,7 +16,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
     {
         await using var connection = await database.OpenConnectionAsync(token);
         await using var command = connection.CreateCommand();
-        command.CommandText = SettingsSelect + " WHERE enabled = 1 ORDER BY machine_id;";
+        command.CommandText = SettingsSelect + " WHERE h.enabled = 1 ORDER BY h.machine_id;";
         var values = new List<HaasConnectionSettings>();
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token)) values.Add(ReadSettings(reader));
@@ -27,7 +27,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
     {
         await using var connection = await database.OpenConnectionAsync(token);
         await using var command = connection.CreateCommand();
-        command.CommandText = SettingsSelect + " WHERE machine_id = $machineId;";
+        command.CommandText = SettingsSelect + " WHERE h.machine_id = $machineId;";
         command.Parameters.AddWithValue("$machineId", machineId);
         await using var reader = await command.ExecuteReaderAsync(token);
         return await reader.ReadAsync(token) ? ReadSettings(reader) : null;
@@ -47,12 +47,12 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         {
             command.CommandText = """
                 INSERT INTO haas_connection_settings (
-                    machine_id, host, mdc_port, mtconnect_port, local_net_share_enabled,
+                    machine_id, host, mdc_port, mtconnect_port, dprnt_port, local_net_share_enabled,
                     local_net_share_path, credentials_reference, production_mode_variable,
                     legacy_variable_alias, part_counter_source, polling_interval_ms,
                     connection_timeout_ms, stable_program_polls, header_line_limit,
                     header_byte_limit, header_part_patterns_json, enabled, version, created_at, updated_at)
-                VALUES ($machineId, $host, $mdcPort, $mtConnectPort, $shareEnabled,
+                VALUES ($machineId, $host, $mdcPort, $mtConnectPort, $dprntPort, $shareEnabled,
                     $sharePath, $credentials, $variable, $legacy, $counterSource, $polling,
                     $timeout, $stable, $lineLimit, $byteLimit, $patterns, $enabled, 1, $createdAt, $updatedAt)
                 ON CONFLICT(machine_id) DO NOTHING;
@@ -62,7 +62,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         {
             command.CommandText = """
                 UPDATE haas_connection_settings SET
-                    host = $host, mdc_port = $mdcPort, mtconnect_port = $mtConnectPort,
+                    host = $host, mdc_port = $mdcPort, mtconnect_port = $mtConnectPort, dprnt_port = $dprntPort,
                     local_net_share_enabled = $shareEnabled, local_net_share_path = $sharePath,
                     credentials_reference = $credentials, production_mode_variable = $variable,
                     legacy_variable_alias = $legacy, part_counter_source = $counterSource,
@@ -694,6 +694,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         command.Parameters.AddWithValue("$host", value.Host);
         command.Parameters.AddWithValue("$mdcPort", value.MdcPort);
         command.Parameters.AddWithValue("$mtConnectPort", value.MtConnectPort);
+        command.Parameters.AddWithValue("$dprntPort", value.DprntPort);
         command.Parameters.AddWithValue("$shareEnabled", value.LocalNetShareEnabled);
         command.Parameters.AddWithValue("$sharePath", Db(value.LocalNetSharePath));
         command.Parameters.AddWithValue("$credentials", Db(value.CredentialsReference));
@@ -737,7 +738,9 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 value.PollingIntervalMs,
                 value.StableProgramPolls,
                 30000,
-                14));
+                14),
+            new HaasMtConnectConfiguration(value.MtConnectPort, value.ConnectionTimeoutMs, value.DprntPort),
+            value.TelemetryProvider);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -747,7 +750,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 allow_read, allow_write, configuration_json, username_secret_id,
                 password_secret_id, raw_telemetry_retention_days, version, created_at, updated_at)
             VALUES ($id, $machineId, 'HAAS_NGC', $enabled, $status,
-                $polling, $timeout, 30000, 1, 1, $configuration, $credential,
+                $polling, $timeout, 30000, 1, $allowWrite, $configuration, $credential,
                 NULL, 14, 1, $createdAt, $updatedAt)
             ON CONFLICT(machine_id) DO UPDATE SET
                 adapter_type = 'HAAS_NGC', enabled = excluded.enabled,
@@ -756,7 +759,11 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 connection_timeout_ms = excluded.connection_timeout_ms,
                 configuration_json = excluded.configuration_json,
                 username_secret_id = excluded.username_secret_id,
-                allow_read = 1, allow_write = 1,
+                allow_read = 1,
+                allow_write = CASE
+                    WHEN json_extract(excluded.configuration_json, '$.telemetryProvider') = 'MTCONNECT' THEN 0
+                    ELSE machine_connections.allow_write
+                END,
                 version = machine_connections.version + 1,
                 updated_at = excluded.updated_at;
             """;
@@ -766,6 +773,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         command.Parameters.AddWithValue("$status", value.Enabled ? CncConnectionStates.Offline : CncConnectionStates.Disabled);
         command.Parameters.AddWithValue("$polling", value.PollingIntervalMs);
         command.Parameters.AddWithValue("$timeout", value.ConnectionTimeoutMs);
+        command.Parameters.AddWithValue("$allowWrite",
+            value.TelemetryProvider == HaasTelemetryProviders.Mdc);
         command.Parameters.AddWithValue("$configuration", JsonSerializer.Serialize(configuration, CncJson.Options));
         command.Parameters.AddWithValue("$credential", Db(value.CredentialsReference));
         command.Parameters.AddWithValue("$createdAt", Format(value.CreatedAt));
@@ -774,19 +783,22 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
     }
 
     private static HaasConnectionSettings ReadSettings(SqliteDataReader reader) => new(
-        reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetBoolean(4),
-        NullableString(reader, 5), NullableString(reader, 6), reader.GetInt32(7), reader.GetInt32(8), reader.GetString(9),
-        reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14),
-        JsonSerializer.Deserialize<string[]>(reader.GetString(15), JsonOptions) ?? [], reader.GetBoolean(16),
-        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)));
+        reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetInt32(4), reader.GetBoolean(5),
+        NullableString(reader, 6), NullableString(reader, 7), reader.GetInt32(8), reader.GetInt32(9), reader.GetString(10),
+        reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15),
+        JsonSerializer.Deserialize<string[]>(reader.GetString(16), JsonOptions) ?? [], reader.GetBoolean(17),
+        reader.GetInt32(18), Parse(reader.GetString(19)), Parse(reader.GetString(20)), reader.GetString(21));
 
     private const string SettingsSelect = """
-        SELECT machine_id, host, mdc_port, mtconnect_port, local_net_share_enabled,
-               local_net_share_path, credentials_reference, production_mode_variable,
-               legacy_variable_alias, part_counter_source, polling_interval_ms,
-               connection_timeout_ms, stable_program_polls, header_line_limit,
-               header_byte_limit, header_part_patterns_json, enabled, version, created_at, updated_at
-        FROM haas_connection_settings
+        SELECT h.machine_id, h.host, h.mdc_port, h.mtconnect_port, h.dprnt_port, h.local_net_share_enabled,
+               h.local_net_share_path, h.credentials_reference, h.production_mode_variable,
+               h.legacy_variable_alias, h.part_counter_source, h.polling_interval_ms,
+               h.connection_timeout_ms, h.stable_program_polls, h.header_line_limit,
+               h.header_byte_limit, h.header_part_patterns_json, h.enabled, h.version,
+               h.created_at, h.updated_at,
+               COALESCE(json_extract(c.configuration_json, '$.telemetryProvider'), 'MDC')
+        FROM haas_connection_settings h
+        LEFT JOIN machine_connections c ON c.machine_id = h.machine_id
         """;
     private const string BenchSelect = """
         SELECT id, batch_operation_id, machine_id, state, machine_program_number,

@@ -30,6 +30,7 @@ internal sealed record TvMachine(
     string Name,
     string ProcessType,
     TvConnectionStatus Connection,
+    string? MachineStatus,
     TvStatus Status,
     TvJob? Current,
     TvJob? Next,
