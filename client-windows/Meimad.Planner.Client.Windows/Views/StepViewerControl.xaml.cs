@@ -52,10 +52,13 @@ public partial class StepViewerControl : UserControl
     private readonly List<int> referenceSelection = [];
     private bool isBuildingFaceReference;
     private int? referenceTriangleIndex;
+    private DispatcherOperation? pendingViewportRender;
+    private bool renderDeferredWhileHidden;
 
     public StepViewerControl()
     {
         InitializeComponent();
+        IsVisibleChanged += Viewer_IsVisibleChanged;
     }
 
     public bool HasModel => points.Count > 0;
@@ -77,6 +80,8 @@ public partial class StepViewerControl : UserControl
     public int RenderedEdgeCount { get; private set; }
 
     public int RenderedSurfaceTriangleCount { get; private set; }
+
+    internal int RenderInvocationCount { get; private set; }
 
     public string? LoadedPath { get; private set; }
 
@@ -431,6 +436,12 @@ public partial class StepViewerControl : UserControl
 
     private void RenderModel()
     {
+        if (pendingViewportRender is { Status: DispatcherOperationStatus.Pending })
+        {
+            pendingViewportRender.Abort();
+            pendingViewportRender = null;
+        }
+        RenderInvocationCount++;
         ModelCanvas.Children.Clear();
         EdgeSurface.Clear();
         SurfaceLayer.Clear();
@@ -907,13 +918,56 @@ public partial class StepViewerControl : UserControl
 
     private void Viewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        if (!HasModel)
+        {
+            return;
+        }
+
         if (!hasAutoFitForCurrentModel)
         {
             AutoFitCurrentModelOnce();
             return;
         }
 
-        RenderModel();
+        if (!IsVisible)
+        {
+            renderDeferredWhileHidden = true;
+            return;
+        }
+
+        RequestViewportRender();
+    }
+
+    private void Viewer_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (IsVisible && renderDeferredWhileHidden)
+        {
+            renderDeferredWhileHidden = false;
+            RequestViewportRender();
+        }
+    }
+
+    private void RequestViewportRender()
+    {
+        if (!HasModel
+            || !IsVisible
+            || ViewerRoot.ActualWidth <= 1
+            || ViewerRoot.ActualHeight <= 1
+            || pendingViewportRender is { Status: DispatcherOperationStatus.Pending })
+        {
+            return;
+        }
+
+        pendingViewportRender = Dispatcher.BeginInvoke(
+            DispatcherPriority.Render,
+            new Action(() =>
+            {
+                pendingViewportRender = null;
+                if (IsVisible && HasModel)
+                {
+                    RenderModel();
+                }
+            }));
     }
 
     internal void RotateForTest(double yawDelta, double pitchDelta)

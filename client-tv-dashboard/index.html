@@ -7,24 +7,26 @@
   <base href="/tv-dashboard/">
   <title>Meimad Machine Status</title>
   <meta name="description" content="Read-only factory-floor machine status dashboard">
-  <link rel="stylesheet" href="styles.css?v=0.1.22">
+  <link rel="stylesheet" href="styles.css?v=0.1.27">
 </head>
 <body>
   <header class="topbar">
-    <h1>Machine status</h1>
-    <span
-      id="server-status"
-      class="server-status server-status-connecting"
-      role="status"
-      aria-live="polite"
-      aria-label="Connecting"
-      title="Connecting"></span>
+    <h1 id="page-title">Machine status</h1>
+    <div class="topbar-tools">
+      <nav id="language-nav" class="language-nav" aria-label="Language">
+        <a href="?lang=en" data-language="en" lang="en">EN</a>
+        <a href="?lang=he" data-language="he" lang="he">עב</a>
+        <a href="?lang=ru" data-language="ru" lang="ru">РУ</a>
+      </nav>
+      <span id="server-status" class="server-status server-status-connecting"
+        role="status" aria-live="polite" aria-label="Connecting" title="Connecting"></span>
+    </div>
   </header>
 
   <main id="machine-grid" class="machine-grid" aria-live="polite" aria-busy="true">
     <div class="empty-state">Waiting for machine status</div>
   </main>
 
-  <script src="app.js?v=0.1.22" defer></script>
+  <script src="app.js?v=0.1.27" defer></script>
 </body>
 </html>

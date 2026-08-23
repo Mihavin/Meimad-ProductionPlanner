@@ -735,15 +735,26 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     internal void AttachSession(IPlannerApiClient? newApiClient, string newClientId, EditModeStatus? editStatus)
     {
-        if (!ReferenceEquals(apiClient, newApiClient))
+        var apiChanged = !ReferenceEquals(apiClient, newApiClient);
+        var nextGeneration = editStatus?.Generation ?? 0;
+        var nextIsEditor = editStatus?.State == ClientEditState.Editor;
+        if (!apiChanged
+            && string.Equals(clientId, newClientId, StringComparison.Ordinal)
+            && editGeneration == nextGeneration
+            && IsEditor == nextIsEditor)
+        {
+            return;
+        }
+
+        if (apiChanged)
         {
             apiClient = newApiClient;
             ClearPreview();
         }
 
         clientId = newClientId;
-        editGeneration = editStatus?.Generation ?? 0;
-        IsEditor = editStatus?.State == ClientEditState.Editor;
+        editGeneration = nextGeneration;
+        IsEditor = nextIsEditor;
         RaiseState();
     }
 

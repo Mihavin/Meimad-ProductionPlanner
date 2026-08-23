@@ -318,6 +318,10 @@ The baseline install/update method is implemented with WiX MSI packages. Final s
 
 Color may reinforce status but must never carry meaning alone. Every color is paired with text and/or an icon.
 
+The Windows client and TV dashboard support English, Hebrew, and Russian. They select the browser/operating-system language on first use and provide an explicit language selector. The choice persists locally. Hebrew uses right-to-left window flow while identifiers, Part Numbers, Machine Numbers, dates, durations, and other technical values retain their required representation. Server API values, SQLite values, paths, imported source data, and user-entered master data are never translated.
+
+Windows localization is event-driven. Loading a new control localizes that control, selecting a tab coalesces one pass over the newly realized tab tree, and rapid language changes coalesce to one pass over each open window. There is no recurring visual-tree localization scan while the client is idle, and persisting the language choice does not block the UI thread. Expensive Timeline and STEP drawings similarly coalesce layout/data changes, defer redraw while hidden, and redraw at most once when a dirty view becomes visible. The five-second Server refresh runs at background dispatcher priority, cannot overlap itself, and unchanged edit-session snapshots do not rebroadcast presentation state.
+
 | Color | Hex | Meaning |
 |---|---|---|
 | Blue | `#1E88E5` | Current / in progress |

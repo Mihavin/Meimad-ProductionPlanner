@@ -9,13 +9,15 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Meimad.Planner.Client.Windows</RootNamespace>
     <AssemblyName>Meimad.Planner.Client.Windows</AssemblyName>
-    <Version>0.1.22</Version>
+    <Version>0.1.27</Version>
     <ApplicationIcon>Assets\MeimadPlanner.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\ui-button-icons-template.png" />
     <Resource Include="Assets\MeimadPlanner.ico" />
+    <EmbeddedResource Include="Localization\strings.he.json" LogicalName="Meimad.Planner.Client.Windows.Localization.strings.he.json" Type="Non-Resx" WithCulture="false" />
+    <EmbeddedResource Include="Localization\strings.ru.json" LogicalName="Meimad.Planner.Client.Windows.Localization.strings.ru.json" Type="Non-Resx" WithCulture="false" />
   </ItemGroup>
 
   <ItemGroup>

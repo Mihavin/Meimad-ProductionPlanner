@@ -8,7 +8,7 @@
     <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
     <RootNamespace>Meimad.Planner.Server</RootNamespace>
     <AssemblyName>Meimad.Planner.Server</AssemblyName>
-    <Version>0.1.22</Version>
+    <Version>0.1.27</Version>
     <!-- Keep disposable local publish intermediates out of the SDK source glob. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);.publish-temp\**</DefaultItemExcludes>
   </PropertyGroup>

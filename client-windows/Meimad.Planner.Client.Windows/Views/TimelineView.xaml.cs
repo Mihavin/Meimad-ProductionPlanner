@@ -29,7 +29,11 @@ public partial class TimelineView : UserControl
     private bool isLoaded;
     private readonly Func<DateTimeOffset> nowProvider;
     private DispatcherTimer? currentTimeTimer;
+    private DispatcherOperation? pendingRender;
     private Canvas? currentTimeMarker;
+    private bool renderDirty = true;
+
+    internal int RenderInvocationCount { get; private set; }
 
     internal IReadOnlyList<string> RenderedMachineAssignmentIds => TimelineCanvas.Children
         .OfType<Border>()
@@ -67,30 +71,39 @@ public partial class TimelineView : UserControl
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs args)
     {
         DetachViewModel();
-        if (isLoaded)
-        {
-            AttachViewModel(args.NewValue as TimelineViewModel);
-        }
-
-        RenderTimeline();
+        AttachViewModel(args.NewValue as TimelineViewModel);
+        RequestRenderTimeline();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs args)
     {
         isLoaded = true;
         AttachViewModel(DataContext as TimelineViewModel);
-        RenderTimeline();
+        if (renderDirty)
+        {
+            RenderTimeline();
+        }
         StartCurrentTimeTimer();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs args)
     {
         isLoaded = false;
+        if (pendingRender is { Status: DispatcherOperationStatus.Pending })
+        {
+            pendingRender.Abort();
+        }
+        pendingRender = null;
         StopCurrentTimeTimer();
-        DetachViewModel();
     }
 
-    private void OnSizeChanged(object sender, SizeChangedEventArgs args) => RenderTimeline();
+    private void OnSizeChanged(object sender, SizeChangedEventArgs args)
+    {
+        if (isLoaded && args.WidthChanged && args.NewSize.Width > 1)
+        {
+            RequestRenderTimeline();
+        }
+    }
 
     private void AttachViewModel(TimelineViewModel? candidate)
     {
@@ -103,8 +116,13 @@ public partial class TimelineView : UserControl
         viewModel = candidate;
         if (viewModel is not null)
         {
-            viewModel.PropertyChanged += OnViewModelPropertyChanged;
-            viewModel.Machines.CollectionChanged += OnMachinesChanged;
+            PropertyChangedEventManager.AddHandler(
+                viewModel,
+                OnViewModelPropertyChanged,
+                string.Empty);
+            CollectionChangedEventManager.AddHandler(
+                viewModel.Machines,
+                OnMachinesChanged);
         }
     }
 
@@ -115,13 +133,18 @@ public partial class TimelineView : UserControl
             return;
         }
 
-        viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        viewModel.Machines.CollectionChanged -= OnMachinesChanged;
+        PropertyChangedEventManager.RemoveHandler(
+            viewModel,
+            OnViewModelPropertyChanged,
+            string.Empty);
+        CollectionChangedEventManager.RemoveHandler(
+            viewModel.Machines,
+            OnMachinesChanged);
         viewModel = null;
     }
 
     private void OnMachinesChanged(object? sender, NotifyCollectionChangedEventArgs args) =>
-        RenderTimeline();
+        RequestRenderTimeline();
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -134,12 +157,34 @@ public partial class TimelineView : UserControl
             or nameof(TimelineViewModel.SelectedDependencies)
             or nameof(TimelineViewModel.SelectedBatch))
         {
-            RenderTimeline();
+            RequestRenderTimeline();
         }
+    }
+
+    private void RequestRenderTimeline()
+    {
+        renderDirty = true;
+        if (!isLoaded || pendingRender is { Status: DispatcherOperationStatus.Pending })
+        {
+            return;
+        }
+
+        pendingRender = Dispatcher.BeginInvoke(
+            DispatcherPriority.Render,
+            new Action(() =>
+            {
+                pendingRender = null;
+                if (isLoaded)
+                {
+                    RenderTimeline();
+                }
+            }));
     }
 
     private void RenderTimeline()
     {
+        renderDirty = false;
+        RenderInvocationCount++;
         var stopwatch = Stopwatch.StartNew();
         currentTimeMarker = null;
         TimelineCanvas.Children.Clear();

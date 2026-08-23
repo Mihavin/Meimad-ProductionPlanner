@@ -8,6 +8,8 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Meimad.Planner.Client.Windows.Presentation;
 using Meimad.Planner.Client.Windows.Api;
+using Meimad.Planner.Client.Windows.Localization;
+using Meimad.Planner.Client.Windows.Tests.Localization;
 using Meimad.Planner.Client.Windows.Views;
 
 namespace Meimad.Planner.Client.Windows.Tests.Presentation;
@@ -51,6 +53,7 @@ public sealed class ViewStartupTests
         var currentTimeTimerStoppedOnUnload = false;
         string? renderedWaitingDescription = null;
         string? timelineStatusAfterClose = null;
+        IReadOnlyList<string> localizationFailures = [];
         var thread = new Thread(() =>
         {
             App? application = null;
@@ -66,6 +69,7 @@ public sealed class ViewStartupTests
                     ShutdownMode = ShutdownMode.OnExplicitShutdown
                 };
                 application.InitializeComponent();
+                LocalizationService.Current.SetLanguage("en", persist: false);
                 var thumbnail = new WriteableBitmap(2, 2, 96, 96, PixelFormats.Bgra32, null);
                 window = new Window
                 {
@@ -85,6 +89,8 @@ public sealed class ViewStartupTests
                     .Select(value => value.Text)
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .ToArray();
+                window.Close();
+                window = null;
 
                 plannerWindow = new MainWindow();
                 var loadedMethod = typeof(MainWindow).GetMethod(
@@ -99,6 +105,7 @@ public sealed class ViewStartupTests
                     loadedMethod);
                 plannerWindow.Show();
                 plannerWindow.UpdateLayout();
+                LocalizationInteractionPerformanceAudit.RunAndAssert(plannerWindow);
 
                 var plannerViewModel = Assert.IsType<MainWindowViewModel>(plannerWindow.DataContext);
                 var serverIndicator = Assert.IsType<Ellipse>(plannerWindow.FindName("ServerStatusIndicator"));
@@ -258,6 +265,8 @@ public sealed class ViewStartupTests
                 timelineRenderWindow.Show();
                 timelineRenderWindow.UpdateLayout();
                 timelineRenderWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                TimelineViewPerformanceAudit.RunAndAssert(renderTimeline, renderViewModel);
+                StepViewerPerformanceAudit.RunAndAssert();
                 oneAssignmentRenderedAsOneCanvasBlock =
                     renderTimeline.RenderedMachineAssignmentIds.Count(value => value == "assignment-render") == 1;
                 var renderedIntervalBlocks = Descendants<Border>(renderTimeline)
@@ -498,6 +507,36 @@ public sealed class ViewStartupTests
                 timelineWindow = Assert.IsType<TimelineWindow>(timelineField.GetValue(plannerWindow));
                 timelineWindowReopenedAfterClose = !ReferenceEquals(firstWindow, timelineWindow)
                     && ReferenceEquals(timelineViewModel, timelineWindow.DataContext);
+
+                var originalLanguage = LocalizationService.Current.CurrentLanguage;
+                var failures = new List<string>();
+                foreach (var language in new[] { "he", "ru" })
+                {
+                    failures.AddRange(AuditLocalizedWindow(plannerWindow, language, "main window"));
+                    failures.AddRange(AuditLocalizedWindow(timelineWindow, language, "timeline window"));
+
+                    var assignmentDialog = new AssignmentOverrideDialog(new AssignmentOverridePrompt(
+                        "PN-1 / OP10", "Mill 5x", "Machine 01", "Mill 3x"));
+                    assignmentDialog.Show();
+                    failures.AddRange(AuditLocalizedWindow(assignmentDialog, language, "assignment dialog"));
+                    assignmentDialog.Close();
+
+                    var pauseDialog = new OperationPauseDialog();
+                    pauseDialog.Show();
+                    failures.AddRange(AuditLocalizedWindow(pauseDialog, language, "pause dialog"));
+                    pauseDialog.Close();
+
+                    var readiness = new PlannerProductionReadiness(
+                        "NOT_READY", false, true, "Not ready: 1 blocking component(s)",
+                        [new("material", "Material", "UNVERIFIED", "Material is not confirmed.", true)],
+                        null, false, []);
+                    var readinessDialog = new ProductionReadinessDialog("PN-1 / OP10", readiness);
+                    readinessDialog.Show();
+                    failures.AddRange(AuditLocalizedWindow(readinessDialog, language, "readiness dialog"));
+                    readinessDialog.Close();
+                }
+                LocalizationService.Current.SetLanguage(originalLanguage, persist: false);
+                localizationFailures = failures.Distinct(StringComparer.Ordinal).ToArray();
             }
             catch (Exception exception)
             {
@@ -520,7 +559,7 @@ public sealed class ViewStartupTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "The WPF startup check timed out.");
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The WPF startup check timed out.");
         Assert.Null(startupException);
         Assert.DoesNotContain("Preview available", renderedText);
         Assert.True(timelineSharesViewModel);
@@ -530,6 +569,9 @@ public sealed class ViewStartupTests
         Assert.True(externalTimelineContainsOnlyGraphAndLegend);
         Assert.True(closedTimelineWasDetached);
         Assert.True(mainViewRemainedVisible);
+        Assert.True(
+            localizationFailures.Count == 0,
+            "English UI text remained after localization: " + string.Join(" | ", localizationFailures));
         Assert.True(serverIndicatorWasCompactAndAccessible);
         Assert.True(mainHeaderHidConnectionText);
         Assert.True(editModeButtonWasCompactAndStateful);
@@ -613,6 +655,118 @@ public sealed class ViewStartupTests
             foreach (var descendant in Descendants<T>(child))
             {
                 yield return descendant;
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> AuditLocalizedWindow(
+        Window window,
+        string language,
+        string surface)
+    {
+        LocalizationService.Current.SetLanguage(language, persist: false);
+        LocalizationBehavior.LocalizeWindow(window);
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+        var failures = new HashSet<string>(StringComparer.Ordinal);
+        var visitedTabs = new HashSet<TabControl>();
+        AuditVisibleText(window, language, surface, failures);
+        foreach (var tab in Descendants<TabControl>(window).ToArray())
+        {
+            VisitTabs(tab);
+        }
+
+        return failures.ToArray();
+
+        void VisitTabs(TabControl tabs)
+        {
+            if (!visitedTabs.Add(tabs))
+            {
+                return;
+            }
+
+            var originalIndex = tabs.SelectedIndex;
+            for (var index = 0; index < tabs.Items.Count; index++)
+            {
+                tabs.SelectedIndex = index;
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                LocalizationBehavior.LocalizeWindow(window);
+                AuditVisibleText(window, language, surface, failures);
+                foreach (var nested in Descendants<TabControl>(tabs).ToArray())
+                {
+                    VisitTabs(nested);
+                }
+            }
+            tabs.SelectedIndex = originalIndex;
+        }
+    }
+
+    private static void AuditVisibleText(
+        Window window,
+        string language,
+        string surface,
+        ISet<string> failures)
+    {
+        var objects = new List<DependencyObject> { window };
+        objects.AddRange(Descendants<DependencyObject>(window));
+        foreach (var item in objects)
+        {
+            if (item is FrameworkElement element)
+            {
+                Check(element.ToolTip as string);
+                Check(AutomationProperties.GetName(element));
+                Check(AutomationProperties.GetHelpText(element));
+            }
+            if (item is TextBlock textBlock)
+            {
+                Check(textBlock.Text);
+                foreach (var run in textBlock.Inlines.OfType<System.Windows.Documents.Run>())
+                {
+                    Check(run.Text);
+                }
+            }
+            if (item is ContentControl { Content: string content }) Check(content);
+            if (item is ContentPresenter { Content: string presenterContent }) Check(presenterContent);
+            if (item is HeaderedContentControl { Header: string header }) Check(header);
+            if (item is HeaderedItemsControl { Header: string itemsHeader }) Check(itemsHeader);
+            if (item is DataGrid dataGrid)
+            {
+                foreach (var column in dataGrid.Columns)
+                {
+                    Check(column.Header as string);
+                }
+            }
+            if (item is ListView { View: GridView gridView })
+            {
+                foreach (var column in gridView.Columns)
+                {
+                    Check(column.Header as string);
+                }
+            }
+        }
+
+        void Check(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)
+                || value is "English" or "עברית" or "Русский")
+            {
+                return;
+            }
+
+            var containsHebrew = value.Any(character => character is >= '\u0590' and <= '\u05ff');
+            var containsCyrillic = value.Any(character => character is >= '\u0400' and <= '\u04ff');
+            var wrongTranslatedLanguage = language == "he"
+                ? LocalizationService.Current.IsTranslation("ru", value)
+                : LocalizationService.Current.IsTranslation("he", value);
+            var untranslatedEnglish = !containsHebrew
+                && !containsCyrillic
+                && value.Any(character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z')
+                && LocalizationService.Current.HasTranslation(language, value);
+            if (wrongTranslatedLanguage || untranslatedEnglish)
+            {
+                failures.Add($"{language}/{surface}: {value}");
             }
         }
     }

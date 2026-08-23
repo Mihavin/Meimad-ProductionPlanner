@@ -22,6 +22,13 @@
         <Border Grid.Row="0" Background="#18324A" Padding="16,9">
             <DockPanel LastChildFill="True">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ComboBox x:Name="LanguageSelector" Width="118" Height="30" Margin="0,0,10,0"
+                              SelectedValuePath="Tag" SelectionChanged="LanguageSelector_SelectionChanged"
+                              ToolTip="Application language" AutomationProperties.Name="Application language">
+                        <ComboBoxItem Tag="en" Content="English" />
+                        <ComboBoxItem Tag="he" Content="עברית" FlowDirection="RightToLeft" />
+                        <ComboBoxItem Tag="ru" Content="Русский" />
+                    </ComboBox>
                     <Border Width="28" Height="28" Background="Transparent" Margin="0,0,8,0"
                             AutomationProperties.Name="Server connection status">
                         <Border.ToolTip>

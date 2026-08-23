@@ -661,7 +661,18 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         string newClientId,
         EditModeStatus? editStatus)
     {
-        if (!ReferenceEquals(apiClient, newApiClient))
+        var apiChanged = !ReferenceEquals(apiClient, newApiClient);
+        var nextIsEditor = editStatus?.State == ClientEditState.Editor;
+        var nextGeneration = editStatus?.Generation ?? 0;
+        if (!apiChanged
+            && string.Equals(clientId, newClientId, StringComparison.Ordinal)
+            && isEditor == nextIsEditor
+            && editGeneration == nextGeneration)
+        {
+            return;
+        }
+
+        if (apiChanged)
         {
             apiClient = newApiClient;
             hasLoaded = false;
@@ -669,8 +680,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
 
         clientId = newClientId;
-        isEditor = editStatus?.State == ClientEditState.Editor;
-        editGeneration = editStatus?.Generation ?? 0;
+        isEditor = nextIsEditor;
+        editGeneration = nextGeneration;
         LegacyImport.AttachSession(apiClient, clientId, editStatus);
         OnPropertyChanged(nameof(IsEditor));
         OnPropertyChanged(nameof(AuthorityText));
