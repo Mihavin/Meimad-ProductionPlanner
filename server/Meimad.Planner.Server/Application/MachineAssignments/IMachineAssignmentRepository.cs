@@ -43,6 +43,10 @@ internal interface IMachineAssignmentRepository
         DateTimeOffset now,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
+
+    Task<ManualOperationReportResult> RecordManualReportAsync(
+        string batchOperationId, ManualOperationReportType reportType, int? partTimeSeconds,
+        DateTimeOffset now, EditAuthority editAuthority, CancellationToken cancellationToken);
 }
 
 internal sealed record AssignmentMutationResult(
@@ -75,6 +79,11 @@ internal enum BatchOperationExecutionAction
     Finish,
     Reset
 }
+
+internal enum ManualOperationReportType { SetupStart, SetupEnd, PartTimeUpdate, ProductionEnd }
+
+internal sealed record ManualOperationReportResult(
+    string BatchOperationId, string MachineId, string ReportType, DateTimeOffset RecordedAt, int? PartTimeSeconds);
 
 internal sealed record BatchOperationExecutionResult(
     string BatchOperationId,

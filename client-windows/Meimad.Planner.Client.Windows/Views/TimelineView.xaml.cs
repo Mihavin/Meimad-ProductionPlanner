@@ -1188,9 +1188,17 @@ public partial class TimelineView : UserControl
                 }
 
                 var phaseX = hostWidth * (phaseStart - clippedHostStart).TotalSeconds / hostDurationSeconds;
-                var phaseWidth = Math.Max(
-                    1,
-                    hostWidth * (phaseEnd - phaseStart).TotalSeconds / hostDurationSeconds);
+                var calculatedPhaseWidth = hostWidth
+                    * (phaseEnd - phaseStart).TotalSeconds
+                    / hostDurationSeconds;
+                // Long horizons can reduce a legitimate setup/QA/reload phase to
+                // a sub-pixel sliver. Keep short phases discoverable in the
+                // rendered bar while preserving their exact tooltip timestamps.
+                var minimumPhaseWidth = phase.Type.Trim().Equals(
+                    "setup", StringComparison.OrdinalIgnoreCase) ? 3d : 1d;
+                var phaseWidth = Math.Min(
+                    Math.Max(minimumPhaseWidth, calculatedPhaseWidth),
+                    Math.Max(1, hostWidth - phaseX));
                 var segment = new Border
                 {
                     Width = phaseWidth,

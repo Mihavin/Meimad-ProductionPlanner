@@ -1444,6 +1444,10 @@ internal sealed record BatchOperationExecution(
     string Status,
     int Version);
 
+internal sealed record ManualOperationReport(
+    string BatchOperationId, string MachineId, string ReportType,
+    DateTimeOffset RecordedAt, int? PartTimeSeconds);
+
 internal sealed record OperationPauseRequest(
     string ReasonType,
     string? ProblemDescription = null,

@@ -685,6 +685,20 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    internal async Task RecordManualReportAsync(PlanningOperationViewModel operation, string reportType, int? partTimeSeconds = null)
+    {
+        if (apiClient is null || !isEditor || IsBusy || operation.MachineId is null) return;
+        IsBusy = true;
+        try
+        {
+            await apiClient.RecordManualOperationReportAsync(operation.BatchOperationId, reportType, partTimeSeconds, clientId, editGeneration);
+            AddFeedback("information", "Manual report recorded", $"{reportType} recorded for {operation.DisplayTitle}.");
+            StatusMessage = $"Manual report recorded: {reportType}.";
+        }
+        catch (Exception exception) when (IsExpected(exception)) { AddFeedback("blocking", "Manual report rejected", FriendlyMessage(exception)); StatusMessage = FriendlyMessage(exception); }
+        finally { IsBusy = false; }
+    }
+
     internal void ReportMoveFailure(Exception exception) =>
         StatusMessage = $"Operation move was not applied: {FriendlyMessage(exception)}";
 

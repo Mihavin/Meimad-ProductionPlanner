@@ -640,6 +640,32 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             actualMachineId);
     }
 
+    public async Task<ManualOperationReportResult> RecordManualReportAsync(
+        string batchOperationId, ManualOperationReportType reportType, int? partTimeSeconds,
+        DateTimeOffset now, EditAuthority editAuthority, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var execution = await ReadExecutionStateAsync(connection, transaction, batchOperationId, cancellationToken)
+            ?? throw new BatchOperationNotFoundException(batchOperationId);
+        if (execution.AssignmentId is null || execution.MachineId is null)
+            throw new BatchOperationNotAssignedException(batchOperationId);
+        var token = reportType switch
+        {
+            ManualOperationReportType.SetupStart => "setupStart",
+            ManualOperationReportType.SetupEnd => "setupEnd",
+            ManualOperationReportType.PartTimeUpdate => "partTimeUpdate",
+            _ => "productionEnd"
+        };
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
+            new StructuredEventWrite("manual_operation_reported", now, actor,
+                new Dictionary<string, string> { ["batchOperationId"] = batchOperationId, ["machineId"] = execution.MachineId },
+                token, null, null, new { reportType = token, partTimeSeconds }), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(batchOperationId, execution.MachineId, token, now, partTimeSeconds);
+    }
+
     private static async Task InsertPauseEventAsync(
         SqliteConnection connection, SqliteTransaction transaction, string operationId,
         OperationPauseReason reason, string pausedBy, DateTimeOffset now, CancellationToken token)

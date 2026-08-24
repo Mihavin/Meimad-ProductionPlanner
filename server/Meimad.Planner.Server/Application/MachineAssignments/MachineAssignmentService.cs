@@ -212,6 +212,18 @@ internal sealed class MachineAssignmentService
             cancellationToken);
     }
 
+    internal Task<ManualOperationReportResult> RecordManualReportAsync(
+        string batchOperationId, string reportType, int? partTimeSeconds,
+        EditAuthority editAuthority, CancellationToken cancellationToken = default)
+    {
+        if (!Enum.TryParse<ManualOperationReportType>(reportType, true, out var parsed))
+            throw new MachineAssignmentValidationException("reportType", "invalid", "reportType must be setupStart, setupEnd, partTimeUpdate, or productionEnd.");
+        if (parsed == ManualOperationReportType.PartTimeUpdate && (!partTimeSeconds.HasValue || partTimeSeconds <= 0))
+            throw new MachineAssignmentValidationException("partTimeSeconds", "required", "partTimeSeconds must be positive for a part time update.");
+        return repository.RecordManualReportAsync(batchOperationId.Trim(), parsed, partTimeSeconds,
+            timeProvider.GetUtcNow(), editAuthority, cancellationToken);
+    }
+
     private static OperationPauseReason? ValidatePauseReason(
         BatchOperationExecutionAction action,
         OperationPauseReason? value)

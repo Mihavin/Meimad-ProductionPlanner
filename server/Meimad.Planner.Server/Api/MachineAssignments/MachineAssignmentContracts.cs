@@ -21,6 +21,9 @@ internal sealed record SuspendOperationRequest(
     string? ReasonType, string? ProblemDescription, string? ToolingItemDescription,
     string? CustomerContactName, string? RequestDescription, string? Comment);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record ManualOperationReportRequest(string? ReportType, int? PartTimeSeconds);
+
 internal sealed record MachineAssignmentResponse(
     string MachineAssignmentId,
     string BatchOperationId,

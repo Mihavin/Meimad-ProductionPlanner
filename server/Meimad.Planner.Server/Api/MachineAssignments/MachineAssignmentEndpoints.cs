@@ -19,6 +19,7 @@ internal static class MachineAssignmentEndpoints
         operations.MapPost("/{batchOperationId}/suspend", SuspendAsync);
         operations.MapPost("/{batchOperationId}/finish", FinishAsync);
         operations.MapPost("/{batchOperationId}/reset", ResetAsync);
+        operations.MapPost("/{batchOperationId}/manual-report", ManualReportAsync);
     }
 
     private static async Task<IResult> AssignOrMoveAsync(
@@ -211,6 +212,20 @@ internal static class MachineAssignmentEndpoints
             context,
             service,
             cancellationToken);
+
+    private static async Task<IResult> ManualReportAsync(
+        string batchOperationId, ManualOperationReportRequest request, HttpContext context,
+        MachineAssignmentService service, CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var accessError)) return accessError!;
+        try
+        {
+            var result = await service.RecordManualReportAsync(batchOperationId, request.ReportType ?? string.Empty,
+                request.PartTimeSeconds, authority!, cancellationToken);
+            return Results.Ok(result);
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var error)) { return error!; }
+    }
 
     private static async Task<IResult> ChangeExecutionStatusAsync(
         string batchOperationId,

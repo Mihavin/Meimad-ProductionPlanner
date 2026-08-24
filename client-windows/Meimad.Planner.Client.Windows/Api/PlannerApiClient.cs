@@ -568,6 +568,11 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ManualOperationReport> RecordManualOperationReportAsync(
+        string batchOperationId, string reportType, int? partTimeSeconds,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<LegacyWorkingPlanPreview> PreviewLegacyWorkingPlanAsync(
         Stream workbook,
         string fileName,
@@ -2036,6 +2041,18 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(pause, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<BatchOperationExecution>(response, cancellationToken);
+    }
+
+    public async Task<ManualOperationReport> RecordManualOperationReportAsync(
+        string batchOperationId, string reportType, int? partTimeSeconds,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/manual-report", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new { reportType, partTimeSeconds }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ManualOperationReport>(response, cancellationToken);
     }
 
     public void Dispose()

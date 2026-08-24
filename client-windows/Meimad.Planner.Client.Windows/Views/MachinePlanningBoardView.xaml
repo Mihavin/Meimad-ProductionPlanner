@@ -174,6 +174,11 @@
                                   IsEnabled="{Binding CanEditReadiness}"
                                   Click="ProductionReadinessMenu_Click"
                                   AutomationProperties.Name="Production readiness" />
+                        <Separator />
+                        <MenuItem Header="Setup start" Tag="setupStart" Click="ManualReport_Click" />
+                        <MenuItem Header="Setup end" Tag="setupEnd" Click="ManualReport_Click" />
+                        <MenuItem Header="Manual part time update" Tag="partTimeUpdate" Click="ManualReport_Click" />
+                        <MenuItem Header="Production end" Tag="productionEnd" Click="ManualReport_Click" />
                     </ContextMenu>
                 </Border.ContextMenu>
                 <Grid>

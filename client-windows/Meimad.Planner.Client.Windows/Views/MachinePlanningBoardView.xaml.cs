@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using Meimad.Planner.Client.Windows.Presentation;
 using Microsoft.Win32;
+using Microsoft.VisualBasic;
 
 namespace Meimad.Planner.Client.Windows.Views;
 
@@ -87,6 +88,23 @@ public partial class MachinePlanningBoardView : UserControl
 
     private async void ResetOperation_Click(object sender, RoutedEventArgs e) =>
         await ChangeOperationExecutionAsync(sender, "reset");
+
+    private async void ManualReport_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem item ||
+            item.Parent is not ContextMenu { PlacementTarget: FrameworkElement target } ||
+            target.DataContext is not PlanningOperationViewModel operation ||
+            DataContext is not MachinePlanningBoardViewModel viewModel) return;
+        var reportType = item.Tag?.ToString() ?? string.Empty;
+        int? seconds = null;
+        if (reportType == "partTimeUpdate")
+        {
+            var value = Interaction.InputBox("Enter manual part time in seconds:", "Manual part time update", "0");
+            if (!int.TryParse(value, out var parsed) || parsed <= 0) return;
+            seconds = parsed;
+        }
+        await viewModel.RecordManualReportAsync(operation, reportType, seconds);
+    }
 
     private async void ScheduleBackward_Click(object sender, RoutedEventArgs e) =>
         await ChangePlanningModeAsync(sender, "backward");
