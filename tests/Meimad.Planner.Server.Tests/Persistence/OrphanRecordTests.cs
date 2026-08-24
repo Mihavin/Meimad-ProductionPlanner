@@ -69,6 +69,6 @@ public sealed class OrphanRecordTests
             await command.ExecuteNonQueryAsync());
 
         Assert.Equal(19, exception.SqliteErrorCode);
-        Assert.Equal(787, exception.SqliteExtendedErrorCode);
+        Assert.Contains(exception.SqliteExtendedErrorCode, new[] { 787, 1811 });
     }
 }

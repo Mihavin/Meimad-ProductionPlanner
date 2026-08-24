@@ -10,7 +10,26 @@ internal interface IPlanningBoardRepository
 internal sealed record PlanningBoardSnapshot(
     DateTimeOffset ReadAt,
     IReadOnlyList<PlanningBoardOperation> Pool,
-    IReadOnlyList<PlanningBoardMachine> Machines);
+    IReadOnlyList<PlanningBoardMachine> Machines,
+    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns = null);
+
+internal sealed record ProductionRunPlanningCard(
+    string ProductionRunId, string Status, string? MachineId, int? BacklogPosition,
+    int SharedSetupSeconds, int ProgramCount, long RemainingDurationSeconds,
+    string ReadinessState, bool IsReady, IReadOnlyList<ProductionRunPlanningProgram> Programs);
+internal sealed record ProductionRunPlanningProgram(
+    string ProductionRunProgramId, string ManufacturingProgramId, string? GCodeReleaseId,
+    int SequencePosition, int TargetCycles, int CompletedCycles, long ForecastCompletionOffsetSeconds,
+    IReadOnlyList<ProductionRunPlanningOutput> Outputs);
+internal sealed record ProductionRunPlanningOutput(
+    string ProductionRunOutputId, string BatchOperationId, string BatchNumber,
+    string CaseId, string PartNumber, int OperationNumber, int QuantityPerCycle,
+    int TargetQuantity, int ProducedQuantity, int RemainingQuantity);
+
+internal interface IProductionRunPlanningProjectionRepository
+{
+    Task<IReadOnlyList<ProductionRunPlanningCard>> ReadAsync(CancellationToken token);
+}
 
 internal sealed record PlanningBoardOperation(
     string BatchOperationId,

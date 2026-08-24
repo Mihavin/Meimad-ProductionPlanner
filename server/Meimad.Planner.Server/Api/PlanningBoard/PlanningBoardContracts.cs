@@ -9,7 +9,8 @@ internal sealed record PlanningBoardResponse(
     string ConflictCalculationMessage,
     IReadOnlyList<PlanningBoardConflictResponse> Conflicts,
     IReadOnlyList<PlanningBoardOperationResponse> Pool,
-    IReadOnlyList<PlanningBoardMachineResponse> Machines)
+    IReadOnlyList<PlanningBoardMachineResponse> Machines,
+    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns)
 {
     internal static PlanningBoardResponse FromApplication(PlanningBoardSnapshot snapshot) => new(
         snapshot.ReadAt,
@@ -17,7 +18,8 @@ internal sealed record PlanningBoardResponse(
         "The pure time engine is not connected to the planning-board projection yet.",
         [],
         snapshot.Pool.Select(PlanningBoardOperationResponse.FromApplication).ToArray(),
-        snapshot.Machines.Select(PlanningBoardMachineResponse.FromApplication).ToArray());
+        snapshot.Machines.Select(PlanningBoardMachineResponse.FromApplication).ToArray(),
+        snapshot.ProductionRuns ?? []);
 }
 
 internal sealed record PlanningBoardConflictResponse(

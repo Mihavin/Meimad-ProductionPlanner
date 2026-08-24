@@ -10,7 +10,15 @@ internal sealed record TimelineProjection(
     IReadOnlyList<TimelineProjectionConflict> Conflicts,
     string DisplayTimeZoneId,
     string DayStartsAtLocal,
-    string DayEndsAtLocal);
+    string DayEndsAtLocal,
+    IReadOnlyList<TimelineProductionRunProjection>? ProductionRuns = null);
+
+internal sealed record TimelineProductionRunProjection(
+    string ProductionRunId, string MachineId, DateTimeOffset StartsAt, DateTimeOffset EndsAt,
+    IReadOnlyList<TimelineProductionRunProgramCompletion> ProgramCompletions);
+internal sealed record TimelineProductionRunProgramCompletion(
+    string ProductionRunProgramId, DateTimeOffset CompletesAt,
+    IReadOnlyList<string> ProductionRunOutputIds);
 
 internal sealed record TimelineProjectionBatch(
     string BatchId,

@@ -460,6 +460,10 @@ internal interface IPlannerApiClient : IDisposable
     Task<PlanningBoardSnapshot> GetPlanningBoardAsync(
         CancellationToken cancellationToken = default);
 
+    Task<ProductionRunResource> CreateProductionRunAsync(
+        ProductionRunCreate value, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<PlannerProductionReadiness> GetProductionReadinessAsync(
         string batchOperationId,
         CancellationToken cancellationToken = default) =>
@@ -1814,6 +1818,17 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     {
         using var response = await httpClient.GetAsync("api/v1/planning-board", cancellationToken);
         return await ReadSuccessAsync<PlanningBoardSnapshot>(response, cancellationToken);
+    }
+
+    public async Task<ProductionRunResource> CreateProductionRunAsync(
+        ProductionRunCreate value, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/production-runs", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(value);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ProductionRunResource>(response, cancellationToken);
     }
 
     public async Task<PlannerProductionReadiness> GetProductionReadinessAsync(

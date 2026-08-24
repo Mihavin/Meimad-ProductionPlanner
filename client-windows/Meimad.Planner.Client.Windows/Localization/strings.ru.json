@@ -2426,4 +2426,16 @@
     "עברית":  "עברית",
     "🔒 View Mode — read only":  "🔒 Режим просмотра — только чтение",
     "🔓 Edit Mode — you are the editor":  "🔓 Режим редактирования — вы редактор"
+,   "Create Production Run": "Создать производственный запуск",
+    "Create Production Run...": "Создать производственный запуск...",
+    "Production Run": "Производственный запуск",
+    "Shared setup (seconds)": "Общая наладка (секунды)",
+    "Program group": "Группа программ",
+    "Manufacturing Program": "Производственная программа",
+    "Revision output": "Выход ревизии",
+    "Per cycle": "За цикл",
+    "Target": "Цель",
+    "Cycles": "Циклы",
+    "Cycle seconds": "Секунд на цикл",
+    "Rows sharing a Program group are coupled: every NC cycle produces every output. Different groups stop independently.": "Строки одной группы связаны: каждый цикл ЧПУ производит все выходы. Разные группы останавливаются независимо."
 }

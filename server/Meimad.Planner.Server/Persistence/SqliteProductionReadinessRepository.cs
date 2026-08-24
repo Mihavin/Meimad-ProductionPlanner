@@ -136,6 +136,20 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
+            UPDATE production_run_programs
+            SET process_revision_id = $processRevisionId,
+                selected_gcode_release_id = $releaseId,
+                legacy_unmanaged = CASE WHEN $processRevisionId IS NULL THEN 1 ELSE 0 END,
+                version = version + 1,
+                updated_at = $updatedAt
+            WHERE production_run_id = (
+                    SELECT production_run_id FROM machine_assignments WHERE id = $assignmentId)
+              AND EXISTS (
+                    SELECT 1 FROM production_runs run
+                    WHERE run.id = production_run_programs.production_run_id
+                      AND run.status IN ('DRAFT','PLANNED')
+                      AND run.legacy_batch_operation_id = $batchOperationId);
+
             UPDATE machine_assignments
             SET selected_gcode_release_id = $releaseId,
                 version = version + CASE
@@ -147,6 +161,8 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
         command.Parameters.AddWithValue("$releaseId", (object?)selectedReleaseId ?? DBNull.Value);
         command.Parameters.AddWithValue("$updatedAt", Iso(now));
         command.Parameters.AddWithValue("$assignmentId", context.MachineAssignmentId);
+        command.Parameters.AddWithValue("$processRevisionId", (object?)context.ActiveProcessRevisionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$batchOperationId", context.BatchOperationId);
         await command.ExecuteNonQueryAsync(token);
     }
 

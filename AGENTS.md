@@ -30,7 +30,9 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
    - A **Case** is the permanent part master and has no production quantity by itself.
    - An **Order** is demand under a Case and is never assigned directly to a Machine.
    - A **Production Batch** is an actual production launch.
-   - A **Batch Operation** is the schedulable unit assigned to a Machine.
+   - A **Batch Operation** is the concrete route and quantity obligation for one Production Batch.
+   - A **Manufacturing Program** is a reusable approved recipe; its immutable revision declares one or more Case Operation outputs.
+   - A **Production Run** is one concrete physical Machine session and becomes the schedulable backlog unit. Existing single-operation work is represented by a one-program, one-output run.
 9. Make every batch allocation explicit across selected Orders, stock quantity, and scrap allowance. Do not make Meimad Planner authoritative for warehouse inventory; ERP remains authoritative for stock.
 10. Preserve dependency meanings:
     - **Sequential:** the dependent operation occurs after its required predecessor and cannot overlap it.
@@ -53,6 +55,7 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 24. Keep ESP32 hardware and firmware as a separate project boundary, started only after the E-Ink server API is stable.
 25. Allow a development Server executable/console host, but target a Windows Service on a designated factory PC or local Server for production.
 26. Do not implement deferred features - automatic planning, ERP synchronization, native mobile apps, full Android-tablet behavior, full tool inventory, tablet write-back, Customer Portal, official CNC transfer, rechargeable-device charging, or OTA firmware update - without an explicit scope decision.
+27. For multi-output work, keep coupled outputs atomic per NC program cycle, forbid rounding and overproduction, and make run structure immutable after its first program starts. Follow the accepted and implemented decisions in `docs/production-run-architecture.md`; schemas v45–v47 own Manufacturing Programs, Production Runs, and idempotent cycle observations.
 
 ## Engineering boundaries
 

@@ -15,6 +15,186 @@ namespace Meimad.Planner.Server.Tests.GCode;
 public sealed class GCodeReleaseApiTests
 {
     [Fact]
+    public async Task Manufacturing_program_api_creates_immutable_multi_output_revisions_and_rejects_invalid_recipes()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            await using (var connection = await application.Services
+                             .GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
+                    VALUES ('case-op-2', 'case-1', 20, 1, 'Deburr');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var initial = await ReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Initial program",
+                Encoding.UTF8.GetBytes("G21 G90\nM30\n"),
+                Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false,
+                processDescription: "Initial single-output process");
+
+            using (var compatibility = await client.GetAsync(
+                       "/api/v1/manufacturing-programs/case-operation:case-op-1"))
+            {
+                compatibility.EnsureSuccessStatusCode();
+                using var json = JsonDocument.Parse(await compatibility.Content.ReadAsStringAsync());
+                var output = json.RootElement.GetProperty("activeRevision").GetProperty("outputs")[0];
+                Assert.Equal("case-op-1", output.GetProperty("caseOperationId").GetString());
+                Assert.Equal(1, output.GetProperty("quantityPerCycle").GetInt32());
+            }
+
+            var local = await ReleaseAsync(
+                client, "post-a", "LOCAL_POST_REVISION", "Post-only correction",
+                Encoding.UTF8.GetBytes("G21 G90\nG4 X1\nM30\n"), null,
+                confirmNewProcess: false, reuseActiveTools: true);
+            Assert.Equal(initial.ProcessRevisionId, local.ProcessRevisionId);
+            using (var compatibility = await client.GetAsync(
+                       "/api/v1/manufacturing-programs/case-operation:case-op-1"))
+            {
+                compatibility.EnsureSuccessStatusCode();
+                using var json = JsonDocument.Parse(await compatibility.Content.ReadAsStringAsync());
+                var output = json.RootElement.GetProperty("activeRevision").GetProperty("outputs")[0];
+                Assert.Equal(1, output.GetProperty("quantityPerCycle").GetInt32());
+                Assert.Single(json.RootElement.GetProperty("revisions").EnumerateArray());
+            }
+
+            using (var catalogResponse = await client.GetAsync(
+                       "/api/v1/cases/case-1/operations/case-op-1/gcode"))
+            {
+                catalogResponse.EnsureSuccessStatusCode();
+                using var catalog = JsonDocument.Parse(await catalogResponse.Content.ReadAsStringAsync());
+                var estimate = catalog.RootElement.GetProperty("releases")[0]
+                    .GetProperty("machineCycleEstimates")[0];
+                Assert.Equal("NC_PROGRAM_EXECUTION_CYCLE", estimate.GetProperty("estimateBasis").GetString());
+            }
+
+            using var created = await client.PostAsJsonAsync("/api/v1/manufacturing-programs", new
+            {
+                name = "Two-up mill and deburr",
+                sourceProcessRevisionId = initial.ProcessRevisionId,
+                changeDescription = "Initial two-output recipe",
+                outputs = new object[]
+                {
+                    new { caseOperationId = "case-op-1", quantityPerCycle = 2, displayOrder = 0, executionMetadataJson = "{\"station\":\"mill\"}" },
+                    new { caseOperationId = "case-op-2", quantityPerCycle = 1, displayOrder = 1, executionMetadataJson = "{\"station\":\"deburr\"}" }
+                }
+            });
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var programId = createdJson.RootElement.GetProperty("manufacturingProgramId").GetString()!;
+            var revision1 = createdJson.RootElement.GetProperty("activeRevision").GetProperty("processRevisionId").GetString()!;
+            Assert.Equal(2, createdJson.RootElement.GetProperty("activeRevision").GetProperty("outputs").GetArrayLength());
+
+            var combinedNc = Encoding.UTF8.GetBytes("O2000\n(PART: TWO-UP)\nG21 G90\nM30\n");
+            using (var content = new MultipartFormDataContent())
+            {
+                content.Add(new StringContent("post-a"), "postprocessorId");
+                content.Add(new StringContent("LOCAL_POST_REVISION"), "changeScope");
+                content.Add(new StringContent("First combined release"), "releaseComment");
+                content.Add(new StringContent("First combined release"), "processChangeDescription");
+                content.Add(new StringContent("false"), "confirmNewProcessRevision");
+                content.Add(new StringContent("true"), "reuseActiveToolTable");
+                content.Add(new StringContent("true"), "confirmToolTable");
+                content.Add(new ByteArrayContent(combinedNc), "gcodeFile", "combined.nc");
+                using var release = await client.PostAsync(
+                    $"/api/v1/manufacturing-programs/{programId}/gcode-releases", content);
+                Assert.Equal(HttpStatusCode.Created, release.StatusCode);
+                using var releaseJson = JsonDocument.Parse(await release.Content.ReadAsStringAsync());
+                var combinedReleaseId = releaseJson.RootElement.GetProperty("gCodeReleaseId").GetString()!;
+                var combinedHash = releaseJson.RootElement.GetProperty("fileHash").GetString()!;
+                Assert.Equal(Sha256(combinedNc), combinedHash);
+
+                using var download = await client.GetAsync(
+                    $"/api/v1/manufacturing-programs/{programId}/gcode-releases/{combinedReleaseId}/file");
+                download.EnsureSuccessStatusCode();
+                Assert.Equal(combinedNc, await download.Content.ReadAsByteArrayAsync());
+                Assert.Equal(combinedHash,
+                    download.Headers.GetValues("X-Meimad-Checksum-SHA256").Single());
+            }
+
+            using (var history = await client.GetAsync($"/api/v1/manufacturing-programs/{programId}"))
+            {
+                history.EnsureSuccessStatusCode();
+                using var historyJson = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
+                Assert.Single(historyJson.RootElement.GetProperty("releases").EnumerateArray());
+                Assert.Equal(revision1,
+                    historyJson.RootElement.GetProperty("releases")[0].GetProperty("processRevisionId").GetString());
+            }
+
+            client.DefaultRequestHeaders.TryAddWithoutValidation(
+                "If-Match", $"\"manufacturing-program:{programId}:v1\"");
+            using var revised = await client.PostAsJsonAsync($"/api/v1/manufacturing-programs/{programId}/revisions", new
+            {
+                sourceProcessRevisionId = revision1,
+                changeDescription = "Run three mill parts per cycle",
+                outputs = new object[]
+                {
+                    new { caseOperationId = "case-op-1", quantityPerCycle = 3, displayOrder = 0, executionMetadataJson = "{\"station\":\"mill\"}" },
+                    new { caseOperationId = "case-op-2", quantityPerCycle = 1, displayOrder = 1, executionMetadataJson = "{\"station\":\"deburr\"}" }
+                }
+            });
+            Assert.Equal(HttpStatusCode.Created, revised.StatusCode);
+            using var revisedJson = JsonDocument.Parse(await revised.Content.ReadAsStringAsync());
+            var revisions = revisedJson.RootElement.GetProperty("revisions");
+            Assert.Equal(2, revisions.GetArrayLength());
+            Assert.Equal(3, revisions[0].GetProperty("outputs")[0].GetProperty("quantityPerCycle").GetInt32());
+            Assert.Equal(2, revisions[1].GetProperty("outputs")[0].GetProperty("quantityPerCycle").GetInt32());
+            Assert.True(revisions[0].GetProperty("isActive").GetBoolean());
+            Assert.False(revisions[1].GetProperty("isActive").GetBoolean());
+
+            client.DefaultRequestHeaders.Remove("If-Match");
+            client.DefaultRequestHeaders.TryAddWithoutValidation(
+                "If-Match", $"\"manufacturing-program:{programId}:v2\"");
+
+            using var duplicate = await client.PostAsJsonAsync($"/api/v1/manufacturing-programs/{programId}/revisions", new
+            {
+                sourceProcessRevisionId = revision1,
+                changeDescription = "Invalid duplicate",
+                outputs = new object[]
+                {
+                    new { caseOperationId = "case-op-1", quantityPerCycle = 1, displayOrder = 0 },
+                    new { caseOperationId = "case-op-1", quantityPerCycle = 1, displayOrder = 1 }
+                }
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, duplicate.StatusCode);
+
+            using var zero = await client.PostAsJsonAsync($"/api/v1/manufacturing-programs/{programId}/revisions", new
+            {
+                sourceProcessRevisionId = revision1,
+                changeDescription = "Invalid zero",
+                outputs = new[] { new { caseOperationId = "case-op-1", quantityPerCycle = 0, displayOrder = 0 } }
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, zero.StatusCode);
+
+            using var negative = await client.PostAsJsonAsync($"/api/v1/manufacturing-programs/{programId}/revisions", new
+            {
+                sourceProcessRevisionId = revision1,
+                changeDescription = "Invalid negative",
+                outputs = new[] { new { caseOperationId = "case-op-1", quantityPerCycle = -1, displayOrder = 0 } }
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, negative.StatusCode);
+
+            await using var verify = await application.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+            await using var active = verify.CreateCommand();
+            active.CommandText = "SELECT COUNT(*) FROM process_revisions WHERE manufacturing_program_id = $id AND is_active = 1;";
+            active.Parameters.AddWithValue("$id", programId);
+            Assert.Equal(1L, (long)(await active.ExecuteScalarAsync())!);
+
+            await using var immutable = verify.CreateCommand();
+            immutable.CommandText = "UPDATE manufacturing_program_revision_outputs SET quantity_per_cycle = 99 WHERE process_revision_id = $id;";
+            immutable.Parameters.AddWithValue("$id", revision1);
+            var exception = await Assert.ThrowsAsync<SqliteException>(() => immutable.ExecuteNonQueryAsync());
+            Assert.Contains("immutable", exception.Message, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
     public async Task Task8_end_to_end_workflow_preserves_history_recalculates_readiness_and_audits_changes()
     {
         await RunAsync(async (application, client, _) =>

@@ -2,6 +2,10 @@
 
 The eleven-item task list extends existing authority boundaries: staged Case/Order import, a Batch route guard, Batch-Operation backlog/criticality projection, schema-v26 external delay and master-calendar layering, shared icons/application icon, STEP bounding/reference tools, and the row TV dashboard.
 
+## Multi-output Production Run workstream
+
+Task 1 was accepted on 2026-08-23. Tasks 2–10 are implemented: schema v45 adds reusable Manufacturing Programs, v46 adds Production Runs and assignment migration, and v47 adds durable idempotent cycle observations. Server APIs cover composition, allocation, assignment, readiness, execution, cancellation, and reads. Planning Board and Timeline expose compressed run/program projections; Windows provides the multi-select Production Run dialog; normalized CNC observations resolve and advance exactly one active program. The architecture impact map remains authoritative.
+
 - **Status:** Server foundation, SQLite schema v26, staged legacy Excel working-plan import, core planning-resource and Setup slices, extended Operation timing, Machine maintenance/breakdown lifecycle, assignment-owned planning modes, derived Batch/Order lifecycles, one canonical embedded/separate-window Timeline, compact Machine Board, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, and Windows Case/Operation/Order/Batch/Machine/Machine-Type/Calendar/Machine-Availability/administrative workspaces implemented; package approval/retention and full conflict policy remain unimplemented
 - **Sequence source:** Functional Specification v0.3, expanded with decision and verification gates
 
@@ -74,7 +78,7 @@ The following order is preserved exactly from the v0.3 functional source:
 
 ## 5. Phase 2 - SQLite schema and migrations
 
-**Status:** Schema versions 1 through 37 implemented. Verified database backup is implemented; released G-code storage must be included in the operational backup policy.
+**Status:** Schema versions 1 through 45 implemented. Verified database backup is implemented; released G-code storage must be included in the operational backup policy.
 
 ### Scope
 

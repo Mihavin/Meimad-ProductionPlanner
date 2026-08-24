@@ -6,6 +6,7 @@ using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.Readiness;
 using Meimad.Planner.Server.Domain.Readiness;
+using Meimad.Planner.Server.Application.PlanningBoard;
 
 namespace Meimad.Planner.Server.Application.Timeline;
 
@@ -20,6 +21,7 @@ internal sealed class TimelineProjectionService
     private readonly IStructuredEventLogRepository eventLog;
     private readonly IProductionReadinessRepository? readinessRepository;
     private readonly ILogger<TimelineProjectionService> logger;
+    private readonly IProductionRunPlanningProjectionRepository? productionRuns;
 
     public TimelineProjectionService(
         ITimelineSourceRepository repository,
@@ -27,7 +29,8 @@ internal sealed class TimelineProjectionService
         TimelineOptions options,
         IStructuredEventLogRepository eventLog,
         ILogger<TimelineProjectionService> logger,
-        IProductionReadinessRepository? readinessRepository = null)
+        IProductionReadinessRepository? readinessRepository = null,
+        IProductionRunPlanningProjectionRepository? productionRuns = null)
     {
         this.repository = repository;
         this.engine = engine;
@@ -35,6 +38,7 @@ internal sealed class TimelineProjectionService
         this.eventLog = eventLog;
         this.readinessRepository = readinessRepository;
         this.logger = logger;
+        this.productionRuns = productionRuns;
     }
 
     internal async Task<TimelineProjection> CalculateAsync(
@@ -666,6 +670,23 @@ internal sealed class TimelineProjectionService
             .OrderBy(batch => batch.PartNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(batch => batch.BatchNumber, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var runCards = productionRuns is null ? [] : await productionRuns.ReadAsync(cancellationToken);
+        var runIntervals = new List<TimelineProductionRunProjection>();
+        foreach (var machineGroup in runCards.Where(value => value.MachineId is not null)
+                     .GroupBy(value => value.MachineId!, StringComparer.Ordinal))
+        {
+            var cursor = forecastCursor;
+            foreach (var card in machineGroup.OrderBy(value => value.BacklogPosition))
+            {
+                var starts = cursor;
+                var ends = starts.AddSeconds(card.RemainingDurationSeconds);
+                runIntervals.Add(new(card.ProductionRunId, machineGroup.Key, starts, ends,
+                    card.Programs.Select(program => new TimelineProductionRunProgramCompletion(
+                        program.ProductionRunProgramId, starts.AddSeconds(program.ForecastCompletionOffsetSeconds),
+                        program.Outputs.Select(output => output.ProductionRunOutputId).ToArray())).ToArray()));
+                cursor = ends;
+            }
+        }
         var projection = new TimelineProjection(
             source.ReadAt,
             horizonStart,
@@ -676,7 +697,8 @@ internal sealed class TimelineProjectionService
             allConflicts,
             options.TimeZoneId,
             options.DayShiftStartsAtLocal,
-            options.DayShiftEndsAtLocal);
+            options.DayShiftEndsAtLocal,
+            runIntervals);
         total.Stop();
         logger.LogInformation(
             "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; backward fallbacks {BackwardFallbackCount}; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",

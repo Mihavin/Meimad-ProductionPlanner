@@ -32,6 +32,11 @@ public sealed class MigrationTests
         "verified_material_receipts",
         "batch_material_reservations",
         "process_revisions",
+        "manufacturing_programs",
+        "production_runs",
+        "production_run_programs",
+        "production_run_outputs",
+        "production_run_cycle_events",
         "gcode_releases",
         "setup_calendar_settings",
         "employee_resources",
@@ -57,7 +62,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(44L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(47L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -160,6 +165,10 @@ public sealed class MigrationTests
         Assert.Equal("cnc_connection_platform", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 44;";
         Assert.Equal("haas_dprnt_part_port", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 45;";
+        Assert.Equal("manufacturing_programs", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 46;";
+        Assert.Equal("production_runs_and_assignment_ownership", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
@@ -249,7 +258,109 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(44L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(47L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Version_45_preserves_multi_revision_release_history_and_adds_single_output_recipes()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        {
+            await DowngradeToV45Async(connection);
+            await using var setup = connection.CreateCommand();
+            setup.CommandText = """
+                DROP TRIGGER case_operations_create_default_manufacturing_program;
+                DROP TRIGGER manufacturing_program_outputs_immutable_delete;
+                DROP TRIGGER manufacturing_program_outputs_immutable_update;
+                DROP TRIGGER process_revisions_program_immutable;
+                DROP TABLE manufacturing_program_revision_outputs;
+                DROP INDEX ix_process_revisions_program_history;
+                DROP INDEX ux_process_revisions_active_program;
+                CREATE UNIQUE INDEX ux_process_revisions_active_operation
+                ON process_revisions (case_operation_id) WHERE is_active = 1;
+                ALTER TABLE process_revisions DROP COLUMN manufacturing_program_id;
+                DROP TABLE manufacturing_programs;
+                DELETE FROM schema_migrations WHERE version = 45;
+                PRAGMA user_version = 44;
+
+                INSERT INTO cases (id, part_number, name, working_folder_path)
+                VALUES ('v45-case', 'V45-PART', 'V45 Part', 'C:\Cases\V45');
+                INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
+                VALUES ('v45-operation', 'v45-case', 10, 0, 'Mill');
+                INSERT INTO postprocessors (id, name, is_active)
+                VALUES ('v45-post', 'V45 post', 1);
+                INSERT INTO tool_table_releases (
+                    id, case_operation_id, revision_number, original_file_name,
+                    stored_relative_path, file_size, file_hash, released_at,
+                    released_by, release_comment, created_at, updated_at, required_tool_count)
+                VALUES ('v45-tools', 'v45-operation', 1, 'tools.mht',
+                    'operations/v45/tool/v45-tools/tools.mht', 15,
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    '2026-08-20T00:00:00Z', 'engineer', 'Exact tools',
+                    '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z', 1);
+                INSERT INTO tool_table_release_tools (
+                    id, tool_table_release_id, row_number, tool_identifier,
+                    description, is_required, requires_magazine_position,
+                    is_active, magazine_position, created_at, updated_at)
+                VALUES ('v45-tool-row', 'v45-tools', 1, 'T1', 'Cutter', 1, 1, 1, '1',
+                    '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z');
+                INSERT INTO process_revisions (
+                    id, case_operation_id, revision_number, is_active,
+                    tool_table_release_id, created_at, created_by,
+                    change_description, version, updated_at)
+                VALUES
+                    ('v45-process-1', 'v45-operation', 1, 0, 'v45-tools',
+                     '2026-08-20T00:00:00Z', 'engineer', 'First', 2, '2026-08-21T00:00:00Z'),
+                    ('v45-process-2', 'v45-operation', 2, 1, 'v45-tools',
+                     '2026-08-21T00:00:00Z', 'engineer', 'Second', 1, '2026-08-21T00:00:00Z');
+                INSERT INTO gcode_releases (
+                    id, case_operation_id, process_revision_id, postprocessor_id,
+                    post_specific_revision, original_file_name, stored_relative_path,
+                    file_size, file_hash, released_at, released_by, change_scope,
+                    release_comment, tool_table_release_id, created_at, updated_at)
+                VALUES
+                    ('v45-gcode-1', 'v45-operation', 'v45-process-1', 'v45-post', 1,
+                     'old.nc', 'operations/v45/gcode/old.nc', 20,
+                     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                     '2026-08-20T00:00:00Z', 'engineer', 'NEW_PROCESS_REVISION',
+                     'First release', 'v45-tools', '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z'),
+                    ('v45-gcode-2', 'v45-operation', 'v45-process-2', 'v45-post', 1,
+                     'current.nc', 'operations/v45/gcode/current.nc', 21,
+                     'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                     '2026-08-21T00:00:00Z', 'engineer', 'NEW_PROCESS_REVISION',
+                     'Second release', 'v45-tools', '2026-08-21T00:00:00Z', '2026-08-21T00:00:00Z');
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        await new DatabaseMigrator(fixture.Database, NullLogger<DatabaseMigrator>.Instance).MigrateAsync();
+
+        await using var reopened = await fixture.Database.OpenConnectionAsync();
+        await using var assertion = reopened.CreateCommand();
+        assertion.CommandText = """
+            SELECT
+                (SELECT COUNT(*) FROM manufacturing_programs
+                 WHERE id = 'case-operation:v45-operation' AND default_case_operation_id = 'v45-operation'),
+                (SELECT COUNT(*) FROM process_revisions
+                 WHERE id IN ('v45-process-1', 'v45-process-2')
+                   AND manufacturing_program_id = 'case-operation:v45-operation'),
+                (SELECT COUNT(*) FROM manufacturing_program_revision_outputs
+                 WHERE process_revision_id IN ('v45-process-1', 'v45-process-2')
+                   AND case_operation_id = 'v45-operation' AND quantity_per_cycle = 1 AND display_order = 0),
+                (SELECT COUNT(*) FROM process_revisions
+                 WHERE manufacturing_program_id = 'case-operation:v45-operation' AND is_active = 1),
+                (SELECT group_concat(id || ':' || file_hash, '|') FROM gcode_releases
+                 WHERE id IN ('v45-gcode-1', 'v45-gcode-2') ORDER BY id);
+            """;
+        await using var reader = await assertion.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(2, reader.GetInt32(1));
+        Assert.Equal(2, reader.GetInt32(2));
+        Assert.Equal(1, reader.GetInt32(3));
+        Assert.Contains("v45-gcode-1:bbbb", reader.GetString(4), StringComparison.Ordinal);
+        Assert.Contains("v45-gcode-2:cccc", reader.GetString(4), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -257,8 +368,10 @@ public sealed class MigrationTests
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using (var connection = await fixture.Database.OpenConnectionAsync())
-        await using (var command = connection.CreateCommand())
         {
+            await DowngradeToV45Async(connection);
+            await DowngradeToV44Async(connection);
+            await using var command = connection.CreateCommand();
             command.CommandText = """
                 DROP TABLE machine_telemetry_raw;
                 DROP TABLE machine_connection_events;
@@ -672,8 +785,10 @@ public sealed class MigrationTests
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using (var connection = await fixture.Database.OpenConnectionAsync())
-        await using (var command = connection.CreateCommand())
         {
+            await DowngradeToV45Async(connection);
+            await DowngradeToV44Async(connection);
+            await using var command = connection.CreateCommand();
             command.CommandText = """
                 DROP TABLE machine_telemetry_raw;
                 DROP TABLE machine_connection_events;
@@ -882,8 +997,10 @@ public sealed class MigrationTests
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using (var connection = await fixture.Database.OpenConnectionAsync())
-        await using (var command = connection.CreateCommand())
         {
+            await DowngradeToV45Async(connection);
+            await DowngradeToV44Async(connection);
+            await using var command = connection.CreateCommand();
             command.CommandText = """
                 DROP TABLE machine_telemetry_raw;
                 DROP TABLE machine_connection_events;
@@ -1093,8 +1210,10 @@ public sealed class MigrationTests
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using (var connection = await fixture.Database.OpenConnectionAsync())
-        await using (var command = connection.CreateCommand())
         {
+            await DowngradeToV45Async(connection);
+            await DowngradeToV44Async(connection);
+            await using var command = connection.CreateCommand();
             command.CommandText = """
                 DROP TABLE machine_telemetry_raw;
                 DROP TABLE machine_connection_events;
@@ -1294,7 +1413,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 45;";
+            command.CommandText = "PRAGMA user_version = 48;";
             await command.ExecuteNonQueryAsync();
         }
 
@@ -1306,6 +1425,86 @@ public sealed class MigrationTests
             migrator.MigrateAsync());
 
         Assert.Contains("newer than supported", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static async Task DowngradeToV45Async(Microsoft.Data.Sqlite.SqliteConnection connection)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DROP TABLE production_run_cycle_events;
+            DELETE FROM schema_migrations WHERE version = 47;
+            DROP TRIGGER machine_assignment_run_contains_legacy_operation;
+            DROP TRIGGER machine_assignment_run_required_update;
+            DROP TRIGGER machine_assignment_wraps_legacy_operation;
+            DROP TRIGGER production_run_structure_locked_output_delete;
+            DROP TRIGGER production_run_structure_locked_output_update;
+            DROP TRIGGER production_run_structure_locked_program_delete;
+            DROP TRIGGER production_run_structure_locked_program_update;
+            DROP TRIGGER production_run_structure_locked_program_insert;
+            DROP TRIGGER production_run_output_no_overallocation_insert;
+            DROP TRIGGER production_run_output_target_matches_cycles_insert;
+            DROP TRIGGER machine_assignment_selected_release_matches_operation_insert;
+            DROP TRIGGER machine_assignment_selected_release_matches_operation_update;
+            DROP INDEX ix_machine_assignments_machine_backlog;
+            DROP INDEX ix_machine_assignments_selected_gcode;
+            DROP INDEX ix_machine_assignments_batch_operation_compatibility;
+            PRAGMA legacy_alter_table=ON;
+            ALTER TABLE machine_assignments RENAME TO machine_assignments_v46;
+            CREATE TABLE machine_assignments (
+                id TEXT PRIMARY KEY,
+                batch_operation_id TEXT NOT NULL UNIQUE,
+                machine_id TEXT NOT NULL,
+                backlog_position INTEGER NOT NULL CHECK(backlog_position>=0),
+                version INTEGER NOT NULL DEFAULT 1 CHECK(version>0),
+                created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                updated_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                planning_mode TEXT NOT NULL DEFAULT 'manual' CHECK(planning_mode IN('forward','backward','manual')),
+                selected_gcode_release_id TEXT REFERENCES gcode_releases(id) ON DELETE RESTRICT,
+                FOREIGN KEY(batch_operation_id) REFERENCES batch_operations(id) ON DELETE RESTRICT,
+                FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE RESTRICT,
+                UNIQUE(machine_id,backlog_position));
+            INSERT INTO machine_assignments(id,batch_operation_id,machine_id,backlog_position,version,created_at,updated_at,planning_mode,selected_gcode_release_id)
+            SELECT id,batch_operation_id,machine_id,backlog_position,version,created_at,updated_at,planning_mode,selected_gcode_release_id FROM machine_assignments_v46;
+            DROP TABLE machine_assignments_v46;
+            PRAGMA legacy_alter_table=OFF;
+            CREATE INDEX ix_machine_assignments_machine_backlog ON machine_assignments(machine_id,backlog_position);
+            CREATE INDEX ix_machine_assignments_selected_gcode ON machine_assignments(selected_gcode_release_id);
+            CREATE TRIGGER machine_assignment_selected_release_matches_operation_insert
+            BEFORE INSERT ON machine_assignments WHEN NEW.selected_gcode_release_id IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM gcode_releases release JOIN batch_operations operation ON operation.id=NEW.batch_operation_id AND operation.source_case_operation_id=release.case_operation_id WHERE release.id=NEW.selected_gcode_release_id)
+            BEGIN SELECT RAISE(ABORT,'selected G-code release must belong to the assigned Batch Operation source');END;
+            CREATE TRIGGER machine_assignment_selected_release_matches_operation_update
+            BEFORE UPDATE OF selected_gcode_release_id,batch_operation_id ON machine_assignments WHEN NEW.selected_gcode_release_id IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM gcode_releases release JOIN batch_operations operation ON operation.id=NEW.batch_operation_id AND operation.source_case_operation_id=release.case_operation_id WHERE release.id=NEW.selected_gcode_release_id)
+            BEGIN SELECT RAISE(ABORT,'selected G-code release must belong to the assigned Batch Operation source');END;
+            DROP TABLE production_run_outputs;
+            DROP TABLE production_run_programs;
+            DROP TABLE production_runs;
+            DELETE FROM schema_migrations WHERE version=46;
+            PRAGMA user_version=45;
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task DowngradeToV44Async(Microsoft.Data.Sqlite.SqliteConnection connection)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DROP TRIGGER case_operations_create_default_manufacturing_program;
+            DROP TRIGGER manufacturing_program_outputs_immutable_delete;
+            DROP TRIGGER manufacturing_program_outputs_immutable_update;
+            DROP TRIGGER process_revisions_program_immutable;
+            DROP TABLE manufacturing_program_revision_outputs;
+            DROP INDEX ix_process_revisions_program_history;
+            DROP INDEX ux_process_revisions_active_program;
+            CREATE UNIQUE INDEX ux_process_revisions_active_operation
+            ON process_revisions(case_operation_id) WHERE is_active=1;
+            ALTER TABLE process_revisions DROP COLUMN manufacturing_program_id;
+            DROP TABLE manufacturing_programs;
+            DELETE FROM schema_migrations WHERE version=45;
+            PRAGMA user_version=44;
+            """;
+        await command.ExecuteNonQueryAsync();
     }
 
     [Fact]

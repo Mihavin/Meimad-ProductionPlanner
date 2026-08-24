@@ -29,7 +29,8 @@ internal sealed record MachineAssignmentResponse(
     string PlanningMode,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    string? ProductionRunId)
 {
     internal static MachineAssignmentResponse FromDomain(MachineAssignment assignment) => new(
         assignment.MachineAssignmentId,
@@ -39,7 +40,8 @@ internal sealed record MachineAssignmentResponse(
         assignment.PlanningMode.ToToken(),
         assignment.Version,
         assignment.CreatedAt,
-        assignment.UpdatedAt);
+        assignment.UpdatedAt,
+        assignment.ProductionRunId);
 }
 
 internal sealed record MachineBacklogItemResponse(

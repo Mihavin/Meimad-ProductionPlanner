@@ -272,7 +272,8 @@ internal sealed record NcMachineCycleEstimateResponse(
     double? MachineRapidRateMillimetersPerMinute,
     double? MachineToolChangeTimeSeconds, double MachineTimeFactor,
     double? RawCycleSeconds, double? EstimatedCycleSeconds,
-    IReadOnlyList<string> Warnings, string Confidence, DateTimeOffset CalculatedAt)
+    IReadOnlyList<string> Warnings, string Confidence, DateTimeOffset CalculatedAt,
+    string EstimateBasis)
 {
     internal static NcMachineCycleEstimateResponse FromDomain(NcMachineCycleEstimate value) => new(
         value.MachineId, value.ParserVersion, value.RawFeedSeconds,
@@ -281,7 +282,7 @@ internal sealed record NcMachineCycleEstimateResponse(
         value.MachineRapidRateMillimetersPerMinute,
         value.MachineToolChangeTimeSeconds, value.MachineTimeFactor,
         value.RawCycleSeconds, value.EstimatedCycleSeconds, value.Warnings,
-        value.Confidence, value.CalculatedAt);
+        value.Confidence, value.CalculatedAt, "NC_PROGRAM_EXECUTION_CYCLE");
 }
 
 internal sealed record PostprocessorReleaseStatusResponse(

@@ -2426,4 +2426,16 @@
     "עברית":  "עברית",
     "🔒 View Mode — read only":  "🔒 מצב תצוגה - לקריאה בלבד",
     "🔓 Edit Mode — you are the editor":  "🔓 מצב עריכה - אתה העורך"
+,   "Create Production Run": "יצירת הרצת ייצור",
+    "Create Production Run...": "יצירת הרצת ייצור...",
+    "Production Run": "הרצת ייצור",
+    "Shared setup (seconds)": "הכנה משותפת (שניות)",
+    "Program group": "קבוצת תוכנית",
+    "Manufacturing Program": "תוכנית ייצור",
+    "Revision output": "פלט מהדורה",
+    "Per cycle": "למחזור",
+    "Target": "יעד",
+    "Cycles": "מחזורים",
+    "Cycle seconds": "שניות למחזור",
+    "Rows sharing a Program group are coupled: every NC cycle produces every output. Different groups stop independently.": "שורות באותה קבוצת תוכנית מצומדות: כל מחזור NC מייצר את כל הפלטים. קבוצות שונות נעצרות בנפרד."
 }

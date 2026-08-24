@@ -49,7 +49,10 @@ internal sealed class DatabaseMigrator
         new SchemaV41KitaronMaterialOrdersMigration(),
         new SchemaV42HaasNgcIntegrationMigration(),
         new SchemaV43CncConnectionPlatformMigration(),
-        new SchemaV44HaasDprntPortMigration()
+        new SchemaV44HaasDprntPortMigration(),
+        new SchemaV45ManufacturingProgramsMigration(),
+        new SchemaV46ProductionRunsMigration(),
+        new SchemaV47ProductionRunExecutionMigration()
     ];
 
     private readonly SqliteDatabase database;
@@ -93,6 +96,16 @@ internal sealed class DatabaseMigrator
             }
 
             await ApplyMigrationAsync(connection, migration, cancellationToken);
+        }
+
+        // A migration test or supported recovery can retain a later migration record while
+        // replaying earlier missing migrations. The last replayed migration then lowers
+        // user_version even though the complete ordered history is present. Normalize the
+        // pragma to the authoritative complete migration history.
+        await using (var normalizeVersion = connection.CreateCommand())
+        {
+            normalizeVersion.CommandText = $"PRAGMA user_version = {latestKnownVersion};";
+            await normalizeVersion.ExecuteNonQueryAsync(cancellationToken);
         }
 
         var finalVersion = await ReadUserVersionAsync(connection, cancellationToken);

@@ -18,7 +18,9 @@ internal sealed record ReleaseGCodeCommand(
     bool ReuseActiveToolTable,
     bool ConfirmToolTable,
     UploadedReleaseFile? GCodeFile,
-    UploadedReleaseFile? ToolTableFile);
+    UploadedReleaseFile? ToolTableFile,
+    string? ManufacturingProgramId = null,
+    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null);
 
 internal sealed record PublishGCodeReleaseCommand(
     string CaseId,
@@ -36,7 +38,11 @@ internal sealed record PublishGCodeReleaseCommand(
     ReleasedToolTableDefinition? ToolTableDefinition,
     NcProgramAnalysis NcAnalysis,
     Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata HeaderMetadata,
-    DateTimeOffset ReleasedAt);
+    DateTimeOffset ReleasedAt,
+    string? ManufacturingProgramId = null,
+    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null);
+
+internal sealed record ProgramPublicationContext(string CaseId, string CaseOperationId);
 
 internal sealed record ReleasedFileDownload(
     string AbsolutePath,

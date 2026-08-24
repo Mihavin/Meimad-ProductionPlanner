@@ -47,7 +47,41 @@ internal sealed record ProcessRevision(
     string CreatedBy,
     string ChangeDescription,
     int Version,
-    ToolTableRelease ToolTable);
+    ToolTableRelease ToolTable,
+    string? ManufacturingProgramId = null,
+    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null);
+
+internal sealed record ManufacturingProgramRevisionOutput(
+    string OutputId,
+    string CaseOperationId,
+    int QuantityPerCycle,
+    int DisplayOrder,
+    string ExecutionMetadataJson);
+
+internal sealed record ManufacturingProgram(
+    string ManufacturingProgramId,
+    string Name,
+    string? DefaultCaseOperationId,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    ProcessRevision? ActiveRevision,
+    IReadOnlyList<ProcessRevision> Revisions,
+    IReadOnlyList<ManufacturingProgramRelease> Releases);
+
+internal sealed record ManufacturingProgramRelease(
+    string GCodeReleaseId,
+    string ProcessRevisionId,
+    string PostprocessorId,
+    int PostSpecificRevision,
+    string OriginalFileName,
+    long FileSize,
+    string FileHash,
+    DateTimeOffset ReleasedAt,
+    string ReleasedBy,
+    string ChangeScope,
+    string ReleaseComment,
+    string ToolTableReleaseId);
 
 internal sealed record GCodeRelease(
     string GCodeReleaseId,

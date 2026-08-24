@@ -275,6 +275,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                    machine_assignments.created_at,
                    machine_assignments.updated_at,
                    machine_assignments.planning_mode,
+                   machine_assignments.production_run_id,
                    batch_operations.production_batch_id,
                    batch_operations.operation_number,
                    batch_operations.name,
@@ -295,13 +296,13 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         {
             items.Add(new MachineBacklogItem(
                 ReadAssignment(reader),
-                reader.GetString(8),
-                reader.GetInt32(9),
-                reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11),
-                reader.IsDBNull(12) ? null : ParseInstant(reader.GetString(12)),
+                reader.GetString(9),
+                reader.GetInt32(10),
+                reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : ParseInstant(reader.GetString(13)),
-                reader.IsDBNull(14) ? null : reader.GetString(14)));
+                reader.IsDBNull(14) ? null : ParseInstant(reader.GetString(14)),
+                reader.IsDBNull(15) ? null : reader.GetString(15)));
         }
 
         return items;
@@ -334,6 +335,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                        machine_assignments.created_at,
                        machine_assignments.updated_at,
                        machine_assignments.planning_mode,
+                       machine_assignments.production_run_id,
                        batch_operations.status
                 FROM machine_assignments
                 JOIN batch_operations
@@ -348,7 +350,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             }
 
             assignment = ReadAssignment(reader);
-            operationStatus = reader.GetString(8);
+            operationStatus = reader.GetString(9);
         }
 
         if (assignment.Version != expectedVersion)
@@ -534,6 +536,9 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await SyncCompatibilityRunExecutionAsync(
+            connection, transaction, batchOperationId, action, productionPin, now, cancellationToken);
+
         if (action == BatchOperationExecutionAction.Suspend)
         {
             await InsertPauseEventAsync(connection, transaction, batchOperationId,
@@ -659,6 +664,96 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Parameters.AddWithValue("$comment", (object?)reason.Comment ?? DBNull.Value);
         command.Parameters.AddWithValue("$pausedBy", pausedBy);
         command.Parameters.AddWithValue("$at", FormatInstant(now));
+        await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task SyncCompatibilityRunExecutionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        BatchOperationExecutionAction action,
+        ProductionPin? pin,
+        DateTimeOffset now,
+        CancellationToken token)
+    {
+        var runStatus = action switch
+        {
+            BatchOperationExecutionAction.Start => "IN_PROGRESS",
+            BatchOperationExecutionAction.Suspend => "SUSPENDED",
+            BatchOperationExecutionAction.Finish => "COMPLETED",
+            BatchOperationExecutionAction.Reset => "PLANNED",
+            _ => throw new ArgumentOutOfRangeException(nameof(action))
+        };
+        var programStatus = action switch
+        {
+            BatchOperationExecutionAction.Start => "ACTIVE",
+            BatchOperationExecutionAction.Suspend => "SUSPENDED",
+            BatchOperationExecutionAction.Finish => "COMPLETED",
+            BatchOperationExecutionAction.Reset => "PLANNED",
+            _ => throw new ArgumentOutOfRangeException(nameof(action))
+        };
+        var outputStatus = action switch
+        {
+            BatchOperationExecutionAction.Start or BatchOperationExecutionAction.Suspend => "IN_PRODUCTION",
+            BatchOperationExecutionAction.Finish => "COMPLETED",
+            BatchOperationExecutionAction.Reset => "ALLOCATED",
+            _ => throw new ArgumentOutOfRangeException(nameof(action))
+        };
+        var at = FormatInstant(now);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE production_runs
+            SET status = $runStatus,
+                structure_locked_at = CASE
+                    WHEN $reset = 1 THEN NULL
+                    ELSE COALESCE(structure_locked_at, $at) END,
+                version = version + 1,
+                updated_at = $at
+            WHERE legacy_batch_operation_id = $operationId;
+
+            UPDATE production_run_programs
+            SET status = $programStatus,
+                completed_cycle_count = CASE
+                    WHEN $finish = 1 THEN target_cycle_count
+                    WHEN $reset = 1 THEN 0
+                    ELSE completed_cycle_count END,
+                production_process_revision_id = $processId,
+                production_gcode_release_id = $releaseId,
+                production_tool_table_release_id = $toolId,
+                production_gcode_file_hash = $gcodeHash,
+                production_tool_table_file_hash = $toolHash,
+                version = version + 1,
+                updated_at = $at
+            WHERE production_run_id IN (
+                SELECT id FROM production_runs WHERE legacy_batch_operation_id = $operationId);
+
+            UPDATE production_run_outputs
+            SET status = $outputStatus,
+                produced_quantity = CASE
+                    WHEN $finish = 1 THEN target_quantity
+                    WHEN $reset = 1 THEN 0
+                    ELSE produced_quantity END,
+                version = version + 1,
+                updated_at = $at
+            WHERE batch_operation_id = $operationId
+              AND production_run_program_id IN (
+                  SELECT program.id FROM production_run_programs program
+                  JOIN production_runs run ON run.id = program.production_run_id
+                  WHERE run.legacy_batch_operation_id = $operationId);
+            """;
+        command.Parameters.AddWithValue("$operationId", batchOperationId);
+        command.Parameters.AddWithValue("$runStatus", runStatus);
+        command.Parameters.AddWithValue("$programStatus", programStatus);
+        command.Parameters.AddWithValue("$outputStatus", outputStatus);
+        command.Parameters.AddWithValue("$finish", action == BatchOperationExecutionAction.Finish ? 1 : 0);
+        command.Parameters.AddWithValue("$reset", action == BatchOperationExecutionAction.Reset ? 1 : 0);
+        command.Parameters.AddWithValue("$at", at);
+        command.Parameters.AddWithValue("$processId", (object?)pin?.ProcessRevisionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$releaseId", (object?)pin?.GCodeReleaseId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$toolId", (object?)pin?.ToolTableReleaseId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$gcodeHash", (object?)pin?.GCodeFileHash ?? DBNull.Value);
+        command.Parameters.AddWithValue("$toolHash", (object?)pin?.ToolTableFileHash ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(token);
     }
 
@@ -943,6 +1038,12 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             else
             {
                 await InsertAssignmentAsync(connection, transaction, assignment, cancellationToken);
+                assignment = assignment with
+                {
+                    ProductionRunId = assignment.ProductionRunId
+                        ?? await ReadCompatibilityProductionRunIdAsync(
+                            connection, transaction, assignment.BatchOperationId, cancellationToken)
+                };
             }
 
             if (assignment.MachineAssignmentId == selectedAssignmentId)
@@ -1023,14 +1124,16 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.CommandText = """
             INSERT INTO machine_assignments (
                 id, batch_operation_id, machine_id, backlog_position,
-                planning_mode, version, created_at, updated_at)
+                planning_mode, version, created_at, updated_at, production_run_id)
             VALUES (
                 $id, $operationId, $machineId, $position,
-                $planningMode, $version, $createdAt, $updatedAt);
+                $planningMode, $version, $createdAt, $updatedAt, $runId);
             """;
         AddAssignmentParameters(command, assignment);
         command.Parameters.AddWithValue("$operationId", assignment.BatchOperationId);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(assignment.CreatedAt));
+        command.Parameters.AddWithValue("$runId", assignment.ProductionRunId is null
+            ? DBNull.Value : assignment.ProductionRunId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -1090,6 +1193,21 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         {
             throw new RunningBatchOperationCannotMoveException(batchOperationId);
         }
+    }
+
+    private static async Task<string> ReadCompatibilityProductionRunIdAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchOperationId,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT id FROM production_runs WHERE legacy_batch_operation_id = $id;";
+        command.Parameters.AddWithValue("$id", batchOperationId);
+        return await command.ExecuteScalarAsync(token) as string
+            ?? throw new InvalidDataException(
+                $"Compatibility assignment did not create a Production Run for '{batchOperationId}'.");
     }
 
     private static async Task EnsureRunningOperationRemainsFirstAsync(
@@ -1178,7 +1296,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, batch_operation_id, machine_id, backlog_position,
-                   version, created_at, updated_at, planning_mode
+                   version, created_at, updated_at, planning_mode, production_run_id
             FROM machine_assignments
             WHERE batch_operation_id = $operationId;
             """;
@@ -1197,7 +1315,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, batch_operation_id, machine_id, backlog_position,
-                   version, created_at, updated_at, planning_mode
+                   version, created_at, updated_at, planning_mode, production_run_id
             FROM machine_assignments
             WHERE machine_id = $machineId
             ORDER BY backlog_position;
@@ -1221,7 +1339,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         ReadPlanningMode(reader.GetString(7)),
         reader.GetInt32(4),
         ParseInstant(reader.GetString(5)),
-        ParseInstant(reader.GetString(6)));
+        ParseInstant(reader.GetString(6)),
+        reader.IsDBNull(8) ? null : reader.GetString(8));
 
     private static MachineAssignmentPlanningMode ReadPlanningMode(string value) =>
         MachineAssignmentPlanningModes.TryParse(value, out var mode)

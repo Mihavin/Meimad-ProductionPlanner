@@ -15,13 +15,28 @@ internal interface IGCodeRepository
         EditAuthority authority,
         CancellationToken cancellationToken);
 
+    Task<ProgramPublicationContext?> ResolveProgramPublicationContextAsync(
+        string manufacturingProgramId,
+        IReadOnlyList<ManufacturingProgramRevisionOutput>? outputs,
+        CancellationToken cancellationToken);
+
     Task<StoredReleaseFile?> ReadGCodeFileAsync(
         string caseOperationId,
         string releaseId,
         CancellationToken cancellationToken);
 
+    Task<StoredReleaseFile?> ReadProgramGCodeFileAsync(
+        string manufacturingProgramId,
+        string releaseId,
+        CancellationToken cancellationToken);
+
     Task<StoredReleaseFile?> ReadToolTableFileAsync(
         string caseOperationId,
+        string toolTableReleaseId,
+        CancellationToken cancellationToken);
+
+    Task<StoredReleaseFile?> ReadProgramToolTableFileAsync(
+        string manufacturingProgramId,
         string toolTableReleaseId,
         CancellationToken cancellationToken);
 

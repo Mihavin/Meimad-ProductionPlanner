@@ -7,8 +7,8 @@ This document separates source-required concepts from proposed implementation fi
 
 ## 1. Modeling principles
 
-- A Case is part master data, an Order is demand, a Production Batch is a production launch, and a Batch Operation is the schedulable unit.
-- Only Batch Operations are assigned to Machines.
+- In the implemented schema, a Case is part master data, an Order is demand, a Production Batch is a production launch, and a Batch Operation is the schedulable unit.
+- In the proposed Production Run target, Batch Operation remains the route/quantity/dependency obligation and only Production Runs are assigned to Machines.
 - Batch allocation is explicit; warehouse balance stays outside Meimad Planner.
 - Route templates and concrete batch work are distinct.
 - Planner input and derived schedule/conflict projections are distinct.
@@ -305,7 +305,9 @@ Schema v35 adds immutable released-production history without duplicating `CaseO
 | Table | Key fields and invariants |
 |---|---|
 | `tool_table_releases` | Stable ID, Case Operation, positive operation-local revision, original filename, unique server-relative path, positive size, 64-character SHA-256, release user/time/comment, timestamps. Unique `(case_operation_id, revision_number)`; update/delete triggers reject mutation. |
-| `process_revisions` | Stable ID, Case Operation, positive revision, active flag, exact tool-table release, creator/time, required change description, version/timestamps. Unique operation/revision and partial unique index allowing at most one active revision per Operation. Historical rows remain referenced. |
+| `manufacturing_programs` | Schema-v45 stable reusable program identity, name, optional deterministic default Case Operation link, version/timestamps. A default program ID is `case-operation:{caseOperationId}`. |
+| `process_revisions` | Preserved stable revision ID, compatibility owner Case Operation, Manufacturing Program, positive revision, active flag, exact tool-table release, creator/time, required change description, version/timestamps. A partial unique index permits one active revision per Manufacturing Program. Historical rows remain referenced and are not renumbered. |
+| `manufacturing_program_revision_outputs` | Immutable stable output ID, process/program revision, Case Operation, positive integer quantity per NC cycle, unique stable display order, immutable JSON execution metadata, and creation time. Composition changes require another revision. |
 | `gcode_releases` | Stable ID, Case Operation, exact process/Postprocessor/tool-table IDs, positive Postprocessor-specific revision, immutable file metadata/hash, release audit/comment, and `LOCAL_POST_REVISION` or `NEW_PROCESS_REVISION`. Unique `(process_revision_id, postprocessor_id, post_specific_revision)`; update/delete triggers reject mutation. No Draft/status column exists. |
 
 The current G-code is derived as the greatest Postprocessor-specific revision for the active process and Postprocessor; an earlier record is never edited to become non-current. A release has no Machine foreign key. Machine applicability is evaluated only by joining its Postprocessor ID to `machine_supported_postprocessors`.
@@ -516,5 +518,10 @@ Schema v36 adds structured immutable released-tool rows and the derived required
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-The implemented migrations through schema v43 are the current persistence/domain contract. Timeline expands schema-v16 timing snapshots with schema-v38 NC estimates only for not-started work, production pins preserve schema-v35 release context, schema-v36 supplies required tool positions, schema-v37 contextual release/offset inputs are evaluated centrally for the concrete assignment, schema-v39 supplies Batch-level local material facts, schema-v41 retains advisory Kitaron material purchase/delivery approval data without promoting it to readiness, and schemas v42-v43 add Haas execution plus the normalized CNC connection platform. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
+The implemented migrations through schema v45 are the current persistence/domain contract. Timeline expands schema-v16 timing snapshots with schema-v38 NC estimates only for not-started work, production pins preserve schema-v35 release context, schema-v36 supplies required tool positions, schema-v37 contextual release/offset inputs are evaluated centrally for the concrete assignment, schema-v39 supplies Batch-level local material facts, schema-v41 retains advisory Kitaron material purchase/delivery approval data, schemas v42-v44 add Haas/CNC connection behavior, and schema v45 adds Manufacturing Programs without rewriting release history. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
 Schema v39 treats Batch `planned_quantity` as the required raw-material piece count, consistent with the existing material-order report and inclusive of scrap allocation. `verified_material_receipts` is local physical evidence rather than ERP inventory. `batch_material_reservations` makes consumption intent explicit. Trigger and repository validation prevent cross-Case reservation, receipt over-reservation, and reservation above Batch quantity. Material readiness is derived for every Batch Operation from its parent Batch reservation coverage; the schema-v37 manual material table is retained only as legacy history and is no longer authoritative.
+## Production Run target model
+
+The multi-output schema is specified in [Production Run and multi-output Manufacturing Program architecture](production-run-architecture.md). Schema v45 implements `manufacturing_programs` and immutable revision outputs. Schema v46 implements `production_runs`, `production_run_programs`, and `production_run_outputs`, and makes `machine_assignments.production_run_id` authoritative while retaining `batch_operation_id` only as a compatibility projection. Schema v47 adds append-only `production_run_cycle_events` with a unique `(source, source_event_id)` identity. Active allocations exclude cancelled/aborted runs; produced quantities remain historical. Started structure is trigger-protected and foreign-key restrictive.
+
+Key target constraints are: one or more programs per run; one or more outputs per program; positive integer quantity per cycle and target quantity; exact divisibility; equal required cycles for coupled outputs; unique program sequence; no active allocation plus produced quantity above a Batch Operation's required quantity; restrictive foreign keys; and immutable started composition.

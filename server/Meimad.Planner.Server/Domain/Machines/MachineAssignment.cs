@@ -8,7 +8,8 @@ internal sealed record MachineAssignment(
     MachineAssignmentPlanningMode PlanningMode,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? ProductionRunId = null);
 
 internal enum MachineAssignmentPlanningMode
 {

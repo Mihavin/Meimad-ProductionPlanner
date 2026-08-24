@@ -154,7 +154,9 @@ internal sealed class GCodeService
                 toolDefinition,
                 analysis,
                 headerMetadata,
-                releasedAt), authority, cancellationToken);
+                releasedAt,
+                command.ManufacturingProgramId,
+                command.Outputs), authority, cancellationToken);
             logger.LogInformation(
                 "Released G-code {ReleaseId} for Operation {OperationId}, Process Revision {ProcessRevisionNumber}, Postprocessor {PostprocessorId}, Post Revision {PostRevision}.",
                 release.GCodeReleaseId,
@@ -172,6 +174,44 @@ internal sealed class GCodeService
         }
     }
 
+    internal async Task<GCodeRelease> ReleaseForProgramAsync(
+        string manufacturingProgramId,
+        ReleaseGCodeCommand command,
+        EditAuthority authority,
+        CancellationToken cancellationToken = default)
+    {
+        var programId = RequiredId(manufacturingProgramId, "manufacturingProgramId");
+        var requestedScope = RequiredScope(command.ChangeScope);
+        if (requestedScope == GCodeChangeScopes.LocalPostRevision && command.Outputs is not null)
+        {
+            throw new GCodeValidationException(
+                "outputsJson", "new_process_revision_required",
+                "A local Post revision preserves the exact output recipe; changing outputs requires NEW_PROCESS_REVISION.");
+        }
+        IReadOnlyList<ManufacturingProgramRevisionOutput>? outputs = null;
+        if (command.Outputs is not null)
+        {
+            var normalized = ManufacturingProgramService.ValidateOutputs(
+                command.Outputs.Select(value => new ManufacturingProgramOutputInput(
+                    value.CaseOperationId, value.QuantityPerCycle, value.DisplayOrder,
+                    value.ExecutionMetadataJson)).ToArray());
+            outputs = normalized.Select(value => new ManufacturingProgramRevisionOutput(
+                Guid.NewGuid().ToString("N"), value.CaseOperationId!, value.QuantityPerCycle,
+                value.DisplayOrder, value.ExecutionMetadataJson!)).ToArray();
+        }
+
+        var context = await repository.ResolveProgramPublicationContextAsync(
+            programId, outputs, cancellationToken)
+            ?? throw new ManufacturingProgramNotFoundException(programId);
+        return await ReleaseAsync(command with
+        {
+            CaseId = context.CaseId,
+            CaseOperationId = context.CaseOperationId,
+            ManufacturingProgramId = programId,
+            Outputs = outputs
+        }, authority, cancellationToken);
+    }
+
     internal async Task<ReleasedFileDownload> OpenReleaseFileAsync(
         string operationId,
         string releaseId,
@@ -184,6 +224,18 @@ internal sealed class GCodeService
         return await ResolveDownloadAsync(file, cancellationToken);
     }
 
+    internal async Task<ReleasedFileDownload> OpenProgramReleaseFileAsync(
+        string programId,
+        string releaseId,
+        CancellationToken cancellationToken = default)
+    {
+        var file = await repository.ReadProgramGCodeFileAsync(
+            RequiredId(programId, "manufacturingProgramId"),
+            RequiredId(releaseId, "releaseId"), cancellationToken)
+            ?? throw new GCodeReleaseNotFoundException(releaseId);
+        return await ResolveDownloadAsync(file, cancellationToken);
+    }
+
     internal async Task<ReleasedFileDownload> OpenToolTableFileAsync(
         string operationId,
         string toolTableReleaseId,
@@ -193,6 +245,18 @@ internal sealed class GCodeService
             RequiredId(operationId, "caseOperationId"),
             RequiredId(toolTableReleaseId, "toolTableReleaseId"),
             cancellationToken) ?? throw new GCodeToolTableNotFoundException(toolTableReleaseId);
+        return await ResolveDownloadAsync(file, cancellationToken);
+    }
+
+    internal async Task<ReleasedFileDownload> OpenProgramToolTableFileAsync(
+        string programId,
+        string toolTableReleaseId,
+        CancellationToken cancellationToken = default)
+    {
+        var file = await repository.ReadProgramToolTableFileAsync(
+            RequiredId(programId, "manufacturingProgramId"),
+            RequiredId(toolTableReleaseId, "toolTableReleaseId"), cancellationToken)
+            ?? throw new GCodeToolTableNotFoundException(toolTableReleaseId);
         return await ResolveDownloadAsync(file, cancellationToken);
     }
 

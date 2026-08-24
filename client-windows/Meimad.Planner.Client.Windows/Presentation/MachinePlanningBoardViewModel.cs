@@ -108,6 +108,26 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     public AsyncCommand SaveCalendarCommand { get; }
 
+    internal async Task<bool> CreateProductionRunAsync(ProductionRunCreate request)
+    {
+        if (apiClient is null || !CanDrag) return false;
+        IsBusy = true;
+        try
+        {
+            await apiClient.CreateProductionRunAsync(request, clientId, editGeneration);
+            StatusMessage = "Production Run created.";
+            await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+            return false;
+        }
+        finally { IsBusy = false; }
+    }
+
     public bool IsBusy
     {
         get => isBusy;

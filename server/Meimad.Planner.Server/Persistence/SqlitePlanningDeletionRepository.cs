@@ -100,6 +100,9 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             await ExecuteDeleteAsync(c, t, "DELETE FROM operation_pause_events WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM machine_assignment_overrides WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM machine_assignments WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
+            await ExecuteDeleteAsync(c, t, "DELETE FROM production_run_outputs WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
+            await ExecuteDeleteAsync(c, t, "DELETE FROM production_run_programs WHERE production_run_id IN (SELECT id FROM production_runs WHERE legacy_batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id));", id, token);
+            await ExecuteDeleteAsync(c, t, "DELETE FROM production_runs WHERE legacy_batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
             foreach (var machineId in affectedMachines)
             {
                 await CompactMachineBacklogAsync(c, t, machineId, token);

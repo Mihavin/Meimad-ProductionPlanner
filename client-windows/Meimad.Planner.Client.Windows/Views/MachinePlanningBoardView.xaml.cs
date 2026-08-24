@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Media3D;
 using Meimad.Planner.Client.Windows.Presentation;
 using Microsoft.Win32;
 
@@ -10,10 +11,25 @@ namespace Meimad.Planner.Client.Windows.Views;
 public partial class MachinePlanningBoardView : UserControl
 {
     private Point dragStart;
+    private bool dragInProgress;
 
     public MachinePlanningBoardView()
     {
         InitializeComponent();
+    }
+
+    private async void CreateProductionRun_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MachinePlanningBoardViewModel viewModel || !viewModel.CanDrag) return;
+        var operations = OperationPool.SelectedItems.Cast<PlanningOperationViewModel>().ToArray();
+        if (operations.Length == 0)
+        {
+            MessageBox.Show("Select one or more unallocated operations first.", "Create Production Run", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var dialog = new ProductionRunDialog(new ProductionRunDialogViewModel(operations)) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() == true)
+            await viewModel.CreateProductionRunAsync(dialog.ViewModel.CreateRequest());
     }
 
     private void BrowseMachinePicture_Click(object sender, RoutedEventArgs e)
@@ -173,7 +189,8 @@ public partial class MachinePlanningBoardView : UserControl
 
     private void DragSource_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (e.LeftButton != MouseButtonState.Pressed
+        if (dragInProgress
+            || e.LeftButton != MouseButtonState.Pressed
             || DataContext is not MachinePlanningBoardViewModel { CanDrag: true })
         {
             return;
@@ -197,7 +214,23 @@ public partial class MachinePlanningBoardView : UserControl
             return;
         }
 
-        DragDrop.DoDragDrop(item, new BoardDragPayload(operation), DragDropEffects.Move);
+        try
+        {
+            dragInProgress = true;
+            DragDrop.DoDragDrop(item, new BoardDragPayload(operation), DragDropEffects.Move);
+        }
+        catch (Exception exception)
+        {
+            if (DataContext is MachinePlanningBoardViewModel viewModel)
+            {
+                viewModel.ReportMoveFailure(exception);
+            }
+        }
+        finally
+        {
+            dragInProgress = false;
+            dragStart = e.GetPosition(this);
+        }
     }
 
     private void MachineBacklog_DragOver(object sender, DragEventArgs e)
@@ -277,7 +310,7 @@ public partial class MachinePlanningBoardView : UserControl
         return payload.Operation is not null;
     }
 
-    private static T? FindAncestor<T>(DependencyObject? current)
+    internal static T? FindAncestor<T>(DependencyObject? current)
         where T : DependencyObject
     {
         while (current is not null)
@@ -287,7 +320,13 @@ public partial class MachinePlanningBoardView : UserControl
                 return match;
             }
 
-            current = VisualTreeHelper.GetParent(current);
+            current = current switch
+            {
+                Visual or Visual3D => VisualTreeHelper.GetParent(current),
+                FrameworkContentElement content => content.Parent,
+                ContentElement content => ContentOperations.GetParent(content),
+                _ => LogicalTreeHelper.GetParent(current)
+            };
         }
 
         return null;

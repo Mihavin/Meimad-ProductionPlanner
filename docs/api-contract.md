@@ -1,5 +1,9 @@
 # API Contract
 
+NC cycle estimates returned with G-code releases are estimates for one complete NC program
+execution cycle. The `estimateBasis` value is `NC_PROGRAM_EXECUTION_CYCLE`; for migrated
+single-output programs this remains numerically identical to the former per-part estimate.
+
 ## Schema-v26 planning additions
 
 Case/Batch Operation representations include external-delay fields. Planning Board operations add `workFinishDate`, `latestStart`, `latestStartWarning`, and `isLatestStartOverdue`. `POST /api/v1/batches` returns `422 case_operations_required` when its Case has no defined route.
@@ -651,6 +655,13 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode` | Read active/history/process and Postprocessor current/stale/missing matrix. |
 | `POST` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode-releases` | Publish one immutable released G-code artifact and optional new process/tool-table release. |
 | `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode-releases/{releaseId}/file` | Download and verify an historical G-code release. |
+| `GET` | `/api/v1/manufacturing-programs` | List reusable programs with immutable revision recipes and release history. |
+| `POST` | `/api/v1/manufacturing-programs` | Create a combined program and its first immutable recipe from an existing exact tool/process context; requires Edit Mode. |
+| `GET` | `/api/v1/manufacturing-programs/{programId}` | Read program catalog, active/history revisions, outputs, and release history. |
+| `POST` | `/api/v1/manufacturing-programs/{programId}/revisions` | Create and activate an immutable changed output recipe; requires Edit Mode and `If-Match: "manufacturing-program:{id}:v{version}"`. |
+| `POST` | `/api/v1/manufacturing-programs/{programId}/gcode-releases` | Multipart program-centric release. A local Post revision retains the exact recipe; a new manufacturing revision supplies `outputsJson`. |
+| `GET` | `/api/v1/manufacturing-programs/{programId}/gcode-releases/{releaseId}/file` | Stream an historical program release after length and SHA-256 verification. |
+| `GET` | `/api/v1/manufacturing-programs/{programId}/tool-table-releases/{toolTableReleaseId}/file` | Stream a referenced exact tool-table release after length and SHA-256 verification. |
 | `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/tool-table-releases/{toolTableReleaseId}/file` | Download and verify an historical tool-table release. |
 
 Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. A separately confirmed Batch deletion is the exception to relationship blocking: it deletes the Batch-owned Machine Assignments, pause history, assignment overrides, package metadata/file records, allocations, and Batch Operations, compacts affected Machine backlogs, deletes the Batch, and recomputes affected Order lifecycles in one immediate transaction. Machine deletion still requires no assignment, downtime, device binding, official package, or Employee qualification reference. These endpoints never delete external folders, images, engineering files, or physical package bytes.
@@ -1715,3 +1726,14 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 
 The contract cannot be frozen until the API, identity, edit-token, data-model, timeline, rendering, package, and telemetry questions in [Implementation plan](implementation-plan.md#open-decisions) are resolved.
+## Production Run API target
+
+The authoritative routes, compatibility façades, concurrency rules, error semantics, audit events, and read models are defined in [Production Run and multi-output Manufacturing Program architecture](production-run-architecture.md). The routes are implemented as follows:
+
+- `GET|POST /api/v1/production-runs` and `GET /api/v1/production-runs/{id}` list, create, and read runs.
+- `PUT /api/v1/production-runs/{id}/composition` replaces not-started composition; `PUT|DELETE .../assignment` assigns, moves, reorders, or unassigns.
+- `POST .../cancel`, `.../start`, `.../suspend`, `.../resume`, and `.../reset` enforce lifecycle transitions.
+- `POST /api/v1/production-runs/{id}/programs/{programId}/activate` and `/cycles` execute one exact program stream. Cycle requests require a source event identity and are idempotent.
+- `GET .../{id}/readiness` returns run, program, and output readiness; `GET /api/v1/batch-operations/unallocated` returns remaining allocatable quantities.
+
+Planning mutations require Single Edit Mode headers. Existing resources require a matching `If-Match: "production-run:{id}:v{version}"`; stale versions return 412. Validation is structured and never rounds, over-allocates, silently selects a release, or partially advances one coupled output.

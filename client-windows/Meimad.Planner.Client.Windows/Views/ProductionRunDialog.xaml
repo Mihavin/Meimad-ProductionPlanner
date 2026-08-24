@@ -1,0 +1,31 @@
+<Window x:Class="Meimad.Planner.Client.Windows.Views.ProductionRunDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Create Production Run" Width="1280" Height="620" MinWidth="900" MinHeight="450"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="12">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="Production Run" FontSize="20" FontWeight="Bold"/>
+            <TextBlock Text="Rows sharing a Program group are coupled: every NC cycle produces every output. Different groups stop independently." TextWrapping="Wrap" Margin="0,4,0,8"/>
+            <StackPanel Orientation="Horizontal"><TextBlock Text="Shared setup (seconds)" VerticalAlignment="Center"/><TextBox Width="100" Margin="8,0" Text="{Binding SharedSetupSeconds,UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding IsReadOnly}"/></StackPanel>
+        </StackPanel>
+        <DataGrid Grid.Row="1" Margin="0,10" ItemsSource="{Binding Outputs}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="{Binding IsReadOnly}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Output" Binding="{Binding Display}" IsReadOnly="True" Width="200"/>
+                <DataGridTextColumn Header="Program group" Binding="{Binding ProgramGroup,UpdateSourceTrigger=PropertyChanged}" Width="80"/>
+                <DataGridTextColumn Header="Manufacturing Program" Binding="{Binding ManufacturingProgramId,UpdateSourceTrigger=PropertyChanged}" Width="170"/>
+                <DataGridTextColumn Header="Revision" Binding="{Binding ProcessRevisionId,UpdateSourceTrigger=PropertyChanged}" Width="140"/>
+                <DataGridTextColumn Header="G-code release" Binding="{Binding GCodeReleaseId,UpdateSourceTrigger=PropertyChanged}" Width="140"/>
+                <DataGridTextColumn Header="Revision output" Binding="{Binding RevisionOutputId,UpdateSourceTrigger=PropertyChanged}" Width="140"/>
+                <DataGridTextColumn Header="Per cycle" Binding="{Binding QuantityPerCycle,UpdateSourceTrigger=PropertyChanged}" Width="75"/>
+                <DataGridTextColumn Header="Target" Binding="{Binding TargetQuantity,UpdateSourceTrigger=PropertyChanged}" Width="75"/>
+                <DataGridTextColumn Header="Cycles" Binding="{Binding RequiredCycles}" IsReadOnly="True" Width="70"/>
+                <DataGridTextColumn Header="Cycle seconds" Binding="{Binding CycleSeconds,UpdateSourceTrigger=PropertyChanged}" Width="95"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <DockPanel Grid.Row="2"><TextBlock Text="{Binding ValidationMessage}" Foreground="#B3261E" TextWrapping="Wrap" VerticalAlignment="Center"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Cancel" Width="90" Margin="8,0" IsCancel="True"/><Button Content="Save" Width="90" IsDefault="True" IsEnabled="{Binding CanSave}" Click="Save_Click"/></StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

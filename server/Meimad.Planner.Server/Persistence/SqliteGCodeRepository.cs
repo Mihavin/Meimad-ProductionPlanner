@@ -54,11 +54,16 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             throw new GCodeOperationNotFoundException(command.CaseOperationId);
         }
 
+        var programId = command.ManufacturingProgramId ?? DefaultProgramId(command.CaseOperationId);
+        if (!await ProgramExistsAsync(connection, transaction, programId, cancellationToken))
+        {
+            throw new ManufacturingProgramNotFoundException(programId);
+        }
         var postprocessorName = await ReadActivePostprocessorNameAsync(
             connection, transaction, command.PostprocessorId, cancellationToken)
             ?? throw new GCodePostprocessorNotFoundException(command.PostprocessorId);
         var active = await ReadActiveProcessAsync(
-            connection, transaction, command.CaseOperationId, cancellationToken);
+            connection, transaction, programId, command.CaseOperationId, cancellationToken);
         var readinessBefore = await ReadAffectedReadinessAsync(
             connection, transaction, command.CaseOperationId, cancellationToken);
 
@@ -69,6 +74,17 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             || command.ChangeScope == GCodeChangeScopes.NewProcessRevision;
         if (createsProcess)
         {
+            var outputs = command.Outputs ??
+                [new ManufacturingProgramRevisionOutput(
+                    $"output:{command.CandidateProcessRevisionId}:{command.CaseOperationId}",
+                    command.CaseOperationId, 1, 0,
+                    $$"""{"caseOperationId":"{{command.CaseOperationId}}"}""")];
+            if (command.ManufacturingProgramId is not null && command.Outputs is null)
+            {
+                throw new GCodeProcessStateException(
+                    "program_outputs_required",
+                    "A new combined Manufacturing Program revision requires its exact output recipe.");
+            }
             if (active is not null && !command.ConfirmNewProcessRevision)
             {
                 throw new GCodeProcessStateException(
@@ -114,8 +130,8 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             await using (var deactivate = connection.CreateCommand())
             {
                 deactivate.Transaction = transaction;
-                deactivate.CommandText = "UPDATE process_revisions SET is_active = 0, version = version + 1, updated_at = $at WHERE case_operation_id = $operationId AND is_active = 1;";
-                deactivate.Parameters.AddWithValue("$operationId", command.CaseOperationId);
+                deactivate.CommandText = "UPDATE process_revisions SET is_active = 0, version = version + 1, updated_at = $at WHERE manufacturing_program_id = $programId AND is_active = 1;";
+                deactivate.Parameters.AddWithValue("$programId", programId);
                 deactivate.Parameters.AddWithValue("$at", Format(command.ReleasedAt));
                 await deactivate.ExecuteNonQueryAsync(cancellationToken);
             }
@@ -130,7 +146,9 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                 releasedBy,
                 command.ProcessChangeDescription,
                 1,
-                toolTable);
+                toolTable,
+                programId,
+                outputs);
             await InsertProcessRevisionAsync(connection, transaction, process, cancellationToken);
         }
         else
@@ -208,12 +226,90 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         ReadStoredFileAsync(
             "gcode_releases", "id", releaseId, caseOperationId, cancellationToken);
 
+    public async Task<StoredReleaseFile?> ReadProgramGCodeFileAsync(
+        string manufacturingProgramId,
+        string releaseId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT release.id, release.original_file_name, release.stored_relative_path,
+                   release.file_size, release.file_hash
+            FROM gcode_releases release
+            JOIN process_revisions revision ON revision.id = release.process_revision_id
+            WHERE release.id = $releaseId AND revision.manufacturing_program_id = $programId;
+            """;
+        command.Parameters.AddWithValue("$releaseId", releaseId);
+        command.Parameters.AddWithValue("$programId", manufacturingProgramId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new StoredReleaseFile(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetInt64(3), reader.GetString(4))
+            : null;
+    }
+
     public Task<StoredReleaseFile?> ReadToolTableFileAsync(
         string caseOperationId,
         string toolTableReleaseId,
         CancellationToken cancellationToken) =>
         ReadStoredFileAsync(
             "tool_table_releases", "id", toolTableReleaseId, caseOperationId, cancellationToken);
+
+    public async Task<StoredReleaseFile?> ReadProgramToolTableFileAsync(
+        string manufacturingProgramId,
+        string toolTableReleaseId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT tool.id, tool.original_file_name, tool.stored_relative_path,
+                   tool.file_size, tool.file_hash
+            FROM tool_table_releases tool
+            JOIN process_revisions revision ON revision.tool_table_release_id = tool.id
+            WHERE tool.id = $toolId AND revision.manufacturing_program_id = $programId
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$toolId", toolTableReleaseId);
+        command.Parameters.AddWithValue("$programId", manufacturingProgramId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new StoredReleaseFile(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetInt64(3), reader.GetString(4))
+            : null;
+    }
+
+    public async Task<ProgramPublicationContext?> ResolveProgramPublicationContextAsync(
+        string manufacturingProgramId,
+        IReadOnlyList<ManufacturingProgramRevisionOutput>? outputs,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        var operationId = outputs?.OrderBy(value => value.DisplayOrder).FirstOrDefault()?.CaseOperationId;
+        await using var command = connection.CreateCommand();
+        command.CommandText = operationId is null
+            ? """
+                SELECT operation.case_id, revision.case_operation_id
+                FROM manufacturing_programs program
+                JOIN process_revisions revision
+                  ON revision.manufacturing_program_id = program.id AND revision.is_active = 1
+                JOIN case_operations operation ON operation.id = revision.case_operation_id
+                WHERE program.id = $programId;
+                """
+            : """
+                SELECT operation.case_id, operation.id
+                FROM manufacturing_programs program
+                JOIN case_operations operation ON operation.id = $operationId
+                WHERE program.id = $programId;
+                """;
+        command.Parameters.AddWithValue("$programId", manufacturingProgramId);
+        if (operationId is not null) command.Parameters.AddWithValue("$operationId", operationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new ProgramPublicationContext(reader.GetString(0), reader.GetString(1))
+            : null;
+    }
 
     public async Task<IReadOnlySet<string>> ListStoredArtifactIdsAsync(CancellationToken cancellationToken)
     {
@@ -270,7 +366,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                    tt.release_comment, tt.required_tool_count
             FROM process_revisions pr
             JOIN tool_table_releases tt ON tt.id = pr.tool_table_release_id
-            WHERE pr.case_operation_id = $operationId
+            WHERE pr.manufacturing_program_id = 'case-operation:' || $operationId
             ORDER BY pr.revision_number DESC;
             """;
         command.Parameters.AddWithValue("$operationId", operationId);
@@ -422,9 +518,17 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         return values;
     }
 
+    private static Task<ProcessRevision?> ReadActiveProcessAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string operationId,
+        CancellationToken token) =>
+        ReadActiveProcessAsync(connection, transaction, DefaultProgramId(operationId), operationId, token);
+
     private static async Task<ProcessRevision?> ReadActiveProcessAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
+        string programId,
         string operationId,
         CancellationToken token)
     {
@@ -440,9 +544,10 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                    tt.release_comment, tt.required_tool_count
             FROM process_revisions pr
             JOIN tool_table_releases tt ON tt.id = pr.tool_table_release_id
-            WHERE pr.case_operation_id = $operationId AND pr.is_active = 1;
+            WHERE pr.manufacturing_program_id = $programId AND pr.is_active = 1;
             """;
         command.Parameters.AddWithValue("$operationId", operationId);
+        command.Parameters.AddWithValue("$programId", programId);
         await using var reader = await command.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token))
         {
@@ -586,9 +691,9 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             INSERT INTO process_revisions (
                 id, case_operation_id, revision_number, is_active,
                 tool_table_release_id, created_at, created_by,
-                change_description, version, updated_at)
+                change_description, version, updated_at, manufacturing_program_id)
             VALUES ($id, $operationId, $revision, 1, $toolTableId, $at, $by,
-                    $description, 1, $at);
+                    $description, 1, $at, $programId);
             """;
         command.Parameters.AddWithValue("$id", value.ProcessRevisionId);
         command.Parameters.AddWithValue("$operationId", value.CaseOperationId);
@@ -597,7 +702,33 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         command.Parameters.AddWithValue("$at", Format(value.CreatedAt));
         command.Parameters.AddWithValue("$by", value.CreatedBy);
         command.Parameters.AddWithValue("$description", value.ChangeDescription);
+        command.Parameters.AddWithValue("$programId", value.ManufacturingProgramId ?? DefaultProgramId(value.CaseOperationId));
         await command.ExecuteNonQueryAsync(token);
+
+        foreach (var output in value.Outputs ??
+                 [new ManufacturingProgramRevisionOutput(
+                     $"output:{value.ProcessRevisionId}:{value.CaseOperationId}",
+                     value.CaseOperationId, 1, 0,
+                     $$"""{"caseOperationId":"{{value.CaseOperationId}}"}""")])
+        {
+            await using var outputCommand = connection.CreateCommand();
+            outputCommand.Transaction = transaction;
+            outputCommand.CommandText = """
+                INSERT INTO manufacturing_program_revision_outputs (
+                    id, process_revision_id, case_operation_id, quantity_per_cycle,
+                    display_order, execution_metadata_json, created_at)
+                VALUES ($id, $revisionId, $operationId, $quantity,
+                        $displayOrder, $metadata, $at);
+                """;
+            outputCommand.Parameters.AddWithValue("$id", output.OutputId);
+            outputCommand.Parameters.AddWithValue("$revisionId", value.ProcessRevisionId);
+            outputCommand.Parameters.AddWithValue("$operationId", output.CaseOperationId);
+            outputCommand.Parameters.AddWithValue("$quantity", output.QuantityPerCycle);
+            outputCommand.Parameters.AddWithValue("$displayOrder", output.DisplayOrder);
+            outputCommand.Parameters.AddWithValue("$metadata", output.ExecutionMetadataJson);
+            outputCommand.Parameters.AddWithValue("$at", Format(value.CreatedAt));
+            await outputCommand.ExecuteNonQueryAsync(token);
+        }
     }
 
     private static async Task InsertReleaseAsync(
@@ -833,6 +964,19 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         return Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1;
     }
 
+    private static async Task<bool> ProgramExistsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string programId,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM manufacturing_programs WHERE id = $id);";
+        command.Parameters.AddWithValue("$id", programId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1;
+    }
+
     private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -871,4 +1015,6 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
 
     private static DateTimeOffset Parse(string value) =>
         DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
+    private static string DefaultProgramId(string operationId) => $"case-operation:{operationId}";
 }

@@ -347,8 +347,12 @@
                                        FontWeight="Bold" />
                             <TextBlock Text="UNASSIGNED" FontWeight="Bold" />
                         </DockPanel>
+                        <Button Grid.Row="0" Content="Create Production Run..." HorizontalAlignment="Center"
+                                Margin="0,28,0,4" Padding="10,3" Click="CreateProductionRun_Click"
+                                IsEnabled="{Binding CanDrag}" AutomationProperties.Name="Create Production Run"/>
                         <ListBox x:Name="OperationPool" Grid.Row="1"
                                  ItemsSource="{Binding Pool}"
+                                 SelectionMode="Extended"
                                  ItemTemplate="{StaticResource CompactOperationRowTemplate}"
                                  AllowDrop="True"
                                  PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"

@@ -1290,7 +1290,38 @@ internal sealed record PlanningBoardSnapshot(
     string ConflictCalculationMessage,
     IReadOnlyList<PlanningConflict> Conflicts,
     IReadOnlyList<PlanningBoardOperation> Pool,
-    IReadOnlyList<PlanningBoardMachine> Machines);
+    IReadOnlyList<PlanningBoardMachine> Machines,
+    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns = null);
+
+internal sealed record ProductionRunPlanningCard(
+    string ProductionRunId,string Status,string? MachineId,int? BacklogPosition,
+    int SharedSetupSeconds,int ProgramCount,long RemainingDurationSeconds,
+    string ReadinessState,bool IsReady,IReadOnlyList<ProductionRunPlanningProgram> Programs);
+internal sealed record ProductionRunPlanningProgram(
+    string ProductionRunProgramId,string ManufacturingProgramId,string? GCodeReleaseId,
+    int SequencePosition,int TargetCycles,int CompletedCycles,long ForecastCompletionOffsetSeconds,
+    IReadOnlyList<ProductionRunPlanningOutput> Outputs);
+internal sealed record ProductionRunPlanningOutput(
+    string ProductionRunOutputId,string BatchOperationId,string BatchNumber,string CaseId,
+    string PartNumber,int OperationNumber,int QuantityPerCycle,int TargetQuantity,
+    int ProducedQuantity,int RemainingQuantity);
+
+internal sealed record ProductionRunCreate(
+    int SharedSetupSeconds,string SetupSnapshotJson,IReadOnlyList<ProductionRunProgramCreate> Programs,
+    ProductionRunAssignmentCreate? Assignment = null);
+internal sealed record ProductionRunProgramCreate(
+    string ManufacturingProgramId,string ProcessRevisionId,string? GCodeReleaseId,
+    int SequencePosition,decimal CycleSeconds,IReadOnlyList<ProductionRunOutputCreate> Outputs);
+internal sealed record ProductionRunOutputCreate(string RevisionOutputId,string BatchOperationId,long TargetQuantity);
+internal sealed record ProductionRunAssignmentCreate(string MachineId,int BacklogPosition,string PlanningMode,bool ConfirmCompatibilityOverride=false,string? OverrideReason=null);
+internal sealed record ProductionRunResource(string ProductionRunId,string Status,int SharedSetupSeconds,int Version,
+    IReadOnlyList<ProductionRunProgramResource> Programs,ProductionRunAssignmentResource? Assignment);
+internal sealed record ProductionRunProgramResource(string ProductionRunProgramId,string ManufacturingProgramId,string? ProcessRevisionId,
+    string? SelectedGCodeReleaseId,int SequencePosition,long TargetCycleCount,long CompletedCycleCount,string Status,
+    IReadOnlyList<ProductionRunOutputResource> Outputs);
+internal sealed record ProductionRunOutputResource(string ProductionRunOutputId,string BatchOperationId,string? RevisionOutputId,
+    long QuantityPerCycle,long TargetQuantity,long ProducedQuantity,long RemainingQuantity,string Status,int Version);
+internal sealed record ProductionRunAssignmentResource(string MachineAssignmentId,string MachineId,int BacklogPosition,string PlanningMode,int Version);
 
 internal sealed record PlanningConflict(
     string ConflictId,
