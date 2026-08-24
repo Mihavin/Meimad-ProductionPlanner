@@ -1376,6 +1376,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
                 "nc_estimate" => "NC cycle",
                 "manager_override" => "Override cycle",
                 "manual" => "Manual cycle",
+                "real_average" => "Real average",
                 _ => "Cycle"
             };
             return $"{source} {Duration(seconds)} / part";
@@ -1495,6 +1496,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
             "manager_override" => $"Manager override cycle estimate: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
             "nc_estimate" => $"NC-based cycle estimate: {Duration(PlanningCycleTimePerPartSeconds ?? NcEstimatedCycleTimePerPartSeconds)} per part ({NcEstimateConfidence ?? "unknown"} confidence).",
             "manual" => $"Manual operation cycle estimate: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
+            "real_average" => $"Average of recorded real part times: {Duration(PlanningCycleTimePerPartSeconds)} per part.",
             _ => "Cycle estimate unavailable."
         };
         if (!UsesSetupOccupancyEstimate)

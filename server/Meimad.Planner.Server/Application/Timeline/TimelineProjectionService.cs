@@ -58,6 +58,7 @@ internal sealed class TimelineProjectionService
         horizonEnd = horizonEnd.ToUniversalTime();
         var sourceRead = Stopwatch.StartNew();
         var source = await repository.ReadAsync(horizonStart, horizonEnd, cancellationToken);
+        source = await ApplyRecordedRealTimingAsync(source, cancellationToken);
         sourceRead.Stop();
         var requestedForecastCursor = (asOf ?? source.ReadAt).ToUniversalTime();
         var forecastCursor = requestedForecastCursor < horizonStart
@@ -725,6 +726,51 @@ internal sealed class TimelineProjectionService
         }
         await LogProjectionEventsAsync(projection, resourceWaitIntervals, cancellationToken);
         return projection;
+    }
+
+    private async Task<TimelineSourceSnapshot> ApplyRecordedRealTimingAsync(
+        TimelineSourceSnapshot source, CancellationToken cancellationToken)
+    {
+        var reports = await eventLog.ListAsync(null, null, "manual_operation_reported", 5000, cancellationToken);
+        if (reports.Count == 0) return source;
+        var byOperation = reports
+            .Where(item => item.RelatedEntityIds.TryGetValue("batchOperationId", out _))
+            .GroupBy(item => item.RelatedEntityIds["batchOperationId"], StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.OrderBy(item => item.Timestamp).ToArray(), StringComparer.Ordinal);
+        var changed = source.Operations.Select(operation =>
+        {
+            if (!byOperation.TryGetValue(operation.OperationId, out var values)) return operation;
+            var partTimes = values
+                .Where(value => string.Equals(value.ReasonCode, "partTimeUpdate", StringComparison.Ordinal))
+                .Select(value => ReadPartTimeSeconds(value.AfterDataJson))
+                .Where(value => value is > 0)
+                .Select(value => (double)value!.Value)
+                .ToArray();
+            var setupStart = values.LastOrDefault(value => string.Equals(value.ReasonCode, "setupStart", StringComparison.Ordinal));
+            var setupEnd = values.LastOrDefault(value => string.Equals(value.ReasonCode, "setupEnd", StringComparison.Ordinal));
+            var setupSeconds = setupStart is not null && setupEnd is not null && setupEnd.Timestamp > setupStart.Timestamp
+                ? (setupEnd.Timestamp - setupStart.Timestamp).TotalSeconds
+                : (double?)null;
+            return operation with
+            {
+                CycleSeconds = partTimes.Length == 0 ? operation.CycleSeconds : partTimes.Average(),
+                SetupSeconds = setupSeconds is > 0 ? setupSeconds : operation.SetupSeconds,
+                PlanningCycleTimeSource = partTimes.Length == 0 ? operation.PlanningCycleTimeSource : "real_average"
+            };
+        }).ToArray();
+        return source with { Operations = changed };
+    }
+
+    private static double? ReadPartTimeSeconds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty("partTimeSeconds", out var value)
+                && value.TryGetDouble(out var seconds) && double.IsFinite(seconds) ? seconds : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     private async Task LogProjectionEventsAsync(
