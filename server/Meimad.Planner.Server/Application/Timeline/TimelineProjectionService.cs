@@ -1577,8 +1577,18 @@ internal sealed class TimelineProjectionService
                 var representative = actual ?? workValues[0];
                 var startsAt = values.Min(interval => interval.StartsAt);
                 var endsAt = values.Max(interval => interval.EndsAt);
+                // Once an operation has recorded actual production, a forecast
+                // setup that overlaps that actual segment is stale and must not
+                // be painted after it. Keep QA/load-unload phases: they are real
+                // machine occupancy and removing them creates apparent pauses
+                // between the blue production runs.
+                var activeActual = actual is not null
+                    && string.Equals(source?.Status, "in_progress", StringComparison.Ordinal);
                 var phases = values
                     .Where(interval => interval.EndsAt > interval.StartsAt)
+                    .Where(interval => !activeActual
+                        || interval.Type != "setup"
+                        || interval.EndsAt <= actual!.StartsAt)
                     .Select(interval => new TimelineProjectionPhase(
                         interval.Type,
                         interval.StartsAt,

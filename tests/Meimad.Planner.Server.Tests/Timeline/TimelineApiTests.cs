@@ -1347,6 +1347,41 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task In_progress_operation_does_not_show_forecast_setup_after_actual_production()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE batch_operations
+                    SET status = 'in_progress', actual_start = '2026-08-11T08:30:00Z',
+                        actual_machine_id = 'machine-1'
+                    WHERE id = 'op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:45:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var interval = Assert.Single(document.RootElement.GetProperty("machines")[0]
+                .GetProperty("intervals").EnumerateArray(), value =>
+                    value.GetProperty("operationId").GetString() == "op-1");
+            var phases = interval.GetProperty("phases").EnumerateArray().ToArray();
+            Assert.NotEmpty(phases);
+            Assert.DoesNotContain(phases, phase =>
+                phase.GetProperty("type").GetString() == "setup");
+            Assert.Contains(phases, phase =>
+                phase.GetProperty("type").GetString() == "production");
+        });
+    }
+
+    [Fact]
     public async Task Backward_assignment_with_in_progress_work_keeps_actual_start_and_reports_fallback()
     {
         await RunWithServerAsync(async (application, client) =>
