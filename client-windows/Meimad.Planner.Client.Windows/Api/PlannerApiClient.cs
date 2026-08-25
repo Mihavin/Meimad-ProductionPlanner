@@ -164,6 +164,18 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerMachine>>([]);
 
+    Task<IReadOnlyList<UserTerminal>> ListUserTerminalsAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<UserTerminal>>([]);
+
+    Task<UserTerminal> CreateUserTerminalAsync(
+        CreateUserTerminalRequest request, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<UserTerminal> UpdateUserTerminalAsync(
+        string deviceId, UpdateUserTerminalRequest request, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<MachineResource> GetMachineAsync(string machineId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
@@ -1167,6 +1179,33 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public async Task<IReadOnlyList<PlannerMachine>> ListMachinesAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<PlannerMachine>("api/v1/machines", cancellationToken);
+
+    public async Task<IReadOnlyList<UserTerminal>> ListUserTerminalsAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<UserTerminal>("api/v1/eink/device-registrations", cancellationToken);
+
+    public async Task<UserTerminal> CreateUserTerminalAsync(
+        CreateUserTerminalRequest value, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/eink/device-registrations", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(value, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<UserTerminal>(response, cancellationToken);
+    }
+
+    public async Task<UserTerminal> UpdateUserTerminalAsync(
+        string deviceId, UpdateUserTerminalRequest value, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Patch,
+            $"api/v1/eink/device-registrations/{Uri.EscapeDataString(deviceId)}", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(value, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<UserTerminal>(response, cancellationToken);
+    }
 
     public async Task<MachineResource> GetMachineAsync(
         string machineId,

@@ -1618,6 +1618,26 @@ internal sealed record TimelineConflict(
             : Message;
 }
 
+internal sealed record UserTerminal(
+    string DeviceId,
+    string TabletId,
+    string? HardwareId,
+    string DeviceName,
+    string? MachineId,
+    bool IsEnabled,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    string? RegistrationToken)
+{
+    public string BindingText => string.IsNullOrWhiteSpace(MachineId) ? "Spare / unassigned" : MachineId;
+    public string StateText => IsEnabled ? "Enabled" : "Disabled";
+}
+
+internal sealed record CreateUserTerminalRequest(string DeviceName, string? MachineId, string? HardwareId);
+
+internal sealed record UpdateUserTerminalRequest(string? MachineId, bool IsEnabled, bool RotateCredential);
+
 internal sealed class PlannerApiException : Exception
 {
     internal PlannerApiException(

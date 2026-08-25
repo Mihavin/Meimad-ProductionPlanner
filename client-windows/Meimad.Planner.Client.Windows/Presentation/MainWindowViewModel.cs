@@ -38,6 +38,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             RefreshAsync,
             () => !IsBusy,
             () => !IsBusy && apiClient is not null);
+        UserTerminals = new UserTerminalsViewModel();
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
@@ -108,6 +109,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public TimelineViewModel Timeline { get; }
 
     public SetupViewModel Setup { get; }
+
+    public UserTerminalsViewModel UserTerminals { get; }
 
     public string ClientId
     {
@@ -382,6 +385,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         MachinePlanningBoard.AttachSession(apiClient, ClientId, status);
         Timeline.AttachSession(apiClient);
         Setup.AttachSession(apiClient, ClientId, status);
+        UserTerminals.AttachSession(apiClient, ClientId, status);
     }
 
     private void SetOffline(string headline, string detail)
@@ -400,6 +404,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
         Timeline.AttachSession(apiClient);
         Setup.AttachSession(apiClient, ClientId, null);
+        UserTerminals.AttachSession(apiClient, ClientId, null);
         RaiseCommandStates();
     }
 
@@ -416,6 +421,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
         Timeline.AttachSession(apiClient);
         Setup.AttachSession(apiClient, ClientId, null);
+        UserTerminals.AttachSession(apiClient, ClientId, null);
         RaiseCommandStates();
     }
 
