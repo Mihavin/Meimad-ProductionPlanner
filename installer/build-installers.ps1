@@ -217,6 +217,12 @@ $harvestedServerExecutable = Join-Path $serverHarvestStage "Meimad.Planner.Serve
 if (Test-Path -LiteralPath $harvestedServerExecutable) {
     Remove-Item -LiteralPath $harvestedServerExecutable -Force
 }
+$harvestedServerSettings = Join-Path $serverHarvestStage "appsettings.json"
+if (Test-Path -LiteralPath $harvestedServerSettings) {
+    # appsettings.json is authored explicitly as a permanent, never-overwrite
+    # component so a Server upgrade cannot discard site configuration.
+    Remove-Item -LiteralPath $harvestedServerSettings -Force
+}
 
 New-WixPayloadAuthoring -SourceDirectory $clientHarvestStage -OutputFile $clientPayloadAuthoring -ComponentGroupId "ClientPayloadComponents"
 New-WixPayloadAuthoring -SourceDirectory $serverHarvestStage -OutputFile $serverPayloadAuthoring -ComponentGroupId "ServerPayloadComponents"

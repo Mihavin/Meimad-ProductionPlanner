@@ -6,8 +6,41 @@ using Meimad.Planner.Server.Application.EInk;
 /// <summary>Authenticated bootstrap for physical production tablets.</summary>
 internal static class TabletEndpoints
 {
-    internal static void MapTabletEndpoints(this IEndpointRouteBuilder endpoints) =>
+    internal static void MapTabletEndpoints(this IEndpointRouteBuilder endpoints)
+    {
         endpoints.MapGet("/api/tablet/ping", PingAsync);
+        endpoints.MapGet("/api/tablets/{tabletId}/status", ReadStatusAsync);
+    }
+
+    private static async Task<IResult> ReadStatusAsync(
+        string tabletId,
+        HttpContext context,
+        TabletStatusService service,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var value = await service.ReadAsync(
+                tabletId,
+                ReadBearerToken(context),
+                timeProvider.GetUtcNow(),
+                DecimalHeader(context, "X-Meimad-Battery-Voltage", 0m, 12m),
+                IntHeader(context, "X-Meimad-Battery-Percent", 0, 100),
+                cancellationToken);
+            context.Response.Headers.CacheControl = "no-cache";
+            return Results.Ok(value);
+        }
+        catch (TabletStatusResourceNotFoundException)
+        {
+            return PlanningHttpSupport.Error(404, "device_resource_not_found",
+                "The requested tablet resource was not found.", context);
+        }
+        catch (TabletStatusUnavailableException exception)
+        {
+            return PlanningHttpSupport.Error(409, exception.Code, exception.Message, context);
+        }
+    }
 
     private static async Task<IResult> PingAsync(
         string? hardwareId,

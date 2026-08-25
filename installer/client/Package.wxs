@@ -2,7 +2,7 @@
   <Package
     Name="Meimad Production Planner Client"
     Manufacturer="Meimad"
-    Version="0.1.34"
+    Version="0.1.38"
     UpgradeCode="{C5B1B980-8EBD-4290-8F55-B4685932C9CA}"
     Scope="perMachine">
 
@@ -21,23 +21,34 @@
 
     <Feature Id="MainFeature" Title="Meimad Production Planner Client" Level="1">
       <ComponentGroupRef Id="ClientPayloadComponents" />
+      <ComponentRef Id="ClientExecutableComponent" />
       <ComponentRef Id="ClientShortcutComponent" />
     </Feature>
   </Package>
 
   <Fragment>
     <DirectoryRef Id="INSTALLFOLDER">
-      <Component Id="ClientShortcutComponent" Guid="{A9373E50-6D1D-4BBC-A42B-F688EA45A2CD}">
+      <Component Id="ClientExecutableComponent" Guid="{A9373E50-6D1D-4BBC-A42B-F688EA45A2CD}">
         <File
           Id="ClientExecutable"
           Source="$(var.ClientExecutableDir)\Meimad.Planner.Client.Windows.exe"
+          KeyPath="yes" />
+      </Component>
+      <Component Id="ClientShortcutComponent" Guid="{C06B3371-4F28-4CDA-8657-7BE22F2F7D44}">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Meimad\Production Planner"
+          Name="ClientShortcut"
+          Type="integer"
+          Value="1"
           KeyPath="yes" />
         <Shortcut
           Id="ClientStartMenuShortcut"
           Directory="PROGRAMMENUDIR"
           Name="Meimad Production Planner"
           Description="Open the Meimad Production Planner Windows client"
-          Advertise="yes"
+          Advertise="no"
+          Target="[#ClientExecutable]"
           WorkingDirectory="INSTALLFOLDER" />
         <RemoveFolder
           Id="RemoveClientProgramMenuFolder"

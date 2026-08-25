@@ -96,7 +96,8 @@ DeviceConfiguration loadDeviceConfiguration() {
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
   if (!preferences.isKey("tablet_id") && strlen(meimad::config::kDefaultTabletId) > 0)
     preferences.putString("tablet_id", meimad::config::kDefaultTabletId);
-  if (!preferences.isKey("device_token") && strlen(meimad::config::kDefaultDeviceToken) > 0)
+  if (strlen(meimad::config::kDefaultDeviceToken) > 0
+      && preferences.getString("device_token", "") != meimad::config::kDefaultDeviceToken)
     preferences.putString("device_token", meimad::config::kDefaultDeviceToken);
   DeviceConfiguration value {
     readHardwareId(),

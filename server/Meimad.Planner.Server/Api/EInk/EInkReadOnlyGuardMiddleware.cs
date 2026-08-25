@@ -19,7 +19,10 @@ internal sealed class EInkReadOnlyGuardMiddleware
             && context.Request.Path.StartsWithSegments("/api/v1/eink/devices");
         var isAuthenticatedBootstrap = HttpMethods.IsGet(context.Request.Method)
             && context.Request.Path.Equals("/api/tablet/ping");
-        if (isDeviceCredential && !isDeviceRead && !isAuthenticatedBootstrap)
+        var isTabletStatusRead = HttpMethods.IsGet(context.Request.Method)
+            && context.Request.Path.StartsWithSegments("/api/tablets")
+            && context.Request.Path.Value?.EndsWith("/status", StringComparison.Ordinal) == true;
+        if (isDeviceCredential && !isDeviceRead && !isAuthenticatedBootstrap && !isTabletStatusRead)
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsJsonAsync(new

@@ -433,6 +433,7 @@ The following are logical support records, not planning authority:
 - The Server generates a high-entropy `mp_eink_...` bearer token, stores only its SHA-256 hash, and returns plaintext only on creation or rotation.
 - Active Windows Edit Mode authority is required to create, bind/unbind, enable/revoke, or rotate a registration; these changes are atomic with the authority check.
 - Authenticated bootstrap records last seen/contact and bounded supplied battery metadata as operational fields only. Firmware profile history and any telemetry retention policy remain open. `SEND_TO_QC` event persistence is approved below but not yet implemented.
+- Authenticated physical status reads resolve the enabled credential and path Tablet ID to its bound Machine, first non-final Machine-backlog Production Run, current Program, and exactly one output. The response revision is a deterministic hash of tablet-visible identity, Machine, Run, Program/output, workflow, and status fields; polling/contact timestamps do not change it. Multi-output Programs are rejected rather than reduced to one output by an implicit choice.
 
 ### 10.2 Tablet QC Event target
 

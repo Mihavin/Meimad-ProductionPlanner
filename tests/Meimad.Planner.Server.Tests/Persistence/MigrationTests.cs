@@ -62,7 +62,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(47L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(48L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -169,6 +169,10 @@ public sealed class MigrationTests
         Assert.Equal("manufacturing_programs", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 46;";
         Assert.Equal("production_runs_and_assignment_ownership", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 47;";
+        Assert.Equal("production_run_execution_events", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 48;";
+        Assert.Equal("eink_physical_tablets_and_workflow", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
@@ -258,7 +262,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(47L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(48L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1413,7 +1417,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 48;";
+            command.CommandText = "PRAGMA user_version = 49;";
             await command.ExecuteNonQueryAsync();
         }
 

@@ -140,6 +140,76 @@ public sealed class EInkApiTests
     }
 
     [Fact]
+    public async Task Physical_tablet_status_is_scoped_stable_and_tracks_authoritative_run_state()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+
+            using var firstResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+            using var first = JsonDocument.Parse(await firstResponse.Content.ReadAsStringAsync());
+            var firstRoot = first.RootElement;
+            var firstRevision = firstRoot.GetProperty("revision").GetUInt32();
+            Assert.Equal("3041", firstRoot.GetProperty("tablet_id").GetString());
+            Assert.Equal("machine-eink-1", firstRoot.GetProperty("machine").GetProperty("id").GetString());
+            Assert.Equal("M-EINK-1", firstRoot.GetProperty("machine").GetProperty("number").GetString());
+            Assert.Equal("run:batch-operation:operation-eink-1",
+                firstRoot.GetProperty("nc_run").GetProperty("id").GetString());
+            Assert.Equal("PN-EINK", firstRoot.GetProperty("part").GetProperty("number").GetString());
+            Assert.Equal(10, firstRoot.GetProperty("operation").GetProperty("number").GetInt32());
+            Assert.Equal("READY_FOR_SETUP", firstRoot.GetProperty("status").GetString());
+
+            using var unchangedResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var unchanged = JsonDocument.Parse(await unchangedResponse.Content.ReadAsStringAsync());
+            Assert.Equal(firstRevision, unchanged.RootElement.GetProperty("revision").GetUInt32());
+
+            Assert.NotNull(await ReadDeviceContactAsync(application.Services));
+
+            await ExecuteAsync(application.Services, """
+                UPDATE production_runs
+                SET status = 'IN_PROGRESS', version = version + 1
+                WHERE id = 'run:batch-operation:operation-eink-1';
+                UPDATE production_run_programs
+                SET status = 'ACTIVE', version = version + 1
+                WHERE production_run_id = 'run:batch-operation:operation-eink-1';
+                """);
+            using var setupResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var setup = JsonDocument.Parse(await setupResponse.Content.ReadAsStringAsync());
+            Assert.Equal("IN_SETUP_RUN", setup.RootElement.GetProperty("status").GetString());
+            Assert.NotEqual(firstRevision, setup.RootElement.GetProperty("revision").GetUInt32());
+
+            await ExecuteAsync(application.Services, """
+                UPDATE production_run_programs
+                SET completed_cycle_count = 1, version = version + 1
+                WHERE production_run_id = 'run:batch-operation:operation-eink-1';
+                """);
+            using var productionResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var production = JsonDocument.Parse(await productionResponse.Content.ReadAsStringAsync());
+            Assert.Equal("IN_PRODUCTION", production.RootElement.GetProperty("status").GetString());
+
+            await ExecuteAsync(application.Services, """
+                INSERT INTO tablet_workflow_events (
+                    id, device_id, machine_id, production_run_id, event_type,
+                    resulting_state, occurred_at, created_at)
+                VALUES (
+                    'tablet-event-eink-1', 'device-eink-1', 'machine-eink-1',
+                    'run:batch-operation:operation-eink-1', 'SEND_TO_QC',
+                    'IN_QC', '2026-08-25T10:15:30Z', '2026-08-25T10:15:30Z');
+                """);
+            using var qcResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var qc = JsonDocument.Parse(await qcResponse.Content.ReadAsStringAsync());
+            Assert.Equal("IN_QC", qc.RootElement.GetProperty("status").GetString());
+
+            using var wrongPath = await client.SendAsync(Get("/api/tablets/3042/status"));
+            Assert.Equal(HttpStatusCode.NotFound, wrongPath.StatusCode);
+            using var wrongToken = await client.SendAsync(Get(
+                "/api/tablets/3041/status", "mp_eink_other-token"));
+            Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
+        });
+    }
+
+    [Fact]
     public async Task Corrupt_package_file_is_rejected_without_returning_bytes()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
@@ -380,6 +450,25 @@ public sealed class EInkApiTests
             WHERE id = 1;
             """;
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ExecuteAsync(IServiceProvider services, string sql)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<string?> ReadDeviceContactAsync(IServiceProvider services)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT last_server_contact_at FROM device_registry WHERE id = $deviceId;";
+        command.Parameters.AddWithValue("$deviceId", DeviceId);
+        return await command.ExecuteScalarAsync() as string;
     }
 
     private static string Sha256(byte[] bytes) =>

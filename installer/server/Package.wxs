@@ -2,7 +2,7 @@
   <Package
     Name="Meimad Production Planner Server"
     Manufacturer="Meimad"
-    Version="0.1.34"
+    Version="0.1.38"
     UpgradeCode="{49637DC8-BA22-4B14-90C7-AA74B249A38F}"
     Scope="perMachine">
 
@@ -18,6 +18,7 @@
     <Feature Id="MainFeature" Title="Meimad Production Planner Server" Level="1">
       <ComponentGroupRef Id="ServerPayloadComponents" />
       <ComponentRef Id="ServerServiceComponent" />
+      <ComponentRef Id="C_D3CEFFCFF98E755128623FCB" />
     </Feature>
   </Package>
 
@@ -45,6 +46,16 @@
           Stop="both"
           Remove="uninstall"
           Wait="yes" />
+      </Component>
+      <Component
+        Id="C_D3CEFFCFF98E755128623FCB"
+        Guid="*"
+        NeverOverwrite="yes"
+        Permanent="yes">
+        <File
+          Id="F_D3CEFFCFF98E755128623FCB"
+          Source="$(var.ServerExecutableDir)\appsettings.json"
+          KeyPath="yes" />
       </Component>
     </DirectoryRef>
   </Fragment>

@@ -1431,7 +1431,7 @@ All E-Ink routes require an implemented revocable `mp_eink_...` bearer credentia
 | `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/manifest` | Read an exact authorized revision manifest. |
 | `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/files/{fileId}` | Download one authorized manifest file or preview. |
 | `GET` | `/api/v1/eink/devices/{deviceId}/time-config` | Read workday, shift-window, and polling configuration. |
-| `GET` | `/api/tablets/{tablet_id}/status` | Approved physical-firmware status projection; Server implementation pending. |
+| `GET` | `/api/tablets/{tablet_id}/status` | Implemented authenticated physical-firmware status projection. |
 | `POST` | `/api/tablets/{tablet_id}/events` | Approved `SEND_TO_QC` operational command; Server implementation pending. |
 
 The currently implemented device routes are GET-only. The approved POST event route is the only exception once implemented. E-Ink credentials receive `403` on planning, Edit Mode, TV, device-registration administration, every other mutation, and any future telemetry route not explicitly scoped to that credential. A path/credential device mismatch returns scoped `404` so it does not reveal another device's registration.
@@ -1661,11 +1661,11 @@ GET /api/tablets/{tablet_id}/status
 POST /api/tablets/{tablet_id}/events
 ```
 
-The contract is approved; the Server routes and persistence migration are not
-yet implemented. The physical firmware now compiles the guarded button binding
-described below, but it is not end-to-end or physically verified. Until the
-Server exception is added, the existing E-Ink guard continues to reject
-device-credential POSTs.
+The authenticated GET status route and schema-v48 workflow table are implemented.
+The POST event route remains pending. The physical firmware compiles the guarded
+button binding described below, but it is not yet end-to-end or physically
+verified. Until the POST exception is added, the existing E-Ink guard continues
+to reject device-credential POSTs.
 
 The GET response uses `revision`, `tablet_id`, `machine`, `nc_run`, `part`,
 `operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP_RUN`,
@@ -1686,10 +1686,20 @@ return the actual Machine Number.
 `nc_run.id` is a Production Run ID, never a Batch Operation ID. The complete
 wire contract uses opaque string IDs; the firmware temporarily accepts numeric
 IDs from early example fixtures for compatibility but must not infer meaning
-from either representation. Derivation of every status remains implementation
-design work, but the approved `SEND_TO_QC` transition is exactly
+from either representation. The current reversible projection maps
+`DRAFT`/`PLANNED` to `READY_FOR_SETUP`, `IN_PROGRESS` with zero completed cycles
+to `IN_SETUP_RUN`, `IN_PROGRESS` after the first completed cycle to
+`IN_PRODUCTION`, `SUSPENDED` or an inactive Machine to `BLOCKED`, and an existing
+tablet QC event to `IN_QC`. No persisted planning fact is changed by this
+mapping. `READY_FOR_PRODUCTION` and the transition out of QC remain open
+decisions. The approved `SEND_TO_QC` transition is exactly
 `IN_SETUP_RUN -> IN_QC` for the same resolved Production Run. A repeated command
 while that same run remains `IN_QC` is an idempotent success.
+
+The current single-part firmware payload rejects a multi-output active Program
+with `409 tablet_projection_ambiguous`; it does not silently select one coupled
+output. Extending the physical payload to represent all atomic outputs remains
+an open compatibility decision.
 
 The first firmware state machine consumes this status without owning or
 deriving business state. `READY_FOR_SETUP` and `IN_QC` select a 120-second
@@ -1875,7 +1885,7 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Single Edit Mode | `/edit-mode`, `/edit-mode/requests`, request outcome/decision, `/edit-mode/release` | Implemented development identity headers; Windows-only credential policy pending auth. |
 | TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
-| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; authenticated `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, and token-plus-MAC bootstrap. Status/event compatibility routes remain pending; `SEND_TO_QC` is the only approved device mutation. |
+| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; authenticated `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, token-plus-MAC bootstrap, and Production-Run-backed physical status. The event compatibility route remains pending; `SEND_TO_QC` is the only approved device mutation. |
 
 Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 
