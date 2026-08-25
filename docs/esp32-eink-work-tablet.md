@@ -36,16 +36,16 @@ Primary goals are:
 
 | Area | Target or constraint |
 |---|---|
-| MCU | ESP32-S3 or similar low-power Wi-Fi-capable controller. Final selection is TBD. |
-| Display | Approximately 7.5-inch-class Color E-Ink; exact panel, controller, resolution, orientation, and palette are TBD. |
+| MCU | XIAO ESP32-S3 Plus on the Seeed XIAO ePaper Display Dev Board. |
+| Display | TRMNL BYOD 7.5-inch (OG) monochrome E-Ink, UC8179 controller, 800×480. |
 | Storage | Removable SD/microSD for official packages, previews, rendered screens, NC/text, tool tables, and local annotations. |
-| Power | Three replaceable AA batteries; no rechargeable cell or charger in MVP. Chemistry and electrical arrangement are TBD. |
+| Power | 2000 mAh rechargeable Li-ion battery supplied with the kit. |
 | Regulation | Low-quiescent-current design with brownout-safe Wi-Fi peaks; power-gate SD/display where practical. |
-| Inputs | Refresh and Page buttons. Long Page press or a button chord enters setup mode. The complete interaction design is TBD. |
+| Inputs | Three user buttons: D1/GPIO2, D2/GPIO3, and D4/GPIO5, plus reset. Long-press behavior remains TBD. |
 | USB | Optional programming/service connector only; never expose Mass Storage to CNC in MVP. |
 | Mechanical | Rugged mount near the Machine, easy setup-time removal, and practical dust/oil-mist protection. Required rating is TBD. |
 | Status | Prefer on-screen indication; avoid always-on LEDs. |
-| Battery | Measure voltage and show a persistent Low Battery warning. Threshold and calibration are TBD. |
+| Battery | BAT_ADC on D0/GPIO1 with ADC enable GPIO6; calibration factor 0.968 in the MVP. |
 
 Hardware and firmware must not be customized per Machine. Machine identity, network configuration, server location, and credentials are provisioned data.
 
