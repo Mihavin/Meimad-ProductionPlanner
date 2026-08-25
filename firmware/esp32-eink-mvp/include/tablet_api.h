@@ -20,6 +20,7 @@ enum class TabletEventType {
 
 struct TabletMachine {
   String id;
+  String number;
   String name;
 };
 

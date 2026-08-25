@@ -10,7 +10,7 @@ Case/Batch Operation representations include external-delay fields. Planning Boa
 
 `GET|PUT|DELETE /api/v1/master-calendar` reads, selects, or clears the global Israel Master Calendar; mutations require Edit Mode. Machine and employee-resource representations accept/return `respectMasterCalendar`. Working-day external delay requires a whole-number duration and selected active Working Calendar; Timeline dependency calculations count that calendar's working dates and intersect it with the master when enabled.
 
-- **Status:** Draft target contract; schema-v26 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, and E-Ink read/simulator slices are implemented as identified below
+- **Status:** Draft target contract; schema-v26 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, and E-Ink read/simulator slices are implemented as identified below; E-Ink `SEND_TO_QC` is approved but not Server-implemented
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -18,14 +18,17 @@ The source specifications define a local REST/API service, domain resources, Sin
 
 ### Scope boundary
 
-This contract covers the Windows Planning Client, TV Dashboard, and Server-side read-only E-Ink integration for the MVP. It intentionally defines:
+This contract covers the Windows Planning Client, TV Dashboard, Server-side E-Ink reads, and the single approved E-Ink `SEND_TO_QC` command for the MVP. It intentionally defines:
 
 - no Customer Portal routes, customer credentials, or Internet-facing gateway;
 - no public/cloud transport or remote-edit contract;
 - no native mobile application surface; and
-- no ESP32 firmware, device setup-AP/provisioning UI, local checklist synchronization, telemetry, or device write-back.
+- no device setup-AP/provisioning UI, local checklist synchronization, telemetry, or device write-back beyond `SEND_TO_QC`; the separate ESP32 project is documented as an explicit consumer where implemented.
 
-Firmware remains a separate future project that may consume the frozen E-Ink routes only after simulator and contract tests pass.
+Firmware remains a separate project boundary. The current prototype client may
+consume only the documented E-Ink/status/event contracts; end-to-end behavior
+is not accepted until the matching Server, simulator, contract, and physical
+device tests pass.
 
 ## 1. Contract maturity
 
@@ -33,8 +36,8 @@ Firmware remains a separate future project that may consume the frozen E-Ink rou
 - `/health` is implemented as an unversioned liveness endpoint; richer readiness remains proposed.
 - Case, Order, Batch creation/read, Machine and Machine Type master data, Working Calendar CRUD and Setup Calendar selection, Machine backlog read, BatchOperation assignment, Single Edit Mode, TV Dashboard, and the E-Ink routes identified below are implemented. Other planning routes remain proposed.
 - The source's conceptual `/api/eink/...` paths are implemented as `/api/v1/eink/...`. Future compatibility guarantees/OpenAPI freezing remain TBD.
-- JSON field names are `camelCase`. Examples explicitly labeled Implemented describe the tested wire shape; all other examples remain Proposed until an OpenAPI document is approved.
-- Human/TV authentication and authorization mechanisms remain TBD. E-Ink device reads use implemented revocable bearer tokens with stored SHA-256 hashes and device/Machine scoping.
+- JSON field names are `camelCase` except the approved Task 5 compatibility routes under `/api/tablets/{tablet_id}`, which preserve their explicit `snake_case` wire contract. Examples explicitly labeled Implemented describe the tested wire shape; approved-but-unimplemented examples remain target behavior until the Server tests pass and OpenAPI is updated.
+- Human/TV authentication and authorization mechanisms remain TBD. E-Ink device reads use implemented revocable bearer tokens with stored SHA-256 hashes and device/Machine scoping; the same credential will need a separate `SEND_TO_QC` capability check when that route is implemented.
 
 Do not implement client and server independently against unreviewed examples. Freeze an OpenAPI document and simulator after Phase 0 decisions, then treat compatibility changes deliberately.
 
@@ -45,7 +48,7 @@ Do not implement client and server independently against unreviewed examples. Fr
 | Windows client in View Mode | `planning.read` | Read master data and projections; request Edit Mode. |
 | Windows client holding Edit Mode | `planning.read`, `planning.edit` | Read and submit approved planning mutations using the active edit generation. |
 | TV Dashboard | `dashboard.read` | Read TV projection only, or an explicitly approved subset. |
-| E-Ink device | `eink.read:<deviceId>` | Read only its version, assigned Machine screen, time config, manifest, and authorized package files. |
+| E-Ink device | `eink.read:<deviceId>`, `eink.send_to_qc:<deviceId>` | Read only its assigned resources and invoke only `SEND_TO_QC` for the Server-resolved eligible Production Run. |
 | Server operator | TBD | Health, backup, restore, migration, and device administration must use a separately approved administrative boundary. |
 
 TV and E-Ink callers must never receive `planning.edit`. A valid user credential without the active Edit Mode generation is insufficient for a planning mutation.
@@ -1416,9 +1419,9 @@ Generation stages files under the configured Server-local package root, enforces
 
 The `201` response contains `packageId`, `revision`, `toolCartId`, `publishedAt`, the immutable `snapshot`, and `assets`. Each asset contains `fileId`, `assetType`, safe `logicalPath`, media type, byte length, SHA-256, and display order; it never exposes a source or storage path. There is no package PATCH/PUT/DELETE route.
 
-## 8. E-Ink read-only contract
+## 8. E-Ink scoped contract
 
-All E-Ink routes require an implemented revocable `mp_eink_...` bearer credential whose subject matches `{deviceId}`. Only the token's SHA-256 hash is stored. The Server resolves the assigned Machine/package from registration; a device cannot select an arbitrary Machine, package, or file by changing an ID.
+All E-Ink routes require an implemented revocable `mp_eink_...` bearer credential whose subject matches `{deviceId}` or `{tablet_id}`. Only the token's SHA-256 hash is stored. The Server resolves the assigned Machine/package/run from registration and current authoritative state; a device cannot select an arbitrary Machine, package, run, or file by changing an ID. Package/planning data remains read-only. `SEND_TO_QC` is the single approved tablet-originated operational command and is not general write authority.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1428,8 +1431,10 @@ All E-Ink routes require an implemented revocable `mp_eink_...` bearer credentia
 | `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/manifest` | Read an exact authorized revision manifest. |
 | `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/files/{fileId}` | Download one authorized manifest file or preview. |
 | `GET` | `/api/v1/eink/devices/{deviceId}/time-config` | Read workday, shift-window, and polling configuration. |
+| `GET` | `/api/tablets/{tablet_id}/status` | Approved physical-firmware status projection; Server implementation pending. |
+| `POST` | `/api/tablets/{tablet_id}/events` | Approved `SEND_TO_QC` operational command; Server implementation pending. |
 
-Every route is GET-only. E-Ink credentials receive `403` on planning, Edit Mode, TV, device-registration administration, and any future telemetry route not explicitly scoped to that credential. A path/credential device mismatch returns scoped `404` so it does not reveal another device's registration.
+The currently implemented device routes are GET-only. The approved POST event route is the only exception once implemented. E-Ink credentials receive `403` on planning, Edit Mode, TV, device-registration administration, every other mutation, and any future telemetry route not explicitly scoped to that credential. A path/credential device mismatch returns scoped `404` so it does not reveal another device's registration.
 
 ### 8.0 Registration and binding administration
 
@@ -1647,30 +1652,83 @@ An exact revision that is no longer the current authorized package returns scope
 
 Missing/corrupt SD and local checksum failures are device-side states, not upload APIs. The simulator must prove that these failures never activate partial content.
 
-### 8.9 Proposed physical-firmware status/event compatibility shape
+### 8.9 Approved physical-firmware status/event contract
 
-The physical firmware prototype contains a reversible client adapter for
-`GET /api/tablets/{tablet_id}/status` and
-`POST /api/tablets/{tablet_id}/events`. These routes are **not implemented by
-the Server** and are not part of the approved v1 E-Ink baseline. In particular,
-the existing E-Ink read-only guard continues to reject device-credential POSTs.
+The physical firmware prototype contains a client for:
 
-The proposed GET response uses `revision`, `tablet_id`, `machine`, `nc_run`,
-`part`, `operation`, and an exact status token from `READY_FOR_SETUP`,
-`IN_SETUP_RUN`, `IN_QC`, `READY_FOR_PRODUCTION`, `IN_PRODUCTION`, `BLOCKED`, or
-`UNKNOWN`. Defining how those tokens derive from Production Run, Production Run
-Program, setup, QA, readiness, and blocking facts is unresolved; an
-implementation must not treat a Batch Operation as an NC run or manufacture a
-status mapping.
+```http
+GET /api/tablets/{tablet_id}/status
+POST /api/tablets/{tablet_id}/events
+```
 
-The proposed POST request is `{ "event_type": "SEND_TO_QC" }` and deliberately
-has no timestamp. If approved, the Server would generate the timestamp and
-return `{ "tablet_id": "...", "event_type": "SEND_TO_QC", "timestamp":
-"<UTC instant>" }`. Before implementation, decide whether this is a
-non-authoritative operational signal or an official execution mutation, its
-authorization/idempotency/audit/persistence rules, and how it preserves the
-Single Edit Mode and tablet read-only boundaries. No firmware button currently
-sends this request.
+The contract is approved; the Server routes, persistence migration, and physical
+button binding are not yet implemented. Until the Server exception is added,
+the existing E-Ink guard continues to reject device-credential POSTs.
+
+The GET response uses `revision`, `tablet_id`, `machine`, `nc_run`, `part`,
+`operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP_RUN`,
+`IN_QC`, `READY_FOR_PRODUCTION`, `IN_PRODUCTION`, `BLOCKED`, or `UNKNOWN`.
+`revision` is the unsigned screen-content revision for this tablet projection.
+An unchanged revision means the previously rendered projection remains valid;
+any render-affecting change to these fields must advance it. The firmware stores
+the revision only after a completed panel refresh and skips redraw when the
+stored tablet identity and revision both match. A different tablet identity
+forces refresh even if its numeric revision is equal. A malformed or unavailable
+response never changes the stored revision or replaces the retained screen.
+`machine.number` is the explicit operator-facing Machine Number used by the
+physical header; `machine.id` remains the stable identity and must not be
+presented as a Machine Number. The current firmware accepts a missing
+`machine.number` only for the original numeric-ID development fixture, where it
+renders `M{id}` as a compatibility fallback. The eventual Server route must
+return the actual Machine Number.
+`nc_run.id` is a Production Run ID, never a Batch Operation ID. The complete
+wire contract uses opaque string IDs; the firmware temporarily accepts numeric
+IDs from early example fixtures for compatibility but must not infer meaning
+from either representation. Derivation of every status remains implementation
+design work, but the approved `SEND_TO_QC` transition is exactly
+`IN_SETUP_RUN -> IN_QC` for the same resolved Production Run. A repeated command
+while that same run remains `IN_QC` is an idempotent success.
+
+Request:
+
+```json
+{ "event_type": "SEND_TO_QC" }
+```
+
+The request must contain no timestamp, Machine ID, run ID, program ID, or
+Operation ID. The Server authenticates the enabled device credential, requires
+the credential subject to match `{tablet_id}`, resolves the bound Machine and
+the `IN_SETUP_RUN` Production Run from authoritative state, and refuses an
+ambiguous or missing target. Single Edit Mode is not required because this is a
+scoped shop-floor operational command, not a planning edit.
+
+Successful response:
+
+```json
+{
+  "tablet_id": "3041",
+  "event_type": "SEND_TO_QC",
+  "timestamp": "2026-08-25T10:15:30Z"
+}
+```
+
+On first acceptance, the Server atomically creates one append-only tablet QC
+event and matching audit entry using Server UTC, changes only the tablet
+workflow projection to `IN_QC`, and advances the status revision. A retry for
+the same Production Run returns `200` with the original timestamp and creates
+no duplicate event or revision. The command does not assign, reorder, start,
+suspend, finish, allocate, count cycles, change Production Run lifecycle, alter
+readiness, or publish/modify package content.
+
+Error behavior is bounded and device-scoped:
+
+| HTTP | Code | Meaning |
+|---:|---|---|
+| `400` | `invalid_tablet_event_request` | Malformed JSON, extra targeting/timestamp fields, or missing `event_type`. |
+| `404` | `device_resource_not_found` | Unknown, disabled, revoked, unbound, or path/credential-mismatched tablet. |
+| `409` | `tablet_event_not_allowed` | No unique run in `IN_SETUP_RUN`, or current workflow state does not permit the event. |
+| `422` | `unsupported_tablet_event` | `event_type` is not exactly `SEND_TO_QC`. |
+| `503` | `service_unavailable` | Server cannot complete the atomic event/status write. |
 
 ## 9. Caching and consistency
 
@@ -1709,9 +1767,9 @@ sends this request.
 - Bind only to approved factory interfaces.
 - Do not rely on LAN location as authentication.
 - Use least-privilege caller capabilities.
-- Verify Edit Mode and concurrency server-side for every mutation.
-- Keep TV and E-Ink credentials read-only and separate from human sessions.
-- Scope each device to its assigned Machine/package and support revocation.
+- Verify Edit Mode and concurrency server-side for every planning mutation; verify the separate operational preconditions and idempotency key for `SEND_TO_QC`.
+- Keep TV credentials read-only. Keep E-Ink credentials separate from human sessions and limited to assigned reads plus `SEND_TO_QC`.
+- Scope each device to its assigned Machine/package/run, prevent client-selected event targets, and support revocation.
 - Never return SQLite paths, network credentials, raw stack traces, or unrelated customer data. Return a Case Working Folder path only to an authorized Windows planning caller; omit it from TV, E-Ink, errors, and logs.
 - Redact authorization headers and tokens from logs.
 - Define request/body/file limits before accepting package or text content.
@@ -1727,7 +1785,7 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 - Preserve additive compatibility within `/api/v1`; removals or semantic changes require a new version or an explicit coordinated migration.
 - Include schema/version fields in long-lived E-Ink JSON and manifest formats.
 - Maintain simulator fixtures for unchanged, changed, offline, revoked, missing SD, corrupt manifest, checksum mismatch, interrupted download, and new-revision behavior.
-- Test that read-only credentials cannot call every mutation path, not just the UI-hidden ones.
+- Test that TV credentials and E-Ink credentials cannot call every mutation path except the exact authorized E-Ink `SEND_TO_QC` route; test cross-device/run targeting, revocation, invalid state, and retry idempotency.
 
 ## 13. MVP route coverage and implementation gate
 
@@ -1746,7 +1804,7 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Single Edit Mode | `/edit-mode`, `/edit-mode/requests`, request outcome/decision, `/edit-mode/release` | Implemented development identity headers; Windows-only credential policy pending auth. |
 | TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
-| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; admin `/eink/device-registrations` | Implemented device-scoped GET-only data; active-editor create/update registration. |
+| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data and active-editor registration administration; status/event compatibility routes approved but Server implementation pending; `SEND_TO_QC` is the only device mutation. |
 
 Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 

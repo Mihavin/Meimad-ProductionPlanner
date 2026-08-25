@@ -17,7 +17,7 @@ Meimad Production Planner is a local client-server system for manual planning of
 
 The system centralizes planning data, calculates timeline consequences, and identifies and explains conflicts. It does not optimize the schedule automatically and does not silently repair a plan. All assignment, sequencing, and corrective decisions remain with a human planner.
 
-The central server is the only authoritative source of planning data. Windows Planning Clients provide full editing; TV Dashboard and Color E-Ink Work Tablets are read-only operational views.
+The central server is the only authoritative source of planning data. Windows Planning Clients provide full planning editing; TV Dashboard is read-only. Color E-Ink Work Tablets read assigned operational/package data and have one narrow operational command, `SEND_TO_QC`, which asks the Server to move the tablet workflow projection for its resolved active Production Run to `IN_QC` without granting planning Edit Mode.
 
 ## 2. Requirements language
 
@@ -37,7 +37,7 @@ The central server is the only authoritative source of planning data. Windows Pl
 - Server-enforced Single Edit Mode.
 - Full Windows planning client.
 - Read-only fullscreen/kiosk TV Dashboard.
-- Read-only E-Ink display and package API.
+- Read-only E-Ink display/package API plus the scoped `SEND_TO_QC` operational event.
 - Server-owned SQLite schema and migrations.
 - Backup with verified restore.
 
@@ -63,8 +63,8 @@ Later work requires an explicit scope decision; exclusion from MVP is not author
 | Current editor | Sole Windows client permitted to mutate planning data. | Yes, through the server API. |
 | Other Windows clients | Continue viewing current server data and may request transfer of Edit Mode. | No until transfer succeeds. |
 | TV Dashboard | Fullscreen/kiosk machine and factory status. | None. |
-| E-Ink Work Tablet | Machine backlog, active operation, setup package, checklist, and read-only file viewing. | None for official data; device-local annotations only. |
-| Setupist | Carries the machine tablet to the Tool Room and back; uses it as a setup viewer and local checklist. | No server write authority through the tablet. |
+| E-Ink Work Tablet | Machine backlog, active operation, setup package, checklist, read-only file viewing, and `SEND_TO_QC`. | Only `SEND_TO_QC` for its Server-resolved active Production Run; no planning/package editing. |
+| Setupist | Carries the machine tablet to the Tool Room and back; uses it as a setup viewer and local checklist, and may signal that setup work is ready for QC. | May invoke `SEND_TO_QC` through the assigned tablet; no planning Edit Mode or other server write authority. |
 | Server operator | Installs/configures service and performs controlled backup/restore. Formal application role is TBD. | Operational authority is TBD. |
 
 Authentication, authorization roles, and audit requirements for people are not defined by the source and remain open.
@@ -295,14 +295,16 @@ Implemented baseline: the Server serves a dependency-free kiosk page and `GET /a
 ## 11. E-Ink integration
 
 - MVP uses one unified Color E-Ink Work Tablet, normally one per Machine plus one or two spares.
-- The tablet is read-only relative to official server planning/package data.
+- The tablet is read-only relative to official server planning/package data except for the approved `SEND_TO_QC` operational event.
 - Official package revisions download over Wi-Fi and cache on SD/microSD.
 - Local checklist marks and comments remain on the device and never synchronize.
 - USB Mass Storage and official CNC transfer responsibility are excluded.
-- Device credentials restrict each tablet to assigned read-only Machine/package data.
+- Device credentials restrict each tablet to assigned read-only Machine/package data plus `SEND_TO_QC` for the Server-resolved active Production Run.
 - Server-observed last-seen, optional battery/firmware telemetry, and offline status must remain separate from planning data.
 
-Implemented Server baseline: active Windows editors can register, bind/unbind, revoke, and rotate E-Ink devices; plaintext credentials are returned only when created or rotated. An active editor can publish an immutable official job-package revision for an assigned Batch Operation. The Server snapshots Machine/Case/Batch/Operation metadata, Timeline-calculated setup time, selected setup worker name/photo, job tools, optional expected-on-Machine tools, and local checklist seed definitions; it copies allow-listed files without modifying them and records SHA-256 for every file. Device-scoped GET endpoints provide a conditional version check, structured Machine screen, current and exact-revision manifests, checksum-verified package files, and time/refresh configuration. The manifest declares Wi-Fi transport, SD persistence, read-only Server access, no reverse synchronization, and no USB Mass Storage. The Server rejects a device credential on planning, Edit Mode, TV, package-generation, and registration-administration routes. The dependency-free browser simulator exercises the read contract. Package approval roles/UI and retention, physical SD staging, deep sleep, panel rendering, hardware inputs, local annotation persistence, and all ESP32 firmware remain outside this implemented server slice.
+`SEND_TO_QC` is an operational workflow command, not a planning edit. The request contains only `event_type: SEND_TO_QC`; it cannot name a Machine, run, program, Operation, or timestamp. The Server authenticates the enabled tablet credential, verifies the path identity, resolves the bound Machine and eligible active Production Run, creates the timestamp, records an append-only event, advances the tablet workflow projection to `IN_QC`, and changes the status revision. It does not assign, reorder, start, suspend, complete, allocate, count cycles, publish files, or change official package content. Single Edit Mode is not required. A repeat for the same run while its tablet workflow is already `IN_QC` returns the original accepted event and timestamp without another state change or duplicate event.
+
+Implemented Server baseline: active Windows editors can register, bind/unbind, revoke, and rotate E-Ink devices; plaintext credentials are returned only when created or rotated. An active editor can publish an immutable official job-package revision for an assigned Batch Operation. The Server snapshots Machine/Case/Batch/Operation metadata, Timeline-calculated setup time, selected setup worker name/photo, job tools, optional expected-on-Machine tools, and local checklist seed definitions; it copies allow-listed files without modifying them and records SHA-256 for every file. Device-scoped GET endpoints provide a conditional version check, structured Machine screen, current and exact-revision manifests, checksum-verified package files, and time/refresh configuration. The manifest declares Wi-Fi transport, SD persistence, read-only package access, no reverse synchronization, and no USB Mass Storage. The Server rejects a device credential on planning, Edit Mode, TV, package-generation, and registration-administration routes. The dependency-free browser simulator exercises the read contract. The separate ESP32 prototype now compiles its bounded status client and first text-only Machine/part/Operation/status/tool-page layout. It stores the last completed status revision/tablet identity in NVS, avoids same-revision panel refreshes, measures actual refresh duration, and preserves the retained screen on status failure; official tool binding, physical paging inputs, on-device assertion execution, and shop-floor readability remain unverified. `SEND_TO_QC` is approved but its Server endpoint, storage, status projection, and physical button binding are not yet implemented. Package approval roles/UI and retention, physical SD staging, complete deep sleep behavior, local annotation persistence, and the remaining ESP32 acceptance work are incomplete.
 
 See [ESP32 / Color E-Ink Work Tablet](esp32-eink-work-tablet.md) and [API contract](api-contract.md).
 
@@ -352,11 +354,11 @@ Before the MVP can be called complete, verification must demonstrate that:
 4. One-order, split-order, multi-order, stock-inclusive, and stock-only batches follow the approved allocation equation.
 5. All four dependency types behave exactly as specified.
 6. Single Edit Mode remains atomic under simultaneous requests and covers Release, Reject, 30-second automatic transfer, voluntary release, disconnect, and restart behavior once defined.
-7. TV and E-Ink credentials cannot call planning mutation endpoints.
+7. TV credentials cannot mutate; E-Ink credentials can call only their assigned reads and `SEND_TO_QC`, never planning mutation endpoints or another device's/run's resources.
 8. Status remains understandable without color.
 9. Backup is restored and checked for integrity, not merely created.
 10. Working Folder handling never changes original engineering files and confines generated content to `_MeimadPlanner`.
-11. E-Ink downloads are scoped, checksum-verified, last-known-good, and read-only; local annotations never enter server state.
+11. E-Ink downloads are scoped, checksum-verified, last-known-good, and read-only; `SEND_TO_QC` is scoped, Server-targeted, Server-timestamped, and idempotent; local annotations never enter server state.
 12. The production service can be installed, restarted, and recovered on the designated Windows host.
 
 Quantitative scale, performance, reliability, backup RPO/RTO, and device thresholds must be added after the related open decisions are approved.
@@ -368,6 +370,6 @@ Quantitative scale, performance, reliability, backup RPO/RTO, and device thresho
 - ERP inventory/status exchange.
 - Native mobile application only if browser/PWA is insufficient.
 - USB Mass Storage or official CNC package transfer only after a separate risk review.
-- Setup-tablet write-back only after an explicit scope decision.
+- Any setup-tablet write-back beyond the approved `SEND_TO_QC` event requires a separate explicit scope decision.
 
 The consolidated unresolved-decision register is in [Implementation plan](implementation-plan.md#open-decisions).

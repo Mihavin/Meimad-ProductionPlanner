@@ -174,6 +174,11 @@ bool parseStatusResponse(
       || !readRequiredString(part["name"], "part.name", parsed.part.name, error)) {
     return false;
   }
+  if (!machine["number"].isNull()
+      && !readRequiredString(
+          machine["number"], "machine.number", parsed.machine.number, error)) {
+    return false;
+  }
 
   if (!operation["number"].is<int32_t>()) {
     error = "operation.number must be a 32-bit integer";

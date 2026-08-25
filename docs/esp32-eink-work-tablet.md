@@ -10,21 +10,21 @@ This document normalizes `Meimad_Planner_ESP32_EInk_Work_Tablet_Concept_v0.1.doc
 
 The Color E-Ink Work Tablet is a low-cost, low-power operational display and local setup checklist for use near CNC Machines and in the Tool Room.
 
-It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative data source.
+It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative planning data source. Its one Server write is the scoped `SEND_TO_QC` operational event.
 
 Primary goals are:
 
 - One inexpensive, unified device design for all Machines.
 - One tablet per Machine plus one or two spares.
 - Months of practical operation from replaceable AA batteries, subject to measurement.
-- Official data flowing from server to device only.
+- Official planning/package data flowing from server to device, with only the `SEND_TO_QC` operational event flowing back.
 - Paper-like local checklist marks and notes that never synchronize.
 
 ## 2. MVP boundaries
 
 | Included | Excluded |
 |---|---|
-| Read-only Machine and setup views | Planning edits or official-data write-back |
+| Read-only Machine and setup views plus `SEND_TO_QC` | Planning edits or any other official-data write-back |
 | Wi-Fi package download | USB Mass Storage to CNC |
 | SD/microSD cache | Official CNC program-carrier responsibility |
 | Device-local checklist and comments | Full tool inventory management |
@@ -61,6 +61,16 @@ Deep sleep is the default state.
 6. Activate the new package only after the complete revision passes verification.
 7. Render or display the relevant screen, persist last-known-good state, and return to sleep.
 
+The physical firmware implements the status-screen subset of this rule. It
+stores the last completed status `revision` and its tablet identity in NVS. A
+matching tablet/revision skips in-memory drawing and the physical E-Ink update;
+a missing value, changed revision, or reassignment refreshes and then saves the
+new value. NVS is not advanced before the blocking panel update returns. Every
+actual update logs its revision and measured `update()` duration. An unavailable
+or malformed response keeps the retained same-tablet screen and revision.
+Package download/activation revisions remain separate future state and must not
+be conflated with this status-screen revision.
+
 An automatic check every ten minutes is only an example. The work calendar, wake interval, retry/backoff, clock source, time zone, DST, and force-refresh gesture are TBD.
 
 The panel retains the last visible image without continuous power. The final battery-life goal must be expressed as a measured workload and numeric acceptance threshold after a bench prototype exists.
@@ -75,6 +85,7 @@ The panel retains the last visible image without continuous power. The final bat
 | NC/Text Viewer | Paginated, read-only NC text, instructions, offsets, and tool tables. |
 | Wi-Fi Setup | Temporary access point for Wi-Fi, server, device/Machine identity, and token provisioning. |
 | Offline | Last cached package/screen with an unambiguous stale/offline warning and last-update time. |
+| Send to QC | Confirmed `SEND_TO_QC` for the Server-resolved current run; show pending/failure/success using text and icon, never color alone. |
 
 The two-button hardware does not yet explain checklist selection, five-state status selection, free-text entry, Back/Next navigation, or confirmation prompts. Input hardware and the complete interaction state machine are blocking decisions.
 
@@ -87,8 +98,10 @@ The two-button hardware does not yet explain checklist selection, five-state sta
 5. The setupist receives the prepared tool cart and sees its cart ID on the tablet.
 6. The setupist returns to the Machine with tablet and cart.
 7. During setup, the tablet acts as a local checklist and read-only viewer.
-8. If a problem is found, the setupist takes the tablet to the programmer or QC. An authorized Windows user corrects and republishes the official package.
-9. The tablet downloads the new revision. Local notes remain local and are not applied to the official package.
+8. When setup is ready for inspection, the setupist explicitly selects and confirms `SEND_TO_QC`. The tablet sends no target ID or timestamp and does not show `IN_QC` until the Server acknowledges it.
+9. The Server resolves the bound Machine/current run, records the first event using Server time, and the next status projection shows `IN_QC`. A bounded retry after an uncertain network result is safe and returns the first timestamp.
+10. If a problem is found, the setupist takes the tablet to the programmer or QC. An authorized Windows user corrects and republishes the official package.
+11. The tablet downloads the new revision. Local notes remain local and are not applied to the official package.
 
 The implemented baseline lets the current Windows Edit Mode holder publish for an already assigned Batch Operation and create corrections as new immutable revisions. A distinct preparer/approver role, approval UI/audit, revision naming/order, reassignment confirmation, retention, and superseded-package access remain TBD.
 
@@ -169,13 +182,19 @@ Structured JSON is the implemented v1 Server/simulator baseline. A pre-rendered 
 
 The source also suggests optional battery/firmware telemetry using a `GET .../ping` request. That conflicts with the read-only boundary and safe HTTP semantics if it records state. Telemetry is excluded from the baseline contract until a narrowly scoped, authenticated design is approved. Server observation of normal reads may update operational last-seen state, but must never change planning data.
 
-The physical firmware prototype also contains a reversible Task 5 client adapter
-for a simplified `/api/tablets/{tablet_id}/status` response and a
-`SEND_TO_QC` event request. The Server does not implement those compatibility
-routes. The firmware validates their JSON and failure behavior but does not bind
-the event to a button. Status derivation and any event write scope must be
-resolved against the implemented v1 projection, Production Run domain, device
-credential scope, and Single Edit Mode before end-to-end enablement.
+The Task 5 physical-firmware status/event contract is approved:
+
+```http
+GET /api/tablets/{tablet_id}/status
+POST /api/tablets/{tablet_id}/events
+```
+
+`SEND_TO_QC` is allowed only from `IN_SETUP_RUN` and changes the same resolved
+Production Run's tablet workflow projection to `IN_QC`. The request contains
+only the event token. The Server owns target resolution and time, and a retry
+for the same run is idempotent. No Edit Mode is required and no planning/run
+lifecycle/package field changes. The firmware client and JSON/failure handling
+exist; the Server routes/storage and physical input binding remain unimplemented.
 
 ## 11. Wi-Fi provisioning
 
@@ -189,12 +208,12 @@ Server-side credential rotation/revocation and Machine/spare binding are impleme
 
 ## 12. Security boundary
 
-- A device credential grants only the read-only Machine/package resources assigned to that tablet.
+- A device credential grants only the read-only Machine/package resources assigned to that tablet plus `SEND_TO_QC` for the Server-resolved eligible run.
 - Do not expose unrelated customer, drawing, or engineering data.
 - Limit cached official data and support immediate credential revocation for a lost device.
 - Keep official and local data in separate storage namespaces.
 - Do not provide CNC write functions or USB Mass Storage in MVP.
-- Device state and any later telemetry remain operational data, never planning data.
+- Device state, `SEND_TO_QC`, and any later telemetry remain operational data, never planning data. `SEND_TO_QC` affects only the tablet workflow projection.
 
 Transport security, certificate trust, removable-media encryption/signing, secure boot, firmware signing, token storage, and physical attack assumptions are TBD.
 
@@ -210,6 +229,23 @@ Transport security, certificate trust, removable-media encryption/signing, secur
 
 Machine view shows Machine ID/type, last update, battery, current part/Batch/Operation/quantity/status, and the next three jobs. Setup view shows Machine, cart, part, Batch, Operation, revision, and paginated checklist. NC/text view shows filename, revision, page position, and a read-only notice.
 
+The physical firmware now contains the first 800x480 production layout. It is
+text-only and orders the page as Machine Name/Number with a small tablet ID,
+part, Operation, a prominent framed status, then a fixed three-row tool table.
+Tool rows use numbered pages and never scroll. All seven approved status tokens
+have operator-readable labels. A successful status response populates the
+official identity/part/Operation/status fields; because that compatibility
+response does not contain tools, the live layout shows `NO TOOL DATA AVAILABLE`
+instead of example rows. The development-only seven-tool fixture is visibly
+marked `LAYOUT DEMO`.
+
+The layout model, pagination, and same/different/missing/reassigned revision
+decisions compile in the focused firmware contract-test image. Previous/Next
+physical button behavior, the official package-to-tool-row binding, on-device
+execution of those assertions, and physical readability/clipping/contrast
+validation remain pending; the implementation therefore does not yet satisfy
+the prototype acceptance gate below.
+
 Display resolution, minimum font size, viewing distance, lighting range, localization, Unicode/RTL, bitmap format, page geometry, and ghosting/full-refresh policy are TBD.
 
 ## 14. Failure behavior
@@ -223,6 +259,8 @@ Display resolution, minimum font size, viewing distance, lighting range, localiz
 | Checksum mismatch | Reject the new file/revision and retain the previous verified package. |
 | New revision | Make the revision change explicit. |
 | Display refresh failure | Retry once; persist an error indication for a later successful refresh. Exact presentation is TBD. |
+| `SEND_TO_QC` timeout/connection loss | Do not optimistically show `IN_QC`; show send-pending/unknown and perform a bounded idempotent retry. |
+| `SEND_TO_QC` rejected | Keep the last confirmed status and show the Server error in operator-readable text. |
 
 Retry limits, backoff/jitter, corrupted configuration, invalid token, clock loss, oversized files, mid-download battery loss, and rollback details must be added to the firmware acceptance suite.
 
@@ -236,7 +274,8 @@ Retry limits, backoff/jitter, corrupted configuration, invalid token, clock loss
 6. Test checklist persistence across sleep and, if possible, across battery replacement.
 7. Test readability at Machine distance and under representative shop-floor lighting.
 8. Fault-inject network loss, invalid credentials, SD removal/corruption, malformed manifests, checksum failure, and power loss during activation.
-9. Run a one-week pilot on one Machine before ordering multiple devices.
+9. Verify `SEND_TO_QC` confirmation, cross-device/run rejection, revoked credentials, invalid-state rejection, lost-response retry idempotency, first-timestamp retention, and no planning/package mutation.
+10. Run a one-week pilot on one Machine before ordering multiple devices.
 
 Numeric pass/fail thresholds for battery life, timing, readability, storage, recovery, and pilot success must be approved before the prototype can pass.
 
@@ -244,9 +283,7 @@ Numeric pass/fail thresholds for battery life, timing, readability, storage, rec
 
 - USB Mass Storage to CNC.
 - Server write-back of tool notes or checklist state.
-- Server acceptance of the proposed `SEND_TO_QC` tablet event until its
-  non-authoritative/official meaning, authorization, idempotency, and audit are
-  approved.
+- Any Server write-back beyond the approved `SEND_TO_QC` event.
 - Official CNC program transfer responsibility.
 - Full Android-tablet behavior.
 - Full tool inventory tracking.

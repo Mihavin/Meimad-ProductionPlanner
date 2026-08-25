@@ -102,7 +102,7 @@ Schema v4 adds explicit Machine `axis_type`, `is_active`, and `display_enabled` 
 
 Schema v5 adds `edit_requests`. Final outcomes are retained as `transferred`, `rejected`, or `auto_transferred`; a partial unique index enforces at most one `pending` request. The request records the holder generation it was raised against, its deadline, decision time, and any granted generation. The token's `lease_expires_at` mirrors the pending decision deadline and is cleared on every final outcome.
 
-Schema v6 adds `eink_package_revisions` and `eink_package_files`. Triggers reject update/delete after insertion, making the metadata an immutable published-read baseline. Package files remain under the configured Server-local package root; SQLite stores only normalized relative paths, byte lengths, media types, ordering, timestamps, and lowercase SHA-256 values. There is intentionally no BLOB column or device write-back table.
+Schema v6 adds `eink_package_revisions` and `eink_package_files`. Triggers reject update/delete after insertion, making the metadata an immutable published-read baseline. Package files remain under the configured Server-local package root; SQLite stores only normalized relative paths, byte lengths, media types, ordering, timestamps, and lowercase SHA-256 values. There is intentionally no BLOB column. The installed schema has no device write-back table; the approved future Tablet QC Event record is defined separately and must arrive through a new ordered migration.
 
 Schema v7 adds the package's publication-time Machine ID/number/name, Case/part identity/revision/customer, Production Batch/quantity, and Batch Operation number/name snapshots plus a constrained asset role (`preview`, `tool_table`, `nc`, `text`, `offsets`, `instructions`, or `other`). New packages populate all snapshot fields. Nullable columns preserve read compatibility with schema-v6 packages; those legacy rows expose `metadata: null`.
 
@@ -429,12 +429,32 @@ The following are logical support records, not planning authority:
 
 - Implemented Device ID and human label.
 - Optional assigned Machine; a partial unique index permits at most one enabled E-Ink device per Machine.
-- Implemented read-only access level and enabled/revoked state.
+- Implemented read-only package/planning access level and enabled/revoked state; the approved `SEND_TO_QC` capability is a separate future scope, not general write access.
 - The Server generates a high-entropy `mp_eink_...` bearer token, stores only its SHA-256 hash, and returns plaintext only on creation or rotation.
 - Active Windows Edit Mode authority is required to create, bind/unbind, enable/revoke, or rotate a registration; these changes are atomic with the authority check.
-- Firmware/display profile and operational last-seen/battery/firmware fields remain absent. Telemetry requires a separate decision.
+- Firmware/display profile and operational last-seen/battery/firmware fields remain absent. Telemetry requires a separate decision. `SEND_TO_QC` event persistence is approved below but not yet implemented.
 
-### 10.2 E-Ink Package Revision
+### 10.2 Tablet QC Event target
+
+The approved target is a Server-owned append-only operational record, separate
+from planning/package tables. Each accepted row has a stable event ID, E-Ink
+device ID, resolved Machine ID, resolved Production Run ID, exact event type
+`SEND_TO_QC`, and Server-generated UTC timestamp. The request supplies none of
+the target IDs or time. A uniqueness constraint on Production Run plus event
+type makes a repeat for the same run idempotent and preserves the first event
+and timestamp. Acceptance and the corresponding structured audit event commit
+atomically.
+
+The tablet status projection derives `IN_QC` from this record and incorporates
+the event identity/timestamp into its revision seed. The record cannot satisfy
+or mutate Production Run lifecycle, Production Run Program cycles, Outputs,
+Orders, Batches, Batch Operations, Machine Assignments, backlog order,
+readiness, or package publication. A later transition out of `IN_QC` requires
+its own approved Server-owned rule; no such tablet command is implied here.
+Schema/migration ownership, final table/index names, retention, and the Windows
+QC-completion action remain implementation work.
+
+### 10.3 E-Ink Package Revision
 
 - Implemented opaque package ID and caller-named textual revision, unique for one Batch Operation and immutable after insertion.
 - Required publication-time Machine, Case/part, Production Batch, planned quantity, and Batch Operation snapshots plus optional tool-cart context.
@@ -480,8 +500,8 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 17. The Server never changes backlog order or assignments merely to clear a conflict.
 18. Working-folder-generated files remain under `_MeimadPlanner`; original engineering files are not modified.
 19. Schema v7 package metadata is immutable after publication; corrections create a distinct revision and never overwrite an official package.
-20. Device credentials can read only their assigned resource scope.
-21. Device operational data cannot mutate or satisfy planning entities or conflicts.
+20. Device credentials can read only their assigned resource scope and may invoke only `SEND_TO_QC` for the Server-resolved eligible active run.
+21. Device operational data, including `SEND_TO_QC`, cannot mutate or satisfy planning entities or conflicts; the event affects only the tablet workflow projection.
 
 ## 13. Explicitly not modeled in MVP
 

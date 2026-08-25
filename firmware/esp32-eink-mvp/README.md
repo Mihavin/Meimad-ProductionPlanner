@@ -1,9 +1,9 @@
 # Meimad Planner ESP32 E-Ink Tablet MVP
 
-This is the first buildable firmware/development environment for the E-Ink
-tablet. It intentionally starts with observable boot diagnostics and button
-heartbeat logging before adding Wi-Fi, Server API calls, package activation, or
-deep sleep.
+This is the buildable firmware/development environment for the E-Ink tablet.
+It includes observable boot diagnostics, bounded Wi-Fi and tablet-status API
+calls, a first production screen layout, and button heartbeat logging. Package
+activation and the complete deep-sleep/input state machine remain future work.
 
 ## Hardware status
 
@@ -38,11 +38,48 @@ reset reason, wake reason, provisional display profile, button pins, and battery
 availability. A heartbeat is printed every ten seconds so a bench test can
 confirm the firmware remains alive.
 
-The firmware now enables the Seeed_GFX renderer for `BOARD_SCREEN_COMBO 502`
-and `USE_XIAO_EPAPER_DISPLAY_BOARD_EE04`. On boot it renders the smoke-test
-reference layout, measures a full refresh, performs a small partial refresh,
-and prints both durations over serial. The final page states that the panel is
-asleep; E-Ink retains this image without ESP32 power until the next refresh.
+The firmware enables the Seeed_GFX renderer for `BOARD_SCREEN_COMBO 502` and
+`USE_XIAO_EPAPER_DISPLAY_BOARD_EE04`. On boot it renders the first production
+layout and measures its full refresh over serial. E-Ink retains the completed
+page without ESP32 power until the next refresh.
+
+## First production layout
+
+The 800x480 screen is text-only and prioritizes Machine identity, part,
+Operation, a framed status band, and a fixed three-row tool table. Tool rows are
+paginated rather than scrolled, and the footer reports `TOOLS n / total`.
+Status tokens are converted to operator-readable text and never rely on color.
+
+When the approved tablet-status GET succeeds, the layout displays that response.
+The status response does not yet carry official tool rows, so the live tool area
+explicitly says `NO TOOL DATA AVAILABLE`; it never fabricates Server data. Until
+the pending Server compatibility route exists, the boot screen uses the example
+layout fixture and marks it `LAYOUT DEMO`. That fixture contains seven tools to
+exercise three-page pagination. Previous/Next button behavior is intentionally
+not bound yet because the complete physical-input mapping remains open.
+
+Compilation checks geometry-independent model behavior and pagination. Normal
+working-distance readability, clipping, contrast, and button navigation still
+require an uploaded image on the physical panel under shop-floor lighting.
+
+## Revision-based screen refresh
+
+After a valid status response, the tablet compares its unsigned `revision` with
+the `last_revision` stored in the `meimad` NVS namespace. The associated tablet
+ID is stored as `last_rev_tab` so reassignment cannot accidentally reuse another
+tablet's equal numeric revision.
+
+- Missing stored state, a changed revision, or a changed tablet ID performs one
+  full production-screen refresh.
+- The new revision is written to NVS only after the panel update returns.
+- An equal revision for the same tablet skips both rendering and `epaper.update()`.
+- If the status request fails and the retained screen belongs to the same
+  tablet, that screen remains untouched.
+
+Every actual refresh logs its source, revision, and measured panel-update
+duration. Skipped refreshes log the equality or last-known-screen reason without
+claiming a panel update. The duration covers the blocking E-Ink `update()` call,
+not in-memory text layout preparation.
 
 ## Windows-hotspot connectivity test
 
@@ -66,7 +103,7 @@ The permanent identity is the station MAC address. `tablet_id` is stored in NVS
 and shown once a Server response supplies it. Before assignment, the screen
 shows `UNREGISTERED TABLET` and the MAC address.
 
-## Proposed tablet status/event adapter
+## Approved tablet status/event adapter
 
 The firmware implements a bounded client for the Task 5 compatibility shape:
 
@@ -83,6 +120,11 @@ integer IDs from the example payload are also accepted and normalized to
 strings in memory. Missing fields, wrong types, a mismatched tablet ID,
 unsupported tokens, and invalid JSON are rejected as malformed without
 replacing a previously valid response.
+
+The production header uses `machine.number` when the response supplies it. For
+compatibility with the original numeric-ID example, a missing number is rendered
+as `M{id}` only when `machine.id` is numeric; new Server responses should supply
+the actual display number explicitly.
 
 The initial event request is exactly:
 
@@ -118,10 +160,12 @@ If that image is explicitly uploaded for bench testing, its 115200-baud serial
 output ends with `Tablet API contract tests: PASS (0 failures)` when every JSON
 fixture assertion succeeds.
 
-The firmware reads the proposed status after a successful registration ping.
-It does not send `SEND_TO_QC` from a button or mutate planning state. The current
-Server does not implement these two compatibility routes: its implemented,
-authorized baseline remains the GET-only `/api/v1/eink/devices/{deviceId}/...`
-contract. Server-side status derivation, event authorization/persistence, and
-the relationship to the existing E-Ink projection require the recorded product
-decision before these routes can be enabled end to end.
+The firmware reads the approved status shape after a successful registration
+ping and exposes the bounded `SEND_TO_QC` request method. The approved command
+transitions the Server-resolved current run from tablet workflow
+`IN_SETUP_RUN` to `IN_QC`; it supplies no target or device timestamp and grants
+no planning/package mutation authority. The current Server does not yet
+implement these two compatibility routes, and the firmware does not yet bind
+the command to a physical button. Those implementation steps are tracked in the
+plan; the implemented Server baseline remains GET-only until they land with
+authorization, persistence, idempotency, and negative tests.

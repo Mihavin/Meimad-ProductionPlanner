@@ -1,6 +1,6 @@
 # Meimad Production Planner — User Help
 
-This guide is for planners, supervisors, setup personnel, and machine operators. The Planner is a factory-local, client/server application. The Server is the source of truth; the Windows client edits planning data, while the Timeline, TV Dashboard, and E-Ink views are read-only.
+This guide is for planners, supervisors, setup personnel, and machine operators. The Planner is a factory-local, client/server application. The Server is the source of truth; the Windows client edits planning data, while the Timeline and TV Dashboard are read-only. E-Ink package/planning views are read-only and the approved tablet workflow adds only `SEND_TO_QC`.
 
 ## 1. Start here
 
@@ -98,7 +98,7 @@ The TV Dashboard is a read-only kiosk view served by the Server at:
 
 It shows display-enabled machines, the current operation, part picture, operation identity, machine state, and calculated setup/current-part/Batch progress. Conflicts, next jobs, planning controls, and editing forms are intentionally hidden. The small connection indicator changes color with the Server connection state. During a short outage, the last valid snapshot remains on screen.
 
-E-Ink devices are also read-only. They display the official package and machine/setup instructions downloaded from the Server. Checklist marks and comments remain local to the tablet; there is no reverse synchronization to the Planner.
+E-Ink devices display the official package and machine/setup instructions downloaded from the Server. Package content, checklist marks, comments, assignments, and planning facts remain read-only/local as applicable. The approved tablet workflow will allow the setupist to confirm **Send to QC** for the current Server-resolved run. That command supplies no run or timestamp, does not require Edit Mode, and changes only the tablet workflow status from `IN_SETUP_RUN` to `IN_QC`. The Server endpoint and physical button flow are not implemented yet, so current devices must not be operated as if the signal has been accepted.
 
 ## 7. Languages and responsiveness
 
@@ -145,11 +145,11 @@ Verify that the Case preview or machine picture path is inside an allowed Server
 - Keep the Server restricted to the factory LAN unless a reviewed deployment explicitly adds authentication, TLS, and firewall controls.
 - Use verified Server backup/restore tooling and test restore copies locally.
 - Never overwrite original engineering or NC files. A correction is a new revision.
-- Treat the Timeline and TV/E-Ink screens as read-only projections.
+- Treat Timeline and TV as read-only projections. Treat E-Ink package/planning content as read-only; `SEND_TO_QC` is the only approved tablet command.
 - Record the exact machine, operation, Batch, and time when reporting a problem.
 
 ## 10. Current implementation notes
 
-The Server APIs and execution model support Production Runs, including multi-output planning data. Some Windows Timeline/Planning Board and TV/E-Ink cards do not yet render every Production Run field; where a Run-specific field is absent, use the operation card and Server projection as the authoritative view. The application does not yet provide automatic scheduling, ERP inventory authority, public Internet access, native mobile editing, or E-Ink write-back.
+The Server APIs and execution model support Production Runs, including multi-output planning data. Some Windows Timeline/Planning Board and TV/E-Ink cards do not yet render every Production Run field; where a Run-specific field is absent, use the operation card and Server projection as the authoritative view. The application does not yet provide automatic scheduling, ERP inventory authority, public Internet access, or native mobile editing. `SEND_TO_QC` is approved but not yet implemented end to end; every other E-Ink write-back remains excluded.
 
 For deployment and engineering details, see the repository [README](../README.md), [functional specification](functional-spec.md), and [performance/stability audit](performance-stability-audit-2026-08-23.md).

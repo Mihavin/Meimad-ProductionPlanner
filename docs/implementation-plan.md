@@ -294,7 +294,7 @@ The real-machine Definition of Done is intentionally not claimed. Haas publicly 
 
 ## 14. Phase 11 - E-Ink API and simulator
 
-**Status:** Server official package generator/read side and browser simulator implemented. Approval/retention, physical-device behavior, full offline fixture simulation, and API stability approval remain open.
+**Status:** Server official package generator/read side and browser simulator implemented. The `SEND_TO_QC` operational command is product-approved but its Server route/storage and simulator/firmware interaction are not implemented. Approval/retention, physical-device behavior, full offline fixture simulation, and API stability approval remain open.
 
 ### Scope
 
@@ -302,6 +302,8 @@ The real-machine Definition of Done is intentionally not claimed. Haas publicly 
 - Implemented device registration/assignment, credential hashing/rotation/revocation, small conditional version check, Machine screen, exact-revision package manifest/file reads, and time config.
 - Implemented active-editor publication for an assigned Batch Operation with immutable snapshot metadata, safe source/logical/storage paths, configurable allow-list/size limits, staged output, SHA-256, context revalidation, and failure cleanup. Approval roles/UI, signatures, retention, and superseded-revision access remain open.
 - Implemented a dependency-free browser simulator for version-first polling, the structured Machine view, conditional refresh, manifest/file display, SHA-256 verification, and preserving the last rendered screen on request failure. Physical SD staging/atomic activation and local-only annotations remain device work; richer injected offline/corruption fixtures remain future simulator work.
+- Implement the approved authenticated `POST /api/tablets/{tablet_id}/events` command for exact `SEND_TO_QC`: resolve the credential-bound Machine and unique `IN_SETUP_RUN` Production Run on the Server, reject client-supplied target/time fields, atomically persist one append-only Server-timestamped event plus audit record, derive `IN_QC` and a new status revision, and return the first accepted timestamp on same-run retries. Do not require Edit Mode or mutate planning/run lifecycle/package data.
+- Implement the matching `GET /api/tablets/{tablet_id}/status` projection with `nc_run.id` bound to a real Production Run ID. Define and test the remaining status derivations without substituting Batch Operation identity for a run.
 - Add telemetry only if the open decision explicitly approves a separate non-planning write scope.
 
 ### Tests and exit gate
@@ -312,6 +314,8 @@ The real-machine Definition of Done is intentionally not claimed. Haas publicly 
 - Interrupted, corrupt, oversized, revoked, missing, and malformed data retain prior valid content.
 - Package files never expose source filesystem paths or unrelated confidential data.
 - No checklist/comment upload route exists.
+- `SEND_TO_QC` accepts only the path-matched enabled device, cannot select another Machine/run, is valid only for a unique `IN_SETUP_RUN`, is idempotent across lost-response retries, retains the first Server timestamp, advances only the tablet status revision, and cannot mutate planning/package/run lifecycle facts.
+- Every other E-Ink POST/PUT/PATCH/DELETE remains forbidden.
 - Contract and simulator remain compatible across the approved firmware-support window.
 - API is declared stable for the prototype with versioning/change policy documented.
 
@@ -319,10 +323,24 @@ The real-machine Definition of Done is intentionally not claimed. Haas publicly 
 
 This phase belongs in a separately approved device project after phase 11's API stability gate.
 
+Current prototype status: the ESP32 project now compiles a text-only 800x480
+production screen with Machine/part/Operation/status hierarchy and fixed
+three-row tool pages. The status adapter supplies the live header/work/status;
+live tools remain explicitly unavailable until the official package tool source
+is connected. A seven-tool `LAYOUT DEMO` fixture exercises three pages without
+claiming official data. The firmware also persists the last completed status
+revision plus tablet identity in NVS, skips all panel drawing for an equal
+same-tablet revision, forces reassignment/changed-revision refresh, saves only
+after `update()` returns, and logs every actual refresh duration. A failed
+status read preserves the same-tablet retained screen. Model/status/pagination
+and revision-decision assertions compile in the separate contract-test image.
+Physical execution/upload/readability validation and Previous/Next button
+binding have not been completed, so this phase remains open.
+
 ### Scope
 
 - Select MCU, panel/controller, power design, SD subsystem, input method, service connector, enclosure, mount, and environmental protection.
-- Implement provisioning, credential storage, timekeeping, deep sleep, battery measurement, conditional polling, staged package handling, panel UI, failure state, and local annotations.
+- Implement provisioning, credential storage, timekeeping, deep sleep, battery measurement, conditional polling, staged package handling, panel UI, failure state, local annotations, and a confirmation-protected `SEND_TO_QC` input flow.
 - Use one configurable firmware build for all Machines.
 
 ### Verification and exit gate
@@ -335,8 +353,9 @@ This phase belongs in a separately approved device project after phase 11's API 
 6. Verify persistence through sleep and, if possible, across battery replacement; record whether the selected storage design supports it.
 7. Fault-inject power loss, network loss, invalid token, clock loss, SD removal/corruption, malformed manifest, checksum failure, oversized file, and panel refresh failure.
 8. Verify readability at defined distance/lighting/temperature.
-9. Run a one-week one-Machine pilot with numeric success criteria.
-10. Order additional units only after the pilot and battery target pass.
+9. Verify `SEND_TO_QC` on physical input: no optimistic `IN_QC`, bounded retry after an uncertain result, idempotent acknowledgment, readable pending/rejected/success states, and no accidental double action.
+10. Run a one-week one-Machine pilot with numeric success criteria.
+11. Order additional units only after the pilot and battery target pass.
 
 ## 16. Cross-cutting test strategy
 
@@ -409,8 +428,8 @@ The following questions are unresolved in the provided source documents. IDs sho
 
 - **OD-022 - Package publication:** Partially resolved: the current Windows Edit Mode holder publishes a caller-named immutable revision for an assigned Batch Operation; Machine/Case/Batch/Operation metadata is snapshotted and a correction creates another revision. Define a distinct preparer/approver role or approval UI, audit, revision naming/ordering policy, and whether reassignment should require explicit republish confirmation.
 - **OD-023 - Package format:** Partially resolved: schema v7 stores immutable snapshot/file metadata, asset roles, safe logical/storage-relative paths, stable file IDs, lengths, media types, timestamps/order, and SHA-256. Generation supports in-folder preview, allow-listed NC/text sources, JSON tool table/offsets, and UTF-8 instructions with configurable limits; reads re-verify bytes. Define signatures, additional formats/encoding, compression, range/resume, device staging/activation, rollback, backup inclusion, superseded-revision access, and retention/garbage collection.
-- **OD-024 - Rendering boundary:** Structured JSON is the implemented v1 Server/simulator baseline. Decide whether physical firmware uses it unchanged or adds a compatible pre-rendered asset profile; then define panel profile, bitmap/palette/fonts, pagination, localization, Unicode/RTL, and compatibility window.
-- **OD-025 - Telemetry and tablet-originated events:** The source says server-to-device/read-only but optionally reports battery/firmware and last-seen. A reversible physical-firmware adapter now models a proposed `SEND_TO_QC` request, but the Server route and button action remain unimplemented. Decide whether telemetry exists and whether `SEND_TO_QC` is a non-authoritative operational signal or an official execution mutation; define authorization, idempotency, persistence, audit, and Single Edit Mode interaction. Any approved operational write must use a separate narrowly scoped endpoint and remain outside planning data. Do not derive the proposed tablet lifecycle tokens until their mapping to Production Runs, setup, QA, readiness, and blocking facts is approved.
+- **OD-024 - Rendering boundary:** Structured JSON is the implemented v1 Server/simulator baseline. The first physical firmware layout renders local text directly from the approved status compatibility response, uses fixed three-row tool pages, and does not implement images; its official tool-row source is not yet connected. Decide whether the final physical firmware consumes the v1 Machine/package projections unchanged or keeps a compatible adapter, and define package-to-tool mapping, panel profile, bitmap/palette/fonts, pagination, localization, Unicode/RTL, and compatibility window.
+- **OD-025 - Telemetry and tablet-originated events:** Partially resolved: `SEND_TO_QC` is approved as the only tablet-originated operational command. It requires an enabled path-matched device credential, takes no target/time fields, resolves the bound Machine and unique `IN_SETUP_RUN` Production Run on the Server, atomically records one append-only event/audit entry using Server UTC, changes only the tablet workflow projection to `IN_QC`, and is idempotent per Production Run while retaining the first timestamp. It does not require Single Edit Mode and cannot mutate planning, Production Run lifecycle/program/output facts, readiness, or packages. Server endpoint/migration/status projection and physical button binding remain implementation work. Battery/firmware/last-seen telemetry remains undecided, as do the other tablet status derivations and the later Server-owned transition out of `IN_QC`.
 - **OD-026 - Device lifecycle:** Partially resolved on the Server: an active editor can register a spare or Machine-bound device, the Server returns a high-entropy token only at create/rotation, stores its SHA-256, permits one enabled E-Ink binding per Machine, and supports rebind/revoke/rotate. Define dedicated administrator authorization/audit, device-side secure storage, token expiry, lost-device/cached-data response, and physical reassignment workflow.
 - **OD-027 - Time/sync:** Partially resolved for Server configuration: time-zone ID, workdays, one shift window, poll interval, retry attempts/backoff, and revision are configurable/readable. Define clock/NTP/RTC, zone portability/DST/holidays/exceptions, multiple windows, manual force-refresh behavior, jitter, stale thresholds, and clock-loss behavior.
 

@@ -203,7 +203,7 @@ Read models:
 - Planning Board returns run cards in Machine backlogs and Batch Operations with remaining unallocated quantity in the pool.
 - Timeline returns one continuous run occupancy plus bounded shared/program/output completion phases.
 - TV returns the current run, active program, coupled outputs, program/run progress, picture, and Machine telemetry; it remains read-only.
-- E-Ink packages identify the run and active program and include all relevant output Cases without adding write-back.
+- E-Ink packages identify the run and active program and include all relevant output Cases. Package/planning content remains read-only; the separate approved `SEND_TO_QC` operational event may change only the tablet workflow projection to `IN_QC` for the Server-resolved run.
 - Haas/CNC resolution maps normalized active program identity to exactly one pinned Production Run Program; unknown/ambiguous/completed matches explain and do not mutate quantities.
 
 ## 11. Assignment and history migration (Task 3)

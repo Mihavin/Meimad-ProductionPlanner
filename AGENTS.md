@@ -23,7 +23,7 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 2. Only the server may open, migrate, back up, or restore the SQLite database. Never let a client open SQLite directly or place the database on a network share.
 3. Keep planning manual. Never auto-schedule, auto-optimize, silently reorder, or silently repair a plan. Calculate consequences, detect conflicts, and explain them so a planner can decide.
 4. Windows Planning Clients are the only MVP editing clients. Enforce exactly one server-controlled editor at a time through Single Edit Mode. A requester asks the current editor; Release transfers immediately, Reject keeps the current holder, no response transfers automatically after the server-configured timeout (30-second default), and the holder may release voluntarily.
-5. TV Dashboard and E-Ink clients are read-only operational consumers. They never request planning edit rights.
+5. TV Dashboard is a read-only operational consumer. E-Ink clients are read-only for planning/package content except for the narrowly scoped `SEND_TO_QC` operational command defined in the API contract. Tablets never request planning Edit Mode or general mutation rights.
 6. Keep the MVP on the factory LAN/Wi-Fi. Do not add public Internet exposure, router port forwarding, remote editing, or customer access.
 7. Any later customer access must be a separate, minimal, read-only portal. It must not expose drawings, certificates of conformity, or VPN access to the factory network.
 8. Preserve the domain separation:
@@ -43,10 +43,10 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 12. MVP timing represents current working setup and cycle values. Do not invent plan-versus-actual history without an explicit scope decision.
 13. Color is never the only status signal. Pair every status color with text and/or an icon, and retain the palette defined in `docs/functional-spec.md`.
 14. Use one unified Color E-Ink Work Tablet concept, normally one device per Machine plus one or two spares. Use one configurable firmware build; do not compile Machine identity or network settings into custom firmware.
-15. Official E-Ink data flows server-to-device only. Tablets may download assigned package revisions but may not upload edits to official planning or package data. Official package files remain read-only in the device UI.
+15. Official E-Ink planning/package data flows server-to-device only. Tablets may download assigned package revisions and may send only the authenticated `SEND_TO_QC` operational event for the Server-resolved active Production Run. That command changes only the tablet workflow projection to `IN_QC`; it may not edit planning assignments, backlog order, quantities, allocations, execution counts, or package data. Official package files remain read-only in the device UI.
 16. Tablet checklist marks and comments remain device-local, non-authoritative, unsynchronized, and stored separately from official package content. Make an official revision change conspicuous before offering any local-mark cleanup.
 17. Do not add USB Mass Storage, CNC write capability, or official CNC-program-carrier responsibility to the tablet in MVP.
-18. Restrict each tablet to assigned read-only resources with a revocable device credential. Limit cached confidential data, support lost-device revocation, and keep device health data separate from planning data.
+18. Restrict each tablet to assigned read-only resources plus its explicit `SEND_TO_QC` event scope with a revocable device credential. The Server, never the tablet, resolves the target Machine and active Production Run. Limit cached confidential data, support lost-device revocation, and keep device health and tablet workflow events separate from planning data.
 19. Deep sleep is the normal tablet state. Automatic checks run only during configured workdays and shift windows; manual Refresh wakes the device at any time. Make a small version/change request before a package download or panel refresh; if unchanged, return to sleep without refreshing the E-Ink display.
 20. Preserve last-known-good tablet content during outages. Verify manifests/files, reject corrupt or checksum-mismatched downloads, and never activate a partial revision. A missing or corrupt SD card must show an error and prevent package download.
 21. The MVP tablet uses three replaceable AA batteries with no rechargeable cell or charger. Prefer on-screen indication and do not add always-on LEDs.
@@ -54,7 +54,7 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 23. Provision a tablet through a temporary setup access point entered by a first-boot/setup gesture. Store configuration locally, restart into normal mode, and provide a long-press or service reset without requiring a Machine-specific firmware build.
 24. Keep ESP32 hardware and firmware as a separate project boundary, started only after the E-Ink server API is stable.
 25. Allow a development Server executable/console host, but target a Windows Service on a designated factory PC or local Server for production.
-26. Do not implement deferred features - automatic planning, ERP synchronization, native mobile apps, full Android-tablet behavior, full tool inventory, tablet write-back, Customer Portal, official CNC transfer, rechargeable-device charging, or OTA firmware update - without an explicit scope decision.
+26. Do not implement deferred features - automatic planning, ERP synchronization, native mobile apps, full Android-tablet behavior, full tool inventory, tablet write-back other than the approved `SEND_TO_QC` command, Customer Portal, official CNC transfer, rechargeable-device charging, or OTA firmware update - without an explicit scope decision.
 27. For multi-output work, keep coupled outputs atomic per NC program cycle, forbid rounding and overproduction, and make run structure immutable after its first program starts. Follow the accepted and implemented decisions in `docs/production-run-architecture.md`; schemas v45–v47 own Manufacturing Programs, Production Runs, and idempotent cycle observations.
 
 ## Engineering boundaries
@@ -68,13 +68,13 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 - Keep secrets, device tokens, local database files, logs, build output, and generated package/cache content out of version control.
 - Use stable IDs in contracts. Use locale-independent timestamps, durations, quantities, and decimal serialization; document the chosen formats before implementation.
 - Make mutations atomic and validate domain invariants on the server even if a client also validates them.
-- Keep device telemetry, if approved, narrowly scoped and unable to mutate planning data.
+- Keep device telemetry, if approved, narrowly scoped and unable to mutate planning data. Keep `SEND_TO_QC` separately scoped and unable to change anything beyond the tablet workflow projection for the resolved active run.
 
 ## Quality and change rules
 
 - Add tests with functionality. At minimum, cover domain invariants, all four dependency modes, timeline/conflict behavior, allocation validation, Single Edit Mode races and timeout behavior, API authorization/read-only boundaries, migrations, backup/restore, and E-Ink cache/checksum failure modes.
 - Test that the planner reports conflicts without changing the user's assignments or backlog order.
-- Test that TV and E-Ink credentials cannot use mutation endpoints and that tablet-local notes never enter server state.
+- Test that TV credentials cannot use mutation endpoints; E-Ink credentials can use only assigned reads and `SEND_TO_QC`, cannot call any other mutation, and cannot target another device/Machine/run. Tablet-local notes never enter server state.
 - Preserve accessibility: status must remain understandable without color and on muted Color E-Ink panels.
 - Prefer small, reviewable changes. Do not combine an unresolved architecture choice with broad feature implementation.
 - Do not claim acceptance from unit tests alone when a requirement depends on Windows Service behavior, LAN deployment, kiosk display, physical E-Ink readability, or measured battery current.

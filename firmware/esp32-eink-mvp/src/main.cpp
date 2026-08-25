@@ -9,6 +9,8 @@
 #include "hardware_config.h"
 #include "device_config.h"
 #include "tablet_api.h"
+#include "production_ui.h"
+#include "screen_revision.h"
 
 #if !MEIMAD_EINK_DRIVER_STUB
 #include <TFT_eSPI.h>
@@ -28,6 +30,9 @@ constexpr uint32_t kSerialWaitMs = 1500;
 constexpr uint32_t kWifiConnectTimeoutMs = 15000;
 constexpr uint8_t kWifiMaximumAttempts = 3;
 constexpr uint64_t kWifiFailureSleepUs = 60ULL * 1000ULL * 1000ULL;
+constexpr char kPreferencesNamespace[] = "meimad";
+constexpr char kLastRevisionKey[] = "last_revision";
+constexpr char kLastRevisionTabletKey[] = "last_rev_tab";
 
 struct DeviceConfiguration {
   String hardwareId;
@@ -49,7 +54,7 @@ String readHardwareId() {
 
 DeviceConfiguration loadDeviceConfiguration() {
   Preferences preferences;
-  preferences.begin("meimad", false);
+  preferences.begin(kPreferencesNamespace, false);
   if (!preferences.isKey("wifi_ssid") && strlen(meimad::config::kDefaultWifiSsid) > 0)
     preferences.putString("wifi_ssid", meimad::config::kDefaultWifiSsid);
   if (!preferences.isKey("wifi_pass") && strlen(meimad::config::kDefaultWifiPassword) > 0)
@@ -75,9 +80,53 @@ DeviceConfiguration loadDeviceConfiguration() {
 void cacheTabletId(const String& tabletId) {
   if (tabletId.isEmpty()) return;
   Preferences preferences;
-  preferences.begin("meimad", false);
+  preferences.begin(kPreferencesNamespace, false);
   preferences.putString("tablet_id", tabletId);
   preferences.end();
+}
+
+meimad::screen_revision::LastRevision loadLastRevision() {
+  meimad::screen_revision::LastRevision result;
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) {
+    Serial.println("Screen revision NVS read failed; refresh will be required.");
+    return result;
+  }
+  result.available = preferences.isKey(kLastRevisionKey)
+      && preferences.isKey(kLastRevisionTabletKey);
+  if (result.available) {
+    result.revision = preferences.getULong(kLastRevisionKey, 0);
+    result.tabletId = preferences.getString(kLastRevisionTabletKey, "");
+    result.available = !result.tabletId.isEmpty();
+  }
+  preferences.end();
+  return result;
+}
+
+bool saveLastRevision(const String& tabletId, uint32_t revision) {
+  if (tabletId.isEmpty()) return false;
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) {
+    Serial.println("Screen revision NVS write failed: namespace unavailable.");
+    return false;
+  }
+  // Revision is written first. If power fails before the tablet identity is
+  // updated, an assignment mismatch forces another safe refresh on next boot.
+  const bool revisionSaved =
+      preferences.putULong(kLastRevisionKey, revision) == sizeof(uint32_t);
+  const bool tabletSaved = revisionSaved
+      && preferences.putString(kLastRevisionTabletKey, tabletId)
+          == tabletId.length();
+  preferences.end();
+  if (!revisionSaved || !tabletSaved) {
+    Serial.println("Screen revision NVS write failed; next boot will refresh safely.");
+    return false;
+  }
+  Serial.printf(
+      "Stored last_revision=%lu for tablet=%s\n",
+      static_cast<unsigned long>(revision),
+      tabletId.c_str());
+  return true;
 }
 
 bool connectWifi(const DeviceConfiguration& configuration) {
@@ -189,67 +238,25 @@ void configureWakeButtons() {
                 meimad::hardware::kActionButtonGpio);
 }
 
-void drawSmokeTestScreen(const DeviceConfiguration& configuration, bool serverConnected) {
+uint32_t drawProductionLayout(
+    const meimad::production_ui::ProductionScreenModel& screen,
+    bool developmentFixture,
+    const char* source,
+    uint32_t revision) {
 #if !MEIMAD_EINK_DRIVER_STUB
-  epaper.begin();
-  epaper.fillScreen(TFT_WHITE);
-  epaper.setTextColor(TFT_BLACK, TFT_WHITE);
-
-  // Large heading, small metadata, and rules provide a repeatable panel QA
-  // reference at the actual 800x480 screen geometry.
-  epaper.setTextSize(4);
-  epaper.drawString("MEIMAD PLANNER", 28, 24);
-  epaper.setTextSize(1);
-  epaper.drawString(configuration.tabletId.isEmpty()
-                        ? "UNREGISTERED TABLET"
-                        : "TABLET " + configuration.tabletId,
-                    610, 10);
-  epaper.drawFastHLine(28, 82, 744, TFT_BLACK);
-  epaper.setTextSize(2);
-  epaper.drawString("Machine: TEST MACHINE", 28, 108);
-  epaper.drawString("Machine No: 10", 28, 140);
-  if (configuration.tabletId.isEmpty()) {
-    epaper.setTextSize(1);
-    epaper.drawString("Hardware ID: " + configuration.hardwareId, 28, 176);
-  } else {
-    epaper.drawString("Hardware identity registered", 28, 172);
-  }
-  epaper.drawFastHLine(28, 208, 744, TFT_BLACK);
-
-  epaper.setTextSize(3);
-  epaper.drawString("STATUS", 28, 228);
-  epaper.setTextSize(4);
-  epaper.drawString(serverConnected ? "SERVER CONNECTED" : "SERVER NOT AVAILABLE", 28, 270);
-  epaper.drawFastHLine(28, 330, 744, TFT_BLACK);
-
-  epaper.setTextSize(2);
-  epaper.drawString("Firmware: " MEIMAD_FIRMWARE_VERSION, 28, 350);
-  epaper.drawString("Full refresh: measuring...", 28, 382);
-  epaper.drawString("Partial refresh: testing...", 28, 414);
-  epaper.drawString("Panel sleep retains this image", 28, 446);
-
-  const uint32_t fullStartedAt = millis();
+  meimad::production_ui::drawProductionScreen(epaper, screen, 0, developmentFixture);
+  const uint32_t refreshStartedAt = millis();
   epaper.update();
-  const uint32_t fullRefreshMs = millis() - fullStartedAt;
-
-  char fullDuration[48];
-  snprintf(fullDuration, sizeof(fullDuration), "Full refresh: %lu ms", fullRefreshMs);
-  epaper.fillRect(28, 380, 420, 26, TFT_WHITE);
-  epaper.setTextSize(2);
-  epaper.drawString(fullDuration, 28, 382);
-  const uint32_t partialStartedAt = millis();
-  epaper.updataPartial(28, 380, 440, 28);
-  const uint32_t partialRefreshMs = millis() - partialStartedAt;
-
-  char partialDuration[58];
-  snprintf(partialDuration, sizeof(partialDuration),
-           "Partial refresh: SUPPORTED (%lu ms)", partialRefreshMs);
-  epaper.fillRect(28, 412, 600, 28, TFT_WHITE);
-  epaper.drawString(partialDuration, 28, 414);
-  epaper.updataPartial(28, 412, 640, 28);
-  Serial.printf("E-Ink full refresh: %lu ms; partial refresh: %lu ms\n",
-                fullRefreshMs, partialRefreshMs);
-  Serial.println("E-Ink panel is sleeping; the smoke-test image remains visible through MCU sleep/reset.");
+  const uint32_t refreshDurationMs = millis() - refreshStartedAt;
+  Serial.printf(
+      "E-Ink screen refresh: source=%s revision=%lu duration=%lu ms\n",
+      source,
+      static_cast<unsigned long>(revision),
+      static_cast<unsigned long>(refreshDurationMs));
+  Serial.println("E-Ink panel is sleeping; the production layout remains visible.");
+  return refreshDurationMs;
+#else
+  return 0;
 #endif
 }
 } // namespace
@@ -286,6 +293,24 @@ void setup() {
     activeConfiguration.tabletId = assignedTabletId;
     Serial.printf("Server-assigned Tablet ID cached in NVS: %s\n", assignedTabletId.c_str());
   }
+  auto productionScreen = meimad::production_ui::makeDevelopmentFixture(
+      activeConfiguration.tabletId);
+  bool developmentFixture = true;
+  bool refreshScreen = true;
+  bool receivedServerRevision = false;
+  uint32_t serverRevision = 0;
+  const auto lastRevision = loadLastRevision();
+  const bool retainedScreenMatchesTablet = lastRevision.available
+      && lastRevision.tabletId == activeConfiguration.tabletId;
+  refreshScreen = !retainedScreenMatchesTablet;
+  if (lastRevision.available) {
+    Serial.printf(
+        "Loaded last_revision=%lu for tablet=%s\n",
+        static_cast<unsigned long>(lastRevision.revision),
+        lastRevision.tabletId.c_str());
+  } else {
+    Serial.println("No stored last_revision; next valid Server screen will refresh.");
+  }
   if (serverConnected && !activeConfiguration.tabletId.isEmpty()) {
     meimad::tablet_api::TabletApiClient tabletApi(
         activeConfiguration.serverBaseUrl,
@@ -293,6 +318,14 @@ void setup() {
     meimad::tablet_api::TabletStatusResponse tabletStatus;
     const auto statusResult = tabletApi.getStatus(activeConfiguration.tabletId, tabletStatus);
     if (statusResult.succeeded()) {
+      productionScreen = meimad::production_ui::makeProductionScreen(tabletStatus);
+      developmentFixture = false;
+      receivedServerRevision = true;
+      serverRevision = tabletStatus.revision;
+      refreshScreen = meimad::screen_revision::shouldRefresh(
+          lastRevision,
+          tabletStatus.tabletId,
+          serverRevision);
       Serial.printf(
           "Tablet status: revision=%lu machine=%s part=%s operation=%ld status=%s\n",
           static_cast<unsigned long>(tabletStatus.revision),
@@ -300,15 +333,34 @@ void setup() {
           tabletStatus.part.number.c_str(),
           static_cast<long>(tabletStatus.operation.number),
           meimad::tablet_api::toToken(tabletStatus.status));
+      if (!refreshScreen) {
+        Serial.printf(
+            "E-Ink screen refresh skipped: server_revision=%lu equals last_revision.\n",
+            static_cast<unsigned long>(serverRevision));
+      }
     } else {
       Serial.printf(
           "Tablet status unavailable: %s%s%s\n",
           meimad::tablet_api::toText(statusResult.code),
           statusResult.detail.isEmpty() ? "" : " - ",
           statusResult.detail.c_str());
+      if (retainedScreenMatchesTablet) {
+        refreshScreen = false;
+        Serial.println(
+            "E-Ink screen refresh skipped: retaining last-known screen without a valid Server revision.");
+      }
     }
   }
-  drawSmokeTestScreen(activeConfiguration, serverConnected);
+  if (refreshScreen) {
+    drawProductionLayout(
+        productionScreen,
+        developmentFixture,
+        receivedServerRevision ? "server" : "layout-demo",
+        serverRevision);
+    if (receivedServerRevision) {
+      saveLastRevision(activeConfiguration.tabletId, serverRevision);
+    }
+  }
   if (!wifiConnected) {
     Serial.printf("Wi-Fi unavailable; entering deep sleep for %llu seconds.\n", kWifiFailureSleepUs / 1000000ULL);
     esp_sleep_enable_timer_wakeup(kWifiFailureSleepUs);
