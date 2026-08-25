@@ -8,5 +8,6 @@ constexpr char kDefaultWifiSsid[] = "Planner-Server";
 constexpr char kDefaultWifiPassword[] = "a12345678";
 constexpr char kServerBaseUrl[] = "http://192.168.137.1:5080";
 constexpr char kDefaultTabletId[] = "0001";
+// Provision a revocable device-scoped token locally. Never commit a live token.
+constexpr char kDefaultDeviceToken[] = "";
 }
-

@@ -65,3 +65,63 @@ the MCU after the retries, leaving the E-Ink page visible.
 The permanent identity is the station MAC address. `tablet_id` is stored in NVS
 and shown once a Server response supplies it. Before assignment, the screen
 shows `UNREGISTERED TABLET` and the MAC address.
+
+## Proposed tablet status/event adapter
+
+The firmware implements a bounded client for the Task 5 compatibility shape:
+
+```http
+GET /api/tablets/{tablet_id}/status
+POST /api/tablets/{tablet_id}/events
+```
+
+The status response requires `revision`, matching `tablet_id`, `machine`,
+`nc_run`, `part`, `operation`, and one of these exact tokens:
+`READY_FOR_SETUP`, `IN_SETUP_RUN`, `IN_QC`, `READY_FOR_PRODUCTION`,
+`IN_PRODUCTION`, `BLOCKED`, or `UNKNOWN`. Opaque string IDs are preferred;
+integer IDs from the example payload are also accepted and normalized to
+strings in memory. Missing fields, wrong types, a mismatched tablet ID,
+unsupported tokens, and invalid JSON are rejected as malformed without
+replacing a previously valid response.
+
+The initial event request is exactly:
+
+```json
+{ "event_type": "SEND_TO_QC" }
+```
+
+It contains no device timestamp. A successful Server acknowledgment is defined
+as Server-generated UTC time plus the echoed identity and event:
+
+```json
+{
+  "tablet_id": "3041",
+  "event_type": "SEND_TO_QC",
+  "timestamp": "2026-08-25T10:15:30Z"
+}
+```
+
+Both calls use a 5-second connection timeout and 7-second overall HTTP timeout,
+log the returned HTTP status, and distinguish transport, HTTP, and malformed
+response failures. A device bearer token can be provisioned in the `meimad`
+NVS namespace as `device_token`; `kDefaultDeviceToken` exists only as a local
+development bootstrap and must never contain a committed live credential.
+
+Build the focused on-device contract test image without changing the normal
+firmware artifact with:
+
+```powershell
+pio run -e xiao-esp32s3-plus-contract-tests
+```
+
+If that image is explicitly uploaded for bench testing, its 115200-baud serial
+output ends with `Tablet API contract tests: PASS (0 failures)` when every JSON
+fixture assertion succeeds.
+
+The firmware reads the proposed status after a successful registration ping.
+It does not send `SEND_TO_QC` from a button or mutate planning state. The current
+Server does not implement these two compatibility routes: its implemented,
+authorized baseline remains the GET-only `/api/v1/eink/devices/{deviceId}/...`
+contract. Server-side status derivation, event authorization/persistence, and
+the relationship to the existing E-Ink projection require the recorded product
+decision before these routes can be enabled end to end.

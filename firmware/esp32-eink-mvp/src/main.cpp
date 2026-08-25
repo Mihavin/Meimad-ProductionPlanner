@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include "hardware_config.h"
 #include "device_config.h"
+#include "tablet_api.h"
 
 #if !MEIMAD_EINK_DRIVER_STUB
 #include <TFT_eSPI.h>
@@ -34,6 +35,7 @@ struct DeviceConfiguration {
   String wifiSsid;
   String wifiPassword;
   String serverBaseUrl;
+  String deviceToken;
 };
 
 String readHardwareId() {
@@ -56,12 +58,15 @@ DeviceConfiguration loadDeviceConfiguration() {
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
   if (!preferences.isKey("tablet_id") && strlen(meimad::config::kDefaultTabletId) > 0)
     preferences.putString("tablet_id", meimad::config::kDefaultTabletId);
+  if (!preferences.isKey("device_token") && strlen(meimad::config::kDefaultDeviceToken) > 0)
+    preferences.putString("device_token", meimad::config::kDefaultDeviceToken);
   DeviceConfiguration value {
     readHardwareId(),
     preferences.getString("tablet_id", ""),
     preferences.getString("wifi_ssid", ""),
     preferences.getString("wifi_pass", ""),
-    preferences.getString("server_url", meimad::config::kServerBaseUrl)
+    preferences.getString("server_url", meimad::config::kServerBaseUrl),
+    preferences.getString("device_token", "")
   };
   preferences.end();
   return value;
@@ -280,6 +285,28 @@ void setup() {
     cacheTabletId(assignedTabletId);
     activeConfiguration.tabletId = assignedTabletId;
     Serial.printf("Server-assigned Tablet ID cached in NVS: %s\n", assignedTabletId.c_str());
+  }
+  if (serverConnected && !activeConfiguration.tabletId.isEmpty()) {
+    meimad::tablet_api::TabletApiClient tabletApi(
+        activeConfiguration.serverBaseUrl,
+        activeConfiguration.deviceToken);
+    meimad::tablet_api::TabletStatusResponse tabletStatus;
+    const auto statusResult = tabletApi.getStatus(activeConfiguration.tabletId, tabletStatus);
+    if (statusResult.succeeded()) {
+      Serial.printf(
+          "Tablet status: revision=%lu machine=%s part=%s operation=%ld status=%s\n",
+          static_cast<unsigned long>(tabletStatus.revision),
+          tabletStatus.machine.name.c_str(),
+          tabletStatus.part.number.c_str(),
+          static_cast<long>(tabletStatus.operation.number),
+          meimad::tablet_api::toToken(tabletStatus.status));
+    } else {
+      Serial.printf(
+          "Tablet status unavailable: %s%s%s\n",
+          meimad::tablet_api::toText(statusResult.code),
+          statusResult.detail.isEmpty() ? "" : " - ",
+          statusResult.detail.c_str());
+    }
   }
   drawSmokeTestScreen(activeConfiguration, serverConnected);
   if (!wifiConnected) {

@@ -169,6 +169,14 @@ Structured JSON is the implemented v1 Server/simulator baseline. A pre-rendered 
 
 The source also suggests optional battery/firmware telemetry using a `GET .../ping` request. That conflicts with the read-only boundary and safe HTTP semantics if it records state. Telemetry is excluded from the baseline contract until a narrowly scoped, authenticated design is approved. Server observation of normal reads may update operational last-seen state, but must never change planning data.
 
+The physical firmware prototype also contains a reversible Task 5 client adapter
+for a simplified `/api/tablets/{tablet_id}/status` response and a
+`SEND_TO_QC` event request. The Server does not implement those compatibility
+routes. The firmware validates their JSON and failure behavior but does not bind
+the event to a button. Status derivation and any event write scope must be
+resolved against the implemented v1 projection, Production Run domain, device
+credential scope, and Single Edit Mode before end-to-end enablement.
+
 ## 11. Wi-Fi provisioning
 
 - On first boot or a setup gesture, create a temporary access point; `MP-M07-SETUP` is an example name only.
@@ -236,6 +244,9 @@ Numeric pass/fail thresholds for battery life, timing, readability, storage, rec
 
 - USB Mass Storage to CNC.
 - Server write-back of tool notes or checklist state.
+- Server acceptance of the proposed `SEND_TO_QC` tablet event until its
+  non-authoritative/official meaning, authorization, idempotency, and audit are
+  approved.
 - Official CNC program transfer responsibility.
 - Full Android-tablet behavior.
 - Full tool inventory tracking.

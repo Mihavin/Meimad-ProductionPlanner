@@ -1647,6 +1647,31 @@ An exact revision that is no longer the current authorized package returns scope
 
 Missing/corrupt SD and local checksum failures are device-side states, not upload APIs. The simulator must prove that these failures never activate partial content.
 
+### 8.9 Proposed physical-firmware status/event compatibility shape
+
+The physical firmware prototype contains a reversible client adapter for
+`GET /api/tablets/{tablet_id}/status` and
+`POST /api/tablets/{tablet_id}/events`. These routes are **not implemented by
+the Server** and are not part of the approved v1 E-Ink baseline. In particular,
+the existing E-Ink read-only guard continues to reject device-credential POSTs.
+
+The proposed GET response uses `revision`, `tablet_id`, `machine`, `nc_run`,
+`part`, `operation`, and an exact status token from `READY_FOR_SETUP`,
+`IN_SETUP_RUN`, `IN_QC`, `READY_FOR_PRODUCTION`, `IN_PRODUCTION`, `BLOCKED`, or
+`UNKNOWN`. Defining how those tokens derive from Production Run, Production Run
+Program, setup, QA, readiness, and blocking facts is unresolved; an
+implementation must not treat a Batch Operation as an NC run or manufacture a
+status mapping.
+
+The proposed POST request is `{ "event_type": "SEND_TO_QC" }` and deliberately
+has no timestamp. If approved, the Server would generate the timestamp and
+return `{ "tablet_id": "...", "event_type": "SEND_TO_QC", "timestamp":
+"<UTC instant>" }`. Before implementation, decide whether this is a
+non-authoritative operational signal or an official execution mutation, its
+authorization/idempotency/audit/persistence rules, and how it preserves the
+Single Edit Mode and tablet read-only boundaries. No firmware button currently
+sends this request.
+
 ## 9. Caching and consistency
 
 - Server mutation commits atomically and produces one new plan revision.
