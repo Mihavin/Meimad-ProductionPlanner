@@ -20,6 +20,7 @@ using Meimad.Planner.Server.Api.MachineTypes;
 using Meimad.Planner.Server.Api.Orders;
 using Meimad.Planner.Server.Api.ProductionBatches;
 using Meimad.Planner.Server.Api.ProductionRuns;
+using Meimad.Planner.Server.Api.Tablets;
 using Meimad.Planner.Server.Api.Postprocessors;
 using Meimad.Planner.Server.Api.Reports;
 using Meimad.Planner.Server.Api.PlanningBoard;
@@ -331,6 +332,7 @@ public static class ServerApplication
         application.MapTvDashboardEndpoints();
         application.MapEInkEndpoints();
         application.MapEInkDeviceRegistrationEndpoints();
+        application.MapTabletEndpoints();
         application.MapJobPackageEndpoints();
         application.MapGCodeEndpoints();
         application.MapManufacturingProgramEndpoints();

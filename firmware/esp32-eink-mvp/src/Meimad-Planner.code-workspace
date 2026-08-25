@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../../Meimad-Planner"
+		},
+		{
+			"name": "Meimad-ProductionPlanner",
+			"path": "../../.."
+		}
+	],
+	"settings": {}
+}
