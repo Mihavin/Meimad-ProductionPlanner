@@ -27,6 +27,7 @@ struct ProductionScreenModel {
   int32_t operationNumber = 0;
   String operationName;
   tablet_api::TabletStatus status = tablet_api::TabletStatus::Unknown;
+  String notice;
   ToolRow tools[kMaximumTools];
   uint8_t toolCount = 0;
 };
@@ -38,6 +39,8 @@ ProductionScreenModel makeDevelopmentFixture(const String& tabletId);
 const char* statusText(tablet_api::TabletStatus status);
 uint8_t toolPageCount(uint8_t toolCount);
 uint8_t normalizedToolPage(uint8_t requestedPage, uint8_t toolCount);
+uint8_t previousToolPage(uint8_t currentPage, uint8_t toolCount);
+uint8_t nextToolPage(uint8_t currentPage, uint8_t toolCount);
 
 #if !MEIMAD_EINK_DRIVER_STUB
 void drawProductionScreen(

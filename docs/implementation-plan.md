@@ -334,8 +334,25 @@ same-tablet revision, forces reassignment/changed-revision refresh, saves only
 after `update()` returns, and logs every actual refresh duration. A failed
 status read preserves the same-tablet retained screen. Model/status/pagination
 and revision-decision assertions compile in the separate contract-test image.
-Physical execution/upload/readability validation and Previous/Next button
-binding have not been completed, so this phase remains open.
+The first state policy maps `READY_FOR_SETUP`/`IN_QC` to 120-second timer polls
+and maps `IN_SETUP_RUN`/`READY_FOR_PRODUCTION`/`IN_PRODUCTION` to physical-button
+wake; all paths enter deep sleep and retain the E-Ink page. ESP32-S3 EXT1 wake
+is configured for the three active-low buttons, with a safety timer if setup
+fails. `BLOCKED`/`UNKNOWN`/unavailable use a documented conservative 120-second
+fallback pending approval. Physical execution/upload/readability/current
+validation and configured workday/shift enforcement have not been completed.
+The first input abstraction now compiles a 40-ms debounce, release validation,
+wake logging, D1 Refresh, D2 Previous Tool Page, short-D4 Next Tool Page, and
+1.2-second D4 `SEND_TO_QC`. The send action requires freshly read
+`IN_SETUP_RUN`, submits once per wake, refreshes status, and renders temporary
+accepted/confirmed/rejected/uncertain feedback. It remains physically and
+end-to-end unverified because the Server compatibility routes are pending. The
+wake runtime logs reason, available UTC time, battery voltage, and RTC-retained
+pre-sleep policy state. Timer/cold/Refresh/send paths perform bounded network
+work; page-only/invalid button wakes keep Wi-Fi off, and every network path
+turns Wi-Fi off after HTTP work and again before deep sleep. Compile evidence
+does not replace measured radio/deep-sleep current or wake testing, so this
+phase remains open.
 
 ### Scope
 
@@ -429,14 +446,14 @@ The following questions are unresolved in the provided source documents. IDs sho
 - **OD-022 - Package publication:** Partially resolved: the current Windows Edit Mode holder publishes a caller-named immutable revision for an assigned Batch Operation; Machine/Case/Batch/Operation metadata is snapshotted and a correction creates another revision. Define a distinct preparer/approver role or approval UI, audit, revision naming/ordering policy, and whether reassignment should require explicit republish confirmation.
 - **OD-023 - Package format:** Partially resolved: schema v7 stores immutable snapshot/file metadata, asset roles, safe logical/storage-relative paths, stable file IDs, lengths, media types, timestamps/order, and SHA-256. Generation supports in-folder preview, allow-listed NC/text sources, JSON tool table/offsets, and UTF-8 instructions with configurable limits; reads re-verify bytes. Define signatures, additional formats/encoding, compression, range/resume, device staging/activation, rollback, backup inclusion, superseded-revision access, and retention/garbage collection.
 - **OD-024 - Rendering boundary:** Structured JSON is the implemented v1 Server/simulator baseline. The first physical firmware layout renders local text directly from the approved status compatibility response, uses fixed three-row tool pages, and does not implement images; its official tool-row source is not yet connected. Decide whether the final physical firmware consumes the v1 Machine/package projections unchanged or keeps a compatible adapter, and define package-to-tool mapping, panel profile, bitmap/palette/fonts, pagination, localization, Unicode/RTL, and compatibility window.
-- **OD-025 - Telemetry and tablet-originated events:** Partially resolved: `SEND_TO_QC` is approved as the only tablet-originated operational command. It requires an enabled path-matched device credential, takes no target/time fields, resolves the bound Machine and unique `IN_SETUP_RUN` Production Run on the Server, atomically records one append-only event/audit entry using Server UTC, changes only the tablet workflow projection to `IN_QC`, and is idempotent per Production Run while retaining the first timestamp. It does not require Single Edit Mode and cannot mutate planning, Production Run lifecycle/program/output facts, readiness, or packages. Server endpoint/migration/status projection and physical button binding remain implementation work. Battery/firmware/last-seen telemetry remains undecided, as do the other tablet status derivations and the later Server-owned transition out of `IN_QC`.
+- **OD-025 - Telemetry and tablet-originated events:** Partially resolved: `SEND_TO_QC` is approved as the only tablet-originated operational command. It requires an enabled path-matched device credential, takes no target/time fields, resolves the bound Machine and unique `IN_SETUP_RUN` Production Run on the Server, atomically records one append-only event/audit entry using Server UTC, changes only the tablet workflow projection to `IN_QC`, and is idempotent per Production Run while retaining the first timestamp. It does not require Single Edit Mode and cannot mutate planning, Production Run lifecycle/program/output facts, readiness, or packages. Firmware physical-button binding, fresh-state eligibility, single-wake submission guard, follow-up refresh, and temporary confirmation rendering are compiled; physical/end-to-end verification is pending. Server endpoint/migration/status projection remain implementation work. Battery/firmware/last-seen telemetry remains undecided, as do the other tablet status derivations and the later Server-owned transition out of `IN_QC`.
 - **OD-026 - Device lifecycle:** Partially resolved on the Server: an active editor can register a spare or Machine-bound device, the Server returns a high-entropy token only at create/rotation, stores its SHA-256, permits one enabled E-Ink binding per Machine, and supports rebind/revoke/rotate. Define dedicated administrator authorization/audit, device-side secure storage, token expiry, lost-device/cached-data response, and physical reassignment workflow.
-- **OD-027 - Time/sync:** Partially resolved for Server configuration: time-zone ID, workdays, one shift window, poll interval, retry attempts/backoff, and revision are configurable/readable. Define clock/NTP/RTC, zone portability/DST/holidays/exceptions, multiple windows, manual force-refresh behavior, jitter, stale thresholds, and clock-loss behavior.
+- **OD-027 - Time/sync:** Partially resolved for Server configuration: time-zone ID, workdays, one shift window, poll interval, retry attempts/backoff, and revision are configurable/readable. Firmware now logs a UTC wake timestamp only when the system clock is already valid and reports unavailable otherwise; it does not fabricate time. The first state machine has a fixed requested 120-second development cadence for `READY_FOR_SETUP` and `IN_QC`, but does not yet synchronize the clock, consume Server time configuration, or enforce the mandatory automatic-wake workday/shift gate. Define and implement clock/NTP/RTC, zone portability/DST/holidays/exceptions, multiple windows, manual force-refresh behavior, jitter, stale thresholds, and clock-loss behavior before production automatic polling.
 
 ### E-Ink hardware and interaction
 
 - **OD-028 - Hardware selection:** Final MCU, panel/controller/size/resolution/orientation/colors/refresh behavior, AA chemistry and power topology, regulator/brownout, SD, USB service access, mount, and environmental rating.
-- **OD-029 - Input contradiction:** The concept specifies only Refresh and Page buttons but also checkboxes, five local statuses, free-text comments, Back/Next, and confirmation. Choose touch/additional controls/text-entry behavior and map every interaction.
+- **OD-029 - Input contradiction:** Partially resolved for the production screen: the first firmware maps active-low D1/GPIO2 to Refresh, D2/GPIO3 to Previous Tool Page, short D4/GPIO5 to Next Tool Page, and a 1.2-second D4 hold to the deliberate `SEND_TO_QC` gesture. It debounces, rejects multi-button/unreleased input, logs the action, and uses the long hold plus post-send notice as the initial confirmation pattern. Final enclosure labels/hold ergonomics and physical behavior remain unverified. The concept also requires checkboxes, five local statuses, free-text comments, broader Back/Next, and revision-cleanup prompts; choose touch/additional controls/text-entry behavior and map those remaining interactions.
 - **OD-030 - Local data:** Define persistence across battery replacement, annotation migration/clear behavior on revision, reassignment behavior, filesystem/capacity/wear/corruption protection, history limit, and encryption.
 - **OD-031 - Firmware update:** Define safe update/service procedure if OTA remains deferred.
 - **OD-032 - Measured acceptance:** Define numeric battery-life/current, wake/download/refresh time, readability distance/lighting/temperature, ghosting, storage, failure recovery, and one-week pilot success thresholds.

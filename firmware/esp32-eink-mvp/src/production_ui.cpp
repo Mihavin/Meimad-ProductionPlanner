@@ -97,6 +97,17 @@ uint8_t normalizedToolPage(uint8_t requestedPage, uint8_t toolCount) {
   return requestedPage < pages ? requestedPage : static_cast<uint8_t>(pages - 1);
 }
 
+uint8_t previousToolPage(uint8_t currentPage, uint8_t toolCount) {
+  const uint8_t page = normalizedToolPage(currentPage, toolCount);
+  return page == 0 ? 0 : static_cast<uint8_t>(page - 1);
+}
+
+uint8_t nextToolPage(uint8_t currentPage, uint8_t toolCount) {
+  const uint8_t page = normalizedToolPage(currentPage, toolCount);
+  const uint8_t lastPage = static_cast<uint8_t>(toolPageCount(toolCount) - 1);
+  return page < lastPage ? static_cast<uint8_t>(page + 1) : lastPage;
+}
+
 #if !MEIMAD_EINK_DRIVER_STUB
 void drawProductionScreen(
     EPaper& display,
@@ -152,6 +163,10 @@ void drawProductionScreen(
   display.drawRect(kLeft + 1, 191, kContentWidth - 2, 108, TFT_BLACK);
   display.setTextSize(1);
   display.drawString("STATUS", 40, 204);
+  if (!model.notice.isEmpty()) {
+    display.setTextSize(2);
+    drawRightAligned(display, fitText(display, model.notice, 520), kRight - 16, 202);
+  }
   display.setTextSize(4);
   display.drawString(fitText(display, statusText(model.status), 710), 40, 238);
 

@@ -59,6 +59,16 @@ struct TabletEventResponse {
   String timestamp;
 };
 
+// Device health is non-planning telemetry. Voltage is sent whenever the
+// tablet calls the Server; percentage remains absent until the AA power path
+// has a measured discharge curve.
+struct BatteryTelemetry {
+  bool voltageAvailable = false;
+  float voltage = 0.0f;
+  bool percentAvailable = false;
+  uint8_t percent = 0;
+};
+
 enum class ApiResultCode {
   Success,
   NotConfigured,
@@ -77,7 +87,10 @@ struct ApiResult {
 
 class TabletApiClient {
  public:
-  TabletApiClient(const String& serverBaseUrl, const String& bearerToken = String());
+  TabletApiClient(
+      const String& serverBaseUrl,
+      const String& bearerToken = String(),
+      const BatteryTelemetry& batteryTelemetry = BatteryTelemetry());
 
   ApiResult getStatus(const String& tabletId, TabletStatusResponse& response) const;
   ApiResult sendEvent(
@@ -88,6 +101,7 @@ class TabletApiClient {
  private:
   String serverBaseUrl_;
   String bearerToken_;
+  BatteryTelemetry batteryTelemetry_;
 };
 
 bool parseStatusPayload(
@@ -105,5 +119,6 @@ bool parseEventPayload(
 const char* toToken(TabletStatus status);
 const char* toToken(TabletEventType eventType);
 const char* toText(ApiResultCode result);
+String formatBatteryVoltageHeader(const BatteryTelemetry& telemetry);
 
 }  // namespace meimad::tablet_api

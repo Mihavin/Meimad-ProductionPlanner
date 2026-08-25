@@ -39,9 +39,9 @@ Primary goals are:
 | MCU | XIAO ESP32-S3 Plus on the Seeed XIAO ePaper Display Dev Board. |
 | Display | TRMNL BYOD 7.5-inch (OG) monochrome E-Ink, UC8179 controller, 800×480. |
 | Storage | Removable SD/microSD for official packages, previews, rendered screens, NC/text, tool tables, and local annotations. |
-| Power | 2000 mAh rechargeable Li-ion battery supplied with the kit. |
+| Power | Three replaceable AA batteries; no rechargeable cell or charger in the MVP. The kit battery is not the production power design. |
 | Regulation | Low-quiescent-current design with brownout-safe Wi-Fi peaks; power-gate SD/display where practical. |
-| Inputs | Three user buttons: D1/GPIO2, D2/GPIO3, and D4/GPIO5, plus reset. Long-press behavior remains TBD. |
+| Inputs | Three active-low user buttons: D1/GPIO2 Refresh, D2/GPIO3 Previous Tool Page, short D4/GPIO5 Next Tool Page, and 1.2-second D4/GPIO5 hold for `SEND_TO_QC`, plus reset. Physical labels/ergonomics remain to be accepted. |
 | USB | Optional programming/service connector only; never expose Mass Storage to CNC in MVP. |
 | Mechanical | Rugged mount near the Machine, easy setup-time removal, and practical dust/oil-mist protection. Required rating is TBD. |
 | Status | Prefer on-screen indication; avoid always-on LEDs. |
@@ -71,6 +71,46 @@ or malformed response keeps the retained same-tablet screen and revision.
 Package download/activation revisions remain separate future state and must not
 be conflated with this status-screen revision.
 
+The first tablet-side power state machine is also implemented. It consumes the
+Server status only to choose wake behavior:
+
+| Server status | Firmware sleep/wake behavior |
+|---|---|
+| `READY_FOR_SETUP` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
+| `IN_SETUP_RUN` | Deep sleep; physical-button wake only. |
+| `IN_QC` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
+| `READY_FOR_PRODUCTION` | Deep sleep; physical-button wake only while the explicit status text remains visible. |
+| `IN_PRODUCTION` | Deep sleep; physical-button wake only. CNC/Server generates cycle events. |
+| `BLOCKED`, `UNKNOWN`, or no valid response | Conservative 120-second retry plus physical wake; final policy is TBD. |
+
+GPIO2/GPIO3/GPIO5 are configured as active-low ESP32-S3 EXT1 wake sources.
+Internal RTC pull-ups are kept powered; physical wake and its current cost still
+require bench verification. A failure to configure button wake adds a
+120-second safety timer for an otherwise button-only state. The state machine
+never changes a Server status.
+
+On each boot, firmware logs the reset/wake reason, a UTC wake timestamp when
+the clock is valid (otherwise an explicit unavailable result), calibrated ADC
+battery voltage, and the status/source/wake configuration retained before the
+previous deep sleep. That pre-sleep state uses RTC memory and is never treated
+as authoritative business state. It preserves the prior sleep policy across a
+local-only page wake; cold boot or lost/invalid RTC memory falls back safely.
+
+Cold boots, timer wakes, Refresh, and `SEND_TO_QC` perform bounded Wi-Fi/Server
+work. Previous/Next and ignored physical wakes do not start Wi-Fi. After the
+last HTTP operation, firmware disconnects Wi-Fi and selects `WIFI_OFF` before
+panel refresh and deep sleep; sleep entry repeats this shutdown as a guard. If
+both timer and physical wake configuration fail, it remains awake for service
+with the Wi-Fi radio disabled. Actual radio-off state, deep-sleep current,
+battery calibration, wake latency, RTC retention, and timestamp continuity
+still require physical measurement.
+
+The timer mapping is implemented as the requested initial development policy,
+but it does not yet enforce configured workdays/shift windows because the
+firmware has no approved clock/time-config integration. Production automatic
+wake remains blocked on that OD-027 work; manual button wake remains valid at
+any time.
+
 An automatic check every ten minutes is only an example. The work calendar, wake interval, retry/backoff, clock source, time zone, DST, and force-refresh gesture are TBD.
 
 The panel retains the last visible image without continuous power. The final battery-life goal must be expressed as a measured workload and numeric acceptance threshold after a bench prototype exists.
@@ -87,7 +127,17 @@ The panel retains the last visible image without continuous power. The final bat
 | Offline | Last cached package/screen with an unambiguous stale/offline warning and last-update time. |
 | Send to QC | Confirmed `SEND_TO_QC` for the Server-resolved current run; show pending/failure/success using text and icon, never color alone. |
 
-The two-button hardware does not yet explain checklist selection, five-state status selection, free-text entry, Back/Next navigation, or confirmation prompts. Input hardware and the complete interaction state machine are blocking decisions.
+The first production-screen mapping uses D1/GPIO2 for Refresh, D2/GPIO3 for
+Previous Tool Page, short D4/GPIO5 for Next Tool Page, and a 1.2-second D4 hold
+as the deliberate `SEND_TO_QC` confirmation gesture. The firmware accepts only
+one debounced button per EXT1 wake, waits for release, logs the action, and
+allows at most one event POST in that wake cycle. A send is enabled only after
+fresh `IN_SETUP_RUN` status, is followed by a status GET, and displays distinct
+accepted/confirmed/rejected/uncertain feedback. Physical behavior has not been
+bench-verified. The three buttons still do not define checklist selection,
+five-state local checklist status, free-text entry, broader Back/Next
+navigation, or revision-cleanup prompts, so the complete post-wake interaction
+state machine remains a blocking decision.
 
 ## 6. Setup workflow
 
@@ -98,7 +148,7 @@ The two-button hardware does not yet explain checklist selection, five-state sta
 5. The setupist receives the prepared tool cart and sees its cart ID on the tablet.
 6. The setupist returns to the Machine with tablet and cart.
 7. During setup, the tablet acts as a local checklist and read-only viewer.
-8. When setup is ready for inspection, the setupist explicitly selects and confirms `SEND_TO_QC`. The tablet sends no target ID or timestamp and does not show `IN_QC` until the Server acknowledges it.
+8. When setup is ready for inspection, the setupist holds D4 for 1.2 seconds. The firmware first verifies fresh `IN_SETUP_RUN` status, submits at most one `SEND_TO_QC` attempt, and then refreshes status. The tablet sends no target ID or timestamp and does not present `IN_QC` unless a Server status response reports it.
 9. The Server resolves the bound Machine/current run, records the first event using Server time, and the next status projection shows `IN_QC`. A bounded retry after an uncertain network result is safe and returns the first timestamp.
 10. If a problem is found, the setupist takes the tablet to the programmer or QC. An authorized Windows user corrects and republishes the official package.
 11. The tablet downloads the new revision. Local notes remain local and are not applied to the official package.
@@ -239,12 +289,13 @@ response does not contain tools, the live layout shows `NO TOOL DATA AVAILABLE`
 instead of example rows. The development-only seven-tool fixture is visibly
 marked `LAYOUT DEMO`.
 
-The layout model, pagination, and same/different/missing/reassigned revision
-decisions compile in the focused firmware contract-test image. Previous/Next
-physical button behavior, the official package-to-tool-row binding, on-device
-execution of those assertions, and physical readability/clipping/contrast
-validation remain pending; the implementation therefore does not yet satisfy
-the prototype acceptance gate below.
+The layout model, pagination, same/different/missing/reassigned revision
+decisions, button mapping, page-boundary behavior, single-attempt guard, and
+`IN_SETUP_RUN` send eligibility compile in the focused firmware contract-test
+image. The official package-to-tool-row binding, on-device execution of those
+assertions, and physical button/readability/clipping/contrast validation remain
+pending; the implementation therefore does not yet satisfy the prototype
+acceptance gate below.
 
 Display resolution, minimum font size, viewing distance, lighting range, localization, Unicode/RTL, bitmap format, page geometry, and ghosting/full-refresh policy are TBD.
 

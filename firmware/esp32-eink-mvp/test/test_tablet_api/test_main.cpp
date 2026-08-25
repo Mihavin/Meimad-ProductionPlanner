@@ -3,10 +3,14 @@
 #include "../../src/tablet_api.cpp"
 #include "../../src/production_ui.cpp"
 #include "../../src/screen_revision.cpp"
+#include "../../src/tablet_state_machine.cpp"
+#include "../../src/button_input.cpp"
 
 using namespace meimad::tablet_api;
 using namespace meimad::production_ui;
 using namespace meimad::screen_revision;
+using namespace meimad::tablet_state_machine;
+using namespace meimad::button_input;
 
 namespace {
 uint32_t failures = 0;
@@ -140,6 +144,10 @@ void testProductionStatusLabelsAndToolPages() {
   CHECK(toolPageCount(4) == 2);
   CHECK(toolPageCount(7) == 3);
   CHECK(normalizedToolPage(9, 7) == 2);
+  CHECK(previousToolPage(0, 7) == 0);
+  CHECK(previousToolPage(2, 7) == 1);
+  CHECK(nextToolPage(0, 7) == 1);
+  CHECK(nextToolPage(2, 7) == 2);
 }
 
 void testProductionScreenUsesStatusAndExplicitMachineNumber() {
@@ -196,6 +204,79 @@ void testRevisionGateSkipsOnlyMatchingTabletAndRevision() {
   CHECK(shouldRefresh(stored, "other-tablet", 17));
   CHECK(shouldRefresh(stored, "3041", 0));
 }
+
+void testTabletStateMachineUsesOnlyPollingOrButtonWake() {
+  const StatePolicy readyForSetup = policyFor(TabletStatus::ReadyForSetup);
+  CHECK(readyForSetup.wakeMode == WakeMode::PollServer);
+  CHECK(readyForSetup.pollIntervalSeconds == 120);
+  CHECK(!readyForSetup.fallbackPolicy);
+
+  const StatePolicy inSetup = policyFor(TabletStatus::InSetupRun);
+  CHECK(inSetup.wakeMode == WakeMode::PhysicalButton);
+  CHECK(inSetup.pollIntervalSeconds == 0);
+
+  const StatePolicy inQc = policyFor(TabletStatus::InQc);
+  CHECK(inQc.wakeMode == WakeMode::PollServer);
+  CHECK(inQc.pollIntervalSeconds == 120);
+
+  const StatePolicy readyForProduction =
+      policyFor(TabletStatus::ReadyForProduction);
+  CHECK(readyForProduction.wakeMode == WakeMode::PhysicalButton);
+  CHECK(readyForProduction.pollIntervalSeconds == 0);
+
+  const StatePolicy inProduction = policyFor(TabletStatus::InProduction);
+  CHECK(inProduction.wakeMode == WakeMode::PhysicalButton);
+  CHECK(inProduction.pollIntervalSeconds == 0);
+}
+
+void testUndefinedStatePoliciesPollConservatively() {
+  const StatePolicy blocked = policyFor(TabletStatus::Blocked);
+  CHECK(blocked.wakeMode == WakeMode::PollServer);
+  CHECK(blocked.pollIntervalSeconds == 120);
+  CHECK(blocked.fallbackPolicy);
+
+  const StatePolicy unknown = policyFor(TabletStatus::Unknown);
+  CHECK(unknown.wakeMode == WakeMode::PollServer);
+  CHECK(unknown.pollIntervalSeconds == 120);
+  CHECK(unknown.fallbackPolicy);
+}
+
+void testWakeButtonMappingUsesLongPressOnlyForSendToQc() {
+  const uint64_t refreshMask = 1ULL << meimad::hardware::kRefreshButtonGpio;
+  const uint64_t previousMask = 1ULL << meimad::hardware::kPageButtonGpio;
+  const uint64_t actionMask = 1ULL << meimad::hardware::kActionButtonGpio;
+  CHECK(actionForWakeMask(refreshMask, false) == ButtonAction::Refresh);
+  CHECK(actionForWakeMask(previousMask, false) == ButtonAction::PreviousToolPage);
+  CHECK(actionForWakeMask(actionMask, false) == ButtonAction::NextToolPage);
+  CHECK(actionForWakeMask(actionMask, true) == ButtonAction::SendToQc);
+  CHECK(actionForWakeMask(refreshMask | actionMask, true) == ButtonAction::None);
+  CHECK(actionForWakeMask(0, false) == ButtonAction::None);
+
+  EventSubmissionGuard guard;
+  CHECK(guard.tryBegin());
+  CHECK(guard.attempted());
+  CHECK(!guard.tryBegin());
+}
+
+void testSendToQcIsAvailableOnlyDuringSetupRun() {
+  CHECK(!canSendToQc(TabletStatus::ReadyForSetup));
+  CHECK(canSendToQc(TabletStatus::InSetupRun));
+  CHECK(!canSendToQc(TabletStatus::InQc));
+  CHECK(!canSendToQc(TabletStatus::ReadyForProduction));
+  CHECK(!canSendToQc(TabletStatus::InProduction));
+  CHECK(!canSendToQc(TabletStatus::Blocked));
+  CHECK(!canSendToQc(TabletStatus::Unknown));
+}
+
+void testOnlyNetworkActionsContactServerAfterButtonWake() {
+  CHECK(requiresServerContact(false, ButtonAction::None));
+  CHECK(requiresServerContact(false, ButtonAction::Refresh));
+  CHECK(requiresServerContact(true, ButtonAction::Refresh));
+  CHECK(requiresServerContact(true, ButtonAction::SendToQc));
+  CHECK(!requiresServerContact(true, ButtonAction::PreviousToolPage));
+  CHECK(!requiresServerContact(true, ButtonAction::NextToolPage));
+  CHECK(!requiresServerContact(true, ButtonAction::None));
+}
 }  // namespace
 
 void setup() {
@@ -214,6 +295,11 @@ void setup() {
   testProductionScreenDoesNotPresentOpaqueIdAsMachineNumber();
   testDevelopmentFixtureIsPagedAndClearlyIdentifiedByCaller();
   testRevisionGateSkipsOnlyMatchingTabletAndRevision();
+  testTabletStateMachineUsesOnlyPollingOrButtonWake();
+  testUndefinedStatePoliciesPollConservatively();
+  testWakeButtonMappingUsesLongPressOnlyForSendToQc();
+  testSendToQcIsAvailableOnlyDuringSetupRun();
+  testOnlyNetworkActionsContactServerAfterButtonWake();
   Serial.printf("Tablet API contract tests: %s (%lu failures)\n",
                 failures == 0 ? "PASS" : "FAIL",
                 static_cast<unsigned long>(failures));

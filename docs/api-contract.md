@@ -1661,9 +1661,11 @@ GET /api/tablets/{tablet_id}/status
 POST /api/tablets/{tablet_id}/events
 ```
 
-The contract is approved; the Server routes, persistence migration, and physical
-button binding are not yet implemented. Until the Server exception is added,
-the existing E-Ink guard continues to reject device-credential POSTs.
+The contract is approved; the Server routes and persistence migration are not
+yet implemented. The physical firmware now compiles the guarded button binding
+described below, but it is not end-to-end or physically verified. Until the
+Server exception is added, the existing E-Ink guard continues to reject
+device-credential POSTs.
 
 The GET response uses `revision`, `tablet_id`, `machine`, `nc_run`, `part`,
 `operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP_RUN`,
@@ -1688,6 +1690,43 @@ from either representation. Derivation of every status remains implementation
 design work, but the approved `SEND_TO_QC` transition is exactly
 `IN_SETUP_RUN -> IN_QC` for the same resolved Production Run. A repeated command
 while that same run remains `IN_QC` is an idempotent success.
+
+The first firmware state machine consumes this status without owning or
+deriving business state. `READY_FOR_SETUP` and `IN_QC` select a 120-second
+timer wake (also allowing physical wake). `IN_SETUP_RUN`,
+`READY_FOR_PRODUCTION`, and `IN_PRODUCTION` select physical-button-only wake;
+the E-Ink page remains visible and CNC/Server integrations own production-cycle
+events. `BLOCKED`, `UNKNOWN`, and an unavailable status currently select a
+conservative 120-second retry because their final sleep policy is not approved.
+This initial cadence does not replace `/time-config`: production automatic
+checks must still be gated to configured workdays/shift windows once firmware
+clock/window integration is implemented.
+
+The compiled wake runtime logs the ESP wake reason, battery voltage, a valid
+UTC wake timestamp when one exists, and the prior status/wake policy retained
+in RTC memory before deep sleep. Cold/timer/Refresh/send wakes contact the
+Server; Previous/Next or invalid physical-button wakes are local-only and keep
+Wi-Fi off. RTC-retained status is used only to preserve the next sleep policy
+on those local wakes and never derives or changes business state. Wi-Fi is
+disabled immediately after bounded HTTP work and checked again before deep
+sleep. Clock synchronization, configured work-window enforcement, and measured
+power behavior remain physical-firmware acceptance work and are not API
+guarantees.
+
+The initial three-button firmware mapping is D1/GPIO2 Refresh, D2/GPIO3
+Previous Tool Page, short D4/GPIO5 Next Tool Page, and a 1.2-second D4/GPIO5
+hold for `SEND_TO_QC`. It accepts only one debounced, released wake button and
+logs every resolved action. A send gesture first obtains fresh status and is
+available only for `IN_SETUP_RUN`; the firmware permits one POST attempt in
+that wake cycle, then performs a status GET without repeating the POST. An
+accepted response, an `IN_QC` follow-up after an uncertain POST result, an
+explicit rejection, and an uncertain result produce distinct temporary
+on-screen notices. If the POST result is uncertain and the follow-up GET also
+fails, the firmware selects its conservative timer retry policy. Server-side
+per-run idempotency remains mandatory across reboot, lost response, or later
+wake cycles. This mapping is an implemented prototype decision, while enclosure
+labels, hold ergonomics, and physical debounce/wake behavior remain OD-029 and
+hardware-acceptance work.
 
 Request:
 
