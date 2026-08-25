@@ -109,6 +109,37 @@ public sealed class EInkApiTests
     }
 
     [Fact]
+    public async Task Tablet_bootstrap_requires_matching_enabled_token_and_hardware_id()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+
+            using var valid = Get("/api/tablet/ping?hardwareId=a4-cf-12-83-76-91");
+            valid.Headers.Add("X-Meimad-Battery-Voltage", "3.860");
+            using var response = await client.SendAsync(valid);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("3041", document.RootElement.GetProperty("tabletId").GetString());
+            Assert.Equal(DeviceId, document.RootElement.GetProperty("deviceId").GetString());
+            Assert.Equal("machine-eink-1", document.RootElement.GetProperty("machineId").GetString());
+
+            using var wrongHardware = await client.SendAsync(Get(
+                "/api/tablet/ping?hardwareId=A4:CF:12:83:76:92"));
+            Assert.Equal(HttpStatusCode.NotFound, wrongHardware.StatusCode);
+
+            using var otherToken = await client.SendAsync(Get(
+                "/api/tablet/ping?hardwareId=A4:CF:12:83:76:91", "mp_eink_other-token"));
+            Assert.Equal(HttpStatusCode.NotFound, otherToken.StatusCode);
+
+            await SetDeviceEnabledAsync(application.Services, false);
+            using var revoked = await client.SendAsync(Get(
+                "/api/tablet/ping?hardwareId=A4:CF:12:83:76:91"));
+            Assert.Equal(HttpStatusCode.NotFound, revoked.StatusCode);
+        });
+    }
+
+    [Fact]
     public async Task Corrupt_package_file_is_rejected_without_returning_bytes()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
@@ -285,12 +316,12 @@ public sealed class EInkApiTests
                 ('assignment-eink-3', 'operation-eink-3', 'machine-eink-1', 2),
                 ('assignment-eink-4', 'operation-eink-4', 'machine-eink-1', 3);
             INSERT INTO device_registry (
-                id, device_type, device_name, machine_id, credential_hash,
+                id, tablet_id, hardware_id, device_type, device_name, machine_id, credential_hash,
                 access_mode, is_enabled)
             VALUES
-                ('device-eink-1', 'eink', 'Tablet One', 'machine-eink-1',
+                ('device-eink-1', '3041', 'A4:CF:12:83:76:91', 'eink', 'Tablet One', 'machine-eink-1',
                  $credentialHash, 'read_only', 1),
-                ('device-eink-2', 'eink', 'Tablet Two', NULL,
+                ('device-eink-2', '3042', 'A4:CF:12:83:76:92', 'eink', 'Tablet Two', NULL,
                  $otherCredentialHash, 'read_only', 1);
             INSERT INTO eink_package_revisions (
                 id, batch_operation_id, revision, tool_cart_id, published_at)

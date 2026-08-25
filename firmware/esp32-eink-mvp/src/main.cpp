@@ -280,6 +280,9 @@ bool testServer(
   http.setConnectTimeout(5000);
   http.setTimeout(7000);
   if (!http.begin(url)) return false;
+  if (!configuration.deviceToken.isEmpty()) {
+    http.addHeader("Authorization", "Bearer " + configuration.deviceToken);
+  }
   const String batteryVoltage =
       meimad::tablet_api::formatBatteryVoltageHeader(batteryTelemetry);
   if (!batteryVoltage.isEmpty()) {

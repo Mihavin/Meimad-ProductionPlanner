@@ -41,7 +41,8 @@ internal static class EInkDeviceRegistrationEndpoints
         try
         {
             var result = await service.CreateAsync(
-                new CreateEInkDeviceRegistrationCommand(request.DeviceName, request.MachineId),
+                new CreateEInkDeviceRegistrationCommand(
+                    request.DeviceName, request.MachineId, request.HardwareId),
                 editAuthority!,
                 cancellationToken);
             return Results.Created(
@@ -125,7 +126,10 @@ internal static class EInkDeviceRegistrationEndpoints
     };
 }
 
-internal sealed record CreateEInkDeviceRegistrationRequest(string DeviceName, string? MachineId);
+internal sealed record CreateEInkDeviceRegistrationRequest(
+    string DeviceName,
+    string? MachineId,
+    string HardwareId);
 
 internal sealed record UpdateEInkDeviceRegistrationRequest(
     string? MachineId,
@@ -134,6 +138,8 @@ internal sealed record UpdateEInkDeviceRegistrationRequest(
 
 internal sealed record EInkDeviceRegistrationResponse(
     string DeviceId,
+    string TabletId,
+    string? HardwareId,
     string DeviceName,
     string? MachineId,
     bool IsEnabled,
@@ -146,6 +152,8 @@ internal sealed record EInkDeviceRegistrationResponse(
         EInkDeviceRegistration value,
         string? registrationToken = null) => new(
         value.DeviceId,
+        value.TabletId,
+        value.HardwareId,
         value.DeviceName,
         value.MachineId,
         value.IsEnabled,

@@ -427,12 +427,12 @@ The following are logical support records, not planning authority:
 
 ### 10.1 Device Registration
 
-- Implemented Device ID and human label.
+- Implemented immutable opaque Device ID, Server-assigned short Tablet ID, and optional normalized physical Wi-Fi MAC hardware ID. Legacy registrations receive a visible `legacy-...` Tablet ID and must be provisioned with a physical MAC before bootstrap.
 - Optional assigned Machine; a partial unique index permits at most one enabled E-Ink device per Machine.
 - Implemented read-only package/planning access level and enabled/revoked state; the approved `SEND_TO_QC` capability is a separate future scope, not general write access.
 - The Server generates a high-entropy `mp_eink_...` bearer token, stores only its SHA-256 hash, and returns plaintext only on creation or rotation.
 - Active Windows Edit Mode authority is required to create, bind/unbind, enable/revoke, or rotate a registration; these changes are atomic with the authority check.
-- Firmware/display profile and operational last-seen/battery/firmware fields remain absent. Telemetry requires a separate decision. `SEND_TO_QC` event persistence is approved below but not yet implemented.
+- Authenticated bootstrap records last seen/contact and bounded supplied battery metadata as operational fields only. Firmware profile history and any telemetry retention policy remain open. `SEND_TO_QC` event persistence is approved below but not yet implemented.
 
 ### 10.2 Tablet QC Event target
 

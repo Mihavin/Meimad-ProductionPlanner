@@ -28,13 +28,15 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO device_registry (
-                id, device_type, device_name, machine_id, credential_hash,
+                id, tablet_id, hardware_id, device_type, device_name, machine_id, credential_hash,
                 access_mode, is_enabled, version, created_at, updated_at)
             VALUES (
-                $id, 'eink', $name, $machineId, $credentialHash,
+                $id, $tabletId, $hardwareId, 'eink', $name, $machineId, $credentialHash,
                 'read_only', 1, 1, $createdAt, $updatedAt);
             """;
         Bind(command, "$id", registration.DeviceId);
+        Bind(command, "$tabletId", registration.TabletId);
+        Bind(command, "$hardwareId", registration.HardwareId);
         Bind(command, "$name", registration.DeviceName);
         Bind(command, "$machineId", registration.MachineId);
         Bind(command, "$credentialHash", credentialHash);
@@ -109,7 +111,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, device_name, machine_id, is_enabled, version, created_at, updated_at
+            SELECT id, tablet_id, hardware_id, device_name, machine_id, is_enabled, version, created_at, updated_at
             FROM device_registry
             WHERE device_type = 'eink'
             ORDER BY device_name COLLATE NOCASE, id;
@@ -124,6 +126,48 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         return values;
     }
 
+    public async Task<EInkDeviceRegistration?> FindEnabledByCredentialAndHardwareAsync(
+        string credentialHash,
+        string hardwareId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, tablet_id, hardware_id, device_name, machine_id, is_enabled, version, created_at, updated_at
+            FROM device_registry
+            WHERE device_type = 'eink' AND is_enabled = 1
+              AND credential_hash = $credentialHash AND hardware_id = $hardwareId;
+            """;
+        Bind(command, "$credentialHash", credentialHash);
+        Bind(command, "$hardwareId", hardwareId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
+    }
+
+    public async Task RecordContactAsync(
+        string deviceId,
+        DateTimeOffset contactedAt,
+        decimal? batteryVoltage,
+        int? batteryPercent,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE device_registry
+            SET last_seen_at = $at, last_server_contact_at = $at,
+                battery_voltage = COALESCE($voltage, battery_voltage),
+                battery_percent = COALESCE($percent, battery_percent)
+            WHERE id = $deviceId AND device_type = 'eink' AND is_enabled = 1;
+            """;
+        Bind(command, "$at", Iso(contactedAt));
+        Bind(command, "$voltage", batteryVoltage);
+        Bind(command, "$percent", batteryPercent);
+        Bind(command, "$deviceId", deviceId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task<EInkDeviceRegistration?> ReadOneAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -133,7 +177,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT id, device_name, machine_id, is_enabled, version, created_at, updated_at
+            SELECT id, tablet_id, hardware_id, device_name, machine_id, is_enabled, version, created_at, updated_at
             FROM device_registry
             WHERE id = $deviceId AND device_type = 'eink';
             """;
@@ -190,15 +234,25 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         reader.GetString(0),
         reader.GetString(1),
         reader.IsDBNull(2) ? null : reader.GetString(2),
-        reader.GetBoolean(3),
-        reader.GetInt32(4),
-        Parse(reader.GetString(5)),
-        Parse(reader.GetString(6)));
+        reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4),
+        reader.GetBoolean(5),
+        reader.GetInt32(6),
+        Parse(reader.GetString(7)),
+        Parse(reader.GetString(8)));
 
     private static EInkDeviceBindingException BindingConflict(SqliteException exception) =>
         new(
-            "device_binding_conflict",
-            exception.Message.Contains("ux_device_registry_eink_machine", StringComparison.Ordinal)
+            exception.Message.Contains("ux_device_registry_eink_hardware_id", StringComparison.Ordinal)
+                ? "hardware_id_conflict"
+                : exception.Message.Contains("ux_device_registry_eink_tablet_id", StringComparison.Ordinal)
+                    ? "tablet_id_conflict"
+                    : "device_binding_conflict",
+            exception.Message.Contains("ux_device_registry_eink_hardware_id", StringComparison.Ordinal)
+                ? "Another active E-Ink tablet already has that hardware ID."
+                : exception.Message.Contains("ux_device_registry_eink_tablet_id", StringComparison.Ordinal)
+                    ? "The generated tablet ID conflicts with an existing registration."
+                    : exception.Message.Contains("ux_device_registry_eink_machine", StringComparison.Ordinal)
                 ? "Another E-Ink device is already bound to that Machine."
                 : "The device name or Machine binding conflicts with an existing registration.");
 

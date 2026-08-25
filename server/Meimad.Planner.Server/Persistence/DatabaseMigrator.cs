@@ -52,7 +52,8 @@ internal sealed class DatabaseMigrator
         new SchemaV44HaasDprntPortMigration(),
         new SchemaV45ManufacturingProgramsMigration(),
         new SchemaV46ProductionRunsMigration(),
-        new SchemaV47ProductionRunExecutionMigration()
+        new SchemaV47ProductionRunExecutionMigration(),
+        new SchemaV48TabletTerminalsMigration()
     ];
 
     private readonly SqliteDatabase database;

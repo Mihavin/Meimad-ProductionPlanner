@@ -64,7 +64,10 @@ Operation, a framed status band, and a fixed three-row tool table. Tool rows are
 paginated rather than scrolled, and the footer reports `TOOLS n / total`.
 Status tokens are converted to operator-readable text and never rely on color.
 
-When the approved tablet-status GET succeeds, the layout displays that response.
+The initial `/api/tablet/ping?hardwareId=<mac>` bootstrap sends the provisioned
+bearer credential and accepts the Server-assigned short Tablet ID only after the
+Server verifies that credential against the normalized physical MAC. When the
+approved tablet-status GET succeeds, the layout displays that response.
 The status response does not yet carry official tool rows, so the live tool area
 explicitly says `NO TOOL DATA AVAILABLE`; it never fabricates Server data. Until
 the pending Server compatibility route exists, the boot screen uses the example
