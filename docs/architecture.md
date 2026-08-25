@@ -246,6 +246,21 @@ Hardware and firmware remain a separate project boundary. The prototype now owns
 
 The deep-sleep runtime retains only its prior display-status sleep policy and configured wake-source result in RTC memory, then logs that state, wake reason, battery voltage, and available UTC time on the next wake. It uses the retained status only to preserve sleep behavior during local-only page/invalid-button wakes; it never treats it as business authority. Cold/timer/Refresh/send wakes may enable Wi-Fi for bounded Server work, while local physical wakes do not. The radio is disabled after the final HTTP operation, before panel work, and checked again at deep-sleep entry. If no wake source can be configured, the service fallback remains awake with Wi-Fi off. Clock synchronization/work-window gating and physical radio/deep-sleep measurements remain incomplete.
 
+A separate compile-time demo target is available for firmware and panel work
+before the Server workflow is complete. It supplies persistent local fixtures
+to the same production screen model for every initial tablet state and the
+required error/low-battery conditions. Demo mode has no Wi-Fi or HTTP path and
+does not submit `SEND_TO_QC`; it is disabled in the normal configurable build
+and is not an alternate production data source.
+
+Task 11 adds voltage-only device-health metadata to every firmware HTTP call.
+It is conveyed as a bounded request header so it does not alter the status/event
+wire bodies or create an unapproved tablet mutation route. The firmware shows a
+provisional threshold-only `LOW BATTERY` warning and does not derive a percent.
+A future Server ingestion/history component must remain outside planning and
+tablet-workflow persistence, use the device credential/path scope, timestamp
+receipts on the Server, validate hardware range, and apply bounded retention.
+
 ## 5. Deployment topology
 
 ```mermaid

@@ -135,7 +135,10 @@ void drawProductionScreen(
   display.drawString(fitText(display, machine, 610), kLeft, 18);
   display.setTextSize(2);
   drawRightAligned(display, model.tabletId, kRight, 14);
-  if (developmentFixture) {
+  if (model.lowBattery) {
+    display.setTextSize(1);
+    drawRightAligned(display, "LOW BATTERY", kRight, 46);
+  } else if (developmentFixture) {
     display.setTextSize(1);
     drawRightAligned(display, "LAYOUT DEMO", kRight, 46);
   }

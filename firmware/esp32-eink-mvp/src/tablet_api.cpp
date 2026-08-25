@@ -1,4 +1,5 @@
 #include "tablet_api.h"
+#include "firmware_logging.h"
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -264,7 +265,7 @@ ApiResult finishRequest(
     int httpStatus,
     const String& operation,
     String& responsePayload) {
-  Serial.printf("Tablet API %s: HTTP %d\n", operation.c_str(), httpStatus);
+  MEIMAD_LOG("API", "%s response=%d", operation.c_str(), httpStatus);
   if (httpStatus < 0) {
     const String transportError = HTTPClient::errorToString(httpStatus);
     http.end();
@@ -308,11 +309,13 @@ bool parseEventPayload(
       payload, requestedTabletId, requestedEventType, response, error);
 }
 
+bool hasValidBatteryVoltage(const BatteryTelemetry& telemetry) {
+  return telemetry.voltageAvailable && isfinite(telemetry.voltage)
+      && telemetry.voltage > 0.0f && telemetry.voltage <= 12.0f;
+}
+
 String formatBatteryVoltageHeader(const BatteryTelemetry& telemetry) {
-  if (!telemetry.voltageAvailable || !isfinite(telemetry.voltage)
-      || telemetry.voltage <= 0.0f || telemetry.voltage > 12.0f) {
-    return String();
-  }
+  if (!hasValidBatteryVoltage(telemetry)) return String();
   return String(telemetry.voltage, 3);
 }
 

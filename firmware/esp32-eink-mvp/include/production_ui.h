@@ -28,6 +28,7 @@ struct ProductionScreenModel {
   String operationName;
   tablet_api::TabletStatus status = tablet_api::TabletStatus::Unknown;
   String notice;
+  bool lowBattery = false;
   ToolRow tools[kMaximumTools];
   uint8_t toolCount = 0;
 };

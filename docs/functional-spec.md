@@ -314,6 +314,18 @@ refresh/deep sleep. RTC state preserves only the next sleep policy on local
 wakes and never replaces Server state. Clock synchronization, configured
 work-window gating, and measured current/runtime behavior remain unverified.
 
+The first firmware also sends voltage-only device-health metadata with each
+existing HTTP call and displays `LOW BATTERY` at its provisional 3.30 V
+threshold. It does not infer a battery percentage. This is non-planning
+telemetry and does not alter the scoped `SEND_TO_QC` body or authority; Server
+battery-history persistence, validation, and retention remain future work.
+
+For UI development before the workflow backend is complete, a separate
+compile-time demo image renders persistent local fixtures for all initial
+tablet states, Wi-Fi and Server errors, an unregistered tablet, and low
+battery. It uses the production screen model but has no Wi-Fi/HTTP behavior
+and cannot submit `SEND_TO_QC`; normal firmware remains Server-driven.
+
 See [ESP32 / Color E-Ink Work Tablet](esp32-eink-work-tablet.md) and [API contract](api-contract.md).
 
 ## 12. Server and deployment requirements

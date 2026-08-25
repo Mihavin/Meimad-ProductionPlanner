@@ -5,12 +5,14 @@
 #include "../../src/screen_revision.cpp"
 #include "../../src/tablet_state_machine.cpp"
 #include "../../src/button_input.cpp"
+#include "../../src/demo_mode.cpp"
 
 using namespace meimad::tablet_api;
 using namespace meimad::production_ui;
 using namespace meimad::screen_revision;
 using namespace meimad::tablet_state_machine;
 using namespace meimad::button_input;
+using namespace meimad::demo_mode;
 
 namespace {
 uint32_t failures = 0;
@@ -277,6 +279,54 @@ void testOnlyNetworkActionsContactServerAfterButtonWake() {
   CHECK(!requiresServerContact(true, ButtonAction::NextToolPage));
   CHECK(!requiresServerContact(true, ButtonAction::None));
 }
+
+void testBatteryTelemetryUsesVoltageUntilPercentageIsCalibrated() {
+  BatteryTelemetry telemetry;
+  CHECK(!hasValidBatteryVoltage(telemetry));
+  CHECK_STRING("", formatBatteryVoltageHeader(telemetry));
+
+  telemetry.voltageAvailable = true;
+  telemetry.voltage = 3.91f;
+  CHECK(hasValidBatteryVoltage(telemetry));
+  CHECK_STRING("3.910", formatBatteryVoltageHeader(telemetry));
+  CHECK(!telemetry.percentAvailable);
+
+  telemetry.voltage = 12.1f;
+  CHECK(!hasValidBatteryVoltage(telemetry));
+  CHECK_STRING("", formatBatteryVoltageHeader(telemetry));
+}
+
+void testCompileTimeDemoCoversEveryRequiredScenario() {
+  const DemoScenario expected[] = {
+      DemoScenario::ReadyForSetup,
+      DemoScenario::InSetupRun,
+      DemoScenario::InQc,
+      DemoScenario::ReadyForProduction,
+      DemoScenario::InProduction,
+      DemoScenario::Blocked,
+      DemoScenario::WifiError,
+      DemoScenario::ServerError,
+      DemoScenario::UnregisteredTablet,
+      DemoScenario::LowBattery};
+  for (uint8_t index = 0; index < kScenarioCount; ++index) {
+    const DemoScenario scenario = scenarioForIndex(index);
+    CHECK(scenario == expected[index]);
+    CHECK(nextScenarioIndex(index) == (index + 1) % kScenarioCount);
+    const ProductionScreenModel screen = makeScreen(scenario);
+    CHECK(screen.notice.startsWith("DEMO - "));
+  }
+
+  CHECK(makeScreen(DemoScenario::ReadyForSetup).status == TabletStatus::ReadyForSetup);
+  CHECK(makeScreen(DemoScenario::InSetupRun).status == TabletStatus::InSetupRun);
+  CHECK(makeScreen(DemoScenario::InQc).status == TabletStatus::InQc);
+  CHECK(makeScreen(DemoScenario::ReadyForProduction).status == TabletStatus::ReadyForProduction);
+  CHECK(makeScreen(DemoScenario::InProduction).status == TabletStatus::InProduction);
+  CHECK(makeScreen(DemoScenario::Blocked).status == TabletStatus::Blocked);
+  CHECK(makeScreen(DemoScenario::WifiError).status == TabletStatus::Unknown);
+  CHECK(makeScreen(DemoScenario::ServerError).status == TabletStatus::Unknown);
+  CHECK_STRING("UNREGISTERED TABLET", makeScreen(DemoScenario::UnregisteredTablet).tabletId);
+  CHECK(makeScreen(DemoScenario::LowBattery).lowBattery);
+}
 }  // namespace
 
 void setup() {
@@ -300,6 +350,8 @@ void setup() {
   testWakeButtonMappingUsesLongPressOnlyForSendToQc();
   testSendToQcIsAvailableOnlyDuringSetupRun();
   testOnlyNetworkActionsContactServerAfterButtonWake();
+  testBatteryTelemetryUsesVoltageUntilPercentageIsCalibrated();
+  testCompileTimeDemoCoversEveryRequiredScenario();
   Serial.printf("Tablet API contract tests: %s (%lu failures)\n",
                 failures == 0 ? "PASS" : "FAIL",
                 static_cast<unsigned long>(failures));

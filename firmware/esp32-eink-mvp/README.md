@@ -43,6 +43,15 @@ state, provisional display profile, button pins, and sampled battery voltage.
 It also logs the selected state policy, effective wake sources, and Wi-Fi
 shutdown immediately before entering deep sleep.
 
+## Structured firmware logging
+
+Firmware diagnostics pass through `include/firmware_logging.h`. Each emitted
+record starts with a stable category such as `[BOOT]`, `[WAKE]`, `[WIFI]`,
+`[API]`, `[DISPLAY]`, `[BUTTON]`, `[BATTERY]`, or `[SLEEP]`, followed by
+key/value details. This keeps serial output filterable while avoiding direct
+serial-print calls in the main API, display, network, and workflow lifecycle
+paths.
+
 The firmware enables the Seeed_GFX renderer for `BOARD_SCREEN_COMBO 502` and
 `USE_XIAO_EPAPER_DISPLAY_BOARD_EE04`. On boot it renders the first production
 layout and measures its full refresh over serial. E-Ink retains the completed
@@ -67,6 +76,27 @@ binding remains pending.
 Compilation checks geometry-independent model behavior and pagination. Normal
 working-distance readability, clipping, contrast, and button navigation still
 require an uploaded image on the physical panel under shop-floor lighting.
+
+## Backend-free demo mode
+
+Build the dedicated development image with:
+
+```powershell
+pio run -e xiao-esp32s3-plus-demo
+pio run -e xiao-esp32s3-plus-demo -t upload
+```
+
+This image enables `MEIMAD_DEMO_MODE=1`. It never connects Wi-Fi, pings the
+Server, requests status, sends battery metadata, or submits `SEND_TO_QC`.
+Instead, it uses compiled fixtures with the same production screen model and
+renderer. The persistent scenario cycle covers Ready for Setup, In Setup Run,
+In QC, Ready for Production, In Production, Blocked, Wi-Fi Error, Server Error,
+Unregistered Tablet, and Low Battery.
+
+Use D1/Refresh or a long D4 press to advance to the next scenario; D2 moves to
+the previous tool page and short D4 moves to the next one. The screen carries a
+`DEMO - ...` notice, and the selected scenario is stored in NVS. The normal
+firmware build leaves demo mode disabled and continues to use only Server state.
 
 ## Revision-based screen refresh
 
@@ -146,6 +176,23 @@ After all required HTTP calls finish, Wi-Fi is disconnected and placed in
 timer or button wake source can be configured, the firmware remains awake for
 service with Wi-Fi still disabled. Physical current, RTC retention, timestamp
 continuity, ADC calibration, and wake timing remain bench-verification items.
+
+## Battery telemetry and warning
+
+The tablet samples battery voltage once per boot and attaches it to every HTTP
+request it makes (`/api/tablet/ping`, tablet-status GET, and tablet-event POST)
+as `X-Meimad-Battery-Voltage`, formatted to three decimal places. The optional
+`X-Meimad-Battery-Percent` header is deliberately omitted: percentage requires
+a measured three-AA discharge curve and is not inferred from voltage alone.
+This health metadata is separate from planning data and does not change the
+strict `SEND_TO_QC` JSON payload.
+
+`LOW BATTERY` is shown when a valid sample is at or below the provisional 3.30
+V threshold. Its last displayed state is stored in NVS so a threshold crossing
+forces a single E-Ink refresh even when the Server revision is unchanged. The
+threshold and ADC calibration must be confirmed on the physical AA power path.
+The current Server may ignore these headers; Server-side device battery history
+is the next separate, non-planning telemetry implementation step.
 
 ## Physical buttons
 

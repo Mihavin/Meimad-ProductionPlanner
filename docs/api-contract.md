@@ -1769,6 +1769,38 @@ Error behavior is bounded and device-scoped:
 | `422` | `unsupported_tablet_event` | `event_type` is not exactly `SEND_TO_QC`. |
 | `503` | `service_unavailable` | Server cannot complete the atomic event/status write. |
 
+### 8.10 Battery telemetry metadata
+
+Task 11 approves a narrow device-health metadata scope separate from planning
+and tablet workflow events. The physical firmware samples voltage once per wake
+and sends it on every HTTP request it makes (`/api/tablet/ping`,
+`GET /api/tablets/{tablet_id}/status`, and
+`POST /api/tablets/{tablet_id}/events`) as:
+
+```http
+X-Meimad-Battery-Voltage: 3.910
+```
+
+When, and only when, a future measured battery model supports it, firmware may
+also send `X-Meimad-Battery-Percent` as an integer `0` through `100`. The first
+firmware deliberately sends voltage only. The header is optional device-health
+metadata; it must not alter the exact `SEND_TO_QC` JSON request body, planning
+data, package data, status revision, or the Server-resolved run target.
+
+The eventual Server health record has this normalized shape, with
+`battery_percent` omitted until it is actually available:
+
+```json
+{ "battery_voltage": 3.91 }
+```
+
+The current Server may ignore the headers. A future Server implementation must
+authenticate/path-scope the device, assign the receipt timestamp, validate a
+finite voltage within a documented hardware range, store bounded per-tablet
+history independently of planning/workflow tables, and retain device-health
+failure behavior separately from `SEND_TO_QC`. No extra firmware POST is made
+until that endpoint and retention policy are implemented.
+
 ## 9. Caching and consistency
 
 - Server mutation commits atomically and produces one new plan revision.

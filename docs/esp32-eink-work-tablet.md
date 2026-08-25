@@ -105,6 +105,15 @@ with the Wi-Fi radio disabled. Actual radio-off state, deep-sleep current,
 battery calibration, wake latency, RTC retention, and timestamp continuity
 still require physical measurement.
 
+The current firmware samples one voltage per wake and attaches it as
+`X-Meimad-Battery-Voltage` metadata to every ping/status/event HTTP request.
+It does not guess a percentage. A simple, provisional `LOW BATTERY` screen
+warning appears at or below 3.30 V; threshold transitions force a screen update
+even without a new Server revision. Device-health metadata is separate from
+planning and `SEND_TO_QC`; the Server may currently ignore it. Server-side
+tablet battery history, retention, hardware-range validation, and an eventual
+measured percentage curve remain pending.
+
 The timer mapping is implemented as the requested initial development policy,
 but it does not yet enforce configured workdays/shift windows because the
 firmware has no approved clock/time-config integration. Production automatic
@@ -296,6 +305,15 @@ image. The official package-to-tool-row binding, on-device execution of those
 assertions, and physical button/readability/clipping/contrast validation remain
 pending; the implementation therefore does not yet satisfy the prototype
 acceptance gate below.
+
+A separate compile-time demo image (`xiao-esp32s3-plus-demo`) makes UI work
+independent from unfinished Server status/event routes. It disables Wi-Fi and
+all Server calls, renders production-model fixtures marked `DEMO`, and persists
+a ten-step state cycle: Ready for Setup, In Setup Run, In QC, Ready for
+Production, In Production, Blocked, Wi-Fi Error, Server Error, Unregistered
+Tablet, and Low Battery. D1/long-D4 advances the scenario while D2/short-D4
+exercise tool pages. It never submits a test event or presents fixture state as
+Server authority; the normal production build has demo mode disabled.
 
 Display resolution, minimum font size, viewing distance, lighting range, localization, Unicode/RTL, bitmap format, page geometry, and ghosting/full-refresh policy are TBD.
 

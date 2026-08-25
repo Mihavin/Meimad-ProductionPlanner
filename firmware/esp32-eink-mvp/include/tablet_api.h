@@ -119,6 +119,7 @@ bool parseEventPayload(
 const char* toToken(TabletStatus status);
 const char* toToken(TabletEventType eventType);
 const char* toText(ApiResultCode result);
+bool hasValidBatteryVoltage(const BatteryTelemetry& telemetry);
 String formatBatteryVoltageHeader(const BatteryTelemetry& telemetry);
 
 }  // namespace meimad::tablet_api
