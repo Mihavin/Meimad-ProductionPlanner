@@ -273,6 +273,105 @@ public sealed class EInkApiTests
     }
 
     [Fact]
+    public async Task Send_to_qc_resolves_current_run_is_idempotent_and_changes_only_workflow_projection()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await EnterSetupRunAsync(application.Services);
+            var before = await ReadPlanningFingerprintAsync(application.Services);
+
+            using var firstResponse = await client.SendAsync(PostEvent("3041", Token,
+                new { event_type = "SEND_TO_QC" }));
+            Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+            using var first = JsonDocument.Parse(await firstResponse.Content.ReadAsStringAsync());
+            Assert.Equal("3041", first.RootElement.GetProperty("tablet_id").GetString());
+            Assert.Equal("SEND_TO_QC", first.RootElement.GetProperty("event_type").GetString());
+            Assert.False(first.RootElement.GetProperty("duplicate").GetBoolean());
+            var acceptedAt = first.RootElement.GetProperty("timestamp").GetDateTimeOffset();
+
+            using var retryResponse = await client.SendAsync(PostEvent("3041", Token,
+                new { event_type = "SEND_TO_QC" }));
+            Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+            using var retry = JsonDocument.Parse(await retryResponse.Content.ReadAsStringAsync());
+            Assert.True(retry.RootElement.GetProperty("duplicate").GetBoolean());
+            Assert.Equal(acceptedAt,
+                retry.RootElement.GetProperty("timestamp").GetDateTimeOffset());
+
+            Assert.Equal(1, await CountSendToQcAsync(application.Services));
+            Assert.Equal(before, await ReadPlanningFingerprintAsync(application.Services));
+            using var statusResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var status = JsonDocument.Parse(await statusResponse.Content.ReadAsStringAsync());
+            Assert.Equal("IN_QC", status.RootElement.GetProperty("status").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task Send_to_qc_rejects_wrong_scope_state_event_and_client_selected_target()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+
+            using var tooEarly = await client.SendAsync(PostEvent("3041", Token,
+                new { event_type = "SEND_TO_QC" }));
+            Assert.Equal(HttpStatusCode.Conflict, tooEarly.StatusCode);
+
+            await EnterSetupRunAsync(application.Services);
+            using var wrongTablet = await client.SendAsync(PostEvent("3042", Token,
+                new { event_type = "SEND_TO_QC" }));
+            Assert.Equal(HttpStatusCode.NotFound, wrongTablet.StatusCode);
+            using var wrongToken = await client.SendAsync(PostEvent(
+                "3041", "mp_eink_other-token", new { event_type = "SEND_TO_QC" }));
+            Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
+            using var wrongEvent = await client.SendAsync(PostEvent("3041", Token,
+                new { event_type = "QC_PASS" }));
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, wrongEvent.StatusCode);
+            using var suppliedTarget = await client.SendAsync(PostEvent("3041", Token,
+                new
+                {
+                    event_type = "SEND_TO_QC",
+                    production_run_id = "run:batch-operation:operation-eink-1",
+                    timestamp = "2026-08-26T00:00:00Z"
+                }));
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, suppliedTarget.StatusCode);
+            Assert.Equal(0, await CountSendToQcAsync(application.Services));
+        });
+    }
+
+    [Fact]
+    public async Task Concurrent_send_to_qc_retries_create_one_event_and_return_one_timestamp()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await EnterSetupRunAsync(application.Services);
+
+            var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+            {
+                using var response = await client.SendAsync(PostEvent("3041", Token,
+                    new { event_type = "SEND_TO_QC" }));
+                var json = await response.Content.ReadAsStringAsync();
+                return (response.StatusCode, json);
+            }));
+
+            Assert.All(responses, value => Assert.Equal(HttpStatusCode.OK, value.StatusCode));
+            var timestamps = responses.Select(value =>
+            {
+                using var document = JsonDocument.Parse(value.json);
+                return document.RootElement.GetProperty("timestamp").GetDateTimeOffset();
+            }).Distinct().ToArray();
+            Assert.Single(timestamps);
+            Assert.Equal(1, responses.Count(value =>
+            {
+                using var document = JsonDocument.Parse(value.json);
+                return !document.RootElement.GetProperty("duplicate").GetBoolean();
+            }));
+            Assert.Equal(1, await CountSendToQcAsync(application.Services));
+        });
+    }
+
+    [Fact]
     public async Task Tablet_status_exposes_only_the_derived_code_for_a_valid_pending_session()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
@@ -494,6 +593,72 @@ public sealed class EInkApiTests
         var request = new HttpRequestMessage(HttpMethod.Get, path);
         request.Headers.Authorization = new("Bearer", token);
         return request;
+    }
+
+    private static HttpRequestMessage PostEvent(
+        string tabletId,
+        string token,
+        object body)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/tablets/{tabletId}/events")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Authorization = new("Bearer", token);
+        request.Headers.Add("X-Meimad-Battery-Voltage", "3.850");
+        return request;
+    }
+
+    private static Task EnterSetupRunAsync(IServiceProvider services) => ExecuteAsync(
+        services,
+        """
+        UPDATE production_runs
+        SET status='IN_PROGRESS',version=version+1
+        WHERE id='run:batch-operation:operation-eink-1';
+        UPDATE production_run_programs
+        SET status='ACTIVE',version=version+1
+        WHERE production_run_id='run:batch-operation:operation-eink-1';
+        INSERT INTO production_run_workflow_events(
+            id,production_run_id,machine_id,event_type,source,source_event_id,
+            server_received_at,metadata_json)
+        VALUES('workflow-setup-ready','run:batch-operation:operation-eink-1',
+               'machine-eink-1','SETUP_VERIFICATION_SUCCEEDED','TEST',
+               'setup-ready','2026-08-26T08:00:00Z','{}');
+        """);
+
+    private static async Task<int> CountSendToQcAsync(IServiceProvider services)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM production_run_workflow_events
+            WHERE production_run_id='run:batch-operation:operation-eink-1'
+              AND event_type='SEND_TO_QC';
+            """;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<string> ReadPlanningFingerprintAsync(IServiceProvider services)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT run.status || '|' || run.version || '|' || program.status || '|'
+                   || program.version || '|' || program.completed_cycle_count || '|'
+                   || assignment.backlog_position || '|' || assignment.version || '|'
+                   || (SELECT COUNT(*) FROM eink_package_revisions)
+            FROM production_runs run
+            JOIN production_run_programs program ON program.production_run_id=run.id
+            JOIN machine_assignments assignment ON assignment.production_run_id=run.id
+            WHERE run.id='run:batch-operation:operation-eink-1'
+            ORDER BY program.sequence_position
+            LIMIT 1;
+            """;
+        return (string)(await command.ExecuteScalarAsync())!;
     }
 
     private static async Task<byte[]> SeedAsync(IServiceProvider services, string packageRoot)
