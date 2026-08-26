@@ -14,6 +14,7 @@ namespace Meimad.Planner.Server.Tests.GCode;
 
 public sealed class GCodeReleaseApiTests
 {
+    private static int nextVerificationIdentity = 300000;
     [Fact]
     public async Task Manufacturing_program_api_creates_immutable_multi_output_revisions_and_rejects_invalid_recipes()
     {
@@ -91,7 +92,8 @@ public sealed class GCodeReleaseApiTests
             var revision1 = createdJson.RootElement.GetProperty("activeRevision").GetProperty("processRevisionId").GetString()!;
             Assert.Equal(2, createdJson.RootElement.GetProperty("activeRevision").GetProperty("outputs").GetArrayLength());
 
-            var combinedNc = Encoding.UTF8.GetBytes("O2000\n(PART: TWO-UP)\nG21 G90\nM30\n");
+            var combinedNc = PrepareNcForRelease(
+                Encoding.UTF8.GetBytes("O2000\n(PART: TWO-UP)\nG21 G90\nM30\n"), 222222);
             using (var content = new MultipartFormDataContent())
             {
                 content.Add(new StringContent("post-a"), "postprocessorId");
@@ -191,6 +193,47 @@ public sealed class GCodeReleaseApiTests
             immutable.Parameters.AddWithValue("$id", revision1);
             var exception = await Assert.ThrowsAsync<SqliteException>(() => immutable.ExecuteNonQueryAsync());
             Assert.Contains("immutable", exception.Message, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
+    public async Task Release_requires_first_block_verification_hook_and_rejects_reused_NC_identity()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var nc = Encoding.UTF8.GetBytes("O1234\nG90\nM30\n");
+            var tools = Encoding.UTF8.GetBytes("tool,position\nT1,1\n");
+
+            using (var missing = await SendReleaseAsync(
+                       client, "post-a", "NEW_PROCESS_REVISION", "Missing hook", nc, tools,
+                       confirmNewProcess: true, reuseActiveTools: false, confirmTools: true,
+                       includeVerificationHook: false))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
+                using var problem = JsonDocument.Parse(await missing.Content.ReadAsStringAsync());
+                Assert.Equal("verification_hook_required",
+                    problem.RootElement.GetProperty("error").GetProperty("details")[0].GetProperty("code").GetString());
+            }
+
+            const int identity = 765432;
+            using (var first = await SendReleaseAsync(
+                       client, "post-a", "NEW_PROCESS_REVISION", "Valid hook", nc, tools,
+                       confirmNewProcess: true, reuseActiveTools: false, confirmTools: true,
+                       verificationIdentity: identity))
+                Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+            using (var duplicate = await SendReleaseAsync(
+                       client, "post-a", "LOCAL_POST_REVISION", "Reused identity", nc, null,
+                       confirmNewProcess: false, reuseActiveTools: true, confirmTools: true,
+                       verificationIdentity: identity))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, duplicate.StatusCode);
+                using var problem = JsonDocument.Parse(await duplicate.Content.ReadAsStringAsync());
+                Assert.Equal("verification_identity_reused",
+                    problem.RootElement.GetProperty("error").GetProperty("details")[0].GetProperty("code").GetString());
+            }
         });
     }
 
@@ -346,7 +389,7 @@ public sealed class GCodeReleaseApiTests
             Assert.Equal("machine-1", mismatch.GetProperty("machineId").GetString());
             Assert.Equal("not_started", mismatch.GetProperty("status").GetString());
 
-            Assert.Equal(firstProgram, await client.GetByteArrayAsync(
+            Assert.Equal(PrepareNcForRelease(firstProgram, first.NcIdentityToken), await client.GetByteArrayAsync(
                 $"/api/v1/cases/case-1/operations/case-op-1/gcode-releases/{first.ReleaseId}/file"));
             using (var finalCatalogResponse = await client.GetAsync(
                        "/api/v1/cases/case-1/operations/case-op-1/gcode"))
@@ -772,7 +815,7 @@ public sealed class GCodeReleaseApiTests
                 processDescription: "Initial manufacturing process");
             Assert.Equal(1, first.ProcessRevisionNumber);
             Assert.Equal(1, first.PostSpecificRevision);
-            Assert.Equal(Sha256(firstGCode), first.FileHash);
+            Assert.Equal(Sha256(PrepareNcForRelease(firstGCode, first.NcIdentityToken)), first.FileHash);
 
             await ReconcileMaterialAsync(client, 1);
 
@@ -845,7 +888,7 @@ public sealed class GCodeReleaseApiTests
             Assert.Equal("stale", Status(root, "post-b"));
             Assert.DoesNotContain("draft", root.ToString(), StringComparison.OrdinalIgnoreCase);
 
-            Assert.Equal(firstGCode, await client.GetByteArrayAsync(
+            Assert.Equal(PrepareNcForRelease(firstGCode, first.NcIdentityToken), await client.GetByteArrayAsync(
                 $"/api/v1/cases/case-1/operations/case-op-1/gcode-releases/{first.ReleaseId}/file"));
             Assert.Equal(firstTools, await client.GetByteArrayAsync(
                 $"/api/v1/cases/case-1/operations/case-op-1/tool-table-releases/{first.ToolTableReleaseId}/file"));
@@ -1169,7 +1212,8 @@ public sealed class GCodeReleaseApiTests
             root.GetProperty("fileHash").GetString()!,
             root.GetProperty("headerMetadata").GetProperty("status").GetString()!,
             root.GetProperty("headerMetadata").GetProperty("partName").ValueKind == JsonValueKind.Null
-                ? null : root.GetProperty("headerMetadata").GetProperty("partName").GetString());
+                ? null : root.GetProperty("headerMetadata").GetProperty("partName").GetString(),
+            root.GetProperty("verificationHook").GetProperty("ncIdentityToken").GetInt32());
     }
 
     private static Task<HttpResponseMessage> SendReleaseAsync(
@@ -1183,7 +1227,9 @@ public sealed class GCodeReleaseApiTests
         bool reuseActiveTools,
         bool confirmTools,
         string? processDescription = null,
-        string toolFileName = "tools.csv")
+        string toolFileName = "tools.csv",
+        bool includeVerificationHook = true,
+        int? verificationIdentity = null)
     {
         var content = new MultipartFormDataContent();
         content.Add(new StringContent(postprocessorId), "postprocessorId");
@@ -1193,7 +1239,9 @@ public sealed class GCodeReleaseApiTests
         content.Add(new StringContent(confirmNewProcess.ToString()), "confirmNewProcessRevision");
         content.Add(new StringContent(reuseActiveTools.ToString()), "reuseActiveToolTable");
         content.Add(new StringContent(confirmTools.ToString()), "confirmToolTable");
-        content.Add(new ByteArrayContent(gcode), "gcodeFile", "program.nc");
+        var identity = verificationIdentity ?? Interlocked.Increment(ref nextVerificationIdentity);
+        var releaseBytes = includeVerificationHook ? PrepareNcForRelease(gcode, identity) : gcode;
+        content.Add(new ByteArrayContent(releaseBytes), "gcodeFile", "program.nc");
         if (tools is not null)
         {
             content.Add(new ByteArrayContent(tools), "toolTableFile", toolFileName);
@@ -1251,6 +1299,26 @@ public sealed class GCodeReleaseApiTests
     private static string Sha256(byte[] bytes) =>
         Convert.ToHexStringLower(SHA256.HashData(bytes));
 
+    private static byte[] PrepareNcForRelease(byte[] source, int identity)
+    {
+        var lines = Encoding.UTF8.GetString(source).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
+        var index = 0;
+        while (index < lines.Count)
+        {
+            var value = lines[index].Trim();
+            if (value.Length == 0 || value == "%"
+                || value.StartsWith('(') && value.EndsWith(')')
+                || System.Text.RegularExpressions.Regex.IsMatch(value, @"^O\d{1,8}\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                index++;
+                continue;
+            }
+            break;
+        }
+        lines.Insert(index, $"G65 P9002 A{identity:D6}. (MEIMAD VERIFY V1)");
+        return Encoding.UTF8.GetBytes(string.Join("\n", lines));
+    }
+
     private static async Task RunAsync(
         Func<WebApplication, HttpClient, string, Task> test)
     {
@@ -1294,5 +1362,6 @@ public sealed class GCodeReleaseApiTests
         string ToolTableReleaseId,
         string FileHash,
         string HeaderStatus,
-        string? HeaderPartName);
+        string? HeaderPartName,
+        int NcIdentityToken);
 }

@@ -38,6 +38,7 @@ public sealed class MigrationTests
         "production_run_outputs",
         "production_run_cycle_events",
         "gcode_releases",
+        "gcode_release_verification_hooks",
         "setup_calendar_settings",
         "employee_resources",
         "employee_calendar_exceptions",
@@ -62,7 +63,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(50L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(51L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -177,6 +178,8 @@ public sealed class MigrationTests
         Assert.Equal("operational_workflow_events_remove_cnc_mode_variable", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 50;";
         Assert.Equal("cnc_verification_foundation", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 51;";
+        Assert.Equal("nc_verification_hook", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
@@ -266,7 +269,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(50L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(51L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1421,7 +1424,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 51;";
+            command.CommandText = "PRAGMA user_version = 52;";
             await command.ExecuteNonQueryAsync();
         }
 

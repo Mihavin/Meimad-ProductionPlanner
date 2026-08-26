@@ -165,21 +165,27 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         command.CommandText = """
             SELECT release.production_run_id, release.machine_id, release.id,
                    release.nc_release_id, release.verification_release_token,
-                   settings.expected_macro_version
+                   settings.expected_macro_version, hook.nc_identity_token
             FROM production_run_current_offset_loaders current
             JOIN offset_loader_releases release
               ON release.id=current.offset_loader_release_id
             JOIN cnc_verification_settings settings
               ON settings.machine_id=release.machine_id AND settings.enabled=1
+            JOIN gcode_release_verification_hooks hook
+              ON hook.gcode_release_id=release.nc_release_id
             WHERE release.machine_id=$machineId
-              AND release.verification_release_token=$releaseToken;
+              AND release.verification_release_token=$releaseToken
+              AND ((hook.invocation_kind='G65'
+                    AND hook.invocation_number=settings.verify_program_number)
+                   OR (hook.invocation_kind='CUSTOM_GCODE'
+                       AND hook.invocation_number=settings.custom_gcode_alias));
             """;
         command.Parameters.AddWithValue("$machineId", machineId);
         command.Parameters.AddWithValue("$releaseToken", releaseToken);
         await using var reader = await command.ExecuteReaderAsync(token);
         return await reader.ReadAsync(token)
             ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetInt32(4), reader.GetInt32(5))
+                reader.GetString(3), reader.GetInt32(6), reader.GetInt32(4), reader.GetInt32(5))
             : null;
     }
 

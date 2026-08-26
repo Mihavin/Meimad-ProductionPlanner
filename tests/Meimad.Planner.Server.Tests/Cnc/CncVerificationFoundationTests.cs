@@ -159,6 +159,8 @@ public sealed class CncVerificationFoundationTests
             VALUES('process-verification','case-operation-verification',1,1,'tools-verification',$at,'user','release',1,$at,'case-operation:case-operation-verification');
             INSERT INTO gcode_releases(id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,change_scope,release_comment,tool_table_release_id,created_at,updated_at)
             VALUES('gcode-verification','case-operation-verification','process-verification','post-verification',1,'part.nc','gcode/part.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','release','tools-verification',$at,$at);
+            INSERT INTO gcode_release_verification_hooks(gcode_release_id,hook_version,invocation_kind,invocation_number,nc_identity_token,line_number,created_at,updated_at)
+            VALUES('gcode-verification',1,'G65',9002,654321,3,$at,$at);
             INSERT INTO production_runs(id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,version,created_at,updated_at)
             VALUES('run-verification','PLANNED',0,'{}',NULL,1,$at,$at);
             INSERT INTO production_run_programs(id,production_run_id,manufacturing_program_id,process_revision_id,selected_gcode_release_id,sequence_position,target_cycle_count,completed_cycle_count,status,legacy_unmanaged,version,created_at,updated_at)

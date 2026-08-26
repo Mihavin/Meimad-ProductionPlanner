@@ -52,6 +52,7 @@ internal sealed class CncDprintEventIngestionService(
                 nonce = parsed.Nonce,
                 macroVersion = parsed.MacroVersion,
                 programIdentity = parsed.ProgramIdentity,
+                expectedNcIdentityToken = context.NcIdentityToken,
                 rawLine = parsed.RawLine
             });
             await workflow.AppendAsync(new(

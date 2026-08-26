@@ -107,6 +107,8 @@ internal sealed class GCodeService
 
             var releasedAt = timeProvider.GetUtcNow();
             var storedGCodePath = artifactStore.ResolveStoredPath(gcodePublication.File.StoredRelativePath);
+            var verificationHook = NcVerificationHookParser.ParseRequired(
+                File.ReadLines(storedGCodePath));
             NcHeaderMetadata headerMetadata;
             try
             {
@@ -154,6 +156,7 @@ internal sealed class GCodeService
                 toolDefinition,
                 analysis,
                 headerMetadata,
+                verificationHook,
                 releasedAt,
                 command.ManufacturingProgramId,
                 command.Outputs), authority, cancellationToken);

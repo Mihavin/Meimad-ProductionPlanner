@@ -957,7 +957,8 @@ internal sealed record PlannerGCodeRelease(
     bool IsForActiveProcess,
     PlannerNcProgramAnalysis? NcAnalysis = null,
     IReadOnlyList<PlannerNcMachineCycleEstimate>? MachineCycleEstimates = null,
-    PlannerNcHeaderMetadata? HeaderMetadata = null)
+    PlannerNcHeaderMetadata? HeaderMetadata = null,
+    PlannerNcVerificationHook? VerificationHook = null)
 {
     public string DisplayName => $"Process r{ProcessRevisionNumber} / {PostprocessorName} r{PostSpecificRevision} — {OriginalFileName}";
     public string ShortHash => FileHash.Length > 12 ? FileHash[..12] : FileHash;
@@ -971,6 +972,9 @@ internal sealed record PlannerGCodeRelease(
     public string HeaderStatusMessage => HeaderMetadata?.Status == "VALID"
         ? $"Part identity from NC header: {HeaderMetadata.PartName}"
         : "Part name could not be extracted from NC header.";
+    public string VerificationHookSummary => VerificationHook is null
+        ? "Historical release — verification hook unavailable"
+        : $"Verification hook v{VerificationHook.HookVersion} · {VerificationHook.InvocationKind} {VerificationHook.InvocationNumber} · NC ID {VerificationHook.NcIdentityToken}";
     public string NcCalculatedTimeSummary
     {
         get
@@ -1015,6 +1019,10 @@ internal sealed record PlannerGCodeRelease(
             ? Formatting.DurationText.Format((long)Math.Ceiling(seconds.Value))
             : "unavailable";
 }
+
+internal sealed record PlannerNcVerificationHook(
+    int HookVersion, string InvocationKind, int InvocationNumber,
+    int NcIdentityToken, int LineNumber);
 
 internal sealed record PlannerNcHeaderMetadata(
     string Status, string? PartName, string? CaseNumber, string? Operation,

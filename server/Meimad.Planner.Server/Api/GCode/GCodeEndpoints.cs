@@ -228,7 +228,8 @@ internal sealed record GCodeReleaseResponse(
     bool IsForActiveProcess,
     NcProgramAnalysisResponse? NcAnalysis,
     IReadOnlyList<NcMachineCycleEstimateResponse> MachineCycleEstimates,
-    NcHeaderMetadataResponse? HeaderMetadata)
+    NcHeaderMetadataResponse? HeaderMetadata,
+    NcVerificationHookResponse? VerificationHook)
 {
     internal static GCodeReleaseResponse FromDomain(GCodeRelease value) => new(
         value.GCodeReleaseId, value.ProcessRevisionId, value.ProcessRevisionNumber,
@@ -239,7 +240,17 @@ internal sealed record GCodeReleaseResponse(
         value.IsForActiveProcess,
         value.NcAnalysis is null ? null : NcProgramAnalysisResponse.FromDomain(value.NcAnalysis),
         (value.MachineCycleEstimates ?? []).Select(NcMachineCycleEstimateResponse.FromDomain).ToArray(),
-        value.HeaderMetadata is null ? null : NcHeaderMetadataResponse.FromDomain(value.HeaderMetadata));
+        value.HeaderMetadata is null ? null : NcHeaderMetadataResponse.FromDomain(value.HeaderMetadata),
+        value.VerificationHook is null ? null : NcVerificationHookResponse.FromDomain(value.VerificationHook));
+}
+
+internal sealed record NcVerificationHookResponse(
+    int HookVersion, string InvocationKind, int InvocationNumber,
+    int NcIdentityToken, int LineNumber)
+{
+    internal static NcVerificationHookResponse FromDomain(NcVerificationHook value) => new(
+        value.HookVersion, value.InvocationKind, value.InvocationNumber,
+        value.NcIdentityToken, value.LineNumber);
 }
 
 internal sealed record NcHeaderMetadataResponse(

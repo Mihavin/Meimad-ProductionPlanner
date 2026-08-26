@@ -38,6 +38,7 @@ internal sealed record PublishGCodeReleaseCommand(
     ReleasedToolTableDefinition? ToolTableDefinition,
     NcProgramAnalysis NcAnalysis,
     Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata HeaderMetadata,
+    NcVerificationHook VerificationHook,
     DateTimeOffset ReleasedAt,
     string? ManufacturingProgramId = null,
     IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null);

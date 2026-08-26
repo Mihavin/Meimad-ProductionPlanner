@@ -28,8 +28,9 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         var nc = await SqliteNcCycleEstimateStore.ReadForOperationAsync(
             connection, caseOperationId, cancellationToken);
         var headers = await ReadHeadersAsync(connection, caseOperationId, cancellationToken);
+        var hooks = await ReadVerificationHooksAsync(connection, caseOperationId, cancellationToken);
         var releases = await ReadReleasesAsync(
-            connection, caseOperationId, nc.Analyses, nc.Estimates, headers, cancellationToken);
+            connection, caseOperationId, nc.Analyses, nc.Estimates, headers, hooks, cancellationToken);
         var active = processes.FirstOrDefault(value => value.IsActive);
         var postprocessors = await ReadPostprocessorStatusesAsync(
             connection,
@@ -188,8 +189,14 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             command.ReleaseComment,
             toolTable.ToolTableReleaseId,
             true,
-            process.IsActive);
+            process.IsActive,
+            VerificationHook: command.VerificationHook);
+        await EnsureVerificationTokenAvailableAsync(
+            connection, transaction, command.VerificationHook.NcIdentityToken, cancellationToken);
         await InsertReleaseAsync(connection, transaction, release, cancellationToken);
+        await InsertVerificationHookAsync(
+            connection, transaction, release.GCodeReleaseId, command.VerificationHook,
+            command.ReleasedAt, cancellationToken);
         await InsertHeaderAsync(connection, transaction, release.GCodeReleaseId,
             command.HeaderMetadata, command.ReleasedAt, cancellationToken);
         var ncEstimates = await SqliteNcCycleEstimateStore.InsertAnalysisAndEstimatesAsync(
@@ -395,6 +402,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         IReadOnlyDictionary<string, NcProgramAnalysis> analyses,
         IReadOnlyDictionary<string, IReadOnlyList<NcMachineCycleEstimate>> estimates,
         IReadOnlyDictionary<string, Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata> headers,
+        IReadOnlyDictionary<string, NcVerificationHook> hooks,
         CancellationToken token)
     {
         await using var command = connection.CreateCommand();
@@ -428,10 +436,32 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             {
                 NcAnalysis = analyses.GetValueOrDefault(release.GCodeReleaseId),
                 MachineCycleEstimates = estimates.GetValueOrDefault(release.GCodeReleaseId, []),
-                HeaderMetadata = headers.GetValueOrDefault(release.GCodeReleaseId)
+                HeaderMetadata = headers.GetValueOrDefault(release.GCodeReleaseId),
+                VerificationHook = hooks.GetValueOrDefault(release.GCodeReleaseId)
             });
         }
 
+        return values;
+    }
+
+    private static async Task<IReadOnlyDictionary<string, NcVerificationHook>> ReadVerificationHooksAsync(
+        SqliteConnection connection, string operationId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT hook.gcode_release_id, hook.hook_version, hook.invocation_kind,
+                   hook.invocation_number, hook.nc_identity_token, hook.line_number
+            FROM gcode_release_verification_hooks hook
+            JOIN gcode_releases release ON release.id=hook.gcode_release_id
+            WHERE release.case_operation_id=$operationId;
+            """;
+        command.Parameters.AddWithValue("$operationId", operationId);
+        var values = new Dictionary<string, NcVerificationHook>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            values.Add(reader.GetString(0), new(
+                reader.GetInt32(1), reader.GetString(2), reader.GetInt32(3),
+                reader.GetInt32(4), reader.GetInt32(5)));
         return values;
     }
 
@@ -766,6 +796,45 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         await command.ExecuteNonQueryAsync(token);
     }
 
+    private static async Task EnsureVerificationTokenAvailableAsync(
+        SqliteConnection connection, SqliteTransaction transaction,
+        int ncIdentityToken, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1 FROM gcode_release_verification_hooks
+                WHERE nc_identity_token=$token);
+            """;
+        command.Parameters.AddWithValue("$token", ncIdentityToken);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) != 0)
+            throw new GCodeValidationException("gCodeFile", "verification_identity_reused",
+                "The NC verification identity is already bound to another immutable G-code release.");
+    }
+
+    private static async Task InsertVerificationHookAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string releaseId,
+        NcVerificationHook hook, DateTimeOffset at, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO gcode_release_verification_hooks (
+                gcode_release_id,hook_version,invocation_kind,invocation_number,
+                nc_identity_token,line_number,created_at,updated_at)
+            VALUES ($releaseId,$version,$kind,$invocation,$identity,$line,$at,$at);
+            """;
+        command.Parameters.AddWithValue("$releaseId", releaseId);
+        command.Parameters.AddWithValue("$version", hook.HookVersion);
+        command.Parameters.AddWithValue("$kind", hook.InvocationKind);
+        command.Parameters.AddWithValue("$invocation", hook.InvocationNumber);
+        command.Parameters.AddWithValue("$identity", hook.NcIdentityToken);
+        command.Parameters.AddWithValue("$line", hook.LineNumber);
+        command.Parameters.AddWithValue("$at", Format(at));
+        await command.ExecuteNonQueryAsync(token);
+    }
+
     private static async Task<int> NextPostRevisionAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -812,7 +881,11 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             postSpecificRevision = release.PostSpecificRevision,
             release.ChangeScope,
             gcodeHash = release.FileHash,
-            toolTableHash = toolTable.FileHash
+            toolTableHash = toolTable.FileHash,
+            verificationHookVersion = release.VerificationHook?.HookVersion,
+            verificationInvocationKind = release.VerificationHook?.InvocationKind,
+            verificationInvocationNumber = release.VerificationHook?.InvocationNumber,
+            ncIdentityToken = release.VerificationHook?.NcIdentityToken
         };
 
         if (createdToolTable)

@@ -38,6 +38,9 @@ internal static partial class NcProgramParser
         foreach (var original in lines)
         {
             lineNumber++;
+            // The required verification invocation is control flow, not machining motion.
+            // It has already been strictly validated before release publication.
+            if (NcVerificationHookParser.IsAcceptedHookBlock(original)) continue;
             var block = StripComments(original).Trim().ToUpperInvariant();
             if (block.Length == 0 || block == "%") continue;
 

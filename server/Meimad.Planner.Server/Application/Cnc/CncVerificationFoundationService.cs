@@ -40,7 +40,8 @@ internal sealed record UpdateCncVerificationSettings(
 
 internal sealed record CncDprintIngestionContext(
     string ProductionRunId, string MachineId, string OffsetLoaderReleaseId,
-    string NcReleaseId, int VerificationReleaseToken, int ExpectedMacroVersion);
+    string NcReleaseId, int NcIdentityToken, int VerificationReleaseToken,
+    int ExpectedMacroVersion);
 
 internal interface ICncVerificationFoundationRepository
 {
