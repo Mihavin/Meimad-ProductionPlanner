@@ -37,6 +37,10 @@ internal sealed class CncDprintEventIngestionService(
                     logger.LogWarning(
                         "Rejected CNC production-cycle event. MachineId={MachineId} EventType={EventType} EventId={EventId} Code={Code}",
                         machineId, parsed.EventType, parsed.SourceEventId, result.Code);
+                else if (result.Code == "cycle_end_unmatched")
+                    logger.LogWarning(
+                        "Retained unmatched CNC CYCLE_END as workflow anomaly. MachineId={MachineId} EventId={EventId} Sequence={Sequence}",
+                        machineId, parsed.SourceEventId, parsed.Sequence);
                 continue;
             }
             if (parsed.EventType != "OFFSET_LOADER_COMPLETED")

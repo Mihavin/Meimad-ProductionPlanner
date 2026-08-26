@@ -51,7 +51,15 @@ atomically retains the immutable workflow fact and advances the existing
 idempotent Production Run cycle/output records, including every coupled output
 and parent status. Duplicate delivery cannot double-count. Haas part counters
 remain monitoring diagnostics and no longer mutate official production quantity.
-Interrupted START/START attempts and orphan-END anomaly retention remain Task 19.
+
+Task 19 is implemented in schema v56. START/START records an immutable,
+Server-derived `CYCLE_INTERRUPTED` event linked to the prior and triggering
+Machine events, then makes the triggering START the new open attempt. The
+interrupted attempt never counts and is not later subtracted. An END without a
+matching START, or with a nonconsecutive sequence, is retained once and receives
+typed immutable anomaly evidence without changing quantities. Existing sequence
+gap/out-of-order rows are preserved by the ordered migration; retries cannot
+duplicate interruption or anomaly facts.
 
 ## Multi-output Production Run workstream
 

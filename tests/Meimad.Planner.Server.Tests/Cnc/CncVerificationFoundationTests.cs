@@ -255,32 +255,96 @@ public sealed class CncVerificationFoundationTests
         Assert.Equal("CYCLE_START,CYCLE_END", await command.ExecuteScalarAsync());
     }
 
-    [Theory]
-    [InlineData(false, 201, "CST", "cycle_start_requires_qc_pass_or_completed_cycle")]
-    [InlineData(true, 202, "CEN", "cycle_end_requires_matching_start")]
-    public async Task Invalid_cycle_transition_never_advances_output(
-        bool approve, long sequence, string code, string expectedReason)
+    [Fact]
+    public async Task Cycle_start_before_QC_PASS_never_advances_output()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
-        await PrepareProductionApprovalAsync(fixture.Database, approve);
+        await PrepareProductionApprovalAsync(fixture.Database, false);
         var repository = new SqliteProductionRunCncObservationRepository(
             fixture.Database, new FixedTimeProvider(Now));
-        var eventType = code == "CST" ? "CYCLE_START" : "CYCLE_END";
 
         var result = await repository.ConsumeCycleEventAsync(new(
-            "machine-verification", eventType, $"INVALID-{sequence}", sequence, 3,
+            "machine-verification", "CYCLE_START", "INVALID-201", 201, 3,
             "RUN-VERIFICATION", "654321",
-            $"MEIMAD/V/1/EVENT/{code}/ID/INVALID-{sequence}/SEQ/{sequence}/MACROVERSION/3"), default);
+            "MEIMAD/V/1/EVENT/CST/ID/INVALID-201/SEQ/201/MACROVERSION/3"), default);
 
         Assert.False(result.Accepted);
-        Assert.Equal(expectedReason, result.Code);
+        Assert.Equal("cycle_start_requires_qc_pass_or_completed_cycle", result.Code);
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE source_event_id=$id;";
-        command.Parameters.AddWithValue("$id", $"INVALID-{sequence}");
+        command.Parameters.AddWithValue("$id", "INVALID-201");
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Second_cycle_start_records_interruption_and_only_new_attempt_can_complete()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        var ingestion = CycleIngestion(fixture.Database);
+        var first = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
+            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/INT-201/SEQ/201/MACROVERSION/3/PROGRAM/654321");
+        var second = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
+            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/INT-202/SEQ/202/MACROVERSION/3/PROGRAM/654321");
+        var end = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
+            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CEN/ID/INT-203/SEQ/203/MACROVERSION/3/PROGRAM/654321");
+
+        await ingestion.ConsumeAsync("machine-verification", [first], default);
+        await ingestion.ConsumeAsync("machine-verification", [second], default);
+        await ingestion.ConsumeAsync("machine-verification", [second], default);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM production_run_workflow_events
+            WHERE event_type='CYCLE_INTERRUPTED'
+              AND json_extract(metadata_json,'$.interruptedSourceEventId')='INT-201'
+              AND json_extract(metadata_json,'$.interruptedBySourceEventId')='INT-202';
+            """;
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+
+        await ingestion.ConsumeAsync("machine-verification", [end], default);
+
+        command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task End_without_start_is_retained_once_as_data_quality_anomaly()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        var repository = new SqliteProductionRunCncObservationRepository(
+            fixture.Database, new FixedTimeProvider(Now));
+        var observation = new CncCycleObservation(
+            "machine-verification", "CYCLE_END", "ORPHAN-202", 202, 3,
+            "RUN-VERIFICATION", "654321",
+            "MEIMAD/V/1/EVENT/CEN/ID/ORPHAN-202/SEQ/202/MACROVERSION/3");
+
+        var first = await repository.ConsumeCycleEventAsync(observation, default);
+        var retry = await repository.ConsumeCycleEventAsync(observation, default);
+
+        Assert.True(first.Accepted);
+        Assert.False(first.CycleCompleted);
+        Assert.Equal("cycle_end_unmatched", first.Code);
+        Assert.True(retry.WasDuplicate);
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM production_run_workflow_anomalies
+            WHERE source_event_id='ORPHAN-202'
+              AND anomaly_type='CYCLE_END_WITHOUT_START';
+            """;
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
     }
 
@@ -303,7 +367,13 @@ public sealed class CncVerificationFoundationTests
         command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE source_event_id='GAP-203';";
-        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = """
+            SELECT COUNT(*) FROM production_run_workflow_anomalies
+            WHERE source_event_id='GAP-203'
+              AND anomaly_type='CYCLE_END_SEQUENCE_MISMATCH';
+            """;
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     private static CncDprintEventIngestionService CycleIngestion(SqliteDatabase database)

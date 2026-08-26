@@ -33,11 +33,12 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             if (await reader.ReadAsync(token))
             {
                 var sameType = reader.GetString(0) == observation.EventType;
+                int? completedCycleCount = reader.IsDBNull(3) ? null : reader.GetInt32(3);
                 var result = new CncCycleObservationResult(
-                    sameType, sameType, sameType && observation.EventType == "CYCLE_END",
+                    sameType, sameType, sameType && completedCycleCount.HasValue,
                     sameType ? "duplicate" : "source_event_conflict",
                     reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
-                    reader.IsDBNull(3) ? null : reader.GetInt32(3));
+                    completedCycleCount);
                 await transaction.CommitAsync(token);
                 return result;
             }
@@ -87,7 +88,7 @@ internal sealed class SqliteProductionRunCncObservationRepository(
         {
             query.Transaction = transaction;
             query.CommandText = """
-                SELECT event_type,source,source_sequence,server_received_at,
+                SELECT id,event_type,source,source_event_id,source_sequence,server_received_at,
                        json_extract(metadata_json,'$.productionRunProgramId')
                 FROM production_run_workflow_events
                 WHERE production_run_id=$runId
@@ -96,29 +97,31 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             query.Parameters.AddWithValue("$runId", target.RunId);
             await using var reader = await query.ExecuteReaderAsync(token);
             if (await reader.ReadAsync(token))
-                latest = new(reader.GetString(0), reader.GetString(1),
-                    reader.IsDBNull(2) ? null : reader.GetInt64(2),
-                    DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture,
+                latest = new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                    DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture,
                         DateTimeStyles.RoundtripKind).ToUniversalTime(),
-                    reader.IsDBNull(4) ? null : reader.GetString(4));
+                    reader.IsDBNull(6) ? null : reader.GetString(6));
         }
 
-        var valid = observation.EventType == "CYCLE_START"
-            ? latest?.EventType is "QC_PASS" or "CYCLE_END"
-            : latest is { EventType: "CYCLE_START" }
-              && latest.Source == source
-              && latest.ProgramId == target.ProgramId
-              && latest.Sequence.HasValue
-              && observation.Sequence == latest.Sequence.Value + 1;
-        if (!valid)
+        var interruptedAttempt = observation.EventType == "CYCLE_START"
+            && latest is { EventType: "CYCLE_START" };
+        var validStart = observation.EventType == "CYCLE_START"
+            && (latest?.EventType is "QC_PASS" or "CYCLE_END" || interruptedAttempt);
+        var validEnd = observation.EventType == "CYCLE_END"
+            && latest is { EventType: "CYCLE_START" }
+            && latest.Source == source
+            && latest.ProgramId == target.ProgramId
+            && latest.Sequence.HasValue
+            && observation.Sequence == latest.Sequence.Value + 1;
+        if (observation.EventType == "CYCLE_START" && !validStart)
         {
             await transaction.RollbackAsync(token);
-            return new(false, false, false,
-                observation.EventType == "CYCLE_START"
-                    ? "cycle_start_requires_qc_pass_or_completed_cycle"
-                    : "cycle_end_requires_matching_start",
+            return new(false, false, false, "cycle_start_requires_qc_pass_or_completed_cycle",
                 target.RunId, target.ProgramId);
         }
+        var unmatchedEnd = observation.EventType == "CYCLE_END" && !validEnd;
 
         var now = timeProvider.GetUtcNow().ToUniversalTime();
         var receivedAt = latest is not null && now <= latest.ReceivedAt
@@ -139,6 +142,36 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             previousSourceSequence = scalar is null or DBNull
                 ? null
                 : Convert.ToInt64(scalar, CultureInfo.InvariantCulture);
+        }
+        if (interruptedAttempt)
+        {
+            var interruptedAt = receivedAt;
+            await using var interrupted = connection.CreateCommand();
+            interrupted.Transaction = transaction;
+            interrupted.CommandText = """
+                INSERT INTO production_run_workflow_events(
+                    id,production_run_id,machine_id,event_type,source,source_event_id,
+                    server_received_at,nc_release_id,metadata_json)
+                VALUES($id,$runId,$machineId,'CYCLE_INTERRUPTED','SERVER_CYCLE',
+                       $sourceEventId,$receivedAt,$releaseId,$metadata);
+                """;
+            interrupted.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+            interrupted.Parameters.AddWithValue("$runId", target.RunId);
+            interrupted.Parameters.AddWithValue("$machineId", observation.MachineId);
+            interrupted.Parameters.AddWithValue("$sourceEventId",
+                $"INTERRUPTED:{source}:{observation.SourceEventId}");
+            interrupted.Parameters.AddWithValue("$receivedAt", Format(interruptedAt));
+            interrupted.Parameters.AddWithValue("$releaseId", Db(target.NcReleaseId));
+            interrupted.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(new
+            {
+                productionRunProgramId = latest!.ProgramId,
+                interruptedWorkflowEventId = latest.EventId,
+                interruptedSourceEventId = latest.SourceEventId,
+                interruptedBySourceEventId = observation.SourceEventId,
+                interruptedBySequence = observation.Sequence
+            }));
+            await interrupted.ExecuteNonQueryAsync(token);
+            receivedAt = interruptedAt.AddTicks(1);
         }
         var workflowEventId = Guid.NewGuid().ToString("N");
         var metadata = JsonSerializer.Serialize(new
@@ -207,8 +240,20 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             await anomaly.ExecuteNonQueryAsync(token);
         }
 
+        if (unmatchedEnd)
+        {
+            var anomalyType = latest?.EventType == "CYCLE_START"
+                ? "CYCLE_END_SEQUENCE_MISMATCH"
+                : "CYCLE_END_WITHOUT_START";
+            await InsertCycleAnomalyAsync(connection, transaction, target, observation,
+                source, workflowEventId, receivedAt, anomalyType, latest, token);
+            await transaction.CommitAsync(token);
+            return new(true, false, false, "cycle_end_unmatched", target.RunId,
+                target.ProgramId);
+        }
+
         var completed = default(int?);
-        if (observation.EventType == "CYCLE_END")
+        if (validEnd)
             completed = await RecordResolvedCycleAsync(connection, transaction, target,
                 source, observation.SourceEventId, receivedAt, observation.MachineId, token);
 
@@ -379,12 +424,58 @@ internal sealed class SqliteProductionRunCncObservationRepository(
         return next;
     }
 
+    private static async Task InsertCycleAnomalyAsync(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        Microsoft.Data.Sqlite.SqliteTransaction transaction,
+        CycleTarget target,
+        CncCycleObservation observation,
+        string source,
+        string workflowEventId,
+        DateTimeOffset detectedAt,
+        string anomalyType,
+        LatestCycleWorkflow? latest,
+        CancellationToken token)
+    {
+        await using var anomaly = connection.CreateCommand();
+        anomaly.Transaction = transaction;
+        anomaly.CommandText = """
+            INSERT INTO production_run_workflow_anomalies(
+                id,production_run_id,machine_id,source,source_event_id,
+                anomaly_type,previous_sequence,expected_sequence,received_sequence,
+                workflow_event_id,detected_at,details_json)
+            VALUES($id,$runId,$machineId,$source,$sourceEventId,$type,$previous,
+                   $expected,$received,$workflowEventId,$at,$details);
+            """;
+        anomaly.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        anomaly.Parameters.AddWithValue("$runId", target.RunId);
+        anomaly.Parameters.AddWithValue("$machineId", observation.MachineId);
+        anomaly.Parameters.AddWithValue("$source", source);
+        anomaly.Parameters.AddWithValue("$sourceEventId", observation.SourceEventId);
+        anomaly.Parameters.AddWithValue("$type", anomalyType);
+        anomaly.Parameters.AddWithValue("$previous", Db(latest?.Sequence));
+        anomaly.Parameters.AddWithValue("$expected",
+            Db(latest?.Sequence is long sequence ? sequence + 1 : null));
+        anomaly.Parameters.AddWithValue("$received", observation.Sequence);
+        anomaly.Parameters.AddWithValue("$workflowEventId", workflowEventId);
+        anomaly.Parameters.AddWithValue("$at", Format(detectedAt));
+        anomaly.Parameters.AddWithValue("$details", JsonSerializer.Serialize(new
+        {
+            latestWorkflowEventId = latest?.EventId,
+            latestEventType = latest?.EventType,
+            latestSourceEventId = latest?.SourceEventId,
+            latestProgramId = latest?.ProgramId,
+            resolvedProgramId = target.ProgramId,
+            receivedSequence = observation.Sequence
+        }));
+        await anomaly.ExecuteNonQueryAsync(token);
+    }
+
     private static async Task<int> ScalarAsync(Microsoft.Data.Sqlite.SqliteConnection c,Microsoft.Data.Sqlite.SqliteTransaction t,string sql,string id,CancellationToken token){await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=sql;q.Parameters.AddWithValue("$id",id);return Convert.ToInt32(await q.ExecuteScalarAsync(token));}
     private static object Db(object? value) => value ?? DBNull.Value;
     private static string Format(DateTimeOffset value)=>value.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture);
 
     private sealed record CycleTarget(string RunId, string ProgramId, string? NcReleaseId);
     private sealed record LatestCycleWorkflow(
-        string EventType, string Source, long? Sequence, DateTimeOffset ReceivedAt,
-        string? ProgramId);
+        string EventId, string EventType, string Source, string? SourceEventId,
+        long? Sequence, DateTimeOffset ReceivedAt, string? ProgramId);
 }
