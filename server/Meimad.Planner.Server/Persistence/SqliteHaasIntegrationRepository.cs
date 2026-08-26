@@ -48,12 +48,11 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
             command.CommandText = """
                 INSERT INTO haas_connection_settings (
                     machine_id, host, mdc_port, mtconnect_port, dprnt_port, local_net_share_enabled,
-                    local_net_share_path, credentials_reference, production_mode_variable,
-                    legacy_variable_alias, part_counter_source, polling_interval_ms,
+                    local_net_share_path, credentials_reference, part_counter_source, polling_interval_ms,
                     connection_timeout_ms, stable_program_polls, header_line_limit,
                     header_byte_limit, header_part_patterns_json, enabled, version, created_at, updated_at)
                 VALUES ($machineId, $host, $mdcPort, $mtConnectPort, $dprntPort, $shareEnabled,
-                    $sharePath, $credentials, $variable, $legacy, $counterSource, $polling,
+                    $sharePath, $credentials, $counterSource, $polling,
                     $timeout, $stable, $lineLimit, $byteLimit, $patterns, $enabled, 1, $createdAt, $updatedAt)
                 ON CONFLICT(machine_id) DO NOTHING;
                 """;
@@ -64,8 +63,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 UPDATE haas_connection_settings SET
                     host = $host, mdc_port = $mdcPort, mtconnect_port = $mtConnectPort, dprnt_port = $dprntPort,
                     local_net_share_enabled = $shareEnabled, local_net_share_path = $sharePath,
-                    credentials_reference = $credentials, production_mode_variable = $variable,
-                    legacy_variable_alias = $legacy, part_counter_source = $counterSource,
+                    credentials_reference = $credentials, part_counter_source = $counterSource,
                     polling_interval_ms = $polling, connection_timeout_ms = $timeout,
                     stable_program_polls = $stable, header_line_limit = $lineLimit,
                     header_byte_limit = $byteLimit, header_part_patterns_json = $patterns,
@@ -104,7 +102,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         var previous = await ReadSnapshotAsync(connection, transaction, snapshot.MachineId, token);
         var active = await ReadActiveBenchAsync(connection, transaction, snapshot.MachineId, token);
         var events = new List<string>();
-        var startedNow = false;
 
         if (snapshot.ConnectivityState == HaasConnectivityStates.Online
             && previous is not null
@@ -140,7 +137,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 {
                     active = await StartBenchAsync(connection, transaction, snapshot,
                         candidates[0], observedAt, token);
-                    startedNow = true;
                     events.Add("BenchAutoStarted");
                     match = "UNIQUE_MATCH";
                 }
@@ -167,59 +163,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
             }
         }
 
-        if (active is not null && !startedNow && previous is not null
-            && snapshot.ConnectivityState == HaasConnectivityStates.Online)
-        {
-            if (previous.ProductionVariableValue == 0 && snapshot.ProductionVariableValue == 1
-                && active.State == HaasBenchStates.Setup)
-            {
-                active = await EnterProductionAsync(connection, transaction, active, snapshot, observedAt, token);
-                events.Add("BenchProductionStarted");
-            }
-            else if (previous.ProductionVariableValue == 1 && snapshot.ProductionVariableValue == 0
-                     && active.State == HaasBenchStates.Production)
-            {
-                var confirmed = await HasConfirmedToolResetAsync(connection, transaction,
-                    snapshot.MachineId, active.BenchId, previous.Timestamp, observedAt, token);
-                active = await EnterSetupAsync(connection, transaction, active, observedAt,
-                    confirmed ? "TOOL_TABLE_LOADED" : "UNEXPECTED_VARIABLE_RESET", token);
-                var eventType = confirmed ? "ProductionVariableReset" : "UnexpectedProductionVariableReset";
-                await AppendEventAsync(connection, transaction, eventType, snapshot.MachineId,
-                    active.BenchId, observedAt,
-                    new { variableNumber = snapshot.ProductionVariableNumber, previousValue = 1, newValue = 0 },
-                    $"{eventType}:{active.BenchId}:{observedAt:O}", token);
-                events.Add(eventType);
-            }
-
-            if (active.State == HaasBenchStates.Production && active.PartCountingEnabled
-                && snapshot.PartCounter is { } counter && active.PreviousPartCounter is { } prior)
-            {
-                if (counter > prior)
-                {
-                    var delta = counter - prior;
-                    active = await CreditPartsAsync(connection, transaction, active, counter, delta, observedAt, token);
-                    await AppendEventAsync(connection, transaction, "PartCompleted", snapshot.MachineId,
-                        active.BenchId, observedAt, new { counterBefore = prior, counterAfter = counter, quantityDelta = delta },
-                        $"part-completed:{active.BenchId}:{prior}:{counter}", token);
-                    events.Add("PartCompleted");
-                }
-                else if (counter < prior)
-                {
-                    active = await ResetCounterAsync(connection, transaction, active, counter, observedAt, token);
-                    await AppendEventAsync(connection, transaction, "PartCounterReset", snapshot.MachineId,
-                        active.BenchId, observedAt, new { counterBefore = prior, counterAfter = counter },
-                        $"part-counter-reset:{active.BenchId}:{observedAt:O}", token);
-                    events.Add("PartCounterReset");
-                }
-            }
-        }
-
-        await UpsertSnapshotAsync(connection, transaction, snapshot with
-        {
-            ProductionVariableChangedAt = previous is null
-                || previous.ProductionVariableValue != snapshot.ProductionVariableValue
-                    ? observedAt : previous.ProductionVariableChangedAt
-        }, token);
+        await UpsertSnapshotAsync(connection, transaction, snapshot, token);
         await transaction.CommitAsync(token);
         return new HaasObservationResult(match, active, events);
     }
@@ -242,56 +186,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
             else production += seconds;
         }
         return new HaasMachineMonitor(settings, snapshot, bench, intervals, events, setup, production);
-    }
-
-    public async Task<string> BeginMacroWriteAuditAsync(
-        string machineId, string? benchId, string? toolTableId, int variableNumber,
-        int? oldValue, int newValue, string reason, string initiatedBy, DateTimeOffset at,
-        CancellationToken token)
-    {
-        var id = Guid.NewGuid().ToString("N");
-        await using var connection = await database.OpenConnectionAsync(token);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO haas_macro_write_audits
-                (id, machine_id, bench_id, tool_table_id, variable_number, old_value,
-                 new_value, reason, initiated_by, requested_at, status)
-            VALUES ($id, $machineId, $benchId, $toolTableId, $variable, $oldValue,
-                    $newValue, $reason, $initiatedBy, $at, 'PENDING');
-            """;
-        command.Parameters.AddWithValue("$id", id);
-        command.Parameters.AddWithValue("$machineId", machineId);
-        command.Parameters.AddWithValue("$benchId", Db(benchId));
-        command.Parameters.AddWithValue("$toolTableId", Db(toolTableId));
-        command.Parameters.AddWithValue("$variable", variableNumber);
-        command.Parameters.AddWithValue("$oldValue", Db(oldValue));
-        command.Parameters.AddWithValue("$newValue", newValue);
-        command.Parameters.AddWithValue("$reason", reason);
-        command.Parameters.AddWithValue("$initiatedBy", initiatedBy);
-        command.Parameters.AddWithValue("$at", Format(at));
-        await command.ExecuteNonQueryAsync(token);
-        return id;
-    }
-
-    public async Task CompleteMacroWriteAuditAsync(
-        string auditId, bool succeeded, string? rawResponse, string? errorMessage,
-        DateTimeOffset at, CancellationToken token)
-    {
-        await using var connection = await database.OpenConnectionAsync(token);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE haas_macro_write_audits
-            SET completed_at = $at, status = $status, raw_haas_response = $raw,
-                error_message = $error
-            WHERE id = $id AND status = 'PENDING';
-            """;
-        command.Parameters.AddWithValue("$id", auditId);
-        command.Parameters.AddWithValue("$at", Format(at));
-        command.Parameters.AddWithValue("$status", succeeded ? "SUCCEEDED" : "FAILED");
-        command.Parameters.AddWithValue("$raw", Db(rawResponse));
-        command.Parameters.AddWithValue("$error", Db(errorMessage));
-        if (await command.ExecuteNonQueryAsync(token) != 1)
-            throw new InvalidOperationException("The Haas write audit was missing or already completed.");
     }
 
     private static async Task<HaasBenchSession> StartBenchAsync(
@@ -332,85 +226,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         return (await ReadActiveBenchAsync(connection, transaction, snapshot.MachineId, token))!;
     }
 
-    private static async Task<HaasBenchSession> EnterProductionAsync(
-        SqliteConnection connection, SqliteTransaction transaction, HaasBenchSession bench,
-        HaasMachineSnapshot snapshot, DateTimeOffset at, CancellationToken token)
-    {
-        await CloseOpenIntervalAsync(connection, transaction, bench.BenchId, at, token);
-        await InsertIntervalAsync(connection, transaction, bench.BenchId, HaasBenchStates.Production, at,
-            "PRODUCTION_VARIABLE_0_TO_1", token);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE haas_bench_sessions SET state = 'PRODUCTION', setup_ended_at = $at,
-                production_started_at = COALESCE(production_started_at, $at),
-                part_counting_enabled = 1, part_counter_baseline = $counter,
-                previous_part_counter = $counter, version = version + 1, updated_at = $at
-            WHERE id = $id AND state = 'SETUP';
-            """;
-        command.Parameters.AddWithValue("$id", bench.BenchId);
-        command.Parameters.AddWithValue("$at", Format(at));
-        command.Parameters.AddWithValue("$counter", Db(snapshot.PartCounter));
-        await command.ExecuteNonQueryAsync(token);
-        await AppendEventAsync(connection, transaction, "BenchProductionStarted", bench.MachineId,
-            bench.BenchId, at,
-            new { benchId = bench.BenchId, machineId = bench.MachineId, timestamp = at,
-                macroVariableNumber = snapshot.ProductionVariableNumber, previousValue = 0, newValue = 1,
-                partCounterBaseline = snapshot.PartCounter },
-            $"bench-production-started:{bench.BenchId}:{at:O}", token);
-        return (await ReadActiveBenchAsync(connection, transaction, bench.MachineId, token))!;
-    }
-
-    private static async Task<HaasBenchSession> EnterSetupAsync(
-        SqliteConnection connection, SqliteTransaction transaction, HaasBenchSession bench,
-        DateTimeOffset at, string source, CancellationToken token)
-    {
-        await CloseOpenIntervalAsync(connection, transaction, bench.BenchId, at, token);
-        await InsertIntervalAsync(connection, transaction, bench.BenchId, HaasBenchStates.Setup, at, source, token);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE haas_bench_sessions SET state = 'SETUP', setup_started_at = $at,
-                setup_ended_at = NULL, part_counting_enabled = 0,
-                part_counter_baseline = NULL, previous_part_counter = NULL,
-                version = version + 1, updated_at = $at WHERE id = $id;
-            """;
-        command.Parameters.AddWithValue("$id", bench.BenchId);
-        command.Parameters.AddWithValue("$at", Format(at));
-        await command.ExecuteNonQueryAsync(token);
-        return (await ReadActiveBenchAsync(connection, transaction, bench.MachineId, token))!;
-    }
-
-    private static async Task<HaasBenchSession> CreditPartsAsync(
-        SqliteConnection connection, SqliteTransaction transaction, HaasBenchSession bench,
-        int counter, int delta, DateTimeOffset at, CancellationToken token) =>
-        await UpdateCounterAsync(connection, transaction, bench, counter, delta, at, token);
-
-    private static async Task<HaasBenchSession> ResetCounterAsync(
-        SqliteConnection connection, SqliteTransaction transaction, HaasBenchSession bench,
-        int counter, DateTimeOffset at, CancellationToken token) =>
-        await UpdateCounterAsync(connection, transaction, bench, counter, 0, at, token);
-
-    private static async Task<HaasBenchSession> UpdateCounterAsync(
-        SqliteConnection connection, SqliteTransaction transaction, HaasBenchSession bench,
-        int counter, int delta, DateTimeOffset at, CancellationToken token)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE haas_bench_sessions SET previous_part_counter = $counter,
-                part_counter_baseline = CASE WHEN $delta = 0 THEN $counter ELSE part_counter_baseline END,
-                produced_quantity = produced_quantity + $delta,
-                version = version + 1, updated_at = $at WHERE id = $id;
-            """;
-        command.Parameters.AddWithValue("$id", bench.BenchId);
-        command.Parameters.AddWithValue("$counter", counter);
-        command.Parameters.AddWithValue("$delta", delta);
-        command.Parameters.AddWithValue("$at", Format(at));
-        await command.ExecuteNonQueryAsync(token);
-        return (await ReadActiveBenchAsync(connection, transaction, bench.MachineId, token))!;
-    }
-
     private static async Task UpsertSnapshotAsync(
         SqliteConnection connection, SqliteTransaction transaction, HaasMachineSnapshot value,
         CancellationToken token)
@@ -421,11 +236,10 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
             INSERT INTO haas_machine_snapshots
                 (machine_id, observed_at, connectivity_state, machine_status, program_number,
                  machine_header_part_name, machine_header_source_path, header_read_at,
-                 production_variable_number, production_variable_value,
-                 production_variable_changed_at, part_counter, raw_mdc_status, last_error,
+                 part_counter, raw_mdc_status, last_error,
                  last_seen_at, version)
             VALUES ($machineId, $at, $connectivity, $status, $program, $part, $path,
-                    $headerAt, $variable, $value, $changedAt, $counter, $raw, $error,
+                    $headerAt, $counter, $raw, $error,
                     $lastSeen, 1)
             ON CONFLICT(machine_id) DO UPDATE SET
                 observed_at = excluded.observed_at, connectivity_state = excluded.connectivity_state,
@@ -433,9 +247,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 machine_header_part_name = excluded.machine_header_part_name,
                 machine_header_source_path = excluded.machine_header_source_path,
                 header_read_at = excluded.header_read_at,
-                production_variable_number = excluded.production_variable_number,
-                production_variable_value = excluded.production_variable_value,
-                production_variable_changed_at = excluded.production_variable_changed_at,
                 part_counter = excluded.part_counter, raw_mdc_status = excluded.raw_mdc_status,
                 last_error = excluded.last_error, last_seen_at = excluded.last_seen_at,
                 version = haas_machine_snapshots.version + 1;
@@ -448,9 +259,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         command.Parameters.AddWithValue("$part", Db(value.MachineHeaderPartName));
         command.Parameters.AddWithValue("$path", Db(value.MachineHeaderSourcePath));
         command.Parameters.AddWithValue("$headerAt", Db(value.HeaderReadAt is { } h ? Format(h) : null));
-        command.Parameters.AddWithValue("$variable", value.ProductionVariableNumber);
-        command.Parameters.AddWithValue("$value", value.ProductionVariableValue);
-        command.Parameters.AddWithValue("$changedAt", Db(value.ProductionVariableChangedAt is { } c ? Format(c) : null));
         command.Parameters.AddWithValue("$counter", Db(value.PartCounter));
         command.Parameters.AddWithValue("$raw", Db(value.RawMdcStatus));
         command.Parameters.AddWithValue("$error", Db(value.LastError));
@@ -466,8 +274,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         command.CommandText = """
             SELECT machine_id, observed_at, connectivity_state, machine_status, program_number,
                    machine_header_part_name, machine_header_source_path, header_read_at,
-                   production_variable_number, production_variable_value,
-                   production_variable_changed_at, part_counter, raw_mdc_status, last_error,
+                   part_counter, raw_mdc_status, last_error,
                    last_seen_at, version
             FROM haas_machine_snapshots WHERE machine_id = $machineId;
             """;
@@ -476,9 +283,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         if (!await reader.ReadAsync(token)) return null;
         return new HaasMachineSnapshot(reader.GetString(0), Parse(reader.GetString(1)), reader.GetString(2),
             NullableString(reader, 3), NullableString(reader, 4), NullableString(reader, 5), NullableString(reader, 6),
-            NullableInstant(reader, 7), reader.GetInt32(8), reader.GetInt32(9), NullableInstant(reader, 10),
-            reader.IsDBNull(11) ? null : reader.GetInt32(11), NullableString(reader, 12), NullableString(reader, 13),
-            NullableInstant(reader, 14), reader.GetInt32(15));
+            NullableInstant(reader, 7), reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            NullableString(reader, 9), NullableString(reader, 10), NullableInstant(reader, 11), reader.GetInt32(12));
     }
 
     private static async Task<HaasBenchSession?> ReadActiveBenchAsync(
@@ -601,26 +407,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         await command.ExecuteNonQueryAsync(token);
     }
 
-    private static async Task<bool> HasConfirmedToolResetAsync(
-        SqliteConnection connection, SqliteTransaction transaction, string machineId,
-        string benchId, DateTimeOffset after, DateTimeOffset before, CancellationToken token)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT EXISTS(SELECT 1 FROM haas_macro_write_audits
-                WHERE machine_id = $machineId AND bench_id = $benchId
-                  AND reason = 'TOOL_TABLE_LOADED' AND new_value = 0 AND status = 'SUCCEEDED'
-                  AND julianday(completed_at) >= julianday($after)
-                  AND julianday(completed_at) <= julianday($before));
-            """;
-        command.Parameters.AddWithValue("$machineId", machineId);
-        command.Parameters.AddWithValue("$benchId", benchId);
-        command.Parameters.AddWithValue("$after", Format(after));
-        command.Parameters.AddWithValue("$before", Format(before));
-        return Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1;
-    }
-
     private static async Task<bool> OperationCompletedAsync(
         SqliteConnection connection, SqliteTransaction transaction, string operationId, CancellationToken token)
     {
@@ -698,8 +484,6 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         command.Parameters.AddWithValue("$shareEnabled", value.LocalNetShareEnabled);
         command.Parameters.AddWithValue("$sharePath", Db(value.LocalNetSharePath));
         command.Parameters.AddWithValue("$credentials", Db(value.CredentialsReference));
-        command.Parameters.AddWithValue("$variable", value.ProductionModeVariable);
-        command.Parameters.AddWithValue("$legacy", value.LegacyVariableAlias);
         command.Parameters.AddWithValue("$counterSource", value.PartCounterSource);
         command.Parameters.AddWithValue("$polling", value.PollingIntervalMs);
         command.Parameters.AddWithValue("$timeout", value.ConnectionTimeoutMs);
@@ -730,10 +514,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 value.HeaderLineLimit,
                 value.HeaderByteLimit,
                 value.HeaderPartPatterns),
-            new HaasProductionConfiguration(
-                value.ProductionModeVariable,
-                value.LegacyVariableAlias,
-                value.PartCounterSource),
+            new HaasProductionConfiguration(value.PartCounterSource),
             new HaasMonitoringConfiguration(
                 value.PollingIntervalMs,
                 value.StableProgramPolls,
@@ -784,15 +565,14 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
 
     private static HaasConnectionSettings ReadSettings(SqliteDataReader reader) => new(
         reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetInt32(4), reader.GetBoolean(5),
-        NullableString(reader, 6), NullableString(reader, 7), reader.GetInt32(8), reader.GetInt32(9), reader.GetString(10),
-        reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15),
-        JsonSerializer.Deserialize<string[]>(reader.GetString(16), JsonOptions) ?? [], reader.GetBoolean(17),
-        reader.GetInt32(18), Parse(reader.GetString(19)), Parse(reader.GetString(20)), reader.GetString(21));
+        NullableString(reader, 6), NullableString(reader, 7), reader.GetString(8),
+        reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13),
+        JsonSerializer.Deserialize<string[]>(reader.GetString(14), JsonOptions) ?? [], reader.GetBoolean(15),
+        reader.GetInt32(16), Parse(reader.GetString(17)), Parse(reader.GetString(18)), reader.GetString(19));
 
     private const string SettingsSelect = """
         SELECT h.machine_id, h.host, h.mdc_port, h.mtconnect_port, h.dprnt_port, h.local_net_share_enabled,
-               h.local_net_share_path, h.credentials_reference, h.production_mode_variable,
-               h.legacy_variable_alias, h.part_counter_source, h.polling_interval_ms,
+               h.local_net_share_path, h.credentials_reference, h.part_counter_source, h.polling_interval_ms,
                h.connection_timeout_ms, h.stable_program_polls, h.header_line_limit,
                h.header_byte_limit, h.header_part_patterns_json, h.enabled, h.version,
                h.created_at, h.updated_at,

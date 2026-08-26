@@ -14,7 +14,7 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
     private NetworkStream? stream;
     private readonly StringBuilder pending = new();
 
-    internal async Task<string?> DrainAsync(string host, int port, int timeoutMs, CancellationToken token)
+    internal async Task<HaasDprntDrainResult> DrainAsync(string host, int port, int timeoutMs, CancellationToken token)
     {
         try
         {
@@ -27,12 +27,13 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
                 await client.ConnectAsync(host, port, connectTimeout.Token);
                 stream = client.GetStream();
             }
-            if (stream is null || !stream.DataAvailable) return null;
+            if (stream is null || !stream.DataAvailable) return new(null, []);
             var buffer = new byte[4096];
             var count = await stream.ReadAsync(buffer, token);
-            if (count == 0) { await DisposeConnectionAsync(); return null; }
+            if (count == 0) { await DisposeConnectionAsync(); return new(null, []); }
             pending.Append(Encoding.UTF8.GetString(buffer, 0, count));
             string? latest = null;
+            var eventLines = new List<string>();
             var text = pending.ToString();
             var lines = text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
             pending.Clear();
@@ -40,13 +41,15 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
             foreach (var line in lines[..^1])
             {
                 if (TryParsePartName(line, out var value)) latest = value;
+                else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
+                    eventLines.Add(line.Trim());
             }
-            return latest;
+            return new(latest, eventLines);
         }
         catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException && !token.IsCancellationRequested)
         {
             await DisposeConnectionAsync();
-            return null;
+            return new(null, []);
         }
     }
 
@@ -69,3 +72,5 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
     }
     public async ValueTask DisposeAsync() => await DisposeConnectionAsync();
 }
+
+internal sealed record HaasDprntDrainResult(string? PartName, IReadOnlyList<string> EventLines);

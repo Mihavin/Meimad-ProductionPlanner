@@ -31,7 +31,6 @@ internal interface IHaasMtConnectReader
         string host,
         int port,
         int timeoutMs,
-        int productionVariableNumber,
         string partCounterSource,
         CancellationToken cancellationToken = default);
 }
@@ -44,8 +43,6 @@ internal sealed record HaasMtConnectRead(
     string? ControllerMode,
     string? ProgramNumber,
     int? Parts,
-    int? ProductionVariableValue,
-    string? ProductionVariableError,
     DateTimeOffset ReadAt,
     decimal? SpindleRpm,
     decimal? FeedRate,
@@ -65,13 +62,6 @@ internal interface IHaasIntegrationRepository
     Task SaveSnapshotAsync(HaasMachineSnapshot snapshot, CancellationToken cancellationToken);
     Task<HaasObservationResult> ApplyObservationAsync(
         HaasMachineSnapshot snapshot, DateTimeOffset observedAt, CancellationToken cancellationToken);
-    Task<string> BeginMacroWriteAuditAsync(
-        string machineId, string? benchId, string? toolTableId, int variableNumber,
-        int? oldValue, int newValue, string reason, string initiatedBy, DateTimeOffset at,
-        CancellationToken cancellationToken);
-    Task CompleteMacroWriteAuditAsync(
-        string auditId, bool succeeded, string? rawResponse, string? errorMessage,
-        DateTimeOffset at, CancellationToken cancellationToken);
 }
 
 internal sealed record HaasObservationResult(
@@ -87,8 +77,6 @@ internal sealed record HaasSettingsUpdate(
     bool LocalNetShareEnabled,
     string? LocalNetSharePath,
     string? CredentialsReference,
-    int ProductionModeVariable,
-    int LegacyVariableAlias,
     string? PartCounterSource,
     int PollingIntervalMs,
     int ConnectionTimeoutMs,

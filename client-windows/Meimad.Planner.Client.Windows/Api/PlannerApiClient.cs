@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -212,10 +213,13 @@ internal interface IPlannerApiClient : IDisposable
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<HaasConnectionTest> TestHaasNetShareAsync(
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    Task<HaasVariableRead> ReadHaasProductionVariableAsync(
-        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<HaasMachineMonitor> GetHaasMonitorAsync(
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncVerificationSettings> GetCncVerificationSettingsAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncVerificationSettings> UpdateCncVerificationSettingsAsync(
+        string machineId, CncVerificationSettingsUpdate update, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<IReadOnlyList<CncAdapterDefinition>> ListCncAdaptersAsync(
         CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<CncAdapterDefinition>>([]);
     Task ReconnectCncAsync(
@@ -1377,20 +1381,33 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadHaasConnectionTestAsync(response, cancellationToken);
     }
 
-    public async Task<HaasVariableRead> ReadHaasProductionVariableAsync(
-        string machineId, CancellationToken cancellationToken = default)
-    {
-        using var response = await httpClient.GetAsync(
-            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/production-variable", cancellationToken);
-        return await ReadSuccessAsync<HaasVariableRead>(response, cancellationToken);
-    }
-
     public async Task<HaasMachineMonitor> GetHaasMonitorAsync(
         string machineId, CancellationToken cancellationToken = default)
     {
         using var response = await httpClient.GetAsync(
             $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/monitor", cancellationToken);
         return await ReadSuccessAsync<HaasMachineMonitor>(response, cancellationToken);
+    }
+
+    public async Task<CncVerificationSettings> GetCncVerificationSettingsAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/verification-configuration", cancellationToken);
+        return await ReadSuccessAsync<CncVerificationSettings>(response, cancellationToken);
+    }
+
+    public async Task<CncVerificationSettings> UpdateCncVerificationSettingsAsync(
+        string machineId, CncVerificationSettingsUpdate update, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/verification-configuration", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CncVerificationSettings>(response, cancellationToken);
     }
 
     public async Task<IReadOnlyList<CncAdapterDefinition>> ListCncAdaptersAsync(

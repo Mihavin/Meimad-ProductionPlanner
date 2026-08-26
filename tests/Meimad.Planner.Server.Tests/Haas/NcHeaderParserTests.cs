@@ -81,12 +81,13 @@ public sealed class NcHeaderParserTests
     [Theory]
     [InlineData(">MACRO, 0.0\r\n", 0)]
     [InlineData(">MACRO, 1.000\r\n", 1)]
-    public void Q600_parser_accepts_only_binary_values(string raw, int expected) =>
+    [InlineData(">MACRO, 7294\r\n", 7294)]
+    public void Q600_parser_accepts_integer_values(string raw, int expected) =>
         Assert.Equal(expected, HaasMdcProtocol.ParseMacro(raw));
 
     [Theory]
-    [InlineData(">MACRO, 2.0\r\n")]
+    [InlineData(">MACRO, 2.5\r\n")]
     [InlineData(">MACRO, NOT-A-NUMBER\r\n")]
-    public void Q600_parser_rejects_non_binary_values(string raw) =>
+    public void Q600_parser_rejects_non_integer_values(string raw) =>
         Assert.Throws<FormatException>(() => HaasMdcProtocol.ParseMacro(raw));
 }

@@ -7,6 +7,11 @@ status-driven deep-sleep state machine with wake-button actions. Package
 activation and the broader checklist/comment input state machine remain future
 work.
 
+Workflow status is Server-projected from immutable Production Run events. The
+persistent CNC Setup/Production macro variable is removed. Future protected,
+temporary verification variables belong only to the commissioned CNC
+challenge/response handshake and are not tablet or firmware state.
+
 ## Hardware status
 
 The development target uses the TRMNL BYOD 7.5-inch (OG) display/carrier with a
@@ -309,6 +314,7 @@ transitions the Server-resolved current run from tablet workflow
 `IN_SETUP_RUN` to `IN_QC`; it supplies no target or device timestamp and grants
 no planning/package mutation authority. The firmware binds it to the guarded
 long-D4 gesture described above and follows the POST with a status GET. The
-current Server does not yet implement the compatibility routes, so end-to-end
-event behavior still cannot succeed until the Server lands authorization,
-persistence, idempotency, and negative tests.
+Server now has shared append-only workflow-event persistence and derives tablet
+status from it. The compatibility POST route, its device authorization,
+eligibility/idempotent-response behavior, and negative end-to-end tests remain
+unimplemented, so the firmware action cannot yet succeed end to end.

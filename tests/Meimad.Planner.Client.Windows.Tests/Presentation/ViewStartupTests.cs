@@ -180,8 +180,8 @@ public sealed class ViewStartupTests
                     && rowText.Contains("Mode Manual")
                     && Descendants<Ellipse>(operationCard).Any(ellipse => ellipse.Width <= 8 && ellipse.ToolTip is not null);
                 var operationBorder = Assert.IsType<Border>(operationCard);
-                var modeItems = operationBorder.ContextMenu!.Items.Cast<MenuItem>().ToArray();
-                assignmentModeActionsWereVisible = modeItems.Length == 4
+                var modeItems = operationBorder.ContextMenu!.Items.OfType<MenuItem>().ToArray();
+                assignmentModeActionsWereVisible = modeItems.Length >= 4
                     && Equals(modeItems[0].Header, "Schedule from delivery date")
                     && Equals(modeItems[1].Header, "Schedule forward")
                     && Equals(modeItems[2].Header, "Set manual mode")

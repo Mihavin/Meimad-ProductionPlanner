@@ -111,12 +111,9 @@ internal sealed class CncConnectionService(
             throw new CncValidationException("configuration.telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
         if (telemetryProvider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
             throw new CncValidationException("configuration.mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
-        if (telemetryProvider == HaasTelemetryProviders.MtConnect && update.AllowWrite)
-            throw new CncValidationException("allowWrite", "MTConnect is read-only; disable CNC write permission or select MDC.");
-        if (value.Production.VariableNumber is < 10000 or > 10999
-            || value.Production.LegacyVariableAlias is < 600 or > 699
-            || value.Production.VariableNumber != value.Production.LegacyVariableAlias + 10000)
-            throw new CncValidationException("configuration.production.variableNumber", "The Haas production variable mapping is invalid.");
+        if (update.AllowWrite)
+            throw new CncValidationException("allowWrite",
+                "Direct CNC variable writes are disabled; protected setup verification executes on the controller.");
         if (value.ProgramAccess.Enabled
             && value.ProgramAccess.Provider != "HAAS_LOCAL_NET_SHARE")
             throw new CncValidationException("configuration.programAccess.provider", "Only Haas Local Net Share program access is implemented.");

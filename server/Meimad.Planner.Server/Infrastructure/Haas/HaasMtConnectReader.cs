@@ -21,7 +21,6 @@ internal sealed class HaasMtConnectReader(
         string host,
         int port,
         int timeoutMs,
-        int productionVariableNumber,
         string partCounterSource,
         CancellationToken cancellationToken = default)
     {
@@ -41,23 +40,6 @@ internal sealed class HaasMtConnectReader(
             }
 
             var device = SelectDevice(current);
-            var macro = device.MacroVariables
-                .SingleOrDefault(value => value.VariableNumber == productionVariableNumber);
-            int? macroValue = null;
-            string? macroError = null;
-            if (macro is null)
-            {
-                macroError = $"MTConnect probe/current did not expose configured variable #{productionVariableNumber}.";
-            }
-            else if (macro.NumericValue is 0m or 1m)
-            {
-                macroValue = decimal.ToInt32(macro.NumericValue.Value);
-            }
-            else
-            {
-                macroError = $"MTConnect reported configured variable #{productionVariableNumber} as '{macro.RawValue}'; Setup/Production requires exactly 0 or 1.";
-            }
-
             var latest = LatestByDataItem(device.Observations);
             var spindle = Latest(latest, observation =>
                 observation.ElementName.Equals("SpindleSpeed", StringComparison.OrdinalIgnoreCase)
@@ -98,8 +80,6 @@ internal sealed class HaasMtConnectReader(
                 program,
                 partCounterSource,
                 parts = counter,
-                productionVariableNumber,
-                productionVariableRaw = macro?.RawValue,
                 spindleRpm = Decimal(spindle?.Value),
                 feedRate = Decimal(feed?.Value),
                 activeAlarmCount = alarmCount
@@ -113,8 +93,6 @@ internal sealed class HaasMtConnectReader(
                 controllerMode,
                 program,
                 counter,
-                macroValue,
-                macroError,
                 readAt,
                 Decimal(spindle?.Value),
                 Decimal(feed?.Value),

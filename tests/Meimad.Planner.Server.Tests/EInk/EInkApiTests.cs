@@ -173,6 +173,13 @@ public sealed class EInkApiTests
                 UPDATE production_run_programs
                 SET status = 'ACTIVE', version = version + 1
                 WHERE production_run_id = 'run:batch-operation:operation-eink-1';
+                INSERT INTO production_run_workflow_events (
+                    id, production_run_id, machine_id, event_type, source,
+                    source_event_id, server_received_at, machine_timestamp)
+                VALUES (
+                    'workflow-setup-eink-1', 'run:batch-operation:operation-eink-1',
+                    'machine-eink-1', 'SETUP_VERIFICATION_SUCCEEDED', 'TEST',
+                    'setup-eink-1', '2026-08-25T10:10:00Z', '2026-08-25T10:09:59Z');
                 """);
             using var setupResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
             using var setup = JsonDocument.Parse(await setupResponse.Content.ReadAsStringAsync());
@@ -183,19 +190,26 @@ public sealed class EInkApiTests
                 UPDATE production_run_programs
                 SET completed_cycle_count = 1, version = version + 1
                 WHERE production_run_id = 'run:batch-operation:operation-eink-1';
+                INSERT INTO production_run_workflow_events (
+                    id, production_run_id, machine_id, event_type, source,
+                    source_event_id, server_received_at, machine_timestamp)
+                VALUES (
+                    'workflow-cycle-eink-1', 'run:batch-operation:operation-eink-1',
+                    'machine-eink-1', 'CYCLE_START', 'TEST',
+                    'cycle-eink-1', '2026-08-25T10:12:00Z', '2026-08-25T10:11:59Z');
                 """);
             using var productionResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
             using var production = JsonDocument.Parse(await productionResponse.Content.ReadAsStringAsync());
             Assert.Equal("IN_PRODUCTION", production.RootElement.GetProperty("status").GetString());
 
             await ExecuteAsync(application.Services, """
-                INSERT INTO tablet_workflow_events (
-                    id, device_id, machine_id, production_run_id, event_type,
-                    resulting_state, occurred_at, created_at)
+                INSERT INTO production_run_workflow_events (
+                    id, tablet_device_id, machine_id, production_run_id, event_type,
+                    source, source_event_id, machine_timestamp, server_received_at)
                 VALUES (
                     'tablet-event-eink-1', 'device-eink-1', 'machine-eink-1',
-                    'run:batch-operation:operation-eink-1', 'SEND_TO_QC',
-                    'IN_QC', '2026-08-25T10:15:30Z', '2026-08-25T10:15:30Z');
+                    'run:batch-operation:operation-eink-1', 'SEND_TO_QC', 'TABLET',
+                    'tablet-event-eink-1', '2026-08-25T10:15:30Z', '2026-08-25T10:15:30Z');
                 """);
             using var qcResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
             using var qc = JsonDocument.Parse(await qcResponse.Content.ReadAsStringAsync());

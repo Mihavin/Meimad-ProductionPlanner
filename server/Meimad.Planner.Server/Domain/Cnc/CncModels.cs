@@ -108,10 +108,7 @@ internal sealed record HaasProgramAccessConfiguration(
     int HeaderLineLimit,
     int HeaderByteLimit,
     IReadOnlyList<string> HeaderPartPatterns);
-internal sealed record HaasProductionConfiguration(
-    int VariableNumber,
-    int LegacyVariableAlias,
-    string PartCounterSource);
+internal sealed record HaasProductionConfiguration(string PartCounterSource);
 internal sealed record HaasMonitoringConfiguration(
     int PollingIntervalMs,
     int StableProgramPolls,
@@ -131,10 +128,6 @@ internal sealed record CncProgramSnapshot(
     CncFreshValue<string> ProgramNumber,
     CncFreshValue<string> PartName,
     CncFreshValue<string> HeaderSourcePath);
-internal sealed record CncProductionSnapshot(
-    string? Mode,
-    int? ModeVariableNumber,
-    CncFreshValue<int?> ModeVariableValue);
 internal sealed record CncTelemetrySnapshot(
     bool? SpindleRunning,
     decimal? SpindleRpm,
@@ -150,7 +143,6 @@ internal sealed record MachineSnapshot(
     DateTimeOffset? LastSeenAt,
     CncFreshValue<string> MachineState,
     CncProgramSnapshot Program,
-    CncProductionSnapshot Production,
     CncFreshValue<int?> PartCounter,
     CncTelemetrySnapshot Telemetry,
     IReadOnlyDictionary<string, string> ComponentHealth,

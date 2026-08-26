@@ -37,7 +37,7 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
         var workflow = run is null
             ? null
             : await ReadWorkflowAsync(
-                connection, transaction, device.DeviceId, run.RunId, cancellationToken);
+                connection, transaction, run.RunId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new TabletStatusSource(
             device.DeviceId,
@@ -153,20 +153,18 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
     private static async Task<TabletStatusWorkflowSource?> ReadWorkflowAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        string deviceId,
         string runId,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT id, resulting_state, occurred_at
-            FROM tablet_workflow_events
-            WHERE device_id = $deviceId AND production_run_id = $runId
-            ORDER BY occurred_at DESC, id DESC
+            SELECT id, event_type, server_received_at
+            FROM production_run_workflow_events
+            WHERE production_run_id = $runId
+            ORDER BY server_received_at DESC, id DESC
             LIMIT 1;
             """;
-        command.Parameters.AddWithValue("$deviceId", deviceId);
         command.Parameters.AddWithValue("$runId", runId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)

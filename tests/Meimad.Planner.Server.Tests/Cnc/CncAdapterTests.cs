@@ -31,7 +31,6 @@ public sealed class CncAdapterTests
         Assert.Equal("RUNNING", second.Snapshot.MachineState.Value);
         Assert.Equal("O1234", second.Snapshot.Program.ProgramNumber.Value);
         Assert.Equal("PART-A", second.Snapshot.Program.PartName.Value);
-        Assert.Equal("SETUP", second.Snapshot.Production.Mode);
         Assert.Equal(27, second.Snapshot.PartCounter.Value);
         Assert.Equal(CncComponentStates.Available, second.Snapshot.ComponentHealth["MDC"]);
         Assert.Single(second.RawTelemetry, item => item.Operation == "Q500");
@@ -50,7 +49,6 @@ public sealed class CncAdapterTests
 
         Assert.Equal(CncConnectionStates.Degraded, result.Snapshot.ConnectionStatus);
         Assert.Equal("RUNNING", result.Snapshot.MachineState.Value);
-        Assert.Equal("PRODUCTION", result.Snapshot.Production.Mode);
         Assert.Equal(9, result.Snapshot.PartCounter.Value);
         Assert.Null(result.Snapshot.Program.PartName.Value);
         Assert.Equal(CncComponentStates.Available, result.Snapshot.ComponentHealth["MDC"]);
@@ -58,7 +56,7 @@ public sealed class CncAdapterTests
     }
 
     [Fact]
-    public async Task Generic_write_contract_rejects_everything_except_controlled_zero_reset()
+    public async Task Generic_write_contract_rejects_all_persistent_mode_variable_writes()
     {
         var mdc = new FakeHaasMdcClient { MacroValue = 1 };
         await using var adapter = new HaasNgcAdapter(Connection(),
@@ -71,10 +69,10 @@ public sealed class CncAdapterTests
         var deniedValue = await adapter.WriteVariableAsync(10605, 1);
         var reset = await adapter.WriteVariableAsync(10605, 0);
 
-        Assert.False(deniedVariable.Available);
-        Assert.False(deniedValue.Available);
-        Assert.True(reset.Available);
-        Assert.Equal(0, mdc.MacroValue);
+        Assert.False(deniedVariable.Supported);
+        Assert.False(deniedValue.Supported);
+        Assert.False(reset.Supported);
+        Assert.Equal(1, mdc.MacroValue);
     }
 
     [Fact]
@@ -84,7 +82,7 @@ public sealed class CncAdapterTests
         var mtConnect = new FakeHaasMtConnectReader
         {
             Result = new("dev1", "VF-3SS", "AVAILABLE", "ACTIVE", "AUTOMATIC",
-                "1500.CNC", 9302, 0, null, DateTimeOffset.UtcNow,
+                "1500.CNC", 9302, DateTimeOffset.UtcNow,
                 4200m, 1250m, 0, "{\"lastSequence\":27778}")
         };
         await using var adapter = new HaasNgcAdapter(Connection("MTCONNECT", programAccess: false),
@@ -100,7 +98,6 @@ public sealed class CncAdapterTests
         Assert.Equal("ACTIVE", result.Snapshot.MachineState.Value);
         Assert.Equal("1500.CNC", result.Snapshot.Program.ProgramNumber.Value);
         Assert.Null(result.Snapshot.Program.PartName.Value);
-        Assert.Equal("SETUP", result.Snapshot.Production.Mode);
         Assert.Equal(9302, result.Snapshot.PartCounter.Value);
         Assert.Equal(4200m, result.Snapshot.Telemetry.SpindleRpm);
         Assert.Equal(CncComponentStates.Available, result.Snapshot.ComponentHealth["MTCONNECT"]);
@@ -112,14 +109,12 @@ public sealed class CncAdapterTests
     }
 
     [Fact]
-    public async Task Nonbinary_MTConnect_macro_keeps_connection_degraded_and_blocks_production_mode()
+    public async Task MTConnect_snapshot_health_does_not_depend_on_a_mode_variable()
     {
         var mtConnect = new FakeHaasMtConnectReader
         {
             Result = new("dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC",
-                "1500.CNC", 9302, null,
-                "MTConnect reported configured variable #10605 as '5.0'; Setup/Production requires exactly 0 or 1.",
-                DateTimeOffset.UtcNow, 0, null, 0, "{}")
+                "1500.CNC", 9302, DateTimeOffset.UtcNow, 0, null, 0, "{}")
         };
         await using var adapter = new HaasNgcAdapter(Connection("MTCONNECT", programAccess: false),
             new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }), mtConnect,
@@ -129,13 +124,11 @@ public sealed class CncAdapterTests
         var snapshot = await adapter.ReadSnapshotAsync();
         var test = await adapter.TestConnectionAsync();
 
-        Assert.Equal(CncConnectionStates.Degraded, snapshot.Snapshot.ConnectionStatus);
-        Assert.Null(snapshot.Snapshot.Production.Mode);
-        Assert.Null(snapshot.Snapshot.Production.ModeVariableValue.Value);
-        Assert.Contains("exactly 0 or 1", snapshot.Snapshot.LastError, StringComparison.Ordinal);
+        Assert.Equal(CncConnectionStates.Online, snapshot.Snapshot.ConnectionStatus);
+        Assert.Null(snapshot.Snapshot.LastError);
         Assert.True(test.OverallSuccess);
-        Assert.Equal(CncConnectionStates.Degraded, test.ConnectionStatus);
-        Assert.Contains(test.Checks, value => value.Id == "variableRead" && !value.Succeeded);
+        Assert.Equal(CncConnectionStates.Online, test.ConnectionStatus);
+        Assert.DoesNotContain(test.Checks, value => value.Id == "variableRead");
     }
 
     [Fact]
@@ -144,7 +137,7 @@ public sealed class CncAdapterTests
         var mtConnect = new FakeHaasMtConnectReader
         {
             Result = new("dev1", "VF-3SS", "AVAILABLE", null, "AUTOMATIC",
-                null, 9302, 0, null, DateTimeOffset.UtcNow,
+                null, 9302, DateTimeOffset.UtcNow,
                 0, null, 0, "{}")
         };
         await using var adapter = new HaasNgcAdapter(Connection("MTCONNECT", programAccess: false),
@@ -201,11 +194,11 @@ public sealed class CncAdapterTests
             new(programAccess ? "HAAS_LOCAL_NET_SHARE" : "NONE", programAccess,
                 programAccess ? @"\\haas\User Data" : null, null, null,
                 50, 32768, NcHeaderParser.DefaultPartPatterns),
-            new(10605, 605, "Q500"), new(500, 2, 30000, 14),
+            new("Q500"), new(500, 2, 30000, 14),
             new(8082, 3000), telemetryProvider);
         return new("cnc-machine-a", "machine-a", CncAdapterType.HaasNgc, true,
             CncConnectionStates.Offline, null, null, null, null, 500, 3000, 30000,
-            true, true, JsonSerializer.Serialize(configuration, CncJson.Options),
+            true, false, JsonSerializer.Serialize(configuration, CncJson.Options),
             null, null, 14, 1, now, now);
     }
 

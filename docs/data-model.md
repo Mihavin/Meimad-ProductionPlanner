@@ -429,22 +429,21 @@ The following are logical support records, not planning authority:
 
 - Implemented immutable opaque Device ID, Server-assigned short Tablet ID, and optional normalized physical Wi-Fi MAC hardware ID. Legacy registrations receive a visible `legacy-...` Tablet ID and must be provisioned with a physical MAC before bootstrap.
 - Optional assigned Machine; a partial unique index permits at most one enabled E-Ink device per Machine.
-- Implemented read-only package/planning access level and enabled/revoked state; the approved `SEND_TO_QC` capability is a separate future scope, not general write access.
+- Implemented read-only package/planning access level and enabled/revoked state; the approved `SEND_TO_QC` route remains separate future scope, not general write access.
 - The Server generates a high-entropy `mp_eink_...` bearer token, stores only its SHA-256 hash, and returns plaintext only on creation or rotation.
 - Active Windows Edit Mode authority is required to create, bind/unbind, enable/revoke, or rotate a registration; these changes are atomic with the authority check.
-- Authenticated bootstrap records last seen/contact and bounded supplied battery metadata as operational fields only. Firmware profile history and any telemetry retention policy remain open. `SEND_TO_QC` event persistence is approved below but not yet implemented.
+- Authenticated bootstrap records last seen/contact and bounded supplied battery metadata as operational fields only. Firmware profile history and any telemetry retention policy remain open. Schema v49 implements shared event persistence, but not the authenticated `SEND_TO_QC` command route.
 - Authenticated physical status reads resolve the enabled credential and path Tablet ID to its bound Machine, first non-final Machine-backlog Production Run, current Program, and exactly one output. The response revision is a deterministic hash of tablet-visible identity, Machine, Run, Program/output, workflow, and status fields; polling/contact timestamps do not change it. Multi-output Programs are rejected rather than reduced to one output by an implicit choice.
 
-### 10.2 Tablet QC Event target
+### 10.2 Operational Workflow Events and Tablet QC target
 
-The approved target is a Server-owned append-only operational record, separate
-from planning/package tables. Each accepted row has a stable event ID, E-Ink
-device ID, resolved Machine ID, resolved Production Run ID, exact event type
-`SEND_TO_QC`, and Server-generated UTC timestamp. The request supplies none of
-the target IDs or time. A uniqueness constraint on Production Run plus event
-type makes a repeat for the same run idempotent and preserves the first event
-and timestamp. Acceptance and the corresponding structured audit event commit
-atomically.
+Schema v49 implements Server-owned append-only operational records, separate
+from planning/package tables. Rows carry Production Run, assigned Machine,
+event type, source/idempotency identity, Server receipt time, optional Machine
+time/sequence/release/device/user evidence, and JSON metadata. Update and delete
+are trigger-blocked. For the future `SEND_TO_QC` route, the request supplies no
+target IDs or time; the Server must add its device authorization, eligibility,
+same-run retry semantics, and response contract atomically.
 
 The tablet status projection derives `IN_QC` from this record and incorporates
 the event identity/timestamp into its revision seed. The record cannot satisfy
@@ -452,7 +451,7 @@ or mutate Production Run lifecycle, Production Run Program cycles, Outputs,
 Orders, Batches, Batch Operations, Machine Assignments, backlog order,
 readiness, or package publication. A later transition out of `IN_QC` requires
 its own approved Server-owned rule; no such tablet command is implied here.
-Schema/migration ownership, final table/index names, retention, and the Windows
+Retention/history access, the authenticated tablet command, and the Windows
 QC-completion action remain implementation work.
 
 ### 10.3 E-Ink Package Revision
@@ -516,7 +515,7 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 41.
+- Ordered server-owned migrations are implemented through version 50.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 
 Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL Server host/port, database, schema/view, username, refresh interval, enable flag, optimistic version, and last read-only connection-test status. The password is stored only as an ASP.NET Data Protection ciphertext bound to the Server application; API responses expose only `passwordConfigured`. No Kitaron source rows or source database credentials are stored as plaintext, and this schema does not yet add source identity/import rows.
@@ -532,17 +531,23 @@ Schema v35 adds released tool tables, process revisions, immutable Postprocessor
 Schema v36 adds structured immutable released-tool rows and the derived required magazine-tool count. Existing v35 tool-table metadata/process history is preserved with null count and no invented rows. Capacity is a live projection from the effective process tool release and assigned Machine; no readiness boolean is persisted.
 - Schema v37 adds contextual release selection, its retained legacy material-input history, and immutable offset-readiness history. Schema v39 adds tables only: it does not translate any legacy/Kitaron approval into a verified receipt or reservation. Existing Batches therefore remain readable but material-blocked until a user records current physical availability and reserves it explicitly.
 - Schema v41 adds `kitaron_material_orders`, a read-only-source advisory register keyed by `TBuyRow.BuyRowID`. It retains mapped purchase order, raw-material, quantity, historical received total, requested delivery, and latest supplier-approved delivery fields. Its rows are explicitly separate from schema-v39 verified receipts and reservations and cannot satisfy production readiness.
-- Schema v42 adds immutable `nc_program_headers`; per-Machine `haas_connection_settings` and latest `haas_machine_snapshots`; `haas_bench_sessions` mapped one-to-one to a started Batch Operation; repeatable `haas_bench_state_intervals`; immutable, idempotency-keyed `haas_events`; and before/after `haas_macro_write_audits`. The Batch Operation remains the schedulable business object; “Bench” is the Haas execution session for that operation, not a new planning entity. File names are informational only. Setup/Production actual time is the sum of closed plus current state intervals, not an estimate from Cycle Start.
+- Schema v42 originally added Haas compatibility tables, including the now-retired persistent Setup/Production macro projection. Schema v49 removes those mode columns and macro-write audits; historical ordered migrations remain unchanged. The Batch Operation remains a quantity/dependency obligation and Production Run is the schedulable Machine-session object.
 - Schema v43 adds `machine_connections` (one primary connection per Machine for MVP, adapter/configuration/version/permissions/lifecycle), `machine_current_state` (one normalized snapshot per Machine), `machine_state_history` (meaningful changes only), `machine_connection_events`, and `machine_telemetry_raw`. Typed adapter configuration is serialized into `configuration_json`; username/password values are forbidden there and only opaque secret IDs occupy dedicated columns. Raw telemetry is pruned per connection using `raw_telemetry_retention_days` (default 14, allowed 1-90); business and Bench events are not pruned with telemetry. The v42 Haas tables remain a compatibility and Bench-history projection during this migration slice.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-The implemented migrations through schema v45 are the current persistence/domain contract. Timeline expands schema-v16 timing snapshots with schema-v38 NC estimates only for not-started work, production pins preserve schema-v35 release context, schema-v36 supplies required tool positions, schema-v37 contextual release/offset inputs are evaluated centrally for the concrete assignment, schema-v39 supplies Batch-level local material facts, schema-v41 retains advisory Kitaron material purchase/delivery approval data, schemas v42-v44 add Haas/CNC connection behavior, and schema v45 adds Manufacturing Programs without rewriting release history. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
+The implemented migrations through schema v50 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, and v50 adds the CNC-verification identity/configuration foundation. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
 Schema v39 treats Batch `planned_quantity` as the required raw-material piece count, consistent with the existing material-order report and inclusive of scrap allocation. `verified_material_receipts` is local physical evidence rather than ERP inventory. `batch_material_reservations` makes consumption intent explicit. Trigger and repository validation prevent cross-Case reservation, receipt over-reservation, and reservation above Batch quantity. Material readiness is derived for every Batch Operation from its parent Batch reservation coverage; the schema-v37 manual material table is retained only as legacy history and is no longer authoritative.
 ## Production Run target model
 
 The multi-output schema is specified in [Production Run and multi-output Manufacturing Program architecture](production-run-architecture.md). Schema v45 implements `manufacturing_programs` and immutable revision outputs. Schema v46 implements `production_runs`, `production_run_programs`, and `production_run_outputs`, and makes `machine_assignments.production_run_id` authoritative while retaining `batch_operation_id` only as a compatibility projection. Schema v47 adds append-only `production_run_cycle_events` with a unique `(source, source_event_id)` identity. Active allocations exclude cancelled/aborted runs; produced quantities remain historical. Started structure is trigger-protected and foreign-key restrictive.
+
+Schema v49 adds append-only `production_run_workflow_events`. Each row identifies its Production Run, assigned Machine, event type, source and idempotency identity; it may also retain a source sequence, separate Machine timestamp, NC release, Offset Loader release, tablet, user, and JSON evidence. `server_received_at` is authoritative. Update/delete triggers make events immutable. The same migration folds existing tablet `SEND_TO_QC` evidence into this stream and removes the legacy persistent CNC mode-variable columns and audit table. Projection logic may change without changing raw events.
+
+Schema v50 adds `offset_loader_releases` as immutable identities tied to one Production Run, Machine, approved G-code release, exact tool-table release, numeric verification release token, creator/time, optional artifact hash, and metadata. `production_run_current_offset_loaders` is the separate mutable current pointer; consistency triggers require the selected release to belong to the same Run and Machine. An old row remains history and is not accepted by current-resolution logic. NC/tool-table/Offset Loader dates are not compared.
+
+`cnc_verification_settings` stores one optimistic configuration per Machine. It contains the Haas DPRNT transport/port, configured protected O9000 program numbers, optional custom alias, four distinct temporary-variable numbers, Data Protection ciphertext for the Machine secret, expected macro version, response digit count, timeout, and enabled flag. API projections expose a boolean secret-presence indicator, never ciphertext or plaintext. `production_run_workflow_anomalies` immutably records sequence gaps and out-of-order observations with previous/expected/received sequence and the actual retained workflow-event ID.
 
 Key target constraints are: one or more programs per run; one or more outputs per program; positive integer quantity per cycle and target quantity; exact divisibility; equal required cycles for coupled outputs; unique program sequence; no active allocation plus produced quantity above a Batch Operation's required quantity; restrictive foreign keys; and immutable started composition.

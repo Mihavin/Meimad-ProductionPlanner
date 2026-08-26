@@ -37,5 +37,5 @@ internal sealed record TabletStatusOutputSource(
 
 internal sealed record TabletStatusWorkflowSource(
     string EventId,
-    string ResultingState,
+    string EventType,
     DateTimeOffset OccurredAt);

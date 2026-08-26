@@ -56,6 +56,7 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 25. Allow a development Server executable/console host, but target a Windows Service on a designated factory PC or local Server for production.
 26. Do not implement deferred features - automatic planning, ERP synchronization, native mobile apps, full Android-tablet behavior, full tool inventory, tablet write-back other than the approved `SEND_TO_QC` command, Customer Portal, official CNC transfer, rechargeable-device charging, or OTA firmware update - without an explicit scope decision.
 27. For multi-output work, keep coupled outputs atomic per NC program cycle, forbid rounding and overproduction, and make run structure immutable after its first program starts. Follow the accepted and implemented decisions in `docs/production-run-architecture.md`; schemas v45–v47 own Manufacturing Programs, Production Runs, and idempotent cycle observations.
+28. A persistent CNC Setup/Production macro variable is not a workflow authority and must not be reintroduced. Server workflow is projected from immutable Production Run operational events. Protected temporary CNC variables are permitted only for the separately commissioned setup-verification handshake; their Machine-specific mapping must be configured, not embedded in business rules.
 
 ## Engineering boundaries
 

@@ -11,14 +11,8 @@ internal sealed class BenchAutomationService(IHaasIntegrationRepository reposito
     public async Task<CncSnapshotConsumptionResult> ConsumeAsync(
         MachineSnapshot snapshot, CancellationToken token)
     {
-        var currentVariable = snapshot.Production.ModeVariableValue;
-        var variable = currentVariable.Value;
-        var variableNumber = snapshot.Production.ModeVariableNumber;
         if (snapshot.ConnectionStatus is not (CncConnectionStates.Online or CncConnectionStates.Degraded)
-            || currentVariable.Stale
-            || currentVariable.ReadAt is null
-            || variable is not (0 or 1)
-            || variableNumber is null)
+            || snapshot.LastSeenAt is null)
             return CncSnapshotConsumptionResult.None;
 
         var currentCounter = snapshot.PartCounter;
@@ -35,9 +29,6 @@ internal sealed class BenchAutomationService(IHaasIntegrationRepository reposito
             snapshot.Program.PartName.Stale ? null : snapshot.Program.PartName.Value,
             snapshot.Program.HeaderSourcePath.Stale ? null : snapshot.Program.HeaderSourcePath.Value,
             snapshot.Program.PartName.Stale ? null : snapshot.Program.PartName.ReadAt,
-            variableNumber.Value,
-            variable.Value,
-            previous?.ProductionVariableChangedAt,
             partCounter,
             null,
             snapshot.LastError,

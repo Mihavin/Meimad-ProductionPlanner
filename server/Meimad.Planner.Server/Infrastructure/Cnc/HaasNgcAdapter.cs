@@ -54,15 +54,15 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         connection.AllowRead,
         connection.AllowRead && configuration.ProgramAccess.Enabled
             && configuration.ProgramAccess.Provider == "HAAS_LOCAL_NET_SHARE",
-        connection.AllowRead,
-        connection.AllowWrite && !UsesMtConnect,
+        false,
+        false,
         connection.AllowRead,
         false, false, false, false, false, false, false);
 
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         if (UsesMtConnect)
-            pendingMtConnectRead = await ReadMtConnectAsync(configuration.Production.VariableNumber, cancellationToken);
+            pendingMtConnectRead = await ReadMtConnectAsync(cancellationToken);
         else
             await client.ConnectAsync(cancellationToken);
     }
@@ -84,23 +84,6 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             checks.Add(new("mdc", false, CncComponentStates.Unavailable, Safe(exception.Message)));
-        }
-
-        if (status is not null)
-        {
-            try
-            {
-                await client.ReadMacroAsync(configuration.Production.VariableNumber, token);
-                checks.Add(new("variableRead", true, CncComponentStates.Available, "Configured production variable is readable."));
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                checks.Add(new("variableRead", false, CncComponentStates.Unavailable, Safe(exception.Message)));
-            }
-        }
-        else
-        {
-            checks.Add(new("variableRead", false, CncComponentStates.Unavailable, "MDC is unavailable."));
         }
 
         if (!GetCapabilities().CanReadProgramHeader)
@@ -144,7 +127,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         HaasMtConnectRead? status = null;
         try
         {
-            status = await ReadMtConnectAsync(configuration.Production.VariableNumber, token);
+            status = await ReadMtConnectAsync(token);
             var available = status.Availability == "AVAILABLE";
             checks.Add(new("mtconnect", available,
                 available ? CncComponentStates.Available : CncComponentStates.Unavailable,
@@ -155,17 +138,6 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             checks.Add(new("mtconnect", false, CncComponentStates.Unavailable, Safe(exception.Message)));
-        }
-
-        if (status?.ProductionVariableValue is not null)
-        {
-            checks.Add(new("variableRead", true, CncComponentStates.Available,
-                $"Configured production variable #{configuration.Production.VariableNumber} is readable through MTConnect."));
-        }
-        else
-        {
-            checks.Add(new("variableRead", false, CncComponentStates.Unavailable,
-                status?.ProductionVariableError ?? "MTConnect is unavailable."));
         }
 
         if (!GetCapabilities().CanReadProgramHeader)
@@ -207,7 +179,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
     private async Task<CncAdapterSnapshot> ReadMtConnectSnapshotAsync(CancellationToken token)
     {
         var status = pendingMtConnectRead
-            ?? await ReadMtConnectAsync(configuration.Production.VariableNumber, token);
+            ?? await ReadMtConnectAsync(token);
         pendingMtConnectRead = null;
         var at = status.ReadAt;
         var available = status.Availability == "AVAILABLE";
@@ -227,18 +199,19 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
                 ? CncComponentStates.Available : CncComponentStates.Unavailable,
             ["activeProgram"] = available && status.ProgramNumber is not null
                 ? CncComponentStates.Available : CncComponentStates.Unavailable,
-            ["macroVariables"] = status.ProductionVariableValue is null
-                ? CncComponentStates.Unavailable : CncComponentStates.Available,
             ["partCounter"] = status.Parts is null
                 ? CncComponentStates.Unavailable : CncComponentStates.Available,
             ["programHeader"] = GetCapabilities().CanReadProgramHeader
                 ? CncComponentStates.Unavailable : CncComponentStates.Unsupported
         };
-        string? error = status.ProductionVariableError;
+        string? error = null;
         var program = status.ProgramNumber;
-        var dprntPart = await dprntPartReader.DrainAsync(configuration.Host,
+        var dprnt = await dprntPartReader.DrainAsync(configuration.Host,
             (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort,
             connection.ConnectionTimeoutMs, token);
+        foreach (var eventLine in dprnt.EventLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+        var dprntPart = dprnt.PartName;
 
         if (program != candidateProgram)
         {
@@ -312,15 +285,12 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         var degraded = health.Values.Any(value => value == CncComponentStates.Unavailable);
         var connectionStatus = !available ? CncConnectionStates.Offline
             : degraded ? CncConnectionStates.Degraded : CncConnectionStates.Online;
-        var macro = status.ProductionVariableValue;
         var snapshot = new MachineSnapshot(
             MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at,
             connectionStatus,
             available ? at : null,
             new(status.MachineStatus, status.MachineStatus is null ? null : at, false),
             new(new(program, program is null ? null : at, false), cachedPart, cachedHeaderPath),
-            new(macro switch { 0 => "SETUP", 1 => "PRODUCTION", _ => null },
-                configuration.Production.VariableNumber, new(macro, macro is null ? null : at, false)),
             new(status.Parts, status.Parts is null ? null : at, false),
             new(status.SpindleRpm is null ? null : status.SpindleRpm > 0,
                 status.SpindleRpm, status.FeedRate, status.ActiveAlarmCount),
@@ -349,23 +319,11 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         {
             ["machineState"] = CncComponentStates.Available,
             ["activeProgram"] = CncComponentStates.Available,
-            ["macroVariables"] = CncComponentStates.Available,
             ["partCounter"] = CncComponentStates.Available,
             ["programHeader"] = GetCapabilities().CanReadProgramHeader
                 ? CncComponentStates.Unavailable : CncComponentStates.Unsupported
         };
         string? error = null;
-        int? macro = null;
-        try
-        {
-            macro = await client.ReadMacroAsync(configuration.Production.VariableNumber, token);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            health["macroVariables"] = CncComponentStates.Unavailable;
-            error = Safe(exception.Message);
-        }
-
         int? counter = status.Parts;
         if (configuration.Production.PartCounterSource != HaasPartCounterSources.Q500)
         {
@@ -377,6 +335,11 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
                 error ??= Safe(exception.Message);
             }
         }
+        var dprnt = await dprntPartReader.DrainAsync(configuration.Host,
+            (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort,
+            connection.ConnectionTimeoutMs, token);
+        foreach (var eventLine in dprnt.EventLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
 
         var program = status.ProgramNumber;
         if (program != candidateProgram)
@@ -386,6 +349,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             if (program != cachedProgram)
             {
                 cachedPart = new(null, null, false);
+                cachedPartFromDprnt = false;
                 cachedHeaderPath = new(null, null, false);
             }
         }
@@ -396,10 +360,18 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         if (program is null)
         {
             cachedProgram = null;
-            cachedPart = new(null, null, false);
+            if (!cachedPartFromDprnt) cachedPart = new(null, null, false);
             cachedHeaderPath = new(null, null, false);
         }
-        else if (GetCapabilities().CanReadProgramHeader
+        if (dprnt.PartName is not null)
+        {
+            cachedPart = new(dprnt.PartName, at, false);
+            cachedPartFromDprnt = true;
+            cachedHeaderPath = new(null, null, false);
+            components["DPRNT"] = CncComponentStates.Available;
+            health["programHeader"] = CncComponentStates.Available;
+        }
+        else if (program is not null && GetCapabilities().CanReadProgramHeader
                  && (program != cachedProgram || cachedPart.Stale)
                  && candidatePolls >= configuration.Monitoring.StableProgramPolls)
         {
@@ -411,6 +383,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
                 if (!metadata.IsValid) throw new IOException("Part name could not be extracted from the active NC header.");
                 cachedProgram = program;
                 cachedPart = new(metadata.PartName, header.ReadTimestamp, false);
+                cachedPartFromDprnt = false;
                 cachedHeaderPath = new(header.SourcePath, header.ReadTimestamp, false);
                 components["PROGRAM_ACCESS"] = CncComponentStates.Available;
                 health["programHeader"] = CncComponentStates.Available;
@@ -443,8 +416,6 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             at,
             new(status.MachineStatus, at, false),
             new(new(program, at, false), cachedPart, cachedHeaderPath),
-            new(macro switch { 0 => "SETUP", 1 => "PRODUCTION", _ => null },
-                configuration.Production.VariableNumber, new(macro, macro is null ? null : at, false)),
             new(counter, counter is null ? null : at, false),
             new(null, null, null, null),
             components,
@@ -468,32 +439,11 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         }
     }
 
-    public async Task<CncOperationResult<int>> ReadVariableAsync(int variable, CancellationToken token = default)
-    {
-        if (!GetCapabilities().CanReadVariables) return CncOperationResult<int>.Unsupported();
-        try
-        {
-            if (!UsesMtConnect)
-                return CncOperationResult<int>.Success(await client.ReadMacroAsync(variable, token));
-            var status = await ReadMtConnectAsync(variable, token);
-            return status.ProductionVariableValue is { } value
-                ? CncOperationResult<int>.Success(value)
-                : CncOperationResult<int>.Failure(status.ProductionVariableError
-                    ?? $"MTConnect did not expose variable #{variable}.");
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        { return CncOperationResult<int>.Failure(Safe(exception.Message)); }
-    }
+    public Task<CncOperationResult<int>> ReadVariableAsync(int variable, CancellationToken token = default) =>
+        Task.FromResult(CncOperationResult<int>.Unsupported());
 
-    public async Task<CncOperationResult<string>> WriteVariableAsync(int variable, int value, CancellationToken token = default)
-    {
-        if (!GetCapabilities().CanWriteVariables) return CncOperationResult<string>.Unsupported();
-        if (variable != configuration.Production.VariableNumber || value != 0)
-            return CncOperationResult<string>.Failure("Only ResetProductionMode may write the configured variable to 0.");
-        try { return CncOperationResult<string>.Success(await client.WriteMacroAsync(variable, value, token)); }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        { return CncOperationResult<string>.Failure(Safe(exception.Message)); }
-    }
+    public Task<CncOperationResult<string>> WriteVariableAsync(int variable, int value, CancellationToken token = default) =>
+        Task.FromResult(CncOperationResult<string>.Unsupported());
 
     public async Task<CncOperationResult<int>> ReadPartCounterAsync(CancellationToken token = default)
     {
@@ -502,7 +452,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         {
             if (UsesMtConnect)
             {
-                var status = await ReadMtConnectAsync(configuration.Production.VariableNumber, token);
+                var status = await ReadMtConnectAsync(token);
                 return status.Parts is { } value
                     ? CncOperationResult<int>.Success(value)
                     : CncOperationResult<int>.Failure(
@@ -521,16 +471,13 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         await client.DisposeAsync();
     }
 
-    private Task<HaasMtConnectRead> ReadMtConnectAsync(
-        int productionVariableNumber,
-        CancellationToken token)
+    private Task<HaasMtConnectRead> ReadMtConnectAsync(CancellationToken token)
     {
         var mtConnect = configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs);
         return mtConnectReader.ReadAsync(
             configuration.Host,
             mtConnect.Port,
             mtConnect.TimeoutMs,
-            productionVariableNumber,
             configuration.Production.PartCounterSource,
             token);
     }
@@ -545,8 +492,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             connection.MachineId, config.Host, config.Mdc.Port, config.MtConnect?.Port ?? 8082,
             config.MtConnect?.DprntPort ?? 8080,
             config.ProgramAccess.Enabled, config.ProgramAccess.SharePath,
-            config.ProgramAccess.UsernameSecretId, config.Production.VariableNumber,
-            config.Production.LegacyVariableAlias, config.Production.PartCounterSource,
+            config.ProgramAccess.UsernameSecretId, config.Production.PartCounterSource,
             config.Monitoring.PollingIntervalMs, config.Mdc.TimeoutMs,
             config.Monitoring.StableProgramPolls, config.ProgramAccess.HeaderLineLimit,
             config.ProgramAccess.HeaderByteLimit, config.ProgramAccess.HeaderPartPatterns,
@@ -568,10 +514,6 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             throw new CncValidationException("telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
         if (provider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
             throw new CncValidationException("mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
-        if (value.Production.VariableNumber is < 10000 or > 10999)
-            throw new CncValidationException("production.variableNumber", "Production variable is invalid.");
-        if (value.Production.VariableNumber != value.Production.LegacyVariableAlias + 10000)
-            throw new CncValidationException("production.legacyVariableAlias", "Legacy alias does not map to the NGC variable.");
     }
 
     private static string Safe(string value) => value.Length <= 500 ? value : value[..500];

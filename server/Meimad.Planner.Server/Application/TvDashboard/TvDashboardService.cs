@@ -130,10 +130,9 @@ internal sealed class TvDashboardService
             Connection(machine.ConnectionStatus),
             NormalizeMachineStatus(machine.MachineStatus),
             status,
-            Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation,
-                machine.ProductionModeVariableValue, machine.ProductionStartedAt),
-            Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation, null, null),
-            Job(thirdSource, now, urgentDueByBatch, projectedFinishByOperation, null, null),
+            Job(currentSource, now, urgentDueByBatch, projectedFinishByOperation),
+            Job(nextSource, now, urgentDueByBatch, projectedFinishByOperation),
+            Job(thirdSource, now, urgentDueByBatch, projectedFinishByOperation),
             downtime,
             []);
     }
@@ -142,9 +141,7 @@ internal sealed class TvDashboardService
         TvSourceOperation? operation,
         DateTimeOffset now,
         IReadOnlyDictionary<string, TvSourceBatchDueDate> urgentDueByBatch,
-        IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation,
-        int? productionModeVariableValue,
-        DateTimeOffset? productionStartedAt)
+        IReadOnlyDictionary<string, DateTimeOffset?> projectedFinishByOperation)
     {
         if (operation is null)
         {
@@ -164,7 +161,7 @@ internal sealed class TvDashboardService
             urgent is not null,
             urgent?.WorkFinishDate.ToString("yyyy-MM-dd"),
             PreviewUrl(operation),
-            Progress(operation, now, productionModeVariableValue, productionStartedAt));
+            Progress(operation, now));
     }
 
     private static TvConnectionStatus Connection(string sourceCode)
@@ -200,9 +197,7 @@ internal sealed class TvDashboardService
 
     private static TvOperationProgress Progress(
         TvSourceOperation operation,
-        DateTimeOffset now,
-        int? productionModeVariableValue,
-        DateTimeOffset? productionStartedAt)
+        DateTimeOffset now)
     {
         var statusCode = operation.Status switch
         {
@@ -226,17 +221,6 @@ internal sealed class TvDashboardService
                 100, null, quantity, quantity);
         }
 
-        // The live Haas production-mode variable is authoritative: 0 is setup and 1 is production.
-        // Timing remains only a progress estimate inside the selected phase.
-        if (statusCode is "started" or "paused" && productionModeVariableValue == 1)
-        {
-            var productionEffectiveEnd = statusCode == "paused" ? operation.ActivePauseStartedAt ?? now : now;
-            var productionSeconds = productionStartedAt is { } startedAt
-                ? Math.Max(0, (productionEffectiveEnd - startedAt).TotalSeconds - Math.Max(0, operation.ClosedPauseSeconds))
-                : 0;
-            return ProductionProgress(statusCode, statusLabel, quantity, operation.CycleSeconds, productionSeconds);
-        }
-
         var setupSeconds = Math.Max(0, operation.SetupSeconds ?? 0);
         var effectiveEnd = statusCode == "paused"
             ? operation.ActivePauseStartedAt ?? now
@@ -244,7 +228,7 @@ internal sealed class TvDashboardService
         var elapsedSeconds = operation.ActualStart is { } start
             ? Math.Max(0, (effectiveEnd - start).TotalSeconds - Math.Max(0, operation.ClosedPauseSeconds))
             : 0;
-        if (productionModeVariableValue == 0 || (setupSeconds > 0 && elapsedSeconds < setupSeconds))
+        if (setupSeconds > 0 && elapsedSeconds < setupSeconds)
         {
             var percent = statusCode == "waiting"
                 ? 0

@@ -1402,8 +1402,6 @@ public sealed class PlannerApiClientTests
               "localNetShareEnabled": false,
               "localNetSharePath": null,
               "credentialsReference": null,
-              "productionModeVariable": 10605,
-              "legacyVariableAlias": 605,
               "partCounterSource": "Q500",
               "pollingIntervalMs": 2000,
               "connectionTimeoutMs": 3000,
@@ -1420,7 +1418,7 @@ public sealed class PlannerApiClientTests
         using var api = CreateClient(handler);
         var update = new HaasConnectionUpdate(
             "192.168.0.56", 5051, 8082, 8080, false, null, null,
-            10605, 605, "Q500", 2000, 3000, 2, 50, 32768,
+            "Q500", 2000, 3000, 2, 50, 32768,
             ["PART"], true, 1, "MTCONNECT");
 
         var result = await api.UpdateHaasConnectionAsync(
@@ -2238,6 +2236,31 @@ public sealed class PlannerApiClientTests
         Assert.Equal("\"employee-exception:exception-1:v1\"", handler.Requests[2].IfMatch);
         Assert.StartsWith("/api/v1/resources/resource-1/availability?from=", handler.Requests[3].Path, StringComparison.Ordinal);
         Assert.Equal(HttpMethod.Delete, handler.Requests[4].Method);
+    }
+
+    [Fact]
+    public async Task Cnc_verification_configuration_is_typed_write_only_and_edit_guarded()
+    {
+        const string responseJson = """
+            {"machineId":"machine-1","dprintTransport":"HAAS_DPRNT_TCP","dprintPort":8080,"challengeProgramNumber":9001,"verifyProgramNumber":9002,"customGcodeAlias":605,"nonceVariable":10801,"responseVariable":10802,"verificationStateVariable":10803,"releaseTokenVariable":10804,"secretConfigured":true,"expectedMacroVersion":3,"responseCodeDigits":6,"verificationTimeoutSeconds":300,"enabled":false,"version":1,"updatedAt":"2026-08-26T12:00:00Z"}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, responseJson),
+            Json(HttpStatusCode.OK, responseJson.Replace("\"version\":1", "\"version\":2")));
+        using var api = CreateClient(handler);
+
+        var current = await api.GetCncVerificationSettingsAsync("machine-1");
+        var saved = await api.UpdateCncVerificationSettingsAsync("machine-1", new(
+            "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10801, 10802, 10803, 10804,
+            "a-machine-secret-value", 3, 6, 300, false, 1), "windows-1", 42);
+
+        Assert.True(current.SecretConfigured);
+        Assert.Equal(2, saved.Version);
+        Assert.Equal("/api/v1/machines/machine-1/verification-configuration", handler.Requests[0].Path);
+        Assert.Equal(HttpMethod.Put, handler.Requests[1].Method);
+        Assert.Equal("42", handler.Requests[1].Generation);
+        Assert.Contains("\"verificationSecret\":\"a-machine-secret-value\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("protectedSecret", handler.Requests[1].Body, StringComparison.OrdinalIgnoreCase);
     }
 
     private static PlannerApiClient CreateClient(HttpMessageHandler handler) => new(

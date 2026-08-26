@@ -42,8 +42,6 @@ internal sealed record HaasConnectionSettings(
     bool LocalNetShareEnabled,
     string? LocalNetSharePath,
     string? CredentialsReference,
-    int ProductionModeVariable,
-    int LegacyVariableAlias,
     string PartCounterSource,
     int PollingIntervalMs,
     int ConnectionTimeoutMs,
@@ -92,9 +90,6 @@ internal sealed record HaasMachineSnapshot(
     string? MachineHeaderPartName,
     string? MachineHeaderSourcePath,
     DateTimeOffset? HeaderReadAt,
-    int ProductionVariableNumber,
-    int ProductionVariableValue,
-    DateTimeOffset? ProductionVariableChangedAt,
     int? PartCounter,
     string? RawMdcStatus,
     string? LastError,
@@ -145,11 +140,3 @@ internal sealed record HaasEvent(
     DateTimeOffset Timestamp,
     string PayloadJson,
     string DedupeKey);
-
-internal sealed record HaasMacroWriteResult(
-    bool Succeeded,
-    int VariableNumber,
-    int? PreviousValue,
-    int RequestedValue,
-    string RawResponse,
-    string? ErrorMessage);

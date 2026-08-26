@@ -49,9 +49,10 @@ internal static class HaasMdcProtocol
         var fields = Fields(raw);
         var value = fields.LastOrDefault();
         if (!decimal.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            || parsed is not 0m and not 1m)
+            || parsed != decimal.Truncate(parsed)
+            || parsed is < int.MinValue or > int.MaxValue)
         {
-            throw new FormatException("The configured Haas production variable must return exactly 0 or 1.");
+            throw new FormatException("The Haas macro response was not an integer.");
         }
         return decimal.ToInt32(parsed);
     }
@@ -133,14 +134,9 @@ internal sealed class HaasMdcClient : IHaasMdcClient
 
     public async Task<string> WriteMacroAsync(int variableNumber, int value, CancellationToken cancellationToken = default)
     {
-        if (variableNumber != settings.ProductionModeVariable)
-            throw new InvalidOperationException("Only the configured production-mode variable may be written.");
-        if (value != 0)
-            throw new InvalidOperationException("The Haas connector permits only an audited reset to value 0.");
-        var raw = await QueryAsync($"?E{variableNumber} 0.00000", cancellationToken);
-        if (!HaasMdcProtocol.IsWriteAccepted(raw))
-            throw new IOException("The Haas control rejected the macro-variable reset.");
-        return raw;
+        await Task.CompletedTask;
+        throw new NotSupportedException(
+            "Direct CNC macro writes are disabled; setup verification is performed by protected controller programs.");
     }
 
     private async Task<string> QueryAsync(string command, CancellationToken cancellationToken)

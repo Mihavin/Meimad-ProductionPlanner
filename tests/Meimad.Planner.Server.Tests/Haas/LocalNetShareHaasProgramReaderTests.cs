@@ -54,7 +54,7 @@ public sealed class LocalNetShareHaasProgramReaderTests
 
     private static HaasConnectionSettings Settings(string path) => new(
         "machine-haas", "192.168.0.56", 5051, 8082, 8080, true, path, null,
-        10699, 699, HaasPartCounterSources.M30Counter1, 2000, 3000, 2,
+        HaasPartCounterSources.M30Counter1, 2000, 3000, 2,
         50, 32768, NcHeaderParser.DefaultPartPatterns, true, 1,
         DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, HaasTelemetryProviders.MtConnect);
 }

@@ -154,6 +154,13 @@ public static class ServerApplication
         builder.Services.AddSingleton<IProductionRunExecutionRepository, SqliteProductionRunExecutionRepository>();
         builder.Services.AddSingleton<ProductionRunExecutionService>();
         builder.Services.AddSingleton<IProductionRunCncObservationRepository, SqliteProductionRunCncObservationRepository>();
+        builder.Services.AddSingleton<IProductionRunWorkflowEventRepository, SqliteProductionRunWorkflowEventRepository>();
+        builder.Services.AddSingleton<ProductionRunWorkflowEventService>();
+        builder.Services.AddSingleton<ICncVerificationFoundationRepository, SqliteCncVerificationFoundationRepository>();
+        builder.Services.AddSingleton<CncVerificationFoundationService>();
+        builder.Services.AddSingleton<CncDprintEventIngestionService>();
+        builder.Services.AddSingleton<ICncRawTelemetryConsumer>(services =>
+            services.GetRequiredService<CncDprintEventIngestionService>());
         builder.Services.AddSingleton<IMaterialReconciliationRepository, SqliteMaterialReconciliationRepository>();
         builder.Services.AddSingleton<MaterialReconciliationService>();
         builder.Services.AddSingleton<IMachineRepository, SqliteMachineRepository>();
@@ -322,6 +329,7 @@ public static class ServerApplication
         application.MapMaterialReconciliationEndpoints();
         application.MapMachineEndpoints();
         application.MapCncEndpoints();
+        application.MapCncVerificationEndpoints();
         application.MapHaasEndpoints();
         application.MapMachineDowntimeEndpoints();
         application.MapMachineTypeEndpoints();

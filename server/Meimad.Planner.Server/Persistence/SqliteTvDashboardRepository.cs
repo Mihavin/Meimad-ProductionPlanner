@@ -52,21 +52,12 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                    COALESCE(machine_current_state.connection_status,
                             machine_connections.connection_status,
                             'OFFLINE'),
-                   machine_current_state.machine_state,
-                   haas_machine_snapshots.production_variable_value,
-                   (SELECT production_started_at
-                    FROM haas_bench_sessions
-                    WHERE haas_bench_sessions.machine_id = machines.id
-                      AND haas_bench_sessions.state = 'PRODUCTION'
-                    ORDER BY haas_bench_sessions.updated_at DESC, haas_bench_sessions.id DESC
-                    LIMIT 1)
+                   machine_current_state.machine_state
             FROM machines
             LEFT JOIN machine_connections
               ON machine_connections.machine_id = machines.id
             LEFT JOIN machine_current_state
               ON machine_current_state.machine_id = machines.id
-            LEFT JOIN haas_machine_snapshots
-              ON haas_machine_snapshots.machine_id = machines.id
             WHERE is_active = 1 AND display_enabled = 1
             ORDER BY machines.number COLLATE NOCASE, machines.id;
             """;
@@ -77,9 +68,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
             values.Add(new TvSourceMachine(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2),
                 reader.GetString(3), reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                reader.IsDBNull(7) ? null : ParseInstant(reader.GetString(7)), []));
+                reader.IsDBNull(5) ? null : reader.GetString(5), []));
         }
 
         return values;

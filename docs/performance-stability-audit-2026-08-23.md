@@ -59,11 +59,11 @@ The Windows service is v0.1.33 while the current verified installer/build is v0.
 
 - telemetry provider `MDC`;
 - no MTConnect configuration;
-- production variable `#10605`;
+- the historical macro observation (diagnostic only; no longer workflow authority);
 - part counter source `Q500`;
 - status `OFFLINE` and no successful poll.
 
-The same machine's MTConnect `/current` endpoint returned HTTP 200. Current-code diagnostics reproduced repeated Q500 failures because the response did not contain a valid `PARTS` value. TCP reachability therefore does not make the connector healthy: the Server is selecting the wrong provider/configuration. Install v0.1.34, then explicitly save the Haas configuration with `MTCONNECT`, port `8082`, and the intended production variable (the shop-floor value previously specified as `#10699`). Confirm the unified CNC connection response before relying on the TV indicator. Installation alone must not be assumed to rewrite an already authoritative connector choice.
+The same machine's MTConnect `/current` endpoint returned HTTP 200. Current-code diagnostics reproduced repeated Q500 failures because the response did not contain a valid `PARTS` value. TCP reachability therefore does not make the connector healthy: the Server is selecting the wrong provider/configuration. Install v0.1.34, then explicitly save the Haas configuration with `MTCONNECT`, port `8082`, and the intended parts-counter source. Confirm the unified CNC connection response before relying on the TV indicator. The historical macro setting is obsolete and has no workflow effect. Installation alone must not be assumed to rewrite an already authoritative connector choice.
 
 ### High - multi-output Production Run UI projections are incomplete
 

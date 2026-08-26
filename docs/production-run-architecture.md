@@ -198,6 +198,10 @@ Compatibility façades remain for Case Operation catalog/release and “assign B
 
 Structured append-only events include run/program/output IDs plus affected Batch Operation, Batch, Case, Machine, revision, release, user/client, quantities, versions, timestamps, and reason as applicable. Required event families are RunCreated, RunCompositionChanged, AllocationChanged, ProgramSelectionChanged, RunAssigned/Moved/Reordered/Unassigned, CompatibilityOverrideConfirmed, RunStarted/Suspended/Resumed/Cancelled/Aborted/Completed, ProgramCycleCompleted/ProgramCompleted, and ExecutionCorrected.
 
+Schema v49 adds a distinct append-only operational workflow stream for setup verification, QC, cycle/session observations, and `SEND_TO_QC`. Server receipt time is authoritative; Machine time and source sequence are evidence, not replacements for it. The persistent CNC Setup/Production mode variable is removed and cannot move a run between workflow states. Protected temporary variables may later participate only in a commissioned verification handshake and are never the durable workflow projection.
+
+Schema v50 adds Offset Loader release identity without changing Production Run composition or approved NC files. Each release pins the Run, Machine, approved G-code release, exact tool-table release, and numeric verification token; a separate current pointer supersedes but never rewrites history. Strict DPRINT ingestion can record a current `OFFSET_LOADER_COMPLETED` event and sequence anomaly evidence, but it does not yet create a verification session or assert that the protected macro identified the active NC program.
+
 Read models:
 
 - Planning Board returns run cards in Machine backlogs and Batch Operations with remaining unallocated quantity in the pool.

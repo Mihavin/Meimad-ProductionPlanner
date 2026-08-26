@@ -43,18 +43,18 @@ public sealed class CncPlatformTests
         Assert.False(await repository.SaveSnapshotAsync(connection,
             snapshot with { Timestamp = snapshot.Timestamp.AddSeconds(1) }, [raw with { Timestamp = snapshot.Timestamp.AddSeconds(1) }], default));
         Assert.True(await repository.SaveSnapshotAsync(connection,
-            FakeCncMachineAdapter.Snapshot("PRODUCTION", 1, 10), [raw], default));
+            FakeCncMachineAdapter.Snapshot("IGNORED", 1, 11), [raw], default));
 
         await using var db = await fixture.Database.OpenConnectionAsync();
         await using var history = db.CreateCommand();
         history.CommandText = "SELECT COUNT(*) FROM machine_state_history WHERE machine_id = 'machine-cnc';";
         Assert.Equal(2L, (long)(await history.ExecuteScalarAsync())!);
         await using var current = db.CreateCommand();
-        current.CommandText = "SELECT COUNT(*), production_variable_value FROM machine_current_state WHERE machine_id = 'machine-cnc';";
+        current.CommandText = "SELECT COUNT(*), part_counter FROM machine_current_state WHERE machine_id = 'machine-cnc';";
         await using var reader = await current.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal(1, reader.GetInt32(0));
-        Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal(11, reader.GetInt32(1));
         await reader.DisposeAsync();
         await using var expired = db.CreateCommand();
         expired.CommandText = "SELECT COUNT(*) FROM machine_telemetry_raw WHERE operation = 'OLD';";
@@ -62,7 +62,7 @@ public sealed class CncPlatformTests
     }
 
     [Fact]
-    public async Task Fake_adapter_setup_to_production_updates_Bench_and_WebSocket_without_refresh()
+    public async Task Legacy_macro_change_cannot_move_Bench_out_of_setup()
     {
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Cnc.Live", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build([
@@ -92,15 +92,15 @@ public sealed class CncPlatformTests
             adapter.SetVariable(1);
             var production = (await adapter.ReadSnapshotAsync()).Snapshot;
             var productionResult = await consumer.ConsumeAsync(production, default);
-            Assert.Contains("BenchProductionStarted", productionResult.DomainEvents);
-            await publisher.PublishAsync(new("BenchStateChanged", "machine-live", production.Timestamp,
-                new { eventTypes = productionResult.DomainEvents }), default);
+            Assert.DoesNotContain("BenchProductionStarted", productionResult.DomainEvents);
+            await publisher.PublishAsync(new("MachineSnapshotUpdated", "machine-live", production.Timestamp,
+                production), default);
             var second = await ReceiveAsync(socket);
-            Assert.Equal("BenchStateChanged", second.GetProperty("type").GetString());
+            Assert.Equal("MachineSnapshotUpdated", second.GetProperty("type").GetString());
 
             var monitor = await application.Services.GetRequiredService<IHaasIntegrationRepository>()
                 .ReadMonitorAsync("machine-live", DateTimeOffset.UtcNow, default);
-            Assert.Equal("PRODUCTION", monitor!.ActiveBench!.State);
+            Assert.Equal(HaasBenchStates.Setup, monitor!.ActiveBench!.State);
         }
         finally
         {
@@ -112,34 +112,26 @@ public sealed class CncPlatformTests
     }
 
     [Fact]
-    public async Task Degraded_stale_missing_and_nonbinary_macro_snapshots_cannot_start_Bench()
+    public async Task Offline_or_missing_program_snapshots_cannot_start_Bench()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedBenchAsync(fixture.Database);
         var repository = new SqliteHaasIntegrationRepository(fixture.Database);
         var consumer = new BenchAutomationService(repository);
 
-        var degraded = AutomationSnapshot(null, 10) with
+        var offline = AutomationSnapshot(10) with
         {
-            ConnectionStatus = CncConnectionStates.Degraded
+            ConnectionStatus = CncConnectionStates.Offline
         };
-        var stale = AutomationSnapshot(0, 10);
-        stale = stale with
+        var missingProgram = AutomationSnapshot(10) with
         {
-            Production = stale.Production with
-            {
-                ModeVariableValue = new(0, DateTimeOffset.UtcNow, true)
-            }
+            Program = new CncProgramSnapshot(
+                new(null, DateTimeOffset.UtcNow, false),
+                new(null, DateTimeOffset.UtcNow, false),
+                new(null, null, false))
         };
-        var missing = AutomationSnapshot(null, 10);
-        var missingNumber = AutomationSnapshot(0, 10);
-        missingNumber = missingNumber with
-        {
-            Production = missingNumber.Production with { ModeVariableNumber = null }
-        };
-        var nonbinary = AutomationSnapshot(5, 10);
 
-        foreach (var snapshot in new[] { degraded, stale, missing, missingNumber, nonbinary })
+        foreach (var snapshot in new[] { offline, missingProgram })
         {
             var result = await consumer.ConsumeAsync(snapshot, default);
             Assert.Empty(result.DomainEvents);
@@ -148,72 +140,18 @@ public sealed class CncPlatformTests
             Assert.Null(monitor!.ActiveBench);
         }
 
-        var valid = await consumer.ConsumeAsync(AutomationSnapshot(0, 10), default);
+        var valid = await consumer.ConsumeAsync(AutomationSnapshot(10), default);
         Assert.Contains("BenchAutoStarted", valid.DomainEvents);
     }
 
     [Fact]
-    public async Task Invalid_current_macro_snapshots_never_use_previous_value_or_credit_parts()
+    public async Task Degraded_optional_capability_can_still_start_setup_with_fresh_program_and_counter()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedBenchAsync(fixture.Database);
         var repository = new SqliteHaasIntegrationRepository(fixture.Database);
         var consumer = new BenchAutomationService(repository);
-
-        await consumer.ConsumeAsync(AutomationSnapshot(0, 10), default);
-        var production = await consumer.ConsumeAsync(AutomationSnapshot(1, 10), default);
-        Assert.Contains("BenchProductionStarted", production.DomainEvents);
-
-        var degraded = AutomationSnapshot(null, 11) with
-        {
-            ConnectionStatus = CncConnectionStates.Degraded
-        };
-        var stale = AutomationSnapshot(1, 12);
-        stale = stale with
-        {
-            Production = stale.Production with
-            {
-                ModeVariableValue = stale.Production.ModeVariableValue with { Stale = true }
-            }
-        };
-        var missing = AutomationSnapshot(null, 13);
-        var nonbinary = AutomationSnapshot(5, 14);
-        var staleCounter = AutomationSnapshot(1, 15);
-        staleCounter = staleCounter with
-        {
-            PartCounter = staleCounter.PartCounter with { Stale = true }
-        };
-
-        foreach (var snapshot in new[] { degraded, stale, missing, nonbinary, staleCounter })
-        {
-            var result = await consumer.ConsumeAsync(snapshot, default);
-            Assert.Empty(result.DomainEvents);
-        }
-
-        var unchanged = await repository.ReadMonitorAsync(
-            "machine-live", DateTimeOffset.UtcNow, default);
-        Assert.Equal(HaasBenchStates.Production, unchanged!.ActiveBench!.State);
-        Assert.Equal(0, unchanged.ActiveBench.ProducedQuantity);
-        Assert.Equal(10, unchanged.ActiveBench.PreviousPartCounter);
-
-        var recovered = await consumer.ConsumeAsync(AutomationSnapshot(1, 15), default);
-        Assert.Contains("PartCompleted", recovered.DomainEvents);
-        var monitor = await repository.ReadMonitorAsync(
-            "machine-live", DateTimeOffset.UtcNow, default);
-        Assert.Equal(5, monitor!.ActiveBench!.ProducedQuantity);
-    }
-
-    [Fact]
-    public async Task Degraded_optional_capability_does_not_discard_fresh_binary_macro_and_counter()
-    {
-        await using var fixture = await TemporaryDatabase.CreateAsync();
-        await SeedBenchAsync(fixture.Database);
-        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
-        var consumer = new BenchAutomationService(repository);
-
-        await consumer.ConsumeAsync(AutomationSnapshot(0, 10), default);
-        await consumer.ConsumeAsync(AutomationSnapshot(1, 10), default);
-        var degraded = AutomationSnapshot(1, 11) with
+        var degraded = AutomationSnapshot(10) with
         {
             ConnectionStatus = CncConnectionStates.Degraded,
             LastError = "Optional program-header access is unavailable."
@@ -221,10 +159,29 @@ public sealed class CncPlatformTests
 
         var result = await consumer.ConsumeAsync(degraded, default);
 
-        Assert.Contains("PartCompleted", result.DomainEvents);
+        Assert.Contains("BenchAutoStarted", result.DomainEvents);
         var monitor = await repository.ReadMonitorAsync(
             "machine-live", DateTimeOffset.UtcNow, default);
-        Assert.Equal(1, monitor!.ActiveBench!.ProducedQuantity);
+        Assert.Equal(HaasBenchStates.Setup, monitor!.ActiveBench!.State);
+    }
+
+    [Fact]
+    public async Task Stale_counter_is_not_forwarded_to_observation_repository()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedBenchAsync(fixture.Database);
+        var repository = new SqliteHaasIntegrationRepository(fixture.Database);
+        var consumer = new BenchAutomationService(repository);
+        var stale = AutomationSnapshot(10) with
+        {
+            PartCounter = new CncFreshValue<int?>(10, DateTimeOffset.UtcNow, true)
+        };
+
+        var result = await consumer.ConsumeAsync(stale, default);
+
+        Assert.Contains("BenchAutoStarted", result.DomainEvents);
+        var snapshot = await repository.GetSnapshotAsync("machine-live", default);
+        Assert.Null(snapshot!.PartCounter);
     }
 
     [Fact]
@@ -320,7 +277,7 @@ public sealed class CncPlatformTests
                 headerLineLimit = 50, headerByteLimit = 32768,
                 headerPartPatterns = new[] { "PART" }
             },
-            production = new { variableNumber = 10605, legacyVariableAlias = 605, partCounterSource = "Q500" },
+            production = new { partCounterSource = "Q500" },
             monitoring = new { pollingIntervalMs = 1000, stableProgramPolls = 2, maximumReconnectBackoffMs = 30000, rawTelemetryRetentionDays = 14 }
         });
         await using var connection = await database.OpenConnectionAsync();
@@ -344,7 +301,7 @@ public sealed class CncPlatformTests
             true, false, configuration, null, null, 14, 1, now, now);
     }
 
-    private static MachineSnapshot AutomationSnapshot(int? variable, int counter)
+    private static MachineSnapshot AutomationSnapshot(int counter)
     {
         var at = DateTimeOffset.UtcNow;
         return new MachineSnapshot(
@@ -353,8 +310,6 @@ public sealed class CncPlatformTests
             new("RUNNING", at, false),
             new(new("O1234", at, false), new("PART-LIVE", at, false),
                 new("MACHINE.NC", at, false)),
-            new(variable switch { 0 => "SETUP", 1 => "PRODUCTION", _ => null },
-                10605, new(variable, variable is null ? null : at, false)),
             new(counter, at, false),
             new(null, null, null, null),
             new Dictionary<string, string>
@@ -366,11 +321,9 @@ public sealed class CncPlatformTests
             {
                 ["machineState"] = CncComponentStates.Available,
                 ["programHeader"] = CncComponentStates.Available,
-                ["macroVariables"] = variable is 0 or 1
-                    ? CncComponentStates.Available : CncComponentStates.Unavailable,
                 ["partCounter"] = CncComponentStates.Available
             },
-            variable is 0 or 1 ? null : "Production variable is unavailable or nonbinary.");
+            null);
     }
 
     private static async Task SeedBenchAsync(SqliteDatabase database)
@@ -396,11 +349,11 @@ public sealed class CncPlatformTests
             VALUES ('assignment-live', 'operation-live', 'machine-live', 0);
             INSERT INTO haas_connection_settings (
                 machine_id, host, mdc_port, mtconnect_port, local_net_share_enabled,
-                production_mode_variable, legacy_variable_alias, part_counter_source,
+                part_counter_source,
                 polling_interval_ms, connection_timeout_ms, stable_program_polls,
                 header_line_limit, header_byte_limit, header_part_patterns_json,
                 enabled, version, created_at, updated_at)
-            VALUES ('machine-live', '127.0.0.1', 5051, 8082, 0, 10605, 605, 'Q500',
+            VALUES ('machine-live', '127.0.0.1', 5051, 8082, 0, 'Q500',
                 2000, 3000, 2, 50, 32768, '["PART"]', 0, 1, $at, $at);
             """;
         command.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
@@ -568,7 +521,7 @@ internal sealed class FakeCncMachineAdapter(string machineId, string connectionI
     public string MachineId { get; } = machineId;
     public CncAdapterType AdapterType => CncAdapterType.HaasNgc;
     public CncAdapterCapabilities GetCapabilities() => new(
-        true, true, true, true, true, true, false, false, false, false, false, false, false);
+        true, true, true, true, false, false, false, false, false, false, false, false, false);
     public Task ConnectAsync(CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); Connected = true; return Task.CompletedTask; }
     public Task DisconnectAsync(CancellationToken token = default)
@@ -588,9 +541,9 @@ internal sealed class FakeCncMachineAdapter(string machineId, string connectionI
         Task.FromResult(CncOperationResult<CncProgramSnapshot>.Success(new(
             new(program, DateTimeOffset.UtcNow, false), new(part, DateTimeOffset.UtcNow, false), new(null, null, false))));
     public Task<CncOperationResult<int>> ReadVariableAsync(int variableNumber, CancellationToken token = default) =>
-        Task.FromResult(CncOperationResult<int>.Success(variable));
+        Task.FromResult(CncOperationResult<int>.Unsupported());
     public Task<CncOperationResult<string>> WriteVariableAsync(int variableNumber, int value, CancellationToken token = default)
-    { variable = value; return Task.FromResult(CncOperationResult<string>.Success("fake")); }
+        => Task.FromResult(CncOperationResult<string>.Unsupported());
     public Task<CncOperationResult<int>> ReadPartCounterAsync(CancellationToken token = default) =>
         Task.FromResult(CncOperationResult<int>.Success(counter));
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -609,10 +562,10 @@ internal sealed class FakeCncMachineAdapter(string machineId, string connectionI
         return new(machineId, connectionId, "HAAS_NGC", at, "ONLINE", at,
             new(state, at, false),
             new(new(program, at, false), new(part, at, false), new("MACHINE.NC", at, false)),
-            new(mode, 10605, new(variable, at, false)), new(counter, at, false),
+            new(counter, at, false),
             new(null, null, null, null),
             new Dictionary<string, string> { ["MDC"] = "AVAILABLE", ["PROGRAM_ACCESS"] = "AVAILABLE" },
-            new Dictionary<string, string> { ["machineState"] = "AVAILABLE", ["programHeader"] = "AVAILABLE", ["macroVariables"] = "AVAILABLE", ["partCounter"] = "AVAILABLE" },
+            new Dictionary<string, string> { ["machineState"] = "AVAILABLE", ["programHeader"] = "AVAILABLE", ["partCounter"] = "AVAILABLE" },
             null);
     }
 }

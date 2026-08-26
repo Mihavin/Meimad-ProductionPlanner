@@ -62,7 +62,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(48L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(50L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -173,6 +173,10 @@ public sealed class MigrationTests
         Assert.Equal("production_run_execution_events", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 48;";
         Assert.Equal("eink_physical_tablets_and_workflow", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 49;";
+        Assert.Equal("operational_workflow_events_remove_cnc_mode_variable", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 50;";
+        Assert.Equal("cnc_verification_foundation", await migrationCommand.ExecuteScalarAsync());
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
@@ -262,7 +266,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(48L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(50L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -388,7 +392,7 @@ public sealed class MigrationTests
                 DROP TRIGGER nc_program_headers_immutable_delete;
                 DROP TRIGGER haas_events_immutable_update;
                 DROP TRIGGER haas_events_immutable_delete;
-                DROP TABLE haas_macro_write_audits;
+                DROP TABLE IF EXISTS haas_macro_write_audits;
                 DROP TABLE haas_events;
                 DROP TABLE haas_bench_state_intervals;
                 DROP TABLE haas_bench_sessions;
@@ -805,7 +809,7 @@ public sealed class MigrationTests
                 DROP TRIGGER nc_program_headers_immutable_delete;
                 DROP TRIGGER haas_events_immutable_update;
                 DROP TRIGGER haas_events_immutable_delete;
-                DROP TABLE haas_macro_write_audits;
+                DROP TABLE IF EXISTS haas_macro_write_audits;
                 DROP TABLE haas_events;
                 DROP TABLE haas_bench_state_intervals;
                 DROP TABLE haas_bench_sessions;
@@ -1017,7 +1021,7 @@ public sealed class MigrationTests
                 DROP TRIGGER nc_program_headers_immutable_delete;
                 DROP TRIGGER haas_events_immutable_update;
                 DROP TRIGGER haas_events_immutable_delete;
-                DROP TABLE haas_macro_write_audits;
+                DROP TABLE IF EXISTS haas_macro_write_audits;
                 DROP TABLE haas_events;
                 DROP TABLE haas_bench_state_intervals;
                 DROP TABLE haas_bench_sessions;
@@ -1230,7 +1234,7 @@ public sealed class MigrationTests
                 DROP TRIGGER nc_program_headers_immutable_delete;
                 DROP TRIGGER haas_events_immutable_update;
                 DROP TRIGGER haas_events_immutable_delete;
-                DROP TABLE haas_macro_write_audits;
+                DROP TABLE IF EXISTS haas_macro_write_audits;
                 DROP TABLE haas_events;
                 DROP TABLE haas_bench_state_intervals;
                 DROP TABLE haas_bench_sessions;
@@ -1417,7 +1421,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 49;";
+            command.CommandText = "PRAGMA user_version = 51;";
             await command.ExecuteNonQueryAsync();
         }
 

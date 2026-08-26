@@ -15,9 +15,16 @@ public sealed class HaasSetupViewTests
         Assert.Contains("Content=\"Test MTConnect\" Command=\"{Binding TestHaasMtConnectCommand}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"Test MDC\" Command=\"{Binding TestHaasMdcCommand}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("TestHaasNetShareCommand", xaml, StringComparison.Ordinal);
-        Assert.Contains("ReadHaasVariableCommand", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadHaasVariableCommand", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Production Variable", xaml, StringComparison.Ordinal);
+        Assert.Contains("direct macro writes are disabled", xaml, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("HaasDiagnostics", xaml, StringComparison.Ordinal);
         Assert.Contains("HaasTimeline", xaml, StringComparison.Ordinal);
+        Assert.Contains("Protected setup verification (commissioning gated)", xaml, StringComparison.Ordinal);
+        Assert.Contains("LoadVerificationConfigurationCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("SaveVerificationConfigurationCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("PasswordBox PasswordChanged=\"VerificationSecret_PasswordChanged\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Keep verification disabled until", xaml, StringComparison.Ordinal);
     }
 
     private static string FindSetupView()

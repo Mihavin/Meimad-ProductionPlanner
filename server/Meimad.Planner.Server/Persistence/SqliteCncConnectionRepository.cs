@@ -173,14 +173,13 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
                     machine_id, connection_id, adapter_type, observed_at, connection_status,
                     last_seen_at, machine_state, program_number, program_number_read_at,
                     part_name, part_name_read_at, part_name_stale, header_source_path,
-                    header_read_at, production_mode, production_variable_number,
-                    production_variable_value, production_variable_read_at, part_counter,
+                    header_read_at, part_counter,
                     part_counter_read_at, spindle_running, spindle_rpm, feed_rate,
                     active_alarm_count, component_health_json, capability_health_json,
                     snapshot_json, last_error, version)
                 VALUES ($machineId, $connectionId, $adapter, $at, $status, $lastSeen,
                     $machineState, $program, $programAt, $part, $partAt, $partStale,
-                    $headerPath, $headerAt, $mode, $variable, $variableValue, $variableAt,
+                    $headerPath, $headerAt,
                     $counter, $counterAt, $spindleRunning, $spindleRpm, $feedRate, $alarms,
                     $components, $capabilities, $snapshot, $error, 1)
                 ON CONFLICT(machine_id) DO UPDATE SET
@@ -190,10 +189,7 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
                     program_number = excluded.program_number, program_number_read_at = excluded.program_number_read_at,
                     part_name = excluded.part_name, part_name_read_at = excluded.part_name_read_at,
                     part_name_stale = excluded.part_name_stale, header_source_path = excluded.header_source_path,
-                    header_read_at = excluded.header_read_at, production_mode = excluded.production_mode,
-                    production_variable_number = excluded.production_variable_number,
-                    production_variable_value = excluded.production_variable_value,
-                    production_variable_read_at = excluded.production_variable_read_at,
+                    header_read_at = excluded.header_read_at,
                     part_counter = excluded.part_counter, part_counter_read_at = excluded.part_counter_read_at,
                     spindle_running = excluded.spindle_running, spindle_rpm = excluded.spindle_rpm,
                     feed_rate = excluded.feed_rate, active_alarm_count = excluded.active_alarm_count,
@@ -282,7 +278,6 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         || old.Program.ProgramNumber.Value != value.Program.ProgramNumber.Value
         || old.Program.PartName.Value != value.Program.PartName.Value
         || old.Program.PartName.Stale != value.Program.PartName.Stale
-        || old.Production.ModeVariableValue.Value != value.Production.ModeVariableValue.Value
         || old.PartCounter.Value != value.PartCounter.Value
         || old.LastError != value.LastError;
 
@@ -320,12 +315,11 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         command.CommandText = """
             INSERT INTO haas_connection_settings (
                 machine_id, host, mdc_port, mtconnect_port, local_net_share_enabled,
-                local_net_share_path, credentials_reference, production_mode_variable,
-                legacy_variable_alias, part_counter_source, polling_interval_ms,
+                local_net_share_path, credentials_reference, part_counter_source, polling_interval_ms,
                 connection_timeout_ms, stable_program_polls, header_line_limit,
                 header_byte_limit, header_part_patterns_json, enabled, version, created_at, updated_at)
             VALUES ($machineId, $host, $mdcPort, $mtConnectPort, $shareEnabled, $sharePath,
-                $credential, $variable, $legacy, $counterSource, $polling, $timeout,
+                $credential, $counterSource, $polling, $timeout,
                 $stable, $lineLimit, $byteLimit, $patterns, $enabled, 1, $createdAt, $updatedAt)
             ON CONFLICT(machine_id) DO UPDATE SET
                 host = excluded.host, mdc_port = excluded.mdc_port,
@@ -333,8 +327,6 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
                 local_net_share_enabled = excluded.local_net_share_enabled,
                 local_net_share_path = excluded.local_net_share_path,
                 credentials_reference = excluded.credentials_reference,
-                production_mode_variable = excluded.production_mode_variable,
-                legacy_variable_alias = excluded.legacy_variable_alias,
                 part_counter_source = excluded.part_counter_source,
                 polling_interval_ms = excluded.polling_interval_ms,
                 connection_timeout_ms = excluded.connection_timeout_ms,
@@ -352,8 +344,6 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         command.Parameters.AddWithValue("$shareEnabled", configuration.ProgramAccess.Enabled);
         command.Parameters.AddWithValue("$sharePath", Db(configuration.ProgramAccess.SharePath));
         command.Parameters.AddWithValue("$credential", Db(value.UsernameSecretId));
-        command.Parameters.AddWithValue("$variable", configuration.Production.VariableNumber);
-        command.Parameters.AddWithValue("$legacy", configuration.Production.LegacyVariableAlias);
         command.Parameters.AddWithValue("$counterSource", configuration.Production.PartCounterSource);
         command.Parameters.AddWithValue("$polling", value.PollingIntervalMs);
         command.Parameters.AddWithValue("$timeout", value.ConnectionTimeoutMs);
@@ -384,10 +374,6 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         command.Parameters.AddWithValue("$partStale", value.Program.PartName.Stale);
         command.Parameters.AddWithValue("$headerPath", Db(value.Program.HeaderSourcePath.Value));
         command.Parameters.AddWithValue("$headerAt", Db(Instant(value.Program.HeaderSourcePath.ReadAt)));
-        command.Parameters.AddWithValue("$mode", Db(value.Production.Mode));
-        command.Parameters.AddWithValue("$variable", Db(value.Production.ModeVariableNumber));
-        command.Parameters.AddWithValue("$variableValue", Db(value.Production.ModeVariableValue.Value));
-        command.Parameters.AddWithValue("$variableAt", Db(Instant(value.Production.ModeVariableValue.ReadAt)));
         command.Parameters.AddWithValue("$counter", Db(value.PartCounter.Value));
         command.Parameters.AddWithValue("$counterAt", Db(Instant(value.PartCounter.ReadAt)));
         command.Parameters.AddWithValue("$spindleRunning", Db(value.Telemetry.SpindleRunning));

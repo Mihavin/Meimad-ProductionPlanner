@@ -11,7 +11,8 @@ internal sealed class CncConnectionManager(
     ICncLivePublisher livePublisher,
     TimeProvider timeProvider,
     ILoggerFactory loggerFactory,
-    ILogger<CncConnectionManager> logger) : BackgroundService, ICncConnectionManager
+    ILogger<CncConnectionManager> logger,
+    IEnumerable<ICncRawTelemetryConsumer>? rawConsumers = null) : BackgroundService, ICncConnectionManager
 {
     private readonly ConcurrentDictionary<string, WorkerLease> workers = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim workerLifecycle = new(1, 1);
@@ -110,7 +111,8 @@ internal sealed class CncConnectionManager(
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(hostToken);
         var worker = new MachineConnectionWorker(
             connection, repository, adapterFactory, consumers.ToArray(), livePublisher,
-            timeProvider, loggerFactory.CreateLogger<MachineConnectionWorker>());
+            timeProvider, loggerFactory.CreateLogger<MachineConnectionWorker>(),
+            rawConsumers?.ToArray() ?? []);
         var task = worker.RunAsync(cancellation.Token);
         workers[connection.MachineId] = new(connection.Version, cancellation, task);
         _ = task.ContinueWith(completed =>
@@ -168,7 +170,8 @@ internal sealed class MachineConnectionWorker(
     IReadOnlyList<ICncSnapshotConsumer> consumers,
     ICncLivePublisher livePublisher,
     TimeProvider timeProvider,
-    ILogger<MachineConnectionWorker> logger)
+    ILogger<MachineConnectionWorker> logger,
+    IReadOnlyList<ICncRawTelemetryConsumer>? rawConsumers = null)
 {
     private static readonly int[] BackoffSteps = [1000, 2000, 5000, 10000, 30000];
 
@@ -196,6 +199,8 @@ internal sealed class MachineConnectionWorker(
                     await repository.UpdateConnectionStateAsync(connection.Id, snapshot.ConnectionStatus,
                         snapshot.Timestamp, true, snapshot.LastError, token);
                     var changed = await repository.SaveSnapshotAsync(connection, snapshot, observed.RawTelemetry, token);
+                    foreach (var rawConsumer in rawConsumers ?? [])
+                        await rawConsumer.ConsumeAsync(connection.MachineId, observed.RawTelemetry, token);
                     var events = new List<string>();
                     foreach (var consumer in consumers)
                     {
@@ -263,9 +268,6 @@ internal sealed class MachineConnectionWorker(
                 : new(previous.Program.ProgramNumber with { Stale = previous.Program.ProgramNumber.Value is not null },
                     previous.Program.PartName with { Stale = previous.Program.PartName.Value is not null },
                     previous.Program.HeaderSourcePath with { Stale = previous.Program.HeaderSourcePath.Value is not null }),
-            previous?.Production is { } production
-                ? production with { ModeVariableValue = production.ModeVariableValue with { Stale = production.ModeVariableValue.Value is not null } }
-                : new(null, null, new(null, null, true)),
             partCounter,
             previous?.Telemetry ?? new(null, null, null, null),
             new Dictionary<string, string> { ["CONNECTION"] = CncComponentStates.Unavailable },

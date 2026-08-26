@@ -28,7 +28,6 @@ public sealed class HaasApiTests
                 {
                     host = address.Host, mdcPort = 5051, mtConnectPort = address.Port,
                     telemetryProvider = "MTCONNECT", localNetShareEnabled = false,
-                    productionModeVariable = 10605, legacyVariableAlias = 605,
                     partCounterSource = "M30_COUNTER_1", pollingIntervalMs = 2000,
                     connectionTimeoutMs = 5000, stableProgramPolls = 2,
                     headerLineLimit = 50, headerByteLimit = 32768,
@@ -49,7 +48,7 @@ public sealed class HaasApiTests
     }
 
     [Fact]
-    public async Task Configurable_macro_and_monitoring_contract_are_server_owned()
+    public async Task Monitoring_contract_is_server_owned_and_excludes_legacy_workflow_macro()
     {
         await RunAsync(async (application, client) =>
         {
@@ -61,8 +60,8 @@ public sealed class HaasApiTests
             initial.EnsureSuccessStatusCode();
             using (var json = JsonDocument.Parse(await initial.Content.ReadAsStringAsync()))
             {
-                Assert.Equal(10605, json.RootElement.GetProperty("productionModeVariable").GetInt32());
-                Assert.Equal(605, json.RootElement.GetProperty("legacyVariableAlias").GetInt32());
+                Assert.False(json.RootElement.TryGetProperty("productionModeVariable", out _));
+                Assert.False(json.RootElement.TryGetProperty("legacyVariableAlias", out _));
                 Assert.Equal(0, json.RootElement.GetProperty("version").GetInt32());
             }
 
@@ -71,8 +70,7 @@ public sealed class HaasApiTests
                 {
                     host = "192.168.1.50", mdcPort = 5051, mtConnectPort = 8082,
                     localNetShareEnabled = true, localNetSharePath = @"\\HAAS-VF3\User Data",
-                    credentialsReference = "windows-service-account", productionModeVariable = 10606,
-                    legacyVariableAlias = 606, partCounterSource = "M30_COUNTER_1",
+                    credentialsReference = "windows-service-account", partCounterSource = "M30_COUNTER_1",
                     pollingIntervalMs = 2500, connectionTimeoutMs = 4000, stableProgramPolls = 2,
                     headerLineLimit = 50, headerByteLimit = 32768,
                     headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
@@ -81,7 +79,7 @@ public sealed class HaasApiTests
             saved.EnsureSuccessStatusCode();
             using (var json = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()))
             {
-                Assert.Equal(10606, json.RootElement.GetProperty("productionModeVariable").GetInt32());
+                Assert.False(json.RootElement.TryGetProperty("productionModeVariable", out _));
                 Assert.Equal("M30_COUNTER_1", json.RootElement.GetProperty("partCounterSource").GetString());
                 Assert.Equal("MTCONNECT", json.RootElement.GetProperty("telemetryProvider").GetString());
                 Assert.Equal(1, json.RootElement.GetProperty("version").GetInt32());
@@ -94,8 +92,7 @@ public sealed class HaasApiTests
                 {
                     host = "192.168.1.50", mdcPort = 5051, mtConnectPort = 8082,
                     localNetShareEnabled = true, localNetSharePath = @"\\HAAS-VF3\User Data",
-                    credentialsReference = "windows-service-account", productionModeVariable = 10606,
-                    legacyVariableAlias = 606, partCounterSource = "M30_COUNTER_1",
+                    credentialsReference = "windows-service-account", partCounterSource = "M30_COUNTER_1",
                     pollingIntervalMs = 2500, connectionTimeoutMs = 4000, stableProgramPolls = 2,
                     headerLineLimit = 50, headerByteLimit = 32768,
                     headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
@@ -139,7 +136,7 @@ public sealed class HaasApiTests
                 {
                     adapterType = "HAAS_NGC", enabled = false,
                     pollingIntervalMs = 3000, connectionTimeoutMs = 4500,
-                    maximumReconnectBackoffMs = 30000, allowRead = true, allowWrite = true,
+                    maximumReconnectBackoffMs = 30000, allowRead = true, allowWrite = false,
                     rawTelemetryRetentionDays = 14,
                     usernameSecretId = "username-ref", passwordSecretId = "password-ref", version = 2,
                     configuration = new
@@ -156,7 +153,6 @@ public sealed class HaasApiTests
                         },
                         production = new
                         {
-                            variableNumber = 10607, legacyVariableAlias = 607,
                             partCounterSource = "Q500"
                         },
                         monitoring = new
@@ -174,7 +170,7 @@ public sealed class HaasApiTests
             using var projectedHaas = await client.GetAsync("/api/v1/machines/machine-haas/haas/connection");
             projectedHaas.EnsureSuccessStatusCode();
             using var projectedJson = JsonDocument.Parse(await projectedHaas.Content.ReadAsStringAsync());
-            Assert.Equal(10607, projectedJson.RootElement.GetProperty("productionModeVariable").GetInt32());
+            Assert.False(projectedJson.RootElement.TryGetProperty("productionModeVariable", out _));
             Assert.Equal(8083, projectedJson.RootElement.GetProperty("mtConnectPort").GetInt32());
             Assert.Equal("MDC", projectedJson.RootElement.GetProperty("telemetryProvider").GetString());
         });
@@ -209,7 +205,6 @@ public sealed class HaasApiTests
                         },
                         production = new
                         {
-                            variableNumber = 10605, legacyVariableAlias = 605,
                             partCounterSource = "Q500"
                         },
                         monitoring = new
@@ -225,8 +220,7 @@ public sealed class HaasApiTests
                 "/api/v1/machines/machine-haas/haas/connection", new
                 {
                     host = "192.168.0.56", mdcPort = 5051, mtConnectPort = 8082,
-                    localNetShareEnabled = false, productionModeVariable = 10605,
-                    legacyVariableAlias = 605, partCounterSource = "Q500",
+                    localNetShareEnabled = false, partCounterSource = "Q500",
                     pollingIntervalMs = 2000, connectionTimeoutMs = 3000,
                     stableProgramPolls = 2, headerLineLimit = 50, headerByteLimit = 32768,
                     headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },

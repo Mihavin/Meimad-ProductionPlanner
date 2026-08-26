@@ -12,6 +12,8 @@ The Color E-Ink Work Tablet is a low-cost, low-power operational display and loc
 
 It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative planning data source. Its one Server write is the scoped `SEND_TO_QC` operational event.
 
+The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside the future setup-verification handshake; the tablet may display a derived response but never receives the raw secret or becomes workflow authority.
+
 Primary goals are:
 
 - One inexpensive, unified device design for all Machines.

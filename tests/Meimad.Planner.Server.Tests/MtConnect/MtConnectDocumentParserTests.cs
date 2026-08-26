@@ -79,12 +79,12 @@ public sealed class MtConnectDocumentParserTests
                 Assert.Equal(42, counter.NumericValue);
             });
 
-        var productionVariable = Assert.Single(device.MacroVariables,
+        var temporaryMacro = Assert.Single(device.MacroVariables,
             value => value.VariableNumber == 10605);
-        Assert.Equal(1m, productionVariable.NumericValue);
-        Assert.Equal("1.0", productionVariable.RawValue);
+        Assert.Equal(1m, temporaryMacro.NumericValue);
+        Assert.Equal("1.0", temporaryMacro.RawValue);
         Assert.Equal("Macros 10600 to 10799",
-            productionVariable.RangeObservation.Definition?.Source);
+            temporaryMacro.RangeObservation.Definition?.Source);
         var unavailableVariable = Assert.Single(device.MacroVariables,
             value => value.VariableNumber == 10606);
         Assert.Null(unavailableVariable.NumericValue);

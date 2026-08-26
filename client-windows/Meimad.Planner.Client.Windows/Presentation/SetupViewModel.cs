@@ -81,8 +81,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool haasLocalNetShareEnabled;
     private string haasLocalNetSharePath = string.Empty;
     private string haasCredentialsReference = string.Empty;
-    private string haasProductionVariable = "10605";
-    private string haasLegacyVariableAlias = "605";
     private string haasPartCounterSource = "Q500";
     private string haasPollingIntervalMs = "2000";
     private string haasConnectionTimeoutMs = "3000";
@@ -90,6 +88,21 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private int haasSettingsVersion;
     private string haasDiagnostics = "Load Haas configuration to view connection status.";
     private string haasTimeline = "No Haas Bench events loaded.";
+    private string verificationDprintPort = "8080";
+    private string verificationChallengeProgram = "9001";
+    private string verificationVerifyProgram = "9002";
+    private string verificationCustomGcodeAlias = string.Empty;
+    private string verificationNonceVariable = "10801";
+    private string verificationResponseVariable = "10802";
+    private string verificationStateVariable = "10803";
+    private string verificationReleaseTokenVariable = "10804";
+    private string verificationSecret = string.Empty;
+    private string verificationMacroVersion = "3";
+    private string verificationCodeDigits = "6";
+    private string verificationTimeoutSeconds = "300";
+    private bool verificationEnabled;
+    private bool verificationSecretConfigured;
+    private int verificationSettingsVersion;
     private MachineDowntime? selectedDowntime;
     private string? editingDowntimeId;
     private PlannerMachine? selectedDowntimeMachine;
@@ -194,9 +207,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         TestHaasMtConnectCommand = new AsyncCommand(TestHaasMtConnectAsync, CanReadHaas);
         TestHaasMdcCommand = new AsyncCommand(TestHaasMdcAsync, CanReadHaas);
         TestHaasNetShareCommand = new AsyncCommand(TestHaasNetShareAsync, CanReadHaas);
-        ReadHaasVariableCommand = new AsyncCommand(ReadHaasVariableAsync, CanReadHaas);
         RefreshHaasMonitorCommand = new AsyncCommand(RefreshHaasMonitorAsync, CanReadHaas);
         ReconnectCncCommand = new AsyncCommand(ReconnectCncAsync, CanManageHaas);
+        LoadVerificationConfigurationCommand = new AsyncCommand(LoadVerificationConfigurationAsync, CanReadHaas);
+        SaveVerificationConfigurationCommand = new AsyncCommand(SaveVerificationConfigurationAsync, CanManageHaas);
         NewPlannedMaintenanceCommand = new AsyncCommand(BeginNewPlannedMaintenanceAsync, CanManage);
         ReportBreakdownCommand = new AsyncCommand(BeginNewBreakdownAsync, CanManage);
         SaveDowntimeCommand = new AsyncCommand(SaveDowntimeAsync, CanSaveDowntime);
@@ -288,9 +302,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand TestHaasMtConnectCommand { get; }
     public AsyncCommand TestHaasMdcCommand { get; }
     public AsyncCommand TestHaasNetShareCommand { get; }
-    public AsyncCommand ReadHaasVariableCommand { get; }
     public AsyncCommand RefreshHaasMonitorCommand { get; }
     public AsyncCommand ReconnectCncCommand { get; }
+    public AsyncCommand LoadVerificationConfigurationCommand { get; }
+    public AsyncCommand SaveVerificationConfigurationCommand { get; }
     public AsyncCommand NewPlannedMaintenanceCommand { get; }
     public AsyncCommand ReportBreakdownCommand { get; }
     public AsyncCommand SaveDowntimeCommand { get; }
@@ -486,8 +501,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public bool HaasLocalNetShareEnabled { get => haasLocalNetShareEnabled; set => SetField(ref haasLocalNetShareEnabled, value); }
     public string HaasLocalNetSharePath { get => haasLocalNetSharePath; set => SetField(ref haasLocalNetSharePath, value); }
     public string HaasCredentialsReference { get => haasCredentialsReference; set => SetField(ref haasCredentialsReference, value); }
-    public string HaasProductionVariable { get => haasProductionVariable; set => SetField(ref haasProductionVariable, value); }
-    public string HaasLegacyVariableAlias { get => haasLegacyVariableAlias; set => SetField(ref haasLegacyVariableAlias, value); }
     public string HaasPartCounterSource { get => haasPartCounterSource; set => SetField(ref haasPartCounterSource, value); }
     public IReadOnlyList<string> HaasPartCounterSources { get; } = ["Q500", "M30_COUNTER_1", "M30_COUNTER_2"];
     public string HaasPollingIntervalMs { get => haasPollingIntervalMs; set => SetField(ref haasPollingIntervalMs, value); }
@@ -495,6 +508,21 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public bool HaasEnabled { get => haasEnabled; set => SetField(ref haasEnabled, value); }
     public string HaasDiagnostics { get => haasDiagnostics; private set => SetField(ref haasDiagnostics, value); }
     public string HaasTimeline { get => haasTimeline; private set => SetField(ref haasTimeline, value); }
+    public string VerificationDprintPort { get => verificationDprintPort; set => SetField(ref verificationDprintPort, value); }
+    public string VerificationChallengeProgram { get => verificationChallengeProgram; set => SetField(ref verificationChallengeProgram, value); }
+    public string VerificationVerifyProgram { get => verificationVerifyProgram; set => SetField(ref verificationVerifyProgram, value); }
+    public string VerificationCustomGcodeAlias { get => verificationCustomGcodeAlias; set => SetField(ref verificationCustomGcodeAlias, value); }
+    public string VerificationNonceVariable { get => verificationNonceVariable; set => SetField(ref verificationNonceVariable, value); }
+    public string VerificationResponseVariable { get => verificationResponseVariable; set => SetField(ref verificationResponseVariable, value); }
+    public string VerificationStateVariable { get => verificationStateVariable; set => SetField(ref verificationStateVariable, value); }
+    public string VerificationReleaseTokenVariable { get => verificationReleaseTokenVariable; set => SetField(ref verificationReleaseTokenVariable, value); }
+    public string VerificationSecret { get => verificationSecret; set => SetField(ref verificationSecret, value); }
+    public string VerificationMacroVersion { get => verificationMacroVersion; set => SetField(ref verificationMacroVersion, value); }
+    public string VerificationCodeDigits { get => verificationCodeDigits; set => SetField(ref verificationCodeDigits, value); }
+    public string VerificationTimeoutSeconds { get => verificationTimeoutSeconds; set => SetField(ref verificationTimeoutSeconds, value); }
+    public bool VerificationEnabled { get => verificationEnabled; set => SetField(ref verificationEnabled, value); }
+    public string VerificationSecretStatus => verificationSecretConfigured
+        ? "Secret configured; leave blank to preserve it." : "A new 16+ character secret is required.";
 
     public MachineDowntime? SelectedDowntime
     {
@@ -1053,7 +1081,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             PopulateHaasConfiguration(value);
             HaasDiagnostics = value.Version == 0
                 ? "Haas NGC is not configured for this Machine."
-                : $"Configuration loaded. Production variable #{value.ProductionModeVariable}; legacy #{value.LegacyVariableAlias}.";
+                : "Configuration loaded. Workflow state is derived from Server events.";
         });
     }
 
@@ -1068,12 +1096,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         if (!int.TryParse(HaasMdcPort, out var mdcPort)
             || !int.TryParse(HaasMtConnectPort, out var mtPort)
             || !int.TryParse(HaasDprntPort, out var dprntPort)
-            || !int.TryParse(HaasProductionVariable, out var variable)
-            || !int.TryParse(HaasLegacyVariableAlias, out var legacy)
             || !int.TryParse(HaasPollingIntervalMs, out var polling)
             || !int.TryParse(HaasConnectionTimeoutMs, out var timeout))
         {
-            HaasDiagnostics = "Haas ports, macro variables, polling, and timeout must be numeric.";
+            HaasDiagnostics = "Haas ports, polling, and timeout must be numeric.";
             return;
         }
         await RunHaasReadAsync(async () =>
@@ -1081,13 +1107,85 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var value = await apiClient!.UpdateHaasConnectionAsync(SelectedMachine!.MachineId,
                 new HaasConnectionUpdate(HaasHost, mdcPort, mtPort, dprntPort, HaasLocalNetShareEnabled,
                     NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
-                    variable, legacy, HaasPartCounterSource, polling, timeout, 2, 50, 32768,
+                    HaasPartCounterSource, polling, timeout, 2, 50, 32768,
                     [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion,
                     HaasTelemetryProvider),
                 clientId, editGeneration);
             PopulateHaasConfiguration(value);
             HaasDiagnostics = "Haas NGC configuration saved by the Server.";
         });
+    }
+
+    internal async Task LoadVerificationConfigurationAsync()
+    {
+        if (!CanReadHaas()) return;
+        await RunHaasReadAsync(async () =>
+        {
+            try
+            {
+                var value = await apiClient!.GetCncVerificationSettingsAsync(SelectedMachine!.MachineId);
+                PopulateVerificationConfiguration(value);
+                HaasDiagnostics = "Protected verification configuration loaded. The secret is never returned.";
+            }
+            catch (PlannerApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                verificationSettingsVersion = 0;
+                verificationSecretConfigured = false;
+                OnPropertyChanged(nameof(VerificationSecretStatus));
+                HaasDiagnostics = "Verification is not configured. Enter a Machine secret and review all controller-specific values before saving.";
+            }
+        });
+    }
+
+    internal async Task SaveVerificationConfigurationAsync()
+    {
+        if (!CanManageHaas()) return;
+        if (!int.TryParse(VerificationDprintPort, out var dprintPort)
+            || !int.TryParse(VerificationChallengeProgram, out var challengeProgram)
+            || !int.TryParse(VerificationVerifyProgram, out var verifyProgram)
+            || !TryOptionalInt(VerificationCustomGcodeAlias, out var alias)
+            || !int.TryParse(VerificationNonceVariable, out var nonceVariable)
+            || !int.TryParse(VerificationResponseVariable, out var responseVariable)
+            || !int.TryParse(VerificationStateVariable, out var stateVariable)
+            || !int.TryParse(VerificationReleaseTokenVariable, out var releaseTokenVariable)
+            || !int.TryParse(VerificationMacroVersion, out var macroVersion)
+            || !int.TryParse(VerificationCodeDigits, out var digits)
+            || !int.TryParse(VerificationTimeoutSeconds, out var timeout))
+        {
+            HaasDiagnostics = "Verification ports, program numbers, variables, version, digits, and timeout must be numeric.";
+            return;
+        }
+        await RunHaasReadAsync(async () =>
+        {
+            var value = await apiClient!.UpdateCncVerificationSettingsAsync(
+                SelectedMachine!.MachineId, new("HAAS_DPRNT_TCP", dprintPort,
+                    challengeProgram, verifyProgram, alias, nonceVariable, responseVariable,
+                    stateVariable, releaseTokenVariable, NullIfBlank(VerificationSecret),
+                    macroVersion, digits, timeout, VerificationEnabled,
+                    verificationSettingsVersion), clientId, editGeneration);
+            PopulateVerificationConfiguration(value);
+            HaasDiagnostics = "Protected verification configuration saved. Enable only after Machine commissioning.";
+        });
+    }
+
+    private void PopulateVerificationConfiguration(CncVerificationSettings value)
+    {
+        VerificationDprintPort = value.DprintPort.ToString(CultureInfo.InvariantCulture);
+        VerificationChallengeProgram = value.ChallengeProgramNumber.ToString(CultureInfo.InvariantCulture);
+        VerificationVerifyProgram = value.VerifyProgramNumber.ToString(CultureInfo.InvariantCulture);
+        VerificationCustomGcodeAlias = value.CustomGcodeAlias?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        VerificationNonceVariable = value.NonceVariable.ToString(CultureInfo.InvariantCulture);
+        VerificationResponseVariable = value.ResponseVariable.ToString(CultureInfo.InvariantCulture);
+        VerificationStateVariable = value.VerificationStateVariable.ToString(CultureInfo.InvariantCulture);
+        VerificationReleaseTokenVariable = value.ReleaseTokenVariable.ToString(CultureInfo.InvariantCulture);
+        VerificationMacroVersion = value.ExpectedMacroVersion.ToString(CultureInfo.InvariantCulture);
+        VerificationCodeDigits = value.ResponseCodeDigits.ToString(CultureInfo.InvariantCulture);
+        VerificationTimeoutSeconds = value.VerificationTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+        VerificationEnabled = value.Enabled;
+        VerificationSecret = string.Empty;
+        verificationSecretConfigured = value.SecretConfigured;
+        verificationSettingsVersion = value.Version;
+        OnPropertyChanged(nameof(VerificationSecretStatus));
     }
 
     internal Task TestHaasMdcAsync() => RunHaasReadAsync(async () =>
@@ -1122,19 +1220,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             : $"Net Share: {result.Message}";
     });
 
-    internal Task ReadHaasVariableAsync() => RunHaasReadAsync(async () =>
-    {
-        var value = await apiClient!.ReadHaasProductionVariableAsync(SelectedMachine!.MachineId);
-        HaasDiagnostics = $"Last Variable Read: #{value.VariableNumber} = {value.Value} ({value.ReadAt.ToLocalTime():HH:mm:ss})";
-    });
-
     internal Task RefreshHaasMonitorAsync() => RunHaasReadAsync(async () =>
     {
         var value = await apiClient!.GetHaasMonitorAsync(SelectedMachine!.MachineId);
         var snapshot = value.Snapshot;
         HaasDiagnostics = snapshot is null
             ? "No Haas telemetry snapshot has been received."
-            : $"{snapshot.ConnectivityState} | Part: {snapshot.MachineHeaderPartName ?? "unverified"} | Program: {snapshot.ProgramNumber ?? "none"} | File: {Path.GetFileName(snapshot.MachineHeaderSourcePath) ?? "unavailable"} | Bench: {value.ActiveBench?.BatchOperationId ?? "none"} | Mode: {value.ActiveBench?.State ?? "WAITING"} | #{snapshot.ProductionVariableNumber} = {snapshot.ProductionVariableValue} | Parts: {value.ActiveBench?.ProducedQuantity ?? 0} | Last Poll: {snapshot.Timestamp.ToLocalTime():HH:mm:ss}";
+            : $"{snapshot.ConnectivityState} | Part: {snapshot.MachineHeaderPartName ?? "unverified"} | Program: {snapshot.ProgramNumber ?? "none"} | File: {Path.GetFileName(snapshot.MachineHeaderSourcePath) ?? "unavailable"} | Bench: {value.ActiveBench?.BatchOperationId ?? "none"} | Parts counter: {snapshot.PartCounter?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"} | Last Poll: {snapshot.Timestamp.ToLocalTime():HH:mm:ss}";
         HaasTimeline = value.RecentEvents.Count == 0
             ? "No Haas Bench events recorded."
             : string.Join(Environment.NewLine, value.RecentEvents.Reverse().Select(item =>
@@ -1855,8 +1947,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasLocalNetShareEnabled = value.LocalNetShareEnabled;
         HaasLocalNetSharePath = value.LocalNetSharePath ?? string.Empty;
         HaasCredentialsReference = value.CredentialsReference ?? string.Empty;
-        HaasProductionVariable = value.ProductionModeVariable.ToString(CultureInfo.InvariantCulture);
-        HaasLegacyVariableAlias = value.LegacyVariableAlias.ToString(CultureInfo.InvariantCulture);
         HaasPartCounterSource = value.PartCounterSource;
         HaasPollingIntervalMs = value.PollingIntervalMs.ToString(CultureInfo.InvariantCulture);
         HaasConnectionTimeoutMs = value.ConnectionTimeoutMs.ToString(CultureInfo.InvariantCulture);
@@ -1874,8 +1964,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasLocalNetShareEnabled = false;
         HaasLocalNetSharePath = string.Empty;
         HaasCredentialsReference = string.Empty;
-        HaasProductionVariable = "10605";
-        HaasLegacyVariableAlias = "605";
         HaasPartCounterSource = "Q500";
         HaasPollingIntervalMs = "2000";
         HaasConnectionTimeoutMs = "3000";
@@ -2213,11 +2301,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DeleteMachineCommand.RaiseCanExecuteChanged();
         LoadHaasConfigurationCommand.RaiseCanExecuteChanged();
         SaveHaasConfigurationCommand.RaiseCanExecuteChanged();
+        LoadVerificationConfigurationCommand.RaiseCanExecuteChanged();
+        SaveVerificationConfigurationCommand.RaiseCanExecuteChanged();
         TestHaasConnectionCommand.RaiseCanExecuteChanged();
         TestHaasMtConnectCommand.RaiseCanExecuteChanged();
         TestHaasMdcCommand.RaiseCanExecuteChanged();
         TestHaasNetShareCommand.RaiseCanExecuteChanged();
-        ReadHaasVariableCommand.RaiseCanExecuteChanged();
         RefreshHaasMonitorCommand.RaiseCanExecuteChanged();
         ReconnectCncCommand.RaiseCanExecuteChanged();
         NewPlannedMaintenanceCommand.RaiseCanExecuteChanged();
@@ -2299,6 +2388,24 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     private static string MachineEntityTag(PlannerMachine value) =>
         $"\"machine:{value.MachineId}:v{value.Version}\"";
+
+    private static bool TryOptionalInt(string value, out int? parsed)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            parsed = null;
+            return true;
+        }
+
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number))
+        {
+            parsed = number;
+            return true;
+        }
+
+        parsed = null;
+        return false;
+    }
 
     private static string DowntimeEntityTag(MachineDowntime value) =>
         $"\"downtime:{value.DowntimeId}:v{value.Version}\"";

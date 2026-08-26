@@ -460,7 +460,7 @@ internal sealed record MachineCreate(
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
-    int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
+    string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
     bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC");
@@ -468,7 +468,7 @@ internal sealed record HaasConnectionSettings(
 internal sealed record HaasConnectionUpdate(
     string Host, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
-    int ProductionModeVariable, int LegacyVariableAlias, string PartCounterSource,
+    string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
     bool Enabled, int Version, string TelemetryProvider);
@@ -477,15 +477,26 @@ internal sealed record HaasConnectionTest(
     bool Succeeded, string Message, string? ProgramNumber, string? MachineStatus,
     int? Parts, PlannerNcHeaderMetadata? Header);
 
-internal sealed record HaasVariableRead(
-    int VariableNumber, int LegacyAlias, int Value, DateTimeOffset ReadAt);
+internal sealed record CncVerificationSettings(
+    string MachineId, string DprintTransport, int DprintPort,
+    int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
+    int NonceVariable, int ResponseVariable, int VerificationStateVariable,
+    int ReleaseTokenVariable, bool SecretConfigured, int ExpectedMacroVersion,
+    int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
+    int Version, DateTimeOffset UpdatedAt);
+
+internal sealed record CncVerificationSettingsUpdate(
+    string DprintTransport, int DprintPort, int ChallengeProgramNumber,
+    int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
+    int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
+    string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
+    int VerificationTimeoutSeconds, bool Enabled, int Version);
 
 internal sealed record HaasMachineSnapshot(
     string MachineId, DateTimeOffset Timestamp, string ConnectivityState,
     string? MachineStatus, string? ProgramNumber, string? MachineHeaderPartName,
     string? MachineHeaderSourcePath, DateTimeOffset? HeaderReadAt,
-    int ProductionVariableNumber, int ProductionVariableValue,
-    DateTimeOffset? ProductionVariableChangedAt, int? PartCounter,
+    int? PartCounter,
     string? RawMdcStatus, string? LastError, DateTimeOffset? LastSeenAt, int Version);
 
 internal sealed record HaasBenchSession(

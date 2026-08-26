@@ -9,7 +9,7 @@ namespace Meimad.Planner.Server.Tests.Haas;
 public sealed class HaasIntegrationTests
 {
     [Fact]
-    public async Task Header_match_starts_setup_variable_transition_counts_parts_and_is_idempotent()
+    public async Task Header_match_starts_setup_and_legacy_macro_changes_have_no_workflow_effect()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database, ambiguous: false);
@@ -29,44 +29,19 @@ public sealed class HaasIntegrationTests
         Assert.Equal("PART-A", monitor.Snapshot!.MachineHeaderPartName);
         Assert.Equal("MACHINE_JOB.NC", Path.GetFileName(monitor.Snapshot.MachineHeaderSourcePath));
 
-        fake.CycleStarts = 15;
-        await worker.PollOnceAsync(settings);
-        Assert.Equal(HaasBenchStates.Setup,
-            (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!.ActiveBench!.State);
-
         fake.MacroValue = 1;
-        await worker.PollOnceAsync(settings);
-        await worker.PollOnceAsync(settings); // repeated 1 must not duplicate transition
-        monitor = (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!;
-        Assert.Equal(HaasBenchStates.Production, monitor.ActiveBench!.State);
-        Assert.True(monitor.ActiveBench.PartCountingEnabled);
-        Assert.Equal(380, monitor.ActiveBench.PartCounterBaseline);
-        Assert.Single(monitor.RecentEvents, value => value.EventType == "BenchProductionStarted");
-
-        fake.Counter = 382;
-        await worker.PollOnceAsync(settings);
-        monitor = (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!;
-        Assert.Equal(2, monitor.ActiveBench!.ProducedQuantity);
-        Assert.Contains(monitor.RecentEvents, value => value.EventType == "PartCompleted");
-
-        fake.Counter = 1;
-        await worker.PollOnceAsync(settings);
-        monitor = (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!;
-        Assert.Equal(2, monitor.ActiveBench!.ProducedQuantity);
-        Assert.Contains(monitor.RecentEvents, value => value.EventType == "PartCounterReset");
-
-        var service = new HaasIntegrationService(repository, new FakeHaasMdcClientFactory(fake),
-            new FakeHaasMtConnectReader(), reader, new NcHeaderParser(), TimeProvider.System);
-        var reset = await service.ResetProductionVariableAfterToolTableAsync(
-            "machine-haas", "tool-table-r1", "planner-test");
-        Assert.True(reset.Succeeded);
-        Assert.Equal(0, fake.MacroValue);
         await worker.PollOnceAsync(settings);
         monitor = (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!;
         Assert.Equal(HaasBenchStates.Setup, monitor.ActiveBench!.State);
         Assert.False(monitor.ActiveBench.PartCountingEnabled);
-        Assert.Equal(3, monitor.Intervals.Count);
-        Assert.Contains(monitor.RecentEvents, value => value.EventType == "ProductionVariableReset");
+        Assert.DoesNotContain(monitor.RecentEvents, value => value.EventType == "BenchProductionStarted");
+
+        fake.Counter = 382;
+        await worker.PollOnceAsync(settings);
+        monitor = (await repository.ReadMonitorAsync("machine-haas", DateTimeOffset.UtcNow, default))!;
+        Assert.Equal(HaasBenchStates.Setup, monitor.ActiveBench!.State);
+        Assert.Equal(0, monitor.ActiveBench.ProducedQuantity);
+        Assert.DoesNotContain(monitor.RecentEvents, value => value.EventType == "PartCompleted");
 
         fake.Disconnected = true;
         await worker.PollOnceAsync(settings);
@@ -125,7 +100,7 @@ public sealed class HaasIntegrationTests
         var mtConnect = new FakeHaasMtConnectReader
         {
             Result = new("dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC",
-                "1500.CNC", 9302, 0, null, DateTimeOffset.UtcNow,
+                "1500.CNC", 9302, DateTimeOffset.UtcNow,
                 0, null, 0, "{}")
         };
         var service = new HaasIntegrationService(repository,
@@ -139,12 +114,12 @@ public sealed class HaasIntegrationTests
         Assert.Equal("1500.CNC", result.ProgramNumber);
         Assert.Equal("STOPPED", result.MachineStatus);
         Assert.Equal(9302, result.Parts);
-        Assert.Contains("production telemetry is ready", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("machine and counter telemetry are ready", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, mtConnect.CallCount);
     }
 
     [Fact]
-    public async Task Dedicated_MTConnect_test_reports_connected_but_degraded_when_macro_is_not_binary()
+    public async Task Dedicated_MTConnect_test_does_not_depend_on_a_workflow_macro()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database, ambiguous: false);
@@ -152,9 +127,7 @@ public sealed class HaasIntegrationTests
         var mtConnect = new FakeHaasMtConnectReader
         {
             Result = new("dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC",
-                "1500.CNC", 9302, null,
-                "MTConnect reported configured variable #10605 as '5.0'; Setup/Production requires exactly 0 or 1.",
-                DateTimeOffset.UtcNow, 0, null, 0, "{}")
+                "1500.CNC", 9302, DateTimeOffset.UtcNow, 0, null, 0, "{}")
         };
         var service = new HaasIntegrationService(repository,
             new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }),
@@ -164,9 +137,7 @@ public sealed class HaasIntegrationTests
         var result = await service.TestMtConnectAsync("machine-haas");
 
         Assert.True(result.Succeeded);
-        Assert.Contains("DEGRADED", result.Message, StringComparison.Ordinal);
-        Assert.Contains("Bench automation is blocked", result.Message, StringComparison.Ordinal);
-        Assert.Contains("exactly 0 or 1", result.Message, StringComparison.Ordinal);
+        Assert.Contains("machine and counter telemetry are ready", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static HaasObservationHarness Worker(
@@ -196,12 +167,11 @@ public sealed class HaasIntegrationTests
             VALUES ('assignment-a', 'operation-a', 'machine-haas', 0);
             INSERT INTO haas_connection_settings
                 (machine_id, host, mdc_port, mtconnect_port, local_net_share_enabled,
-                 local_net_share_path, production_mode_variable, legacy_variable_alias,
-                 part_counter_source, polling_interval_ms, connection_timeout_ms,
+                 local_net_share_path, part_counter_source, polling_interval_ms, connection_timeout_ms,
                  stable_program_polls, header_line_limit, header_byte_limit,
                  header_part_patterns_json, enabled, version, created_at, updated_at)
             VALUES ('machine-haas', '127.0.0.1', 5051, 8082, 1, '\\haas\User Data',
-                    10605, 605, 'Q500', 2000, 3000, 2, 50, 32768,
+                    'Q500', 2000, 3000, 2, 50, 32768,
                     '["PART\\s*[:=]\\s*([^()]+)"]', 1, 1, $at, $at);
             """;
         if (ambiguous)
@@ -266,7 +236,6 @@ internal sealed class FakeHaasMtConnectReader : IHaasMtConnectReader
         string host,
         int port,
         int timeoutMs,
-        int productionVariableNumber,
         string partCounterSource,
         CancellationToken cancellationToken = default)
     {
@@ -274,7 +243,7 @@ internal sealed class FakeHaasMtConnectReader : IHaasMtConnectReader
         if (Error is not null) throw Error;
         return Task.FromResult(Result ?? new HaasMtConnectRead(
             "dev1", "VF-3SS", "AVAILABLE", "STOPPED", "AUTOMATIC", "O1234",
-            0, 0, null, DateTimeOffset.UtcNow, 0, null, 0, "{}"));
+            0, DateTimeOffset.UtcNow, 0, null, 0, "{}"));
     }
 }
 
@@ -302,7 +271,6 @@ internal sealed class HaasObservationHarness(
         try
         {
             var status = await client.GetMachineStatusAsync(token);
-            var macro = await client.ReadMacroAsync(settings.ProductionModeVariable, token);
             var counter = settings.PartCounterSource == HaasPartCounterSources.Q500
                 ? status.Parts : await client.GetPartCounterAsync(settings.PartCounterSource, token);
             var program = status.ProgramNumber;
@@ -323,8 +291,7 @@ internal sealed class HaasObservationHarness(
             var snapshot = new HaasMachineSnapshot(
                 settings.MachineId, at, HaasConnectivityStates.Online, status.MachineStatus,
                 program, part, header?.SourcePath ?? previous?.MachineHeaderSourcePath,
-                header?.ReadTimestamp ?? previous?.HeaderReadAt, settings.ProductionModeVariable,
-                macro, previous?.ProductionVariableChangedAt, counter, status.RawResponse,
+                header?.ReadTimestamp ?? previous?.HeaderReadAt, counter, status.RawResponse,
                 null, at, previous?.Version + 1 ?? 1);
             return await repository.ApplyObservationAsync(snapshot, at, token);
         }
@@ -334,8 +301,7 @@ internal sealed class HaasObservationHarness(
                 settings.MachineId, at, HaasConnectivityStates.Offline,
                 previous?.MachineStatus, previous?.ProgramNumber, previous?.MachineHeaderPartName,
                 previous?.MachineHeaderSourcePath, previous?.HeaderReadAt,
-                settings.ProductionModeVariable, previous?.ProductionVariableValue ?? 0,
-                previous?.ProductionVariableChangedAt, previous?.PartCounter,
+                previous?.PartCounter,
                 previous?.RawMdcStatus, exception.Message, previous?.LastSeenAt,
                 previous?.Version + 1 ?? 1);
             return await repository.ApplyObservationAsync(snapshot, at, token);

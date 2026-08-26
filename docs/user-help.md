@@ -82,11 +82,13 @@ Releasing a new manufacturing-process revision makes other postprocessor release
 
 ## 5. Haas NGC connection and part identity
 
-Use the CNC connection panel in Setup for the Haas machine. Prefer **MTConnect** for read-only monitoring when the machine agent exposes `/current`. MDC remains a separate audited channel for supported variable reads/resets.
+Use the CNC connection panel in Setup for the Haas machine. Prefer **MTConnect** for read-only monitoring when the machine agent exposes `/current`. MDC remains a separate read-only monitoring/test channel; the application exposes no generic variable read, reset, or write control.
 
-Configure the machine’s IP/hostname, MDC port, MTConnect port, DPRNT PartName port, production-mode variable, part-counter source, polling interval, timeout, local NC share, and credential reference. Save the configuration, then use **Test MTConnect**, **Test MDC**, **Test Net Share**, **Read Variable**, **Refresh monitoring**, and **Reconnect** as appropriate.
+Configure the machine’s IP/hostname, MDC port, MTConnect port, DPRNT PartName port, part-counter source, polling interval, timeout, local NC share, and credential reference. Save the configuration, then use **Test Connection**, **Test MTConnect**, **Test MDC**, **Test Net Share**, **Refresh monitoring**, and **Reconnect** as appropriate.
 
-The active NC program’s machine-side header/DPRNT `PartName` is the authoritative part identity for monitoring. Do not infer the part from the program number when a valid PartName is present. The production-mode variable must contain the configured production value; verify the configured address and refresh/reconnect after changing it.
+The active NC program’s machine-side header/DPRNT `PartName` is the authoritative part identity for monitoring. Do not infer the part from the program number when a valid PartName is present. The persistent CNC Setup/Production variable was removed and changing a CNC variable cannot change Meimad workflow state.
+
+The **Protected setup verification** expander stores commissioning configuration only. Keep it disabled until the real Machine passes [the protected-verification technical spike](haas-protected-verification-spike.md). The Machine secret is write-only: leaving the field blank preserves an existing secret, and neither the client nor tablet can read it back.
 
 For a local NC share, the path must be reachable by the **Server service account**, not only by your interactive Windows user. A mapped drive is not sufficient for a Windows service; use a UNC path and grant the service account read permission.
 
@@ -120,7 +122,7 @@ Use the language selector in the Windows client to switch between English, Hebre
 - Confirm the MTConnect port and machine IP.
 - Use **Refresh monitoring** or **Reconnect**.
 - Check that the Server service account can reach the machine network.
-- Confirm that the production variable and PartName/DPRNT settings match the machine configuration.
+- Confirm that the PartName/DPRNT and parts-counter settings match the Machine configuration. CNC variables do not determine workflow state.
 
 ### Net Share unavailable
 

@@ -1338,12 +1338,10 @@ The following Machine-scoped endpoints are implemented. Connection mutation requ
 |---|---|---|
 | `GET` | `/api/v1/machines/{machineId}/haas/connection` | Read settings; an unconfigured Machine returns defaults with `version: 0`. |
 | `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update host, explicit `telemetryProvider` (`MDC` or `MTCONNECT`), MDC/MTConnect/DPRNT ports, read-only share reference, configurable macro/legacy alias, counter source, poll/timeout/debounce/header limits and patterns. |
-| `POST` | `/api/v1/machines/{machineId}/haas/test-mtconnect` | Fetch unfiltered `/probe` and `/current`, validate MTConnect XML/device availability, and return typed program/state/counter diagnostics without changing planning state. A reachable/available agent returns connectivity success, while the message prominently reports `DEGRADED` and blocked Bench automation when the configured macro is missing or nonbinary. |
+| `POST` | `/api/v1/machines/{machineId}/haas/test-mtconnect` | Fetch unfiltered `/probe` and `/current`, validate MTConnect XML/device availability, and return typed program/state/counter diagnostics without changing planning state. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-mdc` | Read typed Q500 status without changing planning state. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-net-share` | Read the active machine-side bounded header and parse Part identity. |
-| `GET` | `/api/v1/machines/{machineId}/haas/production-variable` | Read the configured binary Q600 macro. |
 | `GET` | `/api/v1/machines/{machineId}/haas/monitor` | Return settings, last snapshot, active/latest Bench, state intervals/events, and actual Setup/Production seconds. |
-| `POST` | `/api/v1/machines/{machineId}/haas/tool-table-reset` | With Edit Mode and explicit successful-transfer confirmation, audit, write only configured macro value `0`, read back, and report success/failure. |
 
 The `/haas/*` routes remain compatibility/commissioning endpoints. New monitoring and configuration consumers use the protocol-independent CNC contract.
 
@@ -1356,7 +1354,7 @@ The `/haas/*` routes remain compatibility/commissioning endpoints. New monitorin
 | `GET` | `/api/v1/cnc-adapters` | Registry metadata and static capabilities. Only `HAAS_NGC` has `implemented: true`. |
 | `GET` | `/api/v1/machines/{machineId}/cnc-connection` | Primary connection metadata and sanitized typed configuration. Secret IDs and values are omitted; configured booleans are returned. |
 | `PUT` | `/api/v1/machines/{machineId}/cnc-connection` | Edit-Mode create/update with adapter type, permissions, polling/timeout/backoff/retention and typed protocol configuration. Unsupported adapters cannot be enabled. |
-| `POST` | `/api/v1/machines/{machineId}/cnc-connection/test` | Structured checks for the explicitly selected Haas provider (`mdc` or `mtconnect`), `variableRead`, and `programAccess`, with overall `ONLINE`/`DEGRADED`/`OFFLINE` result. |
+| `POST` | `/api/v1/machines/{machineId}/cnc-connection/test` | Structured checks for the explicitly selected Haas provider (`mdc` or `mtconnect`) and program access, with overall `ONLINE`/`DEGRADED`/`OFFLINE` result. |
 | `POST` | `/api/v1/machines/{machineId}/cnc-connection/reconnect` | Edit-Mode request to restart only that Server-side Machine worker. It does not affect browser connections. |
 | `GET` | `/api/v1/machines/{machineId}/snapshot` | Last normalized current snapshot, including freshness, component health and runtime capability availability. |
 | `GET` | `/api/v1/machines/{machineId}/cnc-diagnostics?limit=50` | Bounded recent raw protocol diagnostics; no credentials or complete NC files. |
@@ -1364,7 +1362,30 @@ The `/haas/*` routes remain compatibility/commissioning endpoints. New monitorin
 
 WebSocket is Server-to-client monitoring transport only. It exposes no CNC command or generic macro-write message. Initial screen state always comes from the relevant GET endpoint before live incremental updates.
 
-`partCounterSource` is `Q500`, `M30_COUNTER_1`, or `M30_COUNTER_2`. With MTConnect, `Q500` compatibility prefers a numeric standard `PartCount` observation and otherwise a numeric M30 counter; explicit M30 choices select their named feed items and should be commissioned against the intended physical counter. `productionModeVariable` is configurable in the permitted NGC global range and must equal `legacyVariableAlias + 10000`. MTConnect accepts it only when probe `Source` range metadata proves the positional mapping and the current value is exactly `0` or `1`; otherwise capability health is unavailable and no Bench mutation or part credit occurs. Current inputs must also have a read timestamp and not be stale; previous macro/counter values are never substituted. Connection state is `ONLINE`, `DEGRADED`, `OFFLINE`, or `ERROR`; Bench state is independently `WAITING`, `SETUP`, `PRODUCTION`, or `COMPLETED`. Automatic matching uses normalized parsed header `partName` against planned assigned Case Part numbers. Zero or multiple matches never mutate a Batch. Repeated valid observations are idempotent through persisted prior snapshots and unique event dedupe keys.
+`partCounterSource` is `Q500`, `M30_COUNTER_1`, or `M30_COUNTER_2`. With MTConnect, `Q500` compatibility prefers a numeric standard `PartCount` observation and otherwise a numeric M30 counter; explicit M30 choices select their named feed items and should be commissioned against the intended physical counter. The CNC connection contract contains no persistent workflow variable and rejects CNC write enablement. Connection state is `ONLINE`, `DEGRADED`, `OFFLINE`, or `ERROR`; workflow is a separate Server projection from immutable Production Run events. Automatic matching uses normalized parsed header `partName` against planned assigned Case Part numbers. Zero or multiple matches never choose or invent a Batch.
+
+#### 7.5.1 CNC verification identity foundation (schema v50)
+
+| Method | Route | Contract |
+|---|---|---|
+| `GET` | `/api/v1/production-runs/{runId}/offset-loader-releases` | Lists immutable Offset Loader history and the derived `isCurrent` flag. |
+| `POST` | `/api/v1/production-runs/{runId}/offset-loader-releases` | Active editor creates a new release and atomically makes it current for that Run/Machine. Body: `machineId`, approved `ncReleaseId`, exact `toolTableReleaseId`, optional 64-hex `artifactHash`, and optional JSON-object `metadataJson`. |
+| `GET` | `/api/v1/machines/{machineId}/verification-configuration` | Windows planning read. Returns controller mapping plus `secretConfigured`; never returns the secret or its ciphertext. Unconfigured returns `404 verification_settings_not_found`. |
+| `PUT` | `/api/v1/machines/{machineId}/verification-configuration` | Edit-Mode optimistic create/update. Accepts `dprintTransport`, port, challenge/verify protected program numbers, optional custom alias, nonce/response/state/release-token variables, optional replacement `verificationSecret`, expected macro version, 4–6 response digits, 30–3600 second timeout, enabled, and version. Blank secret preserves an existing secret. |
+
+Offset Loader creation validates that the Machine is assigned to the Production Run and that the supplied approved NC/tool-table pair belongs to the selected Run program. The Server generates the decimal release token. Releases are immutable; a later release changes only the separate current pointer. Old tokens therefore fail current DPRINT resolution even when their NC program remains approved. No date comparison determines validity.
+
+The strict CNC-safe DPRINT v1 line is ASCII printable, at most 512 bytes, and has this exact field ordering:
+
+```text
+MEIMAD/V/1/EVENT/<CODE>/ID/<SOURCE_EVENT_ID>/SEQ/<NONNEGATIVE_INTEGER>/MACROVERSION/<POSITIVE_INTEGER>[/RUN/<ID>][/PROGRAM/<ID>][/OFFSETRELEASE/<POSITIVE_INTEGER>][/NONCE/<NONNEGATIVE_INTEGER>]
+```
+
+The v1 event codes are `OLC`, `SVR`, `SVS`, `SVF`, `STQ`, `QCP`, `QCF`, `CST`, `CEN`, `CIN`, `PSO`, and `PSC`, mapping in order to the workflow event types defined above. This representation deliberately avoids `|`, `=`, `_`, and other punctuation outside Haas's documented DPRNT literal-text set. The complete line accepts only uppercase letters, digits, `/`, and `-`; IDs use the same set without `/`.
+
+Optional fields may be omitted but, when present, remain in the displayed order. Unknown, duplicate, reordered, empty, malformed, unsupported, lowercase, or whitespace-containing fields fail parsing. `OLC` requires both `OFFSETRELEASE` and `NONCE`; other currently defined event codes reject those two fields. Only an enabled Machine configuration, matching expected macro version, optional matching Run, and current release token allow this event to enter `production_run_workflow_events`. `(source, sourceEventId)` is idempotent. Sequence gaps/out-of-order values produce immutable anomaly rows while preserving the received event and never inventing missing events. Other parsed event types remain raw diagnostics until their later milestone owns validation and projection.
+
+This contract is a foundation, not completed setup verification. `PROGRAM` is retained as untrusted Machine evidence until the Milestone C physical spike proves that the protected macro can obtain the active/caller NC identity. There is no response-code endpoint, verification-session state, CNC macro deployment, or tablet secret/configuration exposure in schema v50.
 
 ## 7.6 Official job package generation
 
@@ -1661,8 +1682,9 @@ GET /api/tablets/{tablet_id}/status
 POST /api/tablets/{tablet_id}/events
 ```
 
-The authenticated GET status route and schema-v48 workflow table are implemented.
-The POST event route remains pending. The physical firmware compiles the guarded
+The authenticated GET status route and schema-v49 event-driven projection are implemented.
+The shared event table is append-only and retains Server receipt time separately
+from optional Machine time. The POST event route remains pending. The physical firmware compiles the guarded
 button binding described below, but it is not yet end-to-end or physically
 verified. Until the POST exception is added, the existing E-Ink guard continues
 to reject device-credential POSTs.

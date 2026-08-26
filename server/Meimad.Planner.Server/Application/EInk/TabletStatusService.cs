@@ -97,16 +97,17 @@ internal sealed class TabletStatusService
             return "BLOCKED";
         }
 
-        if (workflow?.ResultingState == "IN_QC")
+        return workflow?.EventType switch
         {
-            return "IN_QC";
-        }
-
-        return run.Status switch
-        {
-            "DRAFT" or "PLANNED" => "READY_FOR_SETUP",
-            "IN_PROGRESS" when run.CompletedCycleCount == 0 => "IN_SETUP_RUN",
-            "IN_PROGRESS" => "IN_PRODUCTION",
+            null => "READY_FOR_SETUP",
+            "OFFSET_LOADER_COMPLETED" or "SETUP_VERIFICATION_REQUESTED"
+                or "SETUP_VERIFICATION_FAILED" => "IN_SETUP",
+            "SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL" => "IN_SETUP_RUN",
+            "SEND_TO_QC" => "IN_QC",
+            "QC_PASS" => "READY_FOR_PRODUCTION",
+            "CYCLE_START" or "CYCLE_END" or "CYCLE_INTERRUPTED"
+                or "PRODUCTION_SESSION_OPENED" => "IN_PRODUCTION",
+            "PRODUCTION_SESSION_CLOSED" => "UNKNOWN",
             _ => "UNKNOWN"
         };
     }

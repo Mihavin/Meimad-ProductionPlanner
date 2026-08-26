@@ -18,7 +18,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new MtConnectHttpClient(http), TimeProvider.System);
 
         var result = await reader.ReadAsync(address.Host, address.Port, 5000,
-            10605, HaasPartCounterSources.M30Counter1);
+            HaasPartCounterSources.M30Counter1);
 
         Assert.Equal("AVAILABLE", result.Availability);
         Assert.False(string.IsNullOrWhiteSpace(result.DeviceName));
@@ -34,7 +34,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new StubClient(probe, current), TimeProvider.System);
 
         var result = await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.M30Counter1);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.M30Counter1);
 
         Assert.Equal("VF-3SS", result.DeviceName);
         Assert.Equal("AVAILABLE", result.Availability);
@@ -42,8 +42,6 @@ public sealed class HaasMtConnectReaderTests
         Assert.Equal("AUTOMATIC", result.ControllerMode);
         Assert.Equal("1500.CNC", result.ProgramNumber);
         Assert.Equal(9300, result.Parts);
-        Assert.Equal(1, result.ProductionVariableValue);
-        Assert.Null(result.ProductionVariableError);
         Assert.Equal(12000m, result.SpindleRpm);
         Assert.Equal(800.5m, result.FeedRate);
         Assert.Equal(1, result.ActiveAlarmCount);
@@ -59,7 +57,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new StubClient(probe, current), TimeProvider.System);
 
         var result = await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.Q500);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.Q500);
 
         Assert.Equal(42, result.Parts);
     }
@@ -74,7 +72,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new StubClient(probe, current), TimeProvider.System);
 
         var result = await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.Q500);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.Q500);
 
         Assert.Equal(9300, result.Parts);
     }
@@ -96,7 +94,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new StubClient(probe, current), TimeProvider.System);
 
         var result = await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.M30Counter1);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.M30Counter1);
 
         Assert.Equal(2, result.ActiveAlarmCount);
     }
@@ -111,7 +109,7 @@ public sealed class HaasMtConnectReaderTests
             new StubClient(probe, current), new FixedTimeProvider(receivedAt));
 
         var result = await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.M30Counter1);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.M30Counter1);
 
         Assert.Equal(receivedAt, result.ReadAt);
         Assert.Contains("2026-08-23T17:23:01.481", result.DiagnosticPayload, StringComparison.Ordinal);
@@ -126,7 +124,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new StubClient(probe, current), TimeProvider.System);
 
         var exception = await Assert.ThrowsAsync<MtConnectProtocolException>(() => reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.Q500));
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.Q500));
 
         Assert.Contains("more than one machine", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -139,13 +137,13 @@ public sealed class HaasMtConnectReaderTests
         var client = new IsolatedProbeClient(probe, current);
         var reader = new HaasMtConnectReader(client, TimeProvider.System);
         var slow = reader.ReadAsync(
-            "slow.example", 8082, 5000, 10605, HaasPartCounterSources.M30Counter1);
+            "slow.example", 8082, 5000, HaasPartCounterSources.M30Counter1);
         await client.SlowProbeStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
 
         try
         {
             var healthy = await reader.ReadAsync(
-                    "healthy.example", 8082, 1000, 10605, HaasPartCounterSources.M30Counter1)
+                    "healthy.example", 8082, 1000, HaasPartCounterSources.M30Counter1)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Equal("AVAILABLE", healthy.Availability);
         }
@@ -162,7 +160,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(new BlockingProbeClient(), TimeProvider.System);
 
         var exception = await Assert.ThrowsAsync<TimeoutException>(() => reader.ReadAsync(
-            "timeout.example", 8082, 50, 10605, HaasPartCounterSources.M30Counter1));
+            "timeout.example", 8082, 50, HaasPartCounterSources.M30Counter1));
 
         Assert.Contains("timeout.example:8082", exception.Message, StringComparison.Ordinal);
         Assert.Contains("50 ms", exception.Message, StringComparison.Ordinal);
@@ -177,7 +175,7 @@ public sealed class HaasMtConnectReaderTests
         await cancellation.CancelAsync();
 
         var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reader.ReadAsync(
-            "cancelled.example", 8082, 5000, 10605,
+            "cancelled.example", 8082, 5000,
             HaasPartCounterSources.M30Counter1, cancellation.Token));
 
         Assert.IsNotType<TimeoutException>(exception);
@@ -192,9 +190,9 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(client, TimeProvider.System);
 
         await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.M30Counter1);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.M30Counter1);
         await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.M30Counter1);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.M30Counter1);
 
         Assert.Equal(1, client.ProbeCallCount);
         Assert.Equal(2, client.CurrentCallCount);
@@ -227,7 +225,7 @@ public sealed class HaasMtConnectReaderTests
         var reader = new HaasMtConnectReader(client, TimeProvider.System);
 
         var result = await reader.ReadAsync(
-            "192.168.0.56", 8082, 3000, 10605, HaasPartCounterSources.M30Counter1);
+            "192.168.0.56", 8082, 3000, HaasPartCounterSources.M30Counter1);
 
         Assert.Equal("VF-3SS", result.DeviceName);
         Assert.Equal(2, client.ProbeCallCount);

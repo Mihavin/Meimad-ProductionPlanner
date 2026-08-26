@@ -24,6 +24,7 @@ coverage/
 TestResults/
 
 # Runtime data and diagnostics
+.diagnostics/
 *.db
 *.db-*
 *.sqlite

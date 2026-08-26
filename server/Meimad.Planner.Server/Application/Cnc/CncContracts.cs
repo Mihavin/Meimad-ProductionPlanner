@@ -55,6 +55,13 @@ internal interface ICncSnapshotConsumer
     Task<CncSnapshotConsumptionResult> ConsumeAsync(MachineSnapshot snapshot, CancellationToken cancellationToken);
 }
 
+internal interface ICncRawTelemetryConsumer
+{
+    Task ConsumeAsync(
+        string machineId, IReadOnlyList<RawCncTelemetry> telemetry,
+        CancellationToken cancellationToken);
+}
+
 internal sealed record CncSnapshotConsumptionResult(IReadOnlyList<string> DomainEvents)
 {
     internal static readonly CncSnapshotConsumptionResult None = new([]);

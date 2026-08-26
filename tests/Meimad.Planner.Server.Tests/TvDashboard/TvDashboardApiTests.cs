@@ -38,8 +38,8 @@ public sealed class TvDashboardApiTests
             Assert.Equal("op-current", machine.GetProperty("current").GetProperty("operationId").GetString());
             Assert.True(machine.GetProperty("current").GetProperty("urgent").GetBoolean());
             Assert.Equal("started", machine.GetProperty("current").GetProperty("progress").GetProperty("statusCode").GetString());
-            Assert.Equal("production", machine.GetProperty("current").GetProperty("progress").GetProperty("phase").GetString());
-            Assert.Equal(JsonValueKind.Null, machine.GetProperty("current").GetProperty("progress").GetProperty("setupPercent").ValueKind);
+            Assert.Equal("setup", machine.GetProperty("current").GetProperty("progress").GetProperty("phase").GetString());
+            Assert.Equal(JsonValueKind.Number, machine.GetProperty("current").GetProperty("progress").GetProperty("setupPercent").ValueKind);
             Assert.Contains("/api/v1/cases/case-tv/preview", machine.GetProperty("current").GetProperty("previewUrl").GetString(), StringComparison.Ordinal);
             Assert.True(machine.GetProperty("downtime").GetProperty("isCurrent").GetBoolean());
             Assert.Empty(machine.GetProperty("conflicts").EnumerateArray());
@@ -170,8 +170,8 @@ public sealed class TvDashboardApiTests
                     $now, 'ACTIVE', '{}', '{}', '{}', 1);
             INSERT INTO haas_machine_snapshots (
                 machine_id, observed_at, connectivity_state, machine_status, program_number,
-                production_variable_number, production_variable_value, version)
-            VALUES ('machine-tv', $now, 'ONLINE', 'ACTIVE', 'O1000', 10699, 1, 1);
+                version)
+            VALUES ('machine-tv', $now, 'ONLINE', 'ACTIVE', 'O1000', 1);
             INSERT INTO cases (id, part_number, name, preview_reference, working_folder_path)
             VALUES ('case-tv', 'PN-TV', 'TV Part', 'preview.png', $workingFolder);
             INSERT INTO orders (
