@@ -31,6 +31,9 @@ internal interface IEInkDeviceRegistrationRepository
         DateTimeOffset contactedAt,
         decimal? batteryVoltage,
         int? batteryPercent,
+        string? firmwareVersion,
+        string? wifiIpAddress,
+        int? wifiRssi,
         CancellationToken cancellationToken);
 }
 
@@ -43,7 +46,19 @@ internal sealed record EInkDeviceRegistration(
     bool IsEnabled,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? LastSeenAt = null,
+    DateTimeOffset? LastServerContactAt = null,
+    string? FirmwareVersion = null,
+    decimal? BatteryVoltage = null,
+    int? BatteryPercent = null,
+    string? WifiIpAddress = null,
+    int? WifiRssi = null,
+    string? MachineNumber = null,
+    string? MachineName = null,
+    string? CurrentProductionRunId = null,
+    string? CurrentWorkflowStatus = null,
+    string? CurrentPackageRevision = null);
 
 internal sealed record CreateEInkDeviceRegistrationCommand(
     string DeviceName,

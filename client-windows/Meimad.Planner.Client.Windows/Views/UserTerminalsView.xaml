@@ -1,6 +1,108 @@
-<UserControl x:Class="Meimad.Planner.Client.Windows.Views.UserTerminalsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="{StaticResource CanvasBrush}">
-  <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-    <StackPanel Grid.Column="0"><DockPanel Margin="0,0,0,8"><Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}"/><TextBlock Text="User Terminals" FontSize="20" FontWeight="SemiBold"/></DockPanel><TextBlock Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/><DataGrid ItemsSource="{Binding Terminals}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="300"><DataGrid.Columns><DataGridTextColumn Header="Tablet" Binding="{Binding TabletId}"/><DataGridTextColumn Header="Name" Binding="{Binding DeviceName}"/><DataGridTextColumn Header="Machine" Binding="{Binding BindingText}"/><DataGridTextColumn Header="State" Binding="{Binding StateText}"/></DataGrid.Columns></DataGrid></StackPanel>
-    <Border Grid.Column="2" Background="White" BorderBrush="#D8DDE3" BorderThickness="1" Padding="14"><StackPanel><TextBlock Text="Tablet configuration" FontSize="18" FontWeight="SemiBold"/><TextBlock Text="Read-only in View Mode. Tablet communication is confirmed after an authenticated bootstrap reaches the Server." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,12"/><TextBlock Text="Device name"/><TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Text="Wi-Fi MAC address" Margin="0,8,0,0"/><TextBox Text="{Binding HardwareId, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Text="Machine binding" Margin="0,8,0,0"/><ComboBox ItemsSource="{Binding Machines}" SelectedItem="{Binding SelectedMachine}" DisplayMemberPath="Name"/><StackPanel Orientation="Horizontal" Margin="0,12,0,0"><Button Content="New" Command="{Binding NewCommand}"/><Button Content="Save / Assign" Command="{Binding SaveCommand}"/><Button Content="Enable / Disable" Command="{Binding ToggleEnabledCommand}"/></StackPanel><Button Content="Rotate credential" Command="{Binding RotateCredentialCommand}" HorizontalAlignment="Left" Margin="0,6,0,0"/><TextBlock Text="Provisioning credential - copy now; it cannot be retrieved later" FontWeight="SemiBold" Margin="0,16,0,3"/><TextBox Text="{Binding ProvisioningToken, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" MinHeight="45"/></StackPanel></Border>
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.UserTerminalsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+  <Grid Margin="8">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="5*" />
+      <ColumnDefinition Width="12" />
+      <ColumnDefinition Width="2*" MinWidth="300" />
+    </Grid.ColumnDefinitions>
+
+    <Grid Grid.Column="0">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <DockPanel Margin="0,0,0,8">
+        <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" />
+        <StackPanel>
+          <TextBlock Text="User Terminals" FontSize="20" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding EditModeText}" Foreground="{StaticResource MutedTextBrush}" />
+        </StackPanel>
+      </DockPanel>
+      <TextBlock Grid.Row="1" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}"
+                 TextWrapping="Wrap" Margin="0,0,0,8" />
+      <DataGrid Grid.Row="2" ItemsSource="{Binding Terminals}" SelectedItem="{Binding Selected}"
+                AutoGenerateColumns="False" IsReadOnly="True" MinHeight="300"
+                HorizontalScrollBarVisibility="Auto" FrozenColumnCount="2">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="Tablet ID" Binding="{Binding TabletId}" />
+          <DataGridTextColumn Header="Device name" Binding="{Binding DeviceName}" Width="150" />
+          <DataGridTextColumn Header="Hardware MAC" Binding="{Binding HardwareId}" Width="130" />
+          <DataGridTextColumn Header="Machine" Binding="{Binding BindingText}" Width="180" />
+          <DataGridTextColumn Header="Access" Binding="{Binding StateText}" />
+          <DataGridTextColumn Header="Last seen" Binding="{Binding LastSeenText}" Width="130" />
+          <DataGridTextColumn Header="Firmware" Binding="{Binding FirmwareText}" Width="110" />
+          <DataGridTextColumn Header="Battery" Binding="{Binding BatteryText}" Width="100" />
+          <DataGridTextColumn Header="Wi-Fi / health" Binding="{Binding WifiText}" Width="180" />
+          <DataGridTextColumn Header="Current Production Run" Binding="{Binding CurrentRunText}" Width="180" />
+          <DataGridTextColumn Header="Workflow" Binding="{Binding WorkflowText}" Width="150" />
+          <DataGridTextColumn Header="Package revision" Binding="{Binding PackageRevisionText}" Width="130" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Grid>
+
+    <Border Grid.Column="2" Background="White" BorderBrush="#D8DDE3"
+            BorderThickness="1" Padding="14">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Text="Selected terminal" FontSize="18" FontWeight="SemiBold" />
+          <TextBlock Text="Monitoring is read-only and remains available without Edit Mode."
+                     TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
+                     Margin="0,6,0,12" />
+
+          <TextBlock Text="Tablet / hardware" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding Selected.TabletId, TargetNullValue=Select a terminal}" />
+          <TextBlock Text="{Binding Selected.HardwareId, TargetNullValue=Not registered}" />
+          <TextBlock Text="Machine" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding Selected.BindingText, TargetNullValue=—}" TextWrapping="Wrap" />
+          <TextBlock Text="Credential state" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding Selected.StateText, TargetNullValue=—}" />
+          <TextBlock Text="Contact health" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding Selected.HealthText, TargetNullValue=—}" TextWrapping="Wrap" />
+          <TextBlock Text="Firmware / battery / Wi-Fi" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding Selected.FirmwareText, TargetNullValue=—}" />
+          <TextBlock Text="{Binding Selected.BatteryText, TargetNullValue=—}" />
+          <TextBlock Text="{Binding Selected.WifiText, TargetNullValue=—}" />
+          <TextBlock Text="Current Production Run" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding Selected.CurrentRunText, TargetNullValue=—}" TextWrapping="Wrap" />
+          <TextBlock Text="Workflow / package" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding Selected.WorkflowText, TargetNullValue=—}" />
+          <TextBlock Text="{Binding Selected.PackageRevisionText, TargetNullValue=—}" />
+
+          <Separator Margin="0,14" />
+          <TextBlock Text="Terminal administration" FontSize="18" FontWeight="SemiBold" />
+          <TextBlock Text="Registration, assignment and credential actions require the active Edit Mode generation."
+                     TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
+                     Margin="0,4,0,10" />
+          <StackPanel IsEnabled="{Binding IsEditor}">
+            <TextBlock Text="Device name" />
+            <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                     IsEnabled="{Binding CanEditIdentity}" />
+            <TextBlock Text="Wi-Fi MAC address" Margin="0,8,0,0" />
+            <TextBox Text="{Binding HardwareId, UpdateSourceTrigger=PropertyChanged}"
+                     IsEnabled="{Binding CanEditIdentity}" />
+            <TextBlock Text="Machine binding" Margin="0,8,0,0" />
+            <ComboBox ItemsSource="{Binding Machines}" SelectedItem="{Binding SelectedMachine}"
+                      DisplayMemberPath="Name" />
+            <WrapPanel Margin="0,12,0,0">
+              <Button Content="New tablet" Command="{Binding NewCommand}" />
+              <Button Content="Save / assign" Command="{Binding SaveCommand}" />
+              <Button Content="Mark spare" Command="{Binding MarkSpareCommand}" />
+            </WrapPanel>
+            <WrapPanel Margin="0,6,0,0">
+              <Button Content="{Binding ToggleEnabledText}" Command="{Binding ToggleEnabledCommand}" />
+              <Button Content="Rotate credential" Command="{Binding RotateCredentialCommand}" />
+            </WrapPanel>
+          </StackPanel>
+          <TextBlock Text="Provisioning credential — copy now; it cannot be retrieved later"
+                     FontWeight="SemiBold" Margin="0,16,0,3" />
+          <TextBox Text="{Binding ProvisioningToken, Mode=OneWay}" IsReadOnly="True"
+                   TextWrapping="Wrap" MinHeight="45" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
   </Grid>
 </UserControl>

@@ -17,6 +17,7 @@
 #include "button_input.h"
 #include "demo_mode.h"
 #include "firmware_logging.h"
+#include "service_ui.h"
 
 #if !MEIMAD_EINK_DRIVER_STUB
 #include <TFT_eSPI.h>
@@ -44,6 +45,13 @@ constexpr char kLastRevisionKey[] = "last_revision";
 constexpr char kLastRevisionTabletKey[] = "last_rev_tab";
 constexpr char kLastDisplayedStatusKey[] = "last_status";
 constexpr char kVerificationFailSafeKey[] = "verify_block";
+constexpr char kLastContactKey[] = "last_contact";
+constexpr char kLastHttpResultKey[] = "last_http";
+constexpr char kLastRefreshDurationKey[] = "last_refresh";
+constexpr char kLastMachineBindingKey[] = "last_machine";
+constexpr char kLastVerificationResultKey[] = "last_verify";
+constexpr char kLastMacroVersionKey[] = "last_macro";
+constexpr char kServiceScreenActiveKey[] = "service_active";
 constexpr char kToolPageKey[] = "tool_page";
 constexpr char kConfirmationPendingKey[] = "confirm_clear";
 constexpr char kBatteryLowKey[] = "battery_low";
@@ -85,6 +93,15 @@ String readHardwareId() {
   snprintf(value, sizeof(value), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   return String(value);
+}
+
+String safeServerAddress(const String& value) {
+  const int scheme = value.indexOf("://");
+  const int authorityStart = scheme < 0 ? 0 : scheme + 3;
+  const int pathStart = value.indexOf('/', authorityStart);
+  const int at = value.indexOf('@', authorityStart);
+  if (at < 0 || (pathStart >= 0 && at > pathStart)) return value;
+  return value.substring(0, authorityStart) + value.substring(at + 1);
 }
 
 DeviceConfiguration loadDeviceConfiguration() {
@@ -194,6 +211,51 @@ void saveVerificationFailSafe(bool active) {
   Preferences preferences;
   if (!preferences.begin(kPreferencesNamespace, false)) return;
   preferences.putBool(kVerificationFailSafeKey, active);
+  preferences.end();
+}
+
+bool loadServiceScreenActive() {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) return false;
+  const bool active = preferences.getBool(kServiceScreenActiveKey, false);
+  preferences.end();
+  return active;
+}
+
+void saveServiceScreenActive(bool active) {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) return;
+  preferences.putBool(kServiceScreenActiveKey, active);
+  preferences.end();
+}
+
+String loadDiagnosticText(const char* key) {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) return String();
+  const String value = preferences.getString(key, "");
+  preferences.end();
+  return value;
+}
+
+void saveDiagnosticText(const char* key, const String& value) {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) return;
+  preferences.putString(key, value);
+  preferences.end();
+}
+
+uint32_t loadLastRefreshDuration() {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) return 0;
+  const uint32_t duration = preferences.getULong(kLastRefreshDurationKey, 0);
+  preferences.end();
+  return duration;
+}
+
+void saveLastRefreshDuration(uint32_t duration) {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) return;
+  preferences.putULong(kLastRefreshDurationKey, duration);
   preferences.end();
 }
 
@@ -308,13 +370,20 @@ bool connectWifi(const DeviceConfiguration& configuration) {
 bool testServer(
     const DeviceConfiguration& configuration,
     const meimad::tablet_api::BatteryTelemetry& batteryTelemetry,
-    String& assignedTabletId) {
-  if (configuration.serverBaseUrl.isEmpty()) return false;
+    String& assignedTabletId,
+    String& diagnosticResult) {
+  if (configuration.serverBaseUrl.isEmpty()) {
+    diagnosticResult = "PING NOT CONFIGURED";
+    return false;
+  }
   HTTPClient http;
   const String url = configuration.serverBaseUrl + "/api/tablet/ping?hardwareId=" + configuration.hardwareId;
   http.setConnectTimeout(5000);
   http.setTimeout(7000);
-  if (!http.begin(url)) return false;
+  if (!http.begin(url)) {
+    diagnosticResult = "PING INIT FAILED";
+    return false;
+  }
   if (!configuration.deviceToken.isEmpty()) {
     http.addHeader("Authorization", "Bearer " + configuration.deviceToken);
   }
@@ -328,18 +397,28 @@ bool testServer(
         "X-Meimad-Battery-Percent",
         String(batteryTelemetry.percent));
   }
+  http.addHeader("X-Meimad-Firmware-Version", MEIMAD_FIRMWARE_VERSION);
+  if (WiFi.status() == WL_CONNECTED) {
+    http.addHeader("X-Meimad-Wifi-IP", WiFi.localIP().toString());
+    http.addHeader("X-Meimad-Wifi-Rssi", String(WiFi.RSSI()));
+  }
   const int status = http.GET();
   const String payload = status == HTTP_CODE_OK ? http.getString() : String();
   http.end();
   if (status != HTTP_CODE_OK) {
+    diagnosticResult = "PING HTTP " + String(status);
     MEIMAD_LOG("API", "GET /api/tablet/ping response=%d", status);
     return false;
   }
   JsonDocument response;
   if (deserializeJson(response, payload) != DeserializationError::Ok
-      || response["status"] != "ok") return false;
+      || response["status"] != "ok") {
+    diagnosticResult = "PING MALFORMED";
+    return false;
+  }
   assignedTabletId = response["tabletId"].as<String>();
   MEIMAD_LOG("API", "GET /api/tablet/ping response=200");
+  diagnosticResult = "PING HTTP 200";
   return true;
 }
 
@@ -347,9 +426,11 @@ bool requestTabletStatus(
     const meimad::tablet_api::TabletApiClient& tabletApi,
     const String& tabletId,
     const char* requestReason,
-    meimad::tablet_api::TabletStatusResponse& tabletStatus) {
+    meimad::tablet_api::TabletStatusResponse& tabletStatus,
+    meimad::tablet_api::ApiResult* diagnosticResult = nullptr) {
   MEIMAD_LOG("API", "GET /api/tablets/%s/status reason=%s", tabletId.c_str(), requestReason);
   const auto result = tabletApi.getStatus(tabletId, tabletStatus);
+  if (diagnosticResult != nullptr) *diagnosticResult = result;
   if (!result.succeeded()) {
     MEIMAD_LOG(
         "API", "GET status failed code=%s%s%s",
@@ -384,8 +465,7 @@ const char* resetReason(esp_reset_reason_t reason) {
   }
 }
 
-void printWakeReason() {
-  const auto cause = esp_sleep_get_wakeup_cause();
+const char* wakeReasonText(esp_sleep_wakeup_cause_t cause) {
   const char* text = "not-from-sleep";
   switch (cause) {
     case ESP_SLEEP_WAKEUP_EXT0: text = "external-rtc-0"; break;
@@ -396,7 +476,34 @@ void printWakeReason() {
     case ESP_SLEEP_WAKEUP_GPIO: text = "gpio"; break;
     default: break;
   }
+  return text;
+}
+
+void printWakeReason() {
+  const auto cause = esp_sleep_get_wakeup_cause();
+  const char* text = wakeReasonText(cause);
   MEIMAD_LOG("WAKE", "reason=%s code=%d", text, static_cast<int>(cause));
+}
+
+String currentUtcContactText() {
+  const time_t now = time(nullptr);
+  if (now < kMinimumValidWakeTime) return "SUCCESS - UTC UNAVAILABLE";
+  struct tm utcTime {};
+  if (gmtime_r(&now, &utcTime) == nullptr) return "SUCCESS - UTC UNAVAILABLE";
+  char timestamp[25]{};
+  if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%SZ", &utcTime) == 0) {
+    return "SUCCESS - UTC UNAVAILABLE";
+  }
+  return String(timestamp);
+}
+
+String apiDiagnosticText(
+    const char* operation,
+    const meimad::tablet_api::ApiResult& result) {
+  if (result.succeeded()) return String(operation) + " HTTP " + String(result.httpStatus);
+  String value = String(operation) + " " + meimad::tablet_api::toText(result.code);
+  if (result.httpStatus != 0) value += " " + String(result.httpStatus);
+  return value;
 }
 
 void printWakeTimestamp() {
@@ -647,6 +754,23 @@ uint32_t drawProductionLayout(
 #endif
 }
 
+uint32_t drawServiceLayout(
+    const meimad::service_ui::ServiceScreenModel& screen) {
+#if !MEIMAD_EINK_DRIVER_STUB
+  meimad::service_ui::drawServiceScreen(epaper, screen);
+  const uint32_t refreshStartedAt = millis();
+  epaper.update();
+  const uint32_t refreshDurationMs = millis() - refreshStartedAt;
+  MEIMAD_LOG(
+      "DISPLAY",
+      "refresh completed source=service-screen duration_ms=%lu",
+      static_cast<unsigned long>(refreshDurationMs));
+  return refreshDurationMs;
+#else
+  return 0;
+#endif
+}
+
 #if MEIMAD_DEMO_MODE
 void runCompileTimeDemo(
     meimad::button_input::ButtonAction action,
@@ -678,8 +802,10 @@ void runCompileTimeDemo(
       meimad::demo_mode::scenarioName(scenario),
       scenarioIndex);
   Serial.println(
-      "Demo controls: D1/long-D4 next scenario; D2 previous page; short-D4 next page.");
+      "Demo controls: short-D1/long-D4 next scenario; long-D1 service; "
+      "D2 previous page; short-D4 next page.");
   drawProductionLayout(screen, true, "compile-time-demo", scenarioIndex, toolPage);
+  saveServiceScreenActive(false);
   saveToolPage(toolPage);
   saveBatteryLowWarning(screen.lowBattery);
   disableWifiForIdle("compile-time demo");
@@ -694,6 +820,8 @@ void setup() {
   const auto previousSleepState = loadPreviousSleepState();
   const auto wakeCause = esp_sleep_get_wakeup_cause();
   const bool physicalButtonWake = wakeCause == ESP_SLEEP_WAKEUP_EXT1;
+  const bool serviceScreenRequested =
+      wakeButton.action == meimad::button_input::ButtonAction::ServiceScreen;
   const bool serverContactRequired =
       meimad::button_input::requiresServerContact(
           physicalButtonWake, wakeButton.action);
@@ -749,6 +877,42 @@ void setup() {
   Serial.printf("Display controller board combo: %d (UC8179)\n",
                 meimad::hardware::kEinkControllerBoardCombo);
 #if MEIMAD_DEMO_MODE
+  if (serviceScreenRequested) {
+    meimad::service_ui::ServiceScreenModel serviceScreen;
+    serviceScreen.tabletId = configuration.tabletId.isEmpty()
+        ? "UNREGISTERED"
+        : configuration.tabletId;
+    serviceScreen.hardwareMac = configuration.hardwareId;
+    serviceScreen.firmwareVersion = MEIMAD_FIRMWARE_VERSION;
+    serviceScreen.machineBinding = "DEMO MODE";
+    serviceScreen.wifiSsid = configuration.wifiSsid;
+    serviceScreen.serverAddress = safeServerAddress(configuration.serverBaseUrl);
+    serviceScreen.lastSuccessfulContact = "DEMO - NO NETWORK";
+    serviceScreen.lastHttpResult = "DEMO - NO HTTP";
+    serviceScreen.workflowState = "DEMO";
+    serviceScreen.revision = "DEMO";
+    const String voltage =
+        meimad::tablet_api::formatBatteryVoltageHeader(batteryTelemetry);
+    serviceScreen.batteryVoltage = voltage.isEmpty()
+        ? "UNAVAILABLE"
+        : voltage + " V";
+    serviceScreen.wakeReason = wakeReasonText(wakeCause);
+    const uint32_t lastRefreshDuration = loadLastRefreshDuration();
+    serviceScreen.lastRefreshDuration = lastRefreshDuration == 0
+        ? "NOT RECORDED"
+        : String(lastRefreshDuration) + " ms";
+    serviceScreen.verificationResult = "NOT REPORTED";
+    serviceScreen.protectedMacroVersion = "NOT REPORTED";
+    meimad::service_ui::logServiceDiagnostics(serviceScreen);
+    saveLastRefreshDuration(drawServiceLayout(serviceScreen));
+    saveServiceScreenActive(true);
+    enterStateSleep(
+        meimad::tablet_state_machine::policyFor(
+            meimad::tablet_api::TabletStatus::Unknown),
+        meimad::tablet_api::TabletStatus::Unknown,
+        false);
+    return;
+  }
   runCompileTimeDemo(wakeButton.action, batteryTelemetry);
   return;
 #endif
@@ -760,10 +924,25 @@ void setup() {
   bool wifiConnected = false;
   String assignedTabletId;
   bool serverConnected = false;
+  String lastHttpResult = loadDiagnosticText(kLastHttpResultKey);
+  String lastSuccessfulContact = loadDiagnosticText(kLastContactKey);
+  String wifiIp;
+  String wifiRssi;
   if (serverContactRequired) {
     wifiConnected = connectWifi(activeConfiguration);
+    if (wifiConnected) {
+      wifiIp = WiFi.localIP().toString();
+      wifiRssi = String(WiFi.RSSI()) + " dBm";
+    } else {
+      lastHttpResult = "WI-FI CONNECTION FAILED";
+    }
     serverConnected = wifiConnected
-        && testServer(activeConfiguration, batteryTelemetry, assignedTabletId);
+        && testServer(
+            activeConfiguration,
+            batteryTelemetry,
+            assignedTabletId,
+            lastHttpResult);
+    if (serverConnected) lastSuccessfulContact = currentUtcContactText();
   } else {
     disableWifiForIdle("local-only button wake");
     MEIMAD_LOG("WIFI", "skipped reason=local_button_wake");
@@ -790,6 +969,11 @@ void setup() {
   const bool confirmationPending = loadConfirmationPending();
   bool confirmationDisplayed = false;
   bool verificationFailSafeDisplayed = false;
+  String currentMachineBinding = loadDiagnosticText(kLastMachineBindingKey);
+  String currentVerificationResult =
+      loadDiagnosticText(kLastVerificationResultKey);
+  if (currentVerificationResult.isEmpty()) currentVerificationResult = "NOT REPORTED";
+  String currentMacroVersion = loadDiagnosticText(kLastMacroVersionKey);
   bool statePolicyFromServer = !serverContactRequired
       && previousSleepState.available
       && previousSleepState.serverStateAvailable;
@@ -805,6 +989,7 @@ void setup() {
   }
   const auto lastRevision = loadLastRevision();
   const bool verificationFailSafeActive = loadVerificationFailSafe();
+  const bool serviceScreenActive = loadServiceScreenActive();
   const bool lastDisplayedSetupVerification =
       loadLastDisplayedStatus() == "IN_SETUP";
   const bool retainedScreenMatchesTablet = lastRevision.available
@@ -824,6 +1009,7 @@ void setup() {
         activeConfiguration.deviceToken,
         batteryTelemetry);
     meimad::tablet_api::TabletStatusResponse tabletStatus;
+    meimad::tablet_api::ApiResult statusApiResult;
     const char* statusReason =
         wakeButton.action == meimad::button_input::ButtonAction::Refresh
             ? "physical-refresh-button"
@@ -832,7 +1018,10 @@ void setup() {
             tabletApi,
             activeConfiguration.tabletId,
             statusReason,
-            tabletStatus)) {
+            tabletStatus,
+            &statusApiResult)) {
+      lastHttpResult = apiDiagnosticText("STATUS", statusApiResult);
+      lastSuccessfulContact = currentUtcContactText();
       productionScreen = meimad::production_ui::makeProductionScreen(tabletStatus);
       productionScreen.lowBattery = lowBattery;
       developmentFixture = false;
@@ -840,11 +1029,23 @@ void setup() {
       statePolicyFromServer = true;
       serverRevision = tabletStatus.revision;
       serverStatus = tabletStatus.status;
+      currentMachineBinding = tabletStatus.machine.number + " - " + tabletStatus.machine.name;
+      currentVerificationResult = tabletStatus.diagnostics.verificationResult;
+      if (tabletStatus.diagnostics.protectedMacroVersion >= 0) {
+        currentMacroVersion = String(
+            tabletStatus.diagnostics.protectedMacroVersion);
+      } else {
+        currentMacroVersion = "NOT REPORTED";
+      }
+      saveDiagnosticText(kLastMachineBindingKey, currentMachineBinding);
+      saveDiagnosticText(kLastVerificationResultKey, currentVerificationResult);
+      saveDiagnosticText(kLastMacroVersionKey, currentMacroVersion);
       const bool serverContentChanged = meimad::screen_revision::shouldRefresh(
           lastRevision,
           tabletStatus.tabletId,
           serverRevision);
       refreshScreen = serverContentChanged || verificationFailSafeActive
+          || serviceScreenActive
           || confirmationPending || batteryWarningChanged;
       if (serverContentChanged) toolPage = 0;
       toolPage = meimad::production_ui::normalizedToolPage(
@@ -926,6 +1127,7 @@ void setup() {
         }
       }
     } else {
+      lastHttpResult = apiDiagnosticText("STATUS", statusApiResult);
       const bool retainedVerificationCodeCouldBeVisible =
           retainedScreenMatchesTablet
           && (lastDisplayedSetupVerification
@@ -981,6 +1183,13 @@ void setup() {
   }
 
   if (serverContactRequired) {
+    saveDiagnosticText(kLastHttpResultKey, lastHttpResult);
+    if (!lastSuccessfulContact.isEmpty()) {
+      saveDiagnosticText(kLastContactKey, lastSuccessfulContact);
+    }
+  }
+
+  if (serverContactRequired) {
     disableWifiForIdle("network work complete");
   }
 
@@ -1018,19 +1227,67 @@ void setup() {
     }
   }
 
-  if (refreshScreen) {
+  if (serviceScreenRequested) {
+    meimad::service_ui::ServiceScreenModel serviceScreen;
+    serviceScreen.tabletId = activeConfiguration.tabletId.isEmpty()
+        ? "UNREGISTERED"
+        : activeConfiguration.tabletId;
+    serviceScreen.hardwareMac = activeConfiguration.hardwareId;
+    serviceScreen.firmwareVersion = MEIMAD_FIRMWARE_VERSION;
+    serviceScreen.machineBinding = receivedServerRevision
+        ? currentMachineBinding
+        : (currentMachineBinding.isEmpty()
+            ? "UNAVAILABLE"
+            : "LAST: " + currentMachineBinding);
+    serviceScreen.wifiSsid = activeConfiguration.wifiSsid;
+    serviceScreen.ipAddress = wifiIp;
+    serviceScreen.rssi = wifiRssi;
+    serviceScreen.serverAddress = safeServerAddress(activeConfiguration.serverBaseUrl);
+    serviceScreen.lastSuccessfulContact = lastSuccessfulContact;
+    serviceScreen.lastHttpResult = lastHttpResult;
+    serviceScreen.workflowState = receivedServerRevision
+        ? meimad::tablet_api::toToken(serverStatus)
+        : "UNAVAILABLE";
+    serviceScreen.revision = receivedServerRevision
+        ? String(serverRevision)
+        : (lastRevision.available
+            ? "LAST: " + String(lastRevision.revision)
+            : "UNAVAILABLE");
+    const String voltage =
+        meimad::tablet_api::formatBatteryVoltageHeader(batteryTelemetry);
+    serviceScreen.batteryVoltage = voltage.isEmpty()
+        ? "UNAVAILABLE"
+        : voltage + " V";
+    serviceScreen.wakeReason = wakeReasonText(wakeCause);
+    const uint32_t lastRefreshDuration = loadLastRefreshDuration();
+    serviceScreen.lastRefreshDuration = lastRefreshDuration == 0
+        ? "NOT RECORDED"
+        : String(lastRefreshDuration) + " ms";
+    serviceScreen.verificationResult = currentVerificationResult;
+    serviceScreen.protectedMacroVersion = currentMacroVersion;
+    meimad::service_ui::logServiceDiagnostics(serviceScreen);
+    const uint32_t duration = drawServiceLayout(serviceScreen);
+    saveLastRefreshDuration(duration);
+    saveServiceScreenActive(true);
+  } else if (refreshScreen) {
     productionScreen.lowBattery = lowBattery;
-    drawProductionLayout(
+    const uint32_t duration = drawProductionLayout(
         productionScreen,
         developmentFixture,
-        receivedServerRevision ? "server" : "layout-demo",
+        receivedServerRevision
+            ? "server"
+            : (verificationFailSafeDisplayed
+                ? "verification-fail-safe"
+                : "layout-demo"),
         serverRevision,
         toolPage);
+    saveLastRefreshDuration(duration);
     saveToolPage(toolPage);
     if (receivedServerRevision) {
       saveLastRevision(activeConfiguration.tabletId, serverRevision);
       saveLastDisplayedStatus(serverStatus);
       saveVerificationFailSafe(false);
+      saveServiceScreenActive(false);
       if (confirmationDisplayed) {
         saveConfirmationPending(true);
       } else if (confirmationPending) {

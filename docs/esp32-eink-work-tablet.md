@@ -43,7 +43,7 @@ Primary goals are:
 | Storage | Removable SD/microSD for official packages, previews, rendered screens, NC/text, tool tables, and local annotations. |
 | Power | Three replaceable AA batteries; no rechargeable cell or charger in the MVP. The kit battery is not the production power design. |
 | Regulation | Low-quiescent-current design with brownout-safe Wi-Fi peaks; power-gate SD/display where practical. |
-| Inputs | Three active-low user buttons: D1/GPIO2 Refresh, D2/GPIO3 Previous Tool Page, short D4/GPIO5 Next Tool Page, and 1.2-second D4/GPIO5 hold for `SEND_TO_QC`, plus reset. Physical labels/ergonomics remain to be accepted. |
+| Inputs | Three active-low user buttons: short D1/GPIO2 Refresh, 1.2-second D1 hold for Service/Debug, D2/GPIO3 Previous Tool Page, short D4/GPIO5 Next Tool Page, and 1.2-second D4/GPIO5 hold for `SEND_TO_QC`, plus reset. Physical labels/ergonomics remain to be accepted. |
 | USB | Optional programming/service connector only; never expose Mass Storage to CNC in MVP. |
 | Mechanical | Rugged mount near the Machine, easy setup-time removal, and practical dust/oil-mist protection. Required rating is TBD. |
 | Status | Prefer on-screen indication; avoid always-on LEDs. |
@@ -102,7 +102,7 @@ previous deep sleep. That pre-sleep state uses RTC memory and is never treated
 as authoritative business state. It preserves the prior sleep policy across a
 local-only page wake; cold boot or lost/invalid RTC memory falls back safely.
 
-Cold boots, timer wakes, Refresh, and `SEND_TO_QC` perform bounded Wi-Fi/Server
+Cold boots, timer wakes, Refresh, Service/Debug, and `SEND_TO_QC` perform bounded Wi-Fi/Server
 work. Previous/Next and ignored physical wakes do not start Wi-Fi. After the
 last HTTP operation, firmware disconnects Wi-Fi and selects `WIFI_OFF` before
 panel refresh and deep sleep; sleep entry repeats this shutdown as a guard. If
@@ -112,7 +112,10 @@ battery calibration, wake latency, RTC retention, and timestamp continuity
 still require physical measurement.
 
 The current firmware samples one voltage per wake and attaches it as
-`X-Meimad-Battery-Voltage` metadata to every ping/status/event HTTP request.
+`X-Meimad-Battery-Voltage` metadata to every ping/status/event HTTP request. It
+also reports the compiled firmware version and, while connected, local IP/RSSI
+through bounded operational headers consumed by the schema-v53 User Terminals
+monitor.
 It does not guess a percentage. A simple, provisional `LOW BATTERY` screen
 warning appears at or below 3.30 V; threshold transitions force a screen update
 even without a new Server revision. Device-health metadata is separate from
@@ -245,7 +248,12 @@ The Server implements the versioned `/api/v1/eink/devices/{deviceId}/...` forms 
 
 Structured JSON is the implemented v1 Server/simulator baseline. A pre-rendered panel asset may be added only through an explicit compatible contract decision because it changes firmware complexity, fonts, pagination, server rendering, payload size, and display-specific coupling. The browser simulator at `/eink-simulator/` performs the version request first, displays the structured Machine screen, reads manifests/files, verifies file SHA-256, and preserves its last rendered screen on errors. It does not claim physical SD staging, atomic activation, deep sleep, E-Ink refresh, or local annotation behavior.
 
-The source also suggests optional battery/firmware telemetry using a `GET .../ping` request. That conflicts with the read-only boundary and safe HTTP semantics if it records state. Telemetry is excluded from the baseline contract until a narrowly scoped, authenticated design is approved. Server observation of normal reads may update operational last-seen state, but must never change planning data.
+Authenticated ping/status reads now record narrowly scoped last-contact,
+firmware, battery, local-IP, and RSSI observations for the Windows User
+Terminals monitor. This is operational device health, not planning data: it
+cannot change assignment, workflow, package, quantities, execution, or backlog
+state. Invalid telemetry is ignored, and the projection makes no online-SLA
+claim from a timestamp alone.
 
 The Task 5 physical-firmware status/event contract is approved:
 
@@ -318,6 +326,19 @@ as text, preserving leading zeroes. `EXPIRED`, `INVALIDATED`, and `UNAVAILABLE`
 display `SETUP BLOCKED` plus a refresh/do-not-start instruction and no code. The
 adapter rejects missing verification data, numeric or malformed codes, codes on
 blocking states, and verification data outside `IN_SETUP`.
+
+A 1.2-second D1/Refresh hold is the provisional deliberate service gesture. It
+performs bounded Server contact and renders a two-column text screen containing
+Tablet ID/MAC/firmware, Machine binding, SSID/IP/RSSI, Server address, last
+successful contact and HTTP result, workflow/revision, battery, wake reason,
+prior refresh duration, latest Server-known verification result, and reported
+protected-macro version. The same fields use `[SERVICE]` serial logs. Unavailable
+evidence is labeled explicitly. Bearer token, Wi-Fi password, nonce, Machine
+secret, response code, protected-variable mapping, and algorithm internals are
+absent from the model, panel, and service log.
+The firmware persists that the service page is visible and forces the next
+valid ordinary status response to restore production content even when the
+numeric status revision is unchanged.
 
 The layout model, pagination, same/different/missing/reassigned revision
 decisions, button mapping, page-boundary behavior, single-attempt guard, and

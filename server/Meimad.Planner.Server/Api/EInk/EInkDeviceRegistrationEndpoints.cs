@@ -146,6 +146,18 @@ internal sealed record EInkDeviceRegistrationResponse(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    DateTimeOffset? LastSeenAt,
+    DateTimeOffset? LastServerContactAt,
+    string? FirmwareVersion,
+    decimal? BatteryVoltage,
+    int? BatteryPercent,
+    string? WifiIpAddress,
+    int? WifiRssi,
+    string? MachineNumber,
+    string? MachineName,
+    string? CurrentProductionRunId,
+    string? CurrentWorkflowStatus,
+    string? CurrentPackageRevision,
     string? RegistrationToken)
 {
     internal static EInkDeviceRegistrationResponse FromApplication(
@@ -160,5 +172,17 @@ internal sealed record EInkDeviceRegistrationResponse(
         value.Version,
         value.CreatedAt,
         value.UpdatedAt,
+        value.LastSeenAt,
+        value.LastServerContactAt,
+        value.FirmwareVersion,
+        value.BatteryVoltage,
+        value.BatteryPercent,
+        value.WifiIpAddress,
+        value.WifiRssi,
+        value.MachineNumber,
+        value.MachineName,
+        value.CurrentProductionRunId,
+        value.CurrentWorkflowStatus,
+        value.CurrentPackageRevision,
         registrationToken);
 }

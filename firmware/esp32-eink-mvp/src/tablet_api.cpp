@@ -3,6 +3,7 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <WiFi.h>
 
 #include <limits.h>
 #include <math.h>
@@ -53,6 +54,11 @@ void addBatteryTelemetry(HTTPClient& http, const BatteryTelemetry& telemetry) {
   }
   if (telemetry.percentAvailable && telemetry.percent <= 100) {
     http.addHeader("X-Meimad-Battery-Percent", String(telemetry.percent));
+  }
+  http.addHeader("X-Meimad-Firmware-Version", MEIMAD_FIRMWARE_VERSION);
+  if (WiFi.status() == WL_CONNECTED) {
+    http.addHeader("X-Meimad-Wifi-IP", WiFi.localIP().toString());
+    http.addHeader("X-Meimad-Wifi-Rssi", String(WiFi.RSSI()));
   }
 }
 
@@ -181,6 +187,54 @@ bool parseVerification(
   return true;
 }
 
+bool parseDiagnostics(
+    JsonObjectConst root,
+    TabletDiagnostics& parsed,
+    String& error) {
+  JsonVariantConst value = root["diagnostics"];
+  if (value.isNull()) return true;
+  if (!value.is<JsonObjectConst>()) {
+    error = "diagnostics must be an object";
+    return false;
+  }
+  JsonObjectConst diagnostics = value.as<JsonObjectConst>();
+  if (!readRequiredString(
+          diagnostics["verification_result"],
+          "diagnostics.verification_result",
+          parsed.verificationResult,
+          error)) {
+    return false;
+  }
+  const bool supportedResult =
+      parsed.verificationResult == "NOT_REPORTED"
+      || parsed.verificationResult == "WAITING_FOR_OPERATOR"
+      || parsed.verificationResult == "PENDING"
+      || parsed.verificationResult == "SUCCEEDED"
+      || parsed.verificationResult == "FAILED"
+      || parsed.verificationResult == "EXPIRED"
+      || parsed.verificationResult == "INVALIDATED"
+      || parsed.verificationResult == "SUPERSEDED"
+      || parsed.verificationResult == "UNAVAILABLE"
+      || parsed.verificationResult == "UNKNOWN";
+  if (!supportedResult) {
+    error = "diagnostics.verification_result is not supported";
+    return false;
+  }
+  if (!diagnostics["protected_macro_version"].isNull()) {
+    if (!diagnostics["protected_macro_version"].is<int32_t>()) {
+      error = "diagnostics.protected_macro_version must be a 32-bit integer";
+      return false;
+    }
+    parsed.protectedMacroVersion =
+        diagnostics["protected_macro_version"].as<int32_t>();
+    if (parsed.protectedMacroVersion < 0) {
+      error = "diagnostics.protected_macro_version must not be negative";
+      return false;
+    }
+  }
+  return true;
+}
+
 bool parseEventToken(const String& value, TabletEventType& eventType) {
   if (value != "SEND_TO_QC") return false;
   eventType = TabletEventType::SendToQc;
@@ -292,6 +346,7 @@ bool parseStatusResponse(
   if (!parseVerification(root, parsed.status, parsed.verification, error)) {
     return false;
   }
+  if (!parseDiagnostics(root, parsed.diagnostics, error)) return false;
 
   response = parsed;
   return true;

@@ -111,10 +111,77 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, tablet_id, hardware_id, device_name, machine_id, is_enabled, version, created_at, updated_at
-            FROM device_registry
-            WHERE device_type = 'eink'
-            ORDER BY device_name COLLATE NOCASE, id;
+            WITH current_runs AS (
+                SELECT assignment.machine_id, run.id, run.status,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY assignment.machine_id
+                           ORDER BY assignment.backlog_position, run.id) AS row_number
+                FROM machine_assignments assignment
+                JOIN production_runs run ON run.id = assignment.production_run_id
+                WHERE run.status NOT IN ('COMPLETED','CANCELLED','ABORTED')
+            ),
+            latest_workflow AS (
+                SELECT production_run_id, event_type,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY production_run_id
+                           ORDER BY server_received_at DESC, id DESC) AS row_number
+                FROM production_run_workflow_events
+            ),
+            latest_packages AS (
+                SELECT batch_operation_id, revision,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY batch_operation_id
+                           ORDER BY published_at DESC, id DESC) AS row_number
+                FROM eink_package_revisions
+            ),
+            run_packages AS (
+                SELECT program.production_run_id,
+                       CASE WHEN COUNT(DISTINCT package.revision) = 1
+                            THEN MAX(package.revision)
+                            ELSE 'MULTIPLE' END AS revision
+                FROM production_run_programs program
+                JOIN production_run_outputs output
+                  ON output.production_run_program_id = program.id
+                JOIN latest_packages package
+                  ON package.batch_operation_id = output.batch_operation_id
+                 AND package.row_number = 1
+                GROUP BY program.production_run_id
+            )
+            SELECT device.id, device.tablet_id, device.hardware_id,
+                   device.device_name, device.machine_id, device.is_enabled,
+                   device.version, device.created_at, device.updated_at,
+                   device.last_seen_at, device.last_server_contact_at,
+                   device.firmware_version, device.battery_voltage,
+                   device.battery_percent, device.wifi_ip_address,
+                   device.wifi_rssi, machine.number, machine.name,
+                   current.id,
+                   CASE
+                       WHEN current.id IS NULL THEN NULL
+                       WHEN machine.is_active = 0 OR current.status = 'SUSPENDED'
+                           THEN 'BLOCKED'
+                       WHEN workflow.event_type IS NULL THEN 'READY_FOR_SETUP'
+                       WHEN workflow.event_type IN (
+                           'OFFSET_LOADER_COMPLETED', 'SETUP_VERIFICATION_REQUESTED',
+                           'SETUP_VERIFICATION_FAILED') THEN 'IN_SETUP'
+                       WHEN workflow.event_type IN (
+                           'SETUP_VERIFICATION_SUCCEEDED', 'QC_FAIL') THEN 'IN_SETUP_RUN'
+                       WHEN workflow.event_type = 'SEND_TO_QC' THEN 'IN_QC'
+                       WHEN workflow.event_type = 'QC_PASS' THEN 'READY_FOR_PRODUCTION'
+                       WHEN workflow.event_type IN (
+                           'CYCLE_START', 'CYCLE_END', 'CYCLE_INTERRUPTED',
+                           'PRODUCTION_SESSION_OPENED') THEN 'IN_PRODUCTION'
+                       ELSE 'UNKNOWN'
+                   END,
+                   packages.revision
+            FROM device_registry device
+            LEFT JOIN machines machine ON machine.id = device.machine_id
+            LEFT JOIN current_runs current
+              ON current.machine_id = device.machine_id AND current.row_number = 1
+            LEFT JOIN latest_workflow workflow
+              ON workflow.production_run_id = current.id AND workflow.row_number = 1
+            LEFT JOIN run_packages packages ON packages.production_run_id = current.id
+            WHERE device.device_type = 'eink'
+            ORDER BY device.device_name COLLATE NOCASE, device.id;
             """;
         var values = new List<EInkDeviceRegistration>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -150,6 +217,9 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         DateTimeOffset contactedAt,
         decimal? batteryVoltage,
         int? batteryPercent,
+        string? firmwareVersion,
+        string? wifiIpAddress,
+        int? wifiRssi,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -158,12 +228,18 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
             UPDATE device_registry
             SET last_seen_at = $at, last_server_contact_at = $at,
                 battery_voltage = COALESCE($voltage, battery_voltage),
-                battery_percent = COALESCE($percent, battery_percent)
+                battery_percent = COALESCE($percent, battery_percent),
+                firmware_version = COALESCE($firmware, firmware_version),
+                wifi_ip_address = COALESCE($wifiIp, wifi_ip_address),
+                wifi_rssi = COALESCE($wifiRssi, wifi_rssi)
             WHERE id = $deviceId AND device_type = 'eink' AND is_enabled = 1;
             """;
         Bind(command, "$at", Iso(contactedAt));
         Bind(command, "$voltage", batteryVoltage);
         Bind(command, "$percent", batteryPercent);
+        Bind(command, "$firmware", firmwareVersion);
+        Bind(command, "$wifiIp", wifiIpAddress);
+        Bind(command, "$wifiRssi", wifiRssi);
         Bind(command, "$deviceId", deviceId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -239,7 +315,33 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         reader.GetBoolean(5),
         reader.GetInt32(6),
         Parse(reader.GetString(7)),
-        Parse(reader.GetString(8)));
+        Parse(reader.GetString(8)),
+        OptionalDate(reader, 9),
+        OptionalDate(reader, 10),
+        OptionalString(reader, 11),
+        OptionalDecimal(reader, 12),
+        OptionalInt(reader, 13),
+        OptionalString(reader, 14),
+        OptionalInt(reader, 15),
+        OptionalString(reader, 16),
+        OptionalString(reader, 17),
+        OptionalString(reader, 18),
+        OptionalString(reader, 19),
+        OptionalString(reader, 20));
+
+    private static string? OptionalString(SqliteDataReader reader, int ordinal) =>
+        reader.FieldCount <= ordinal || reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    private static int? OptionalInt(SqliteDataReader reader, int ordinal) =>
+        reader.FieldCount <= ordinal || reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+
+    private static decimal? OptionalDecimal(SqliteDataReader reader, int ordinal) =>
+        reader.FieldCount <= ordinal || reader.IsDBNull(ordinal) ? null : reader.GetDecimal(ordinal);
+
+    private static DateTimeOffset? OptionalDate(SqliteDataReader reader, int ordinal) =>
+        reader.FieldCount <= ordinal || reader.IsDBNull(ordinal)
+            ? null
+            : Parse(reader.GetString(ordinal));
 
     private static EInkDeviceBindingException BindingConflict(SqliteException exception) =>
         new(

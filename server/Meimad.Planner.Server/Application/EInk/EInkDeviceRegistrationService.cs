@@ -23,9 +23,7 @@ internal sealed class EInkDeviceRegistrationService
         CancellationToken cancellationToken = default)
     {
         var name = RequiredName(command.DeviceName);
-        var hardwareId = string.IsNullOrWhiteSpace(command.HardwareId)
-            ? null
-            : RequiredHardwareId(command.HardwareId);
+        var hardwareId = RequiredHardwareId(command.HardwareId);
         var token = CreateToken();
         var now = timeProvider.GetUtcNow();
         for (var attempt = 0; attempt < 20; attempt++)
@@ -86,6 +84,9 @@ internal sealed class EInkDeviceRegistrationService
         string? hardwareId,
         decimal? batteryVoltage,
         int? batteryPercent,
+        string? firmwareVersion,
+        string? wifiIpAddress,
+        int? wifiRssi,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(bearerToken))
@@ -97,7 +98,8 @@ internal sealed class EInkDeviceRegistrationService
             HashToken(bearerToken), RequiredHardwareId(hardwareId), cancellationToken)
             ?? throw new EInkDeviceRegistrationNotFoundException("authenticated tablet");
         await repository.RecordContactAsync(
-            registration.DeviceId, timeProvider.GetUtcNow(), batteryVoltage, batteryPercent, cancellationToken);
+            registration.DeviceId, timeProvider.GetUtcNow(), batteryVoltage, batteryPercent,
+            firmwareVersion, wifiIpAddress, wifiRssi, cancellationToken);
         return registration;
     }
 

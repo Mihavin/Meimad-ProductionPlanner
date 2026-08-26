@@ -54,6 +54,11 @@ struct TabletVerification {
   String responseCode;
 };
 
+struct TabletDiagnostics {
+  String verificationResult = "NOT_REPORTED";
+  int32_t protectedMacroVersion = -1;
+};
+
 struct TabletStatusResponse {
   uint32_t revision = 0;
   String tabletId;
@@ -63,6 +68,7 @@ struct TabletStatusResponse {
   TabletOperation operation;
   TabletStatus status = TabletStatus::Unknown;
   TabletVerification verification;
+  TabletDiagnostics diagnostics;
 };
 
 // The request deliberately contains no timestamp. Server time is authoritative.

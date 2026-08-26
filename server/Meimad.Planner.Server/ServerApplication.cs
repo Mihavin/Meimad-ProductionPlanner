@@ -191,6 +191,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<EInkDeviceRegistrationService>();
         builder.Services.AddSingleton<ITabletStatusRepository, SqliteTabletStatusRepository>();
         builder.Services.AddSingleton<TabletStatusService>();
+        builder.Services.AddSingleton<ITabletEventRepository, SqliteTabletEventRepository>();
+        builder.Services.AddSingleton<TabletEventService>();
         builder.Services.AddSingleton<IJobPackageRepository, SqliteJobPackageRepository>();
         builder.Services.AddSingleton<JobPackageService>();
         builder.Services.AddSingleton<IGCodeRepository, SqliteGCodeRepository>();

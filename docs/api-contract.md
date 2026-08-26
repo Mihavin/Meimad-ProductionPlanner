@@ -1465,11 +1465,24 @@ These implemented Server administration routes are for the Windows planning/oper
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/v1/eink/device-registrations` | List registration metadata; never returns credential hashes or an existing token. |
+| `GET` | `/api/v1/eink/device-registrations` | List registration and non-secret operational monitoring metadata; never returns credential hashes or an existing token. No Edit Mode required. |
 | `POST` | `/api/v1/eink/device-registrations` | Create a named spare or Machine-bound E-Ink device; returns the new token once. |
 | `PATCH` | `/api/v1/eink/device-registrations/{deviceId}` | Bind/unbind, enable/revoke, and optionally rotate the credential. |
 
-POST/PATCH require the same active `X-Meimad-Client-Id`, `X-Meimad-User-Id`, and `X-Meimad-Edit-Generation` authority as planning mutations; the authority check and registration write share one immediate SQLite transaction. Create accepts `{ "deviceName": "M07 tablet", "machineId": "machine-7" }`. PATCH accepts `{ "machineId": "machine-7", "isEnabled": true, "rotateCredential": false }`. `machineId` may be null for a spare. The plaintext `registrationToken` is present only in a successful create or rotation response. Human authentication and a narrower administrator role remain OD-012.
+POST/PATCH require the same active `X-Meimad-Client-Id`, `X-Meimad-User-Id`, and `X-Meimad-Edit-Generation` authority as planning mutations; the authority check and registration write share one immediate SQLite transaction. Create requires the physical MAC and accepts `{ "deviceName": "M07 tablet", "machineId": "machine-7", "hardwareId": "A4:CF:12:83:76:91" }`. PATCH accepts `{ "machineId": "machine-7", "isEnabled": true, "rotateCredential": false }`. `machineId` may be null for a spare; a spare remains physically identified by its MAC. The plaintext `registrationToken` is present only in a successful create or rotation response. Human authentication and a narrower administrator role remain OD-012.
+
+Each GET item includes Tablet ID, device name, hardware MAC, Machine ID/number/name,
+enabled state, last-seen/server-contact timestamps, reported firmware, battery voltage
+and optional percentage, Wi-Fi IP/RSSI, current Production Run ID, Server-projected
+workflow state, and current package revision. Missing observations are `null`; package
+revision is `MULTIPLE` when a multi-output run resolves to more than one distinct
+revision. This endpoint reports stored observations and does not infer an online SLA.
+
+Authenticated `/api/tablet/ping` and `/api/tablets/{tablet_id}/status` requests may
+report bounded non-secret telemetry in `X-Meimad-Firmware-Version`,
+`X-Meimad-Wifi-IP`, `X-Meimad-Wifi-Rssi`, `X-Meimad-Battery-Voltage`, and
+`X-Meimad-Battery-Percent`. Invalid or out-of-range values are ignored. These headers
+cannot alter planning, assignment, workflow, package, or execution state.
 
 ### 8.1 Version/change check
 
@@ -1700,7 +1713,9 @@ any render-affecting change to these fields must advance it. The firmware stores
 the revision only after a completed panel refresh and skips redraw when the
 stored tablet identity and revision both match. A different tablet identity
 forces refresh even if its numeric revision is equal. A malformed or unavailable
-response never changes the stored revision or replaces the retained screen.
+response never changes the stored revision or replaces the retained screen,
+except for the documented firmware fail-safe that clears a possibly stale
+setup-verification code.
 
 While status is `IN_SETUP`, the response also contains:
 
@@ -1713,6 +1728,25 @@ While status is `IN_SETUP`, the response also contains:
   }
 }
 ```
+
+Every successful status response also includes the non-secret service-screen
+projection:
+
+```json
+{
+  "diagnostics": {
+    "verification_result": "WAITING_FOR_OPERATOR",
+    "protected_macro_version": 3
+  }
+}
+```
+
+`verification_result` reports the latest Server-known session result for the
+resolved Machine/Run, or `NOT_REPORTED` when no session evidence exists.
+`protected_macro_version` is omitted when the Server has no reported version.
+These fields participate in `revision`. They expose no nonce, response code,
+Machine secret/key, bearer credential, protected-variable mapping, or algorithm
+internals; the response code remains confined to the `IN_SETUP` projection above.
 
 `response_code` is present only for the credential's assigned Machine and Run when the unique session is `PENDING`, unexpired, still tied to the current Offset Loader and approved NC hook, and its enabled Machine configuration still matches. The Server decrypts the Machine secret and derives the fixed-width response in memory; the session and response JSON contain no raw nonce, Machine key/secret, protected-variable number, or algorithm internals. Expired, invalidated, superseded, missing, or undecryptable contexts return `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE` without `response_code`. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
 `machine.number` is the explicit operator-facing Machine Number used by the
@@ -1752,8 +1786,9 @@ clock/window integration is implemented.
 
 The compiled wake runtime logs the ESP wake reason, battery voltage, a valid
 UTC wake timestamp when one exists, and the prior status/wake policy retained
-in RTC memory before deep sleep. Cold/timer/Refresh/send wakes contact the
-Server; Previous/Next or invalid physical-button wakes are local-only and keep
+in RTC memory before deep sleep. Cold/timer/Refresh/send wakes and the long-D1
+Service/Debug gesture contact the Server; Previous/Next or invalid
+physical-button wakes are local-only and keep
 Wi-Fi off. RTC-retained status is used only to preserve the next sleep policy
 on those local wakes and never derives or changes business state. Wi-Fi is
 disabled immediately after bounded HTTP work and checked again before deep
@@ -1761,8 +1796,9 @@ sleep. Clock synchronization, configured work-window enforcement, and measured
 power behavior remain physical-firmware acceptance work and are not API
 guarantees.
 
-The initial three-button firmware mapping is D1/GPIO2 Refresh, D2/GPIO3
-Previous Tool Page, short D4/GPIO5 Next Tool Page, and a 1.2-second D4/GPIO5
+The initial three-button firmware mapping is short D1/GPIO2 Refresh, a
+1.2-second D1/GPIO2 hold for Service/Debug, D2/GPIO3 Previous Tool Page, short
+D4/GPIO5 Next Tool Page, and a 1.2-second D4/GPIO5
 hold for `SEND_TO_QC`. It accepts only one debounced, released wake button and
 logs every resolved action. A send gesture first obtains fresh status and is
 available only for `IN_SETUP_RUN`; the firmware permits one POST attempt in

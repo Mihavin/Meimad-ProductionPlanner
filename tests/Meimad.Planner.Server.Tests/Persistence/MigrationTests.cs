@@ -63,7 +63,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(52L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(53L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -183,6 +183,9 @@ public sealed class MigrationTests
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 52;";
         Assert.Equal("setup_verification_sessions", await migrationCommand.ExecuteScalarAsync());
 
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 53;";
+        Assert.Equal("tablet_terminal_health", await migrationCommand.ExecuteScalarAsync());
+
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('kitaron_material_orders')
             WHERE name IN ('source_key', 'purchase_order_number', 'material_number',
@@ -271,7 +274,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(52L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(53L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1426,7 +1429,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 53;";
+            command.CommandText = "PRAGMA user_version = 54;";
             await command.ExecuteNonQueryAsync();
         }
 

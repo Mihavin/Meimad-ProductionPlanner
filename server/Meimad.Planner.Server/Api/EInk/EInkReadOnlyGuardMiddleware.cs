@@ -22,7 +22,11 @@ internal sealed class EInkReadOnlyGuardMiddleware
         var isTabletStatusRead = HttpMethods.IsGet(context.Request.Method)
             && context.Request.Path.StartsWithSegments("/api/tablets")
             && context.Request.Path.Value?.EndsWith("/status", StringComparison.Ordinal) == true;
-        if (isDeviceCredential && !isDeviceRead && !isAuthenticatedBootstrap && !isTabletStatusRead)
+        var isTabletSendToQc = HttpMethods.IsPost(context.Request.Method)
+            && context.Request.Path.StartsWithSegments("/api/tablets")
+            && context.Request.Path.Value?.EndsWith("/events", StringComparison.Ordinal) == true;
+        if (isDeviceCredential && !isDeviceRead && !isAuthenticatedBootstrap
+            && !isTabletStatusRead && !isTabletSendToQc)
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsJsonAsync(new
@@ -30,7 +34,7 @@ internal sealed class EInkReadOnlyGuardMiddleware
                 error = new
                 {
                     code = "device_read_only",
-                    message = "E-Ink device credentials can access only assigned read-only resources and tablet bootstrap.",
+                    message = "E-Ink device credentials can access only assigned reads, tablet bootstrap, and SEND_TO_QC.",
                     correlationId = context.TraceIdentifier,
                     details = Array.Empty<object>()
                 }

@@ -35,6 +35,9 @@ internal sealed class TabletStatusService
         DateTimeOffset contactedAt,
         decimal? batteryVoltage,
         int? batteryPercent,
+        string? firmwareVersion,
+        string? wifiIpAddress,
+        int? wifiRssi,
         CancellationToken cancellationToken = default)
     {
         var source = await repository.ReadAsync(tabletId.Trim(), cancellationToken);
@@ -51,6 +54,9 @@ internal sealed class TabletStatusService
             contactedAt,
             batteryVoltage,
             batteryPercent,
+            firmwareVersion,
+            wifiIpAddress,
+            wifiRssi,
             cancellationToken);
 
         if (source.Machine is null)
@@ -75,6 +81,7 @@ internal sealed class TabletStatusService
         var output = source.Outputs[0];
         var status = Status(source.Machine, source.Run, source.Workflow);
         var verification = Verification(source, status, contactedAt);
+        var diagnostics = Diagnostics(source.VerificationSession, verification);
         var content = new
         {
             tabletId = source.TabletId,
@@ -83,7 +90,8 @@ internal sealed class TabletStatusService
             output,
             status,
             workflowEvent = source.Workflow?.EventId,
-            verification
+            verification,
+            diagnostics
         };
         return new TabletStatusResponse(
             Revision(content),
@@ -96,7 +104,27 @@ internal sealed class TabletStatusService
             new TabletStatusPartResponse(output.PartNumber, output.PartName),
             new TabletStatusOperationResponse(output.OperationNumber, output.OperationName),
             status,
-            verification);
+            verification,
+            diagnostics);
+    }
+
+    private static TabletStatusDiagnosticsResponse Diagnostics(
+        TabletVerificationSessionSource? session,
+        TabletStatusVerificationResponse? verification)
+    {
+        if (session is null)
+            return new("NOT_REPORTED", null);
+
+        var result = session.State switch
+        {
+            "PENDING" => verification?.State ?? "PENDING",
+            "SUCCEEDED" => "SUCCEEDED",
+            "FAILED" => "FAILED",
+            "EXPIRED" => "EXPIRED",
+            "SUPERSEDED" => "SUPERSEDED",
+            _ => "UNKNOWN"
+        };
+        return new(result, session.MacroVersion);
     }
 
     private TabletStatusVerificationResponse? Verification(
@@ -105,6 +133,8 @@ internal sealed class TabletStatusService
         if (status != "IN_SETUP") return null;
         var session = source.VerificationSession;
         if (session is null)
+            return new(true, "UNAVAILABLE", null);
+        if (session.State == "SUPERSEDED")
             return new(true, "UNAVAILABLE", null);
         if (session.State != "PENDING" || !session.ContextIsValid)
             return new(true, "INVALIDATED", null);
@@ -184,7 +214,8 @@ internal sealed record TabletStatusResponse(
     TabletStatusOperationResponse Operation,
     string Status,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    TabletStatusVerificationResponse? Verification);
+    TabletStatusVerificationResponse? Verification,
+    TabletStatusDiagnosticsResponse Diagnostics);
 
 internal sealed record TabletStatusMachineResponse(string Id, string Number, string Name);
 
@@ -200,6 +231,13 @@ internal sealed record TabletStatusVerificationResponse(
     [property: JsonPropertyName("response_code")]
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? ResponseCode);
+
+internal sealed record TabletStatusDiagnosticsResponse(
+    [property: JsonPropertyName("verification_result")]
+    string VerificationResult,
+    [property: JsonPropertyName("protected_macro_version")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? ProtectedMacroVersion);
 
 internal sealed class TabletStatusResourceNotFoundException : Exception;
 

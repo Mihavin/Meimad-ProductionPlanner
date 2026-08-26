@@ -204,15 +204,20 @@ request it makes (`/api/tablet/ping`, tablet-status GET, and tablet-event POST)
 as `X-Meimad-Battery-Voltage`, formatted to three decimal places. The optional
 `X-Meimad-Battery-Percent` header is deliberately omitted: percentage requires
 a measured three-AA discharge curve and is not inferred from voltage alone.
-This health metadata is separate from planning data and does not change the
-strict `SEND_TO_QC` JSON payload.
+The same authenticated requests report the compiled firmware version and, while
+connected, the local IP address and RSSI through bounded
+`X-Meimad-Firmware-Version`, `X-Meimad-Wifi-IP`, and `X-Meimad-Wifi-Rssi`
+headers. This health metadata is separate from planning data and does not change
+the strict `SEND_TO_QC` JSON payload.
 
 `LOW BATTERY` is shown when a valid sample is at or below the provisional 3.30
 V threshold. Its last displayed state is stored in NVS so a threshold crossing
 forces a single E-Ink refresh even when the Server revision is unchanged. The
 threshold and ADC calibration must be confirmed on the physical AA power path.
-The current Server may ignore these headers; Server-side device battery history
-is the next separate, non-planning telemetry implementation step.
+Schema v53 records the last valid firmware, battery, IP, and RSSI observations
+for the Windows User Terminals monitor. It does not infer an online SLA or alter
+planning, workflow, package, or execution state. Historical telemetry retention
+and battery-percentage calibration remain separate work.
 
 ## Physical buttons
 
@@ -221,7 +226,8 @@ enclosure labels and shop-floor ergonomics are physically accepted:
 
 | Hardware input | Firmware action |
 |---|---|
-| D1 / GPIO2 | Refresh: wake, connect, and request current Server status. |
+| Short D1 / GPIO2 | Refresh: wake, connect, and request current Server status. |
+| Hold D1 / GPIO2 for 1.2 seconds | Open the service/debug screen after a bounded Server refresh. |
 | D2 / GPIO3 | Previous tool page. |
 | Short D4 / GPIO5 | Next tool page. |
 | Hold D4 / GPIO5 for 1.2 seconds | `SEND_TO_QC`, only after a fresh `IN_SETUP_RUN` status permits it. |
@@ -232,6 +238,24 @@ waits for release before sleeping again. Ambiguous, bounced, or unreleased
 inputs are ignored. This prevents one held button from causing an immediate
 second wake/action; an in-memory guard also allows at most one event POST in a
 wake cycle.
+
+## Service/debug screen
+
+A deliberate 1.2-second D1/Refresh hold opens a flat two-column diagnostic
+screen. It shows Tablet ID, hardware MAC, firmware version, Machine binding,
+Wi-Fi SSID, current IP/RSSI, Server address, last successful contact, last HTTP
+result, workflow state/revision, battery voltage, wake reason, prior panel
+refresh duration, latest Server-known CNC verification result, and reported
+protected-macro version. The same bounded values are emitted as `[SERVICE]`
+serial records. Missing clock/network/Server evidence is labeled unavailable;
+it is never fabricated.
+
+The screen model has no bearer-token, Wi-Fi-password, raw nonce, Machine secret,
+protected-variable mapping, response algorithm, or operator response-code
+field. The long-D1 gesture is provisional pending physical enclosure and
+shop-floor ergonomic acceptance. The service-screen marker is persisted so the
+next valid ordinary status response restores the production screen even when
+its numeric revision has not changed.
 
 After `SEND_TO_QC`, the firmware always performs another status GET without
 submitting the event again. The status band shows accepted, confirmed,
@@ -287,6 +311,10 @@ Only the waiting state may carry `response_code`; it must be a JSON string of
 4–6 decimal digits so leading zeroes survive. A missing verification object,
 a numeric/malformed code, a code attached to a blocking state, or verification
 data outside `IN_SETUP` is rejected rather than rendered.
+
+An optional `diagnostics` object supplies only `verification_result` and
+`protected_macro_version` for the service screen. Invalid types or negative
+versions are rejected. No sensitive verification input is accepted or logged.
 
 The production header uses `machine.number` when the response supplies it. For
 compatibility with the original numeric-ID example, a missing number is rendered

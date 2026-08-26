@@ -116,7 +116,6 @@ public sealed class EInkApiTests
         await RunWithServerAsync(async (application, client, packageRoot) =>
         {
             await SeedAsync(application.Services, packageRoot);
-
             using var valid = Get("/api/tablet/ping?hardwareId=a4-cf-12-83-76-91");
             valid.Headers.Add("X-Meimad-Battery-Voltage", "3.860");
             using var response = await client.SendAsync(valid);
@@ -138,6 +137,54 @@ public sealed class EInkApiTests
             using var revoked = await client.SendAsync(Get(
                 "/api/tablet/ping?hardwareId=A4:CF:12:83:76:91"));
             Assert.Equal(HttpStatusCode.NotFound, revoked.StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task Terminal_monitoring_is_read_only_and_projects_device_run_workflow_and_package()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await ExecuteAsync(application.Services, """
+                INSERT INTO eink_package_revisions(
+                    id,batch_operation_id,revision,published_at)
+                VALUES('package-eink-2','operation-eink-1','R2','2099-01-01T00:00:00Z');
+                """);
+            using var ping = Get("/api/tablet/ping?hardwareId=A4:CF:12:83:76:91");
+            ping.Headers.Add("X-Meimad-Battery-Voltage", "3.860");
+            ping.Headers.Add("X-Meimad-Battery-Percent", "72");
+            ping.Headers.Add("X-Meimad-Firmware-Version", "0.1.0-test");
+            ping.Headers.Add("X-Meimad-Wifi-IP", "192.168.50.31");
+            ping.Headers.Add("X-Meimad-Wifi-Rssi", "-61");
+            using var pingResponse = await client.SendAsync(ping);
+            Assert.Equal(HttpStatusCode.OK, pingResponse.StatusCode);
+
+            // Monitoring deliberately needs no Edit Mode headers.
+            using var response = await client.GetAsync("/api/v1/eink/device-registrations");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(json);
+            var terminal = document.RootElement.GetProperty("items")
+                .EnumerateArray().Single(item =>
+                    item.GetProperty("deviceId").GetString() == DeviceId);
+            Assert.Equal("3041", terminal.GetProperty("tabletId").GetString());
+            Assert.Equal("A4:CF:12:83:76:91", terminal.GetProperty("hardwareId").GetString());
+            Assert.Equal("M-EINK-1", terminal.GetProperty("machineNumber").GetString());
+            Assert.Equal("E-Ink Mill", terminal.GetProperty("machineName").GetString());
+            Assert.Equal("0.1.0-test", terminal.GetProperty("firmwareVersion").GetString());
+            Assert.Equal(3.860m, terminal.GetProperty("batteryVoltage").GetDecimal());
+            Assert.Equal(72, terminal.GetProperty("batteryPercent").GetInt32());
+            Assert.Equal("192.168.50.31", terminal.GetProperty("wifiIpAddress").GetString());
+            Assert.Equal(-61, terminal.GetProperty("wifiRssi").GetInt32());
+            Assert.Equal("run:batch-operation:operation-eink-1",
+                terminal.GetProperty("currentProductionRunId").GetString());
+            Assert.Equal("READY_FOR_SETUP",
+                terminal.GetProperty("currentWorkflowStatus").GetString());
+            Assert.Equal("R2", terminal.GetProperty("currentPackageRevision").GetString());
+            Assert.True(terminal.GetProperty("lastSeenAt").GetDateTimeOffset() > DateTimeOffset.MinValue);
+            Assert.DoesNotContain("credentialHash", json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Token, json, StringComparison.Ordinal);
         });
     }
 
@@ -244,6 +291,11 @@ public sealed class EInkApiTests
             Assert.True(verification.GetProperty("required").GetBoolean());
             Assert.Equal("WAITING_FOR_OPERATOR", verification.GetProperty("state").GetString());
             Assert.Equal("0388", verification.GetProperty("response_code").GetString());
+            var diagnostics = root.GetProperty("diagnostics");
+            Assert.Equal(
+                "WAITING_FOR_OPERATOR",
+                diagnostics.GetProperty("verification_result").GetString());
+            Assert.Equal(3, diagnostics.GetProperty("protected_macro_version").GetInt32());
             Assert.DoesNotContain("100000", json, StringComparison.Ordinal);
             Assert.DoesNotContain("699624", json, StringComparison.Ordinal);
             Assert.DoesNotContain("tablet-verification-secret", json, StringComparison.Ordinal);
@@ -291,6 +343,10 @@ public sealed class EInkApiTests
             var supersededVerification = superseded.RootElement.GetProperty("verification");
             Assert.Equal("UNAVAILABLE", supersededVerification.GetProperty("state").GetString());
             Assert.False(supersededVerification.TryGetProperty("response_code", out _));
+            Assert.Equal(
+                "SUPERSEDED",
+                superseded.RootElement.GetProperty("diagnostics")
+                    .GetProperty("verification_result").GetString());
         });
     }
 
@@ -342,9 +398,19 @@ public sealed class EInkApiTests
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "eink-admin-client");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
 
+            using var unidentified = await client.PostAsJsonAsync(
+                "/api/v1/eink/device-registrations",
+                new { deviceName = "Unknown spare", machineId = (string?)null });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, unidentified.StatusCode);
+
             using var create = await client.PostAsJsonAsync(
                 "/api/v1/eink/device-registrations",
-                new { deviceName = "Spare Tablet", machineId = (string?)null });
+                new
+                {
+                    deviceName = "Spare Tablet",
+                    machineId = (string?)null,
+                    hardwareId = "A4:CF:12:83:76:93"
+                });
             Assert.Equal(HttpStatusCode.Created, create.StatusCode);
             using var created = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
             var deviceId = created.RootElement.GetProperty("deviceId").GetString()!;

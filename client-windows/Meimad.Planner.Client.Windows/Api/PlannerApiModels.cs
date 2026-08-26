@@ -1647,10 +1647,42 @@ internal sealed record UserTerminal(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? RegistrationToken)
+    string? RegistrationToken,
+    DateTimeOffset? LastSeenAt = null,
+    DateTimeOffset? LastServerContactAt = null,
+    string? FirmwareVersion = null,
+    decimal? BatteryVoltage = null,
+    int? BatteryPercent = null,
+    string? WifiIpAddress = null,
+    int? WifiRssi = null,
+    string? MachineNumber = null,
+    string? MachineName = null,
+    string? CurrentProductionRunId = null,
+    string? CurrentWorkflowStatus = null,
+    string? CurrentPackageRevision = null)
 {
-    public string BindingText => string.IsNullOrWhiteSpace(MachineId) ? "Spare / unassigned" : MachineId;
-    public string StateText => IsEnabled ? "Enabled" : "Disabled";
+    public string BindingText => string.IsNullOrWhiteSpace(MachineId)
+        ? "Spare / unassigned"
+        : string.IsNullOrWhiteSpace(MachineName)
+            ? MachineId
+            : $"{MachineNumber} — {MachineName}";
+    public string StateText => IsEnabled ? "Enabled" : "Revoked";
+    public string LastSeenText => LastSeenAt?.ToLocalTime().ToString("g") ?? "Never";
+    public string FirmwareText => FirmwareVersion ?? "Not reported";
+    public string BatteryText => BatteryVoltage is null && BatteryPercent is null
+        ? "Not reported"
+        : $"{(BatteryVoltage is null ? string.Empty : $"{BatteryVoltage:0.00} V")}{(BatteryVoltage is not null && BatteryPercent is not null ? " / " : string.Empty)}{(BatteryPercent is null ? string.Empty : $"{BatteryPercent}%")}";
+    public string WifiText => WifiIpAddress is null && WifiRssi is null
+        ? "Not reported"
+        : $"{WifiIpAddress ?? "IP unavailable"}{(WifiRssi is null ? string.Empty : $" / {WifiRssi} dBm")}";
+    public string HealthText => !IsEnabled
+        ? "Credential revoked"
+        : LastServerContactAt is null
+            ? "No authenticated contact"
+            : $"Authenticated contact {LastServerContactAt.Value.ToLocalTime():g}";
+    public string CurrentRunText => CurrentProductionRunId ?? "No current run";
+    public string WorkflowText => CurrentWorkflowStatus ?? "Unavailable";
+    public string PackageRevisionText => CurrentPackageRevision ?? "No current package";
 }
 
 internal sealed record CreateUserTerminalRequest(string DeviceName, string? MachineId, string? HardwareId);

@@ -103,6 +103,12 @@ It shows display-enabled machines, the current operation, part picture, operatio
 
 E-Ink devices display the official package and machine/setup instructions downloaded from the Server. Package content, checklist marks, comments, assignments, and planning facts remain read-only/local as applicable. The approved tablet workflow will allow the setupist to confirm **Send to QC** for the current Server-resolved run. That command supplies no run or timestamp, does not require Edit Mode, and changes only the tablet workflow status from `IN_SETUP_RUN` to `IN_QC`. The Server endpoint and physical button flow are not implemented yet, so current devices must not be operated as if the signal has been accepted.
 
+Use the Windows **User Terminals** page to monitor tablet identity, Machine binding,
+last contact, reported firmware/battery/Wi-Fi, current Production Run, workflow state,
+and package revision. Monitoring works in View Mode. Request Edit Mode before creating
+a tablet, changing its Machine, marking it spare, enabling/revoking it, or rotating its
+credential. Copy a new or rotated credential immediately; it cannot be retrieved later.
+
 ## 7. Languages and responsiveness
 
 Use the language selector in the Windows client to switch between English, Hebrew, and Russian. If a screen appears stuck, wait for the current request to finish before switching again, then refresh. Avoid opening many Timeline windows or repeatedly refreshing a large horizon; each read-only calculation uses the Server snapshot.

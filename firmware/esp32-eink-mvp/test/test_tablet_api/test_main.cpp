@@ -6,6 +6,7 @@
 #include "../../src/tablet_state_machine.cpp"
 #include "../../src/button_input.cpp"
 #include "../../src/demo_mode.cpp"
+#include "../../src/service_ui.cpp"
 
 using namespace meimad::tablet_api;
 using namespace meimad::production_ui;
@@ -39,7 +40,29 @@ String validStatusPayload(const char* status = "IN_SETUP_RUN") {
       + "\"nc_run\":{\"id\":845},"
       + "\"part\":{\"number\":\"P-12345\",\"name\":\"Housing\"},"
       + "\"operation\":{\"number\":30,\"name\":\"Finish Milling\"},"
-      + "\"status\":\"" + status + "\"" + verification + "}";
+      + "\"status\":\"" + status + "\"" + verification
+      + ",\"diagnostics\":{\"verification_result\":\"NOT_REPORTED\","
+        "\"protected_macro_version\":3}}";
+}
+
+void testParsesSafeServiceDiagnostics() {
+  TabletStatusResponse response;
+  String error;
+  CHECK(parseStatusPayload(validStatusPayload(), "3041", response, error));
+  CHECK_STRING("NOT_REPORTED", response.diagnostics.verificationResult);
+  CHECK(response.diagnostics.protectedMacroVersion == 3);
+
+  String invalid = validStatusPayload();
+  invalid.replace("\"protected_macro_version\":3", "\"protected_macro_version\":-1");
+  error = "";
+  CHECK(!parseStatusPayload(invalid, "3041", response, error));
+  CHECK_STRING("diagnostics.protected_macro_version must not be negative", error);
+
+  invalid = validStatusPayload();
+  invalid.replace("NOT_REPORTED", "SECRET_TEXT");
+  error = "";
+  CHECK(!parseStatusPayload(invalid, "3041", response, error));
+  CHECK_STRING("diagnostics.verification_result is not supported", error);
 }
 
 void testParsesExampleAndNormalizesNumericIds() {
@@ -355,11 +378,13 @@ void testWakeButtonMappingUsesLongPressOnlyForSendToQc() {
   const uint64_t previousMask = 1ULL << meimad::hardware::kPageButtonGpio;
   const uint64_t actionMask = 1ULL << meimad::hardware::kActionButtonGpio;
   CHECK(actionForWakeMask(refreshMask, false) == ButtonAction::Refresh);
+  CHECK(actionForWakeMask(refreshMask, true) == ButtonAction::ServiceScreen);
   CHECK(actionForWakeMask(previousMask, false) == ButtonAction::PreviousToolPage);
   CHECK(actionForWakeMask(actionMask, false) == ButtonAction::NextToolPage);
   CHECK(actionForWakeMask(actionMask, true) == ButtonAction::SendToQc);
   CHECK(actionForWakeMask(refreshMask | actionMask, true) == ButtonAction::None);
   CHECK(actionForWakeMask(0, false) == ButtonAction::None);
+  CHECK(requiresServerContact(true, ButtonAction::ServiceScreen));
 
   EventSubmissionGuard guard;
   CHECK(guard.tryBegin());
@@ -452,6 +477,7 @@ void setup() {
   testParsesExampleAndNormalizesNumericIds();
   testParsesExplicitMachineNumber();
   testAcceptsEveryInitialStatus();
+  testParsesSafeServiceDiagnostics();
   testParsesSetupVerificationWithoutLosingLeadingZeroes();
   testAcceptsBlockingVerificationStatesWithoutAResponseCode();
   testRejectsUnsafeVerificationPayloads();

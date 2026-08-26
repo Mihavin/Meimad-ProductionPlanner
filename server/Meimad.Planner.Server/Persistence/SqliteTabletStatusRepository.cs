@@ -216,7 +216,6 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
              AND current.machine_id=session.machine_id
             WHERE session.machine_id=$machineId
               AND session.production_run_id=$runId
-              AND session.state IN ('PENDING','SUCCEEDED')
             ORDER BY session.created_at DESC,session.id DESC
             LIMIT 1;
             """;

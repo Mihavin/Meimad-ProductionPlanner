@@ -28,19 +28,23 @@ bool waitForRelease(int pin) {
 }
 }  // namespace
 
-ButtonAction actionForWakeMask(uint64_t wakeMask, bool actionLongPress) {
+ButtonAction actionForWakeMask(uint64_t wakeMask, bool longPress) {
   const uint64_t buttons = wakeMask & kKnownButtonMask;
-  if (buttons == kRefreshMask) return ButtonAction::Refresh;
+  if (buttons == kRefreshMask) {
+    return longPress ? ButtonAction::ServiceScreen : ButtonAction::Refresh;
+  }
   if (buttons == kPreviousMask) return ButtonAction::PreviousToolPage;
   if (buttons == kActionMask) {
-    return actionLongPress ? ButtonAction::SendToQc : ButtonAction::NextToolPage;
+    return longPress ? ButtonAction::SendToQc : ButtonAction::NextToolPage;
   }
   return ButtonAction::None;
 }
 
 bool requiresServerContact(bool physicalButtonWake, ButtonAction action) {
   if (!physicalButtonWake) return true;
-  return action == ButtonAction::Refresh || action == ButtonAction::SendToQc;
+  return action == ButtonAction::Refresh
+      || action == ButtonAction::ServiceScreen
+      || action == ButtonAction::SendToQc;
 }
 
 ButtonEvent captureWakeButtonEvent() {
@@ -66,9 +70,12 @@ ButtonEvent captureWakeButtonEvent() {
 
   const uint32_t holdStartedAt = millis();
   bool longPress = false;
-  if (event.wakeMask == kActionMask) {
+  if (event.wakeMask == kActionMask || event.wakeMask == kRefreshMask) {
+    const uint32_t threshold = event.wakeMask == kRefreshMask
+        ? kServiceScreenLongPressMilliseconds
+        : kSendToQcLongPressMilliseconds;
     while (isPressed(pin)
-        && millis() - holdStartedAt < kSendToQcLongPressMilliseconds) {
+        && millis() - holdStartedAt < threshold) {
       delay(10);
     }
     longPress = isPressed(pin);
@@ -90,6 +97,7 @@ const char* toText(ButtonAction action) {
   switch (action) {
     case ButtonAction::None: return "NONE";
     case ButtonAction::Refresh: return "REFRESH";
+    case ButtonAction::ServiceScreen: return "SERVICE_SCREEN";
     case ButtonAction::PreviousToolPage: return "PREVIOUS_TOOL_PAGE";
     case ButtonAction::NextToolPage: return "NEXT_TOOL_PAGE";
     case ButtonAction::SendToQc: return "SEND_TO_QC";
