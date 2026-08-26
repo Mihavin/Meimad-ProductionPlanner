@@ -44,7 +44,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\haas-verification-
 
 The network address is intentionally not written to the evidence JSON. The output location is ignored operational evidence and must be reviewed before any sanitized conclusion is copied into version-controlled documentation. Never pass the secret, nonce, response, state, or release-token variables as candidates.
 
-During the capture, run only an HFO-reviewed, no-motion protected probe. It must emit a non-production line beginning `MEIMADSPIKE/`, containing the candidate variable number/value, the protected macro's own O-number, and a test-run identifier. It must not emit `MEIMAD/V/1`, because that prefix is reserved for validated operational ingestion. Compare the protected-macro value with Q500 before and after each case:
+During the capture, run only an HFO-reviewed, no-motion protected probe. Identity probes must emit a non-production line beginning `MEIMADSPIKE/`, containing the candidate variable number/value, the protected macro's own O-number, and a test-run identifier. Algorithm-vector probes use the stricter `MEIMADSPIKE/V/1/TEST/...` contract in the response-algorithm document and are graded into the evidence JSON automatically. Neither form may emit `MEIMAD/V/1`, because that prefix is reserved for validated operational ingestion. Compare the protected-macro identity value with Q500 before and after each case:
 
 | Case | Top-level program | Call form | Required observation |
 |---|---:|---|---|

@@ -31,7 +31,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$toolVersion = '1.0.0'
+$toolVersion = '1.1.0'
 
 function Invoke-ReadOnlyMdcQuery {
     param(
@@ -145,7 +145,7 @@ function Receive-DprntLines {
             $true)
         try {
             $deadline = [DateTimeOffset]::UtcNow.AddSeconds($CaptureSeconds)
-            Write-Host "DPRNT capture connected. Run only the approved non-cutting identity probe now."
+            Write-Host "DPRNT capture connected. Run only the approved non-cutting identity/vector probe now."
             while ([DateTimeOffset]::UtcNow -lt $deadline -and $lines.Count -lt 10000) {
                 try {
                     $line = $reader.ReadLine()
@@ -198,6 +198,9 @@ $before = Read-MdcSnapshot
 $dprnt = Receive-DprntLines
 $after = Read-MdcSnapshot
 $completedAt = [DateTimeOffset]::UtcNow
+$graderPath = Join-Path $PSScriptRoot 'haas-verification-grade.ps1'
+$capturedLines = @($dprnt.lines | ForEach-Object { $_.line })
+$vectorGrade = (& $graderPath -InputLines $capturedLines) | ConvertFrom-Json
 
 $evidence = [ordered]@{
     schemaVersion = 1
@@ -216,6 +219,7 @@ $evidence = [ordered]@{
     }
     before = $before
     dprnt = $dprnt
+    responseVectorGrade = $vectorGrade
     after = $after
     operatorRecord = [ordered]@{
         controllerSoftware = $null

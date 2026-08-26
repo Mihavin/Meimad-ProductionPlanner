@@ -93,6 +93,14 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 It is for public test keys only. Production key derivation/provisioning must not use command-line arguments.
 
+For passive CNC capture, the no-motion bench macro emits each result in this exact strict format:
+
+```text
+MEIMADSPIKE/V/1/TEST/V01/NONCE/731841/OFFSETRELEASE/483920/NC/654321/DIGITS/6/RESPONSE/438513
+```
+
+`V01` through `V07` correspond to the table order. The line contains no Machine key. `scripts/haas-verification-spike.ps1` remains read-only/passive and now grades these captured lines into `responseVectorGrade`; missing, duplicate, malformed, unexpected, or mismatched attempted vectors make the status `FAIL`. A capture containing only the separate `MEIMADSPIKE/CASE/...` identity probes reports vector status `NOT_RUN`, not a vector failure. Captured `MEIMADSPIKE` lines are evidence only and are never ingested as operational workflow events. An existing capture or exported line file can be graded independently with `scripts/haas-verification-grade.ps1`.
+
 ## Protected-program layout candidate
 
 No `.NC` macro is shipped yet because program numbers, variables, DPRNT behavior, `FIX` arithmetic, Reset cleanup, and access protection still require HFO approval on the actual control.
