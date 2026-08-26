@@ -3,7 +3,9 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Persistence;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -220,6 +222,94 @@ public sealed class EInkApiTests
             using var wrongToken = await client.SendAsync(Get(
                 "/api/tablets/3041/status", "mp_eink_other-token"));
             Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task Tablet_status_exposes_only_the_derived_code_for_a_valid_pending_session()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            var now = application.Services.GetRequiredService<TimeProvider>().GetUtcNow();
+            await SeedVerificationSessionAsync(application.Services, now, now.AddMinutes(5));
+
+            using var response = await client.SendAsync(Get("/api/tablets/3041/status"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            Assert.Equal("IN_SETUP", root.GetProperty("status").GetString());
+            var verification = root.GetProperty("verification");
+            Assert.True(verification.GetProperty("required").GetBoolean());
+            Assert.Equal("WAITING_FOR_OPERATOR", verification.GetProperty("state").GetString());
+            Assert.Equal("0388", verification.GetProperty("response_code").GetString());
+            Assert.DoesNotContain("100000", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("699624", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("tablet-verification-secret", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("protectedSecret", json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("nonce", json, StringComparison.OrdinalIgnoreCase);
+
+            using var wrongToken = await client.SendAsync(Get(
+                "/api/tablets/3041/status", "mp_eink_other-token"));
+            Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
+
+            await ExecuteAsync(application.Services, """
+                UPDATE production_run_programs
+                SET selected_gcode_release_id=NULL
+                WHERE production_run_id='run:batch-operation:operation-eink-1';
+                """);
+            using var wrongNcResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var wrongNc = JsonDocument.Parse(await wrongNcResponse.Content.ReadAsStringAsync());
+            var wrongNcVerification = wrongNc.RootElement.GetProperty("verification");
+            Assert.Equal("INVALIDATED", wrongNcVerification.GetProperty("state").GetString());
+            Assert.False(wrongNcVerification.TryGetProperty("response_code", out _));
+
+            await ExecuteAsync(application.Services, """
+                UPDATE production_run_programs
+                SET selected_gcode_release_id='gcode-eink-verification'
+                WHERE production_run_id='run:batch-operation:operation-eink-1';
+                """);
+            await ExecuteAsync(application.Services,
+                "UPDATE cnc_verification_settings SET enabled=0 WHERE machine_id='machine-eink-1';");
+            using var disabledResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var disabled = JsonDocument.Parse(await disabledResponse.Content.ReadAsStringAsync());
+            var disabledVerification = disabled.RootElement.GetProperty("verification");
+            Assert.Equal("INVALIDATED", disabledVerification.GetProperty("state").GetString());
+            Assert.False(disabledVerification.TryGetProperty("response_code", out _));
+
+            await ExecuteAsync(application.Services, $"""
+                UPDATE cnc_verification_settings
+                SET enabled=1 WHERE machine_id='machine-eink-1';
+                UPDATE cnc_setup_verification_sessions
+                SET state='SUPERSEDED', resolved_at='{now:O}'
+                WHERE id='session-eink-verification';
+                """);
+            using var supersededResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var superseded = JsonDocument.Parse(
+                await supersededResponse.Content.ReadAsStringAsync());
+            var supersededVerification = superseded.RootElement.GetProperty("verification");
+            Assert.Equal("UNAVAILABLE", supersededVerification.GetProperty("state").GetString());
+            Assert.False(supersededVerification.TryGetProperty("response_code", out _));
+        });
+    }
+
+    [Fact]
+    public async Task Expired_verification_session_never_exposes_a_response_code()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            var now = application.Services.GetRequiredService<TimeProvider>().GetUtcNow();
+            await SeedVerificationSessionAsync(
+                application.Services, now.AddMinutes(-10), now.AddSeconds(-1));
+
+            using var response = await client.SendAsync(Get("/api/tablets/3041/status"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var verification = document.RootElement.GetProperty("verification");
+            Assert.Equal("EXPIRED", verification.GetProperty("state").GetString());
+            Assert.False(verification.TryGetProperty("response_code", out _));
         });
     }
 
@@ -466,6 +556,90 @@ public sealed class EInkApiTests
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task SeedVerificationSessionAsync(
+        IServiceProvider services, DateTimeOffset createdAt, DateTimeOffset expiresAt)
+    {
+        const string secret = "tablet-verification-secret-1";
+        var protector = services.GetRequiredService<IDataProtectionProvider>().CreateProtector(
+            CncVerificationSecretProtection.Purpose);
+        var protectedSecret = protector.Protect(secret);
+        var machineKey = CncVerificationResponseAlgorithm.DeriveMachineKey("machine-eink-1", secret);
+        Assert.Equal(699624, machineKey);
+        Assert.Equal("0388", CncVerificationResponseAlgorithm.Calculate(
+            100000, 100000, 100000, machineKey, 4));
+
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO postprocessors(id,name)VALUES('post-eink-verification','Verification Post');
+            INSERT INTO tool_table_releases(
+                id,case_operation_id,revision_number,original_file_name,stored_relative_path,
+                file_size,file_hash,released_at,released_by,release_comment,created_at,updated_at)
+            VALUES('tools-eink-verification','case-op-eink-1',1,'tools.csv','tools/verification.csv',
+                   1,$hash,$createdAt,'test','verification',$createdAt,$createdAt);
+            INSERT INTO process_revisions(
+                id,case_operation_id,revision_number,is_active,tool_table_release_id,
+                created_at,created_by,change_description,version,updated_at,manufacturing_program_id)
+            VALUES('process-eink-verification','case-op-eink-1',1,1,'tools-eink-verification',
+                   $createdAt,'test','verification',1,$createdAt,'case-operation:case-op-eink-1');
+            INSERT INTO gcode_releases(
+                id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,
+                original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,
+                change_scope,release_comment,tool_table_release_id,created_at,updated_at)
+            VALUES('gcode-eink-verification','case-op-eink-1','process-eink-verification',
+                   'post-eink-verification',1,'part.nc','gcode/part.nc',1,$hash,$createdAt,'test',
+                   'LOCAL_POST_REVISION','verification','tools-eink-verification',$createdAt,$createdAt);
+            INSERT INTO gcode_release_verification_hooks(
+                gcode_release_id,hook_version,invocation_kind,invocation_number,
+                nc_identity_token,line_number,created_at,updated_at)
+            VALUES('gcode-eink-verification',1,'G65',9002,100000,3,$createdAt,$createdAt);
+            UPDATE production_run_programs
+            SET manufacturing_program_id='case-operation:case-op-eink-1',
+                process_revision_id='process-eink-verification',
+                selected_gcode_release_id='gcode-eink-verification',
+                legacy_unmanaged=0,
+                updated_at=$createdAt
+            WHERE production_run_id='run:batch-operation:operation-eink-1';
+            INSERT INTO offset_loader_releases(
+                id,production_run_id,machine_id,nc_release_id,tool_table_release_id,
+                verification_release_token,created_at,created_by)
+            VALUES('offset-eink-verification','run:batch-operation:operation-eink-1',
+                   'machine-eink-1','gcode-eink-verification','tools-eink-verification',
+                   100000,$createdAt,'test');
+            INSERT INTO production_run_current_offset_loaders(
+                production_run_id,machine_id,offset_loader_release_id,selected_at,selected_by,version)
+            VALUES('run:batch-operation:operation-eink-1','machine-eink-1',
+                   'offset-eink-verification',$createdAt,'test',1);
+            INSERT INTO cnc_verification_settings(
+                machine_id,dprint_transport,dprint_port,challenge_program_number,
+                verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
+                verification_state_variable,release_token_variable,protected_secret,
+                expected_macro_version,response_code_digits,verification_timeout_seconds,
+                enabled,version,created_at,updated_at)
+            VALUES('machine-eink-1','HAAS_DPRNT_TCP',8080,9001,9002,NULL,
+                   10801,10802,10803,10804,$protectedSecret,3,4,300,1,1,$createdAt,$createdAt);
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                server_received_at,nc_release_id,offset_loader_release_id,metadata_json)
+            VALUES('workflow-offset-eink-verification','run:batch-operation:operation-eink-1',
+                   'machine-eink-1','OFFSET_LOADER_COMPLETED','TEST','offset-eink-verification',
+                   $createdAt,'gcode-eink-verification','offset-eink-verification','{}');
+            INSERT INTO cnc_setup_verification_sessions(
+                id,production_run_id,machine_id,nc_release_id,offset_loader_release_id,
+                nonce,macro_version,response_code_digits,state,created_at,expires_at,
+                source_workflow_event_id)
+            VALUES('session-eink-verification','run:batch-operation:operation-eink-1',
+                   'machine-eink-1','gcode-eink-verification','offset-eink-verification',
+                   100000,3,4,'PENDING',$createdAt,$expiresAt,'workflow-offset-eink-verification');
+            """;
+        command.Parameters.AddWithValue("$hash", new string('d', 64));
+        command.Parameters.AddWithValue("$createdAt", createdAt.ToUniversalTime().ToString("O"));
+        command.Parameters.AddWithValue("$expiresAt", expiresAt.ToUniversalTime().ToString("O"));
+        command.Parameters.AddWithValue("$protectedSecret", protectedSecret);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task ExecuteAsync(IServiceProvider services, string sql)
     {
         var database = services.GetRequiredService<SqliteDatabase>();
@@ -502,15 +676,17 @@ public sealed class EInkApiTests
                 $"--EInk:PackageRoot={packageRoot}"
             ],
             webHost => webHost.UseTestServer());
+        var started = false;
         try
         {
             await application.StartAsync();
+            started = true;
             using var client = application.GetTestClient();
             await test(application, client, packageRoot);
-            await application.StopAsync();
         }
         finally
         {
+            if (started) await application.StopAsync();
             await application.DisposeAsync();
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(directoryPath))

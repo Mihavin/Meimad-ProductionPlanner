@@ -1380,14 +1380,14 @@ Offset Loader creation validates that the Machine is assigned to the Production 
 The strict CNC-safe DPRINT v1 line is ASCII printable, at most 512 bytes, and has this exact field ordering:
 
 ```text
-MEIMAD/V/1/EVENT/<CODE>/ID/<SOURCE_EVENT_ID>/SEQ/<NONNEGATIVE_INTEGER>/MACROVERSION/<POSITIVE_INTEGER>[/RUN/<ID>][/PROGRAM/<ID>][/OFFSETRELEASE/<POSITIVE_INTEGER>][/NONCE/<NONNEGATIVE_INTEGER>]
+MEIMAD/V/1/EVENT/<CODE>/ID/<SOURCE_EVENT_ID>/SEQ/<NONNEGATIVE_INTEGER>/MACROVERSION/<POSITIVE_INTEGER>[/RUN/<ID>][/PROGRAM/<ID>][/OFFSETRELEASE/<SIX_DIGIT_INTEGER>][/NONCE/<SIX_DIGIT_INTEGER>]
 ```
 
 The v1 event codes are `OLC`, `SVR`, `SVS`, `SVF`, `STQ`, `QCP`, `QCF`, `CST`, `CEN`, `CIN`, `PSO`, and `PSC`, mapping in order to the workflow event types defined above. This representation deliberately avoids `|`, `=`, `_`, and other punctuation outside Haas's documented DPRNT literal-text set. The complete line accepts only uppercase letters, digits, `/`, and `-`; IDs use the same set without `/`.
 
-Optional fields may be omitted but, when present, remain in the displayed order. Unknown, duplicate, reordered, empty, malformed, unsupported, lowercase, or whitespace-containing fields fail parsing. `OLC` requires both `OFFSETRELEASE` and `NONCE`; other currently defined event codes reject those two fields. Only an enabled Machine configuration, matching expected macro version, optional matching Run, and current release token allow this event to enter `production_run_workflow_events`. `(source, sourceEventId)` is idempotent. Sequence gaps/out-of-order values produce immutable anomaly rows while preserving the received event and never inventing missing events. Other parsed event types remain raw diagnostics until their later milestone owns validation and projection.
+Optional fields may be omitted but, when present, remain in the displayed order. Unknown, duplicate, reordered, empty, malformed, unsupported, lowercase, or whitespace-containing fields fail parsing. `OLC` requires both `OFFSETRELEASE` and `NONCE` as six-digit integers; other currently defined event codes reject those two fields. Only an enabled Machine configuration, matching expected macro version, optional matching Run, current release token, and schema-v51 NC hook allow this event to enter `production_run_workflow_events`. `(source, sourceEventId)` is idempotent. Sequence gaps/out-of-order values produce immutable anomaly rows while preserving the received event and never inventing missing events. Other parsed event types remain raw diagnostics until their later milestone owns validation and projection.
 
-This contract is a foundation, not completed setup verification. Schema v51 selects the generic-hook fallback, so the protected call's stored six-digit identity—not `PROGRAM`—is the intended exact NC release input. `PROGRAM` remains untrusted Machine evidence. Current `OLC` resolution requires the release hook's invocation to match the enabled Machine configuration and retains the expected NC identity in event metadata. Algorithm v1 has only a disconnected reference implementation and public commissioning vectors; it is not invoked by this API. There is still no response-code endpoint, verification-session state, commissioned CNC macro deployment, or tablet secret/configuration exposure.
+This contract is a foundation, not completed setup verification. Schema v51 selects the generic-hook fallback, so the protected call's stored six-digit identity—not `PROGRAM`—is the intended exact NC release input. `PROGRAM` remains untrusted Machine evidence. Schema v52 atomically creates one `PENDING` session with the retained `OLC` event. The immutable session context contains Machine, Run, exact NC/Offset Loader releases, six-digit nonce, macro version, response width, creation, expiration, and source event; it stores no secret or response. A newer Offset Loader supersedes a live session. The existing assigned-tablet status route uses the physically matched algorithm under the fail-closed contract in section 8.9; there is no separate response-code endpoint. Commissioned production macro input, success/failure ingestion, and execution blocking remain unimplemented.
 
 ## 7.6 Official job package generation
 
@@ -1684,7 +1684,7 @@ GET /api/tablets/{tablet_id}/status
 POST /api/tablets/{tablet_id}/events
 ```
 
-The authenticated GET status route and schema-v49 event-driven projection are implemented.
+The authenticated GET status route, schema-v49 event-driven projection, and schema-v52 setup-verification response projection are implemented.
 The shared event table is append-only and retains Server receipt time separately
 from optional Machine time. The POST event route remains pending. The physical firmware compiles the guarded
 button binding described below, but it is not yet end-to-end or physically
@@ -1692,7 +1692,7 @@ verified. Until the POST exception is added, the existing E-Ink guard continues
 to reject device-credential POSTs.
 
 The GET response uses `revision`, `tablet_id`, `machine`, `nc_run`, `part`,
-`operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP_RUN`,
+`operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP`, `IN_SETUP_RUN`,
 `IN_QC`, `READY_FOR_PRODUCTION`, `IN_PRODUCTION`, `BLOCKED`, or `UNKNOWN`.
 `revision` is the unsigned screen-content revision for this tablet projection.
 An unchanged revision means the previously rendered projection remains valid;
@@ -1701,6 +1701,20 @@ the revision only after a completed panel refresh and skips redraw when the
 stored tablet identity and revision both match. A different tablet identity
 forces refresh even if its numeric revision is equal. A malformed or unavailable
 response never changes the stored revision or replaces the retained screen.
+
+While status is `IN_SETUP`, the response also contains:
+
+```json
+{
+  "verification": {
+    "required": true,
+    "state": "WAITING_FOR_OPERATOR",
+    "response_code": "0388"
+  }
+}
+```
+
+`response_code` is present only for the credential's assigned Machine and Run when the unique session is `PENDING`, unexpired, still tied to the current Offset Loader and approved NC hook, and its enabled Machine configuration still matches. The Server decrypts the Machine secret and derives the fixed-width response in memory; the session and response JSON contain no raw nonce, Machine key/secret, protected-variable number, or algorithm internals. Expired, invalidated, superseded, missing, or undecryptable contexts return `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE` without `response_code`. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
 `machine.number` is the explicit operator-facing Machine Number used by the
 physical header; `machine.id` remains the stable identity and must not be
 presented as a Machine Number. The current firmware accepts a missing
@@ -1726,8 +1740,8 @@ output. Extending the physical payload to represent all atomic outputs remains
 an open compatibility decision.
 
 The first firmware state machine consumes this status without owning or
-deriving business state. `READY_FOR_SETUP` and `IN_QC` select a 120-second
-timer wake (also allowing physical wake). `IN_SETUP_RUN`,
+deriving business state. `READY_FOR_SETUP`, `IN_SETUP`, and `IN_QC` select a
+120-second timer wake (also allowing physical wake). `IN_SETUP_RUN`,
 `READY_FOR_PRODUCTION`, and `IN_PRODUCTION` select physical-button-only wake;
 the E-Ink page remains visible and CNC/Server integrations own production-cycle
 events. `BLOCKED`, `UNKNOWN`, and an unavailable status currently select a

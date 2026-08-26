@@ -1,5 +1,8 @@
 [CmdletBinding(DefaultParameterSetName = 'Path')]
 param(
+    [ValidateSet('Vectors', 'Identity')]
+    [string]$Mode = 'Vectors',
+
     [Parameter(Mandatory = $true, ParameterSetName = 'Path')]
     [ValidateNotNullOrEmpty()]
     [string]$InputPath,
@@ -17,6 +20,56 @@ if ($PSCmdlet.ParameterSetName -eq 'Path') {
         throw "Input file does not exist: $resolvedInput"
     }
     $InputLines = [System.IO.File]::ReadAllLines($resolvedInput)
+}
+
+if ($Mode -eq 'Identity') {
+    $identityExpected = [ordered]@{
+        '1' = 123401
+        '2' = 432101
+        '4' = 123501
+    }
+    $identityPattern = '^MEIMADSPIKE/CASE/(?<case>[124])/PROBE/9010/IDENTITY/(?<identity>[0-9]{6})$'
+    $identityCounts = [ordered]@{ '1' = 0; '2' = 0; '4' = 0 }
+    $identityObservations = [System.Collections.Generic.List[object]]::new()
+    $identityLineCount = 0
+    foreach ($lineValue in $InputLines) {
+        $line = if ($null -eq $lineValue) { '' } else { $lineValue.Trim() }
+        if (-not $line.StartsWith('MEIMADSPIKE/CASE/', [StringComparison]::Ordinal)) { continue }
+        $identityLineCount++
+        $match = [regex]::Match($line, $identityPattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        if (-not $match.Success) {
+            $identityObservations.Add([ordered]@{ case = $null; passed = $false; code = 'malformed'; line = $line })
+            continue
+        }
+        $case = $match.Groups['case'].Value
+        $identity = [int]$match.Groups['identity'].Value
+        $passed = $identity -eq $identityExpected[$case]
+        if ($passed) { $identityCounts[$case]++ }
+        $identityObservations.Add([ordered]@{
+            case = $case
+            passed = $passed
+            code = if ($passed) { 'matched' } else { 'identity_mismatch' }
+            expectedIdentity = $identityExpected[$case]
+            actualIdentity = $identity
+            line = $line
+        })
+    }
+    $identityAttempted = $identityLineCount -gt 0
+    $identityFailed = @($identityObservations | Where-Object { -not $_.passed })
+    $requiredRepetitionsPerCase = 4
+    $insufficient = @($identityExpected.Keys | Where-Object { $identityCounts[$_] -lt $requiredRepetitionsPerCase })
+    $identityPassed = $identityAttempted -and $identityFailed.Count -eq 0 -and $insufficient.Count -eq 0
+    [ordered]@{
+        protocol = 'MEIMADSPIKE/CASE'
+        status = if (-not $identityAttempted) { 'NOT_RUN' } elseif ($identityPassed) { 'PASS' } else { 'FAIL' }
+        attempted = $identityAttempted
+        requiredRepetitionsPerCase = $requiredRepetitionsPerCase
+        matchedCounts = $identityCounts
+        insufficientCases = $insufficient
+        observations = $identityObservations
+        allPassed = if ($identityAttempted) { $identityPassed } else { $null }
+    } | ConvertTo-Json -Depth 8
+    return
 }
 
 $expected = [ordered]@{

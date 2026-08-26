@@ -48,7 +48,7 @@ function Invoke-ReadOnlyMdcQuery {
         if (-not $connectTask.Wait($TimeoutMilliseconds)) {
             throw "MDC connection timed out."
         }
-        $connectTask.GetAwaiter().GetResult()
+        $null = $connectTask.GetAwaiter().GetResult()
         $networkStream = $tcpClient.GetStream()
         $networkStream.ReadTimeout = $TimeoutMilliseconds
         $networkStream.WriteTimeout = $TimeoutMilliseconds
@@ -134,7 +134,7 @@ function Receive-DprntLines {
         if (-not $connectTask.Wait($TimeoutMilliseconds)) {
             throw "DPRNT connection timed out."
         }
-        $connectTask.GetAwaiter().GetResult()
+        $null = $connectTask.GetAwaiter().GetResult()
         $networkStream = $tcpClient.GetStream()
         $networkStream.ReadTimeout = 500
         $reader = [System.IO.StreamReader]::new(
@@ -200,7 +200,8 @@ $after = Read-MdcSnapshot
 $completedAt = [DateTimeOffset]::UtcNow
 $graderPath = Join-Path $PSScriptRoot 'haas-verification-grade.ps1'
 $capturedLines = @($dprnt.lines | ForEach-Object { $_.line })
-$vectorGrade = (& $graderPath -InputLines $capturedLines) | ConvertFrom-Json
+$vectorGrade = (& $graderPath -Mode Vectors -InputLines $capturedLines) | ConvertFrom-Json
+$identityGrade = (& $graderPath -Mode Identity -InputLines $capturedLines) | ConvertFrom-Json
 
 $evidence = [ordered]@{
     schemaVersion = 1
@@ -220,6 +221,7 @@ $evidence = [ordered]@{
     before = $before
     dprnt = $dprnt
     responseVectorGrade = $vectorGrade
+    identityTransportGrade = $identityGrade
     after = $after
     operatorRecord = [ordered]@{
         controllerSoftware = $null

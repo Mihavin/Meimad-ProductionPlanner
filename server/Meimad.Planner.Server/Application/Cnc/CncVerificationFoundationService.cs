@@ -5,6 +5,11 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace Meimad.Planner.Server.Application.Cnc;
 
+internal static class CncVerificationSecretProtection
+{
+    internal const string Purpose = "Meimad.Planner.CncVerification.MachineSecret.v1";
+}
+
 internal sealed record OffsetLoaderRelease(
     string OffsetLoaderReleaseId, string ProductionRunId, string MachineId,
     string NcReleaseId, string ToolTableReleaseId, int VerificationReleaseToken,
@@ -41,7 +46,7 @@ internal sealed record UpdateCncVerificationSettings(
 internal sealed record CncDprintIngestionContext(
     string ProductionRunId, string MachineId, string OffsetLoaderReleaseId,
     string NcReleaseId, int NcIdentityToken, int VerificationReleaseToken,
-    int ExpectedMacroVersion);
+    int ExpectedMacroVersion, int ResponseCodeDigits, int VerificationTimeoutSeconds);
 
 internal interface ICncVerificationFoundationRepository
 {
@@ -72,7 +77,7 @@ internal sealed class CncVerificationFoundationService
         this.repository = repository;
         this.timeProvider = timeProvider;
         secretProtector = dataProtectionProvider.CreateProtector(
-            "Meimad.Planner.CncVerification.MachineSecret.v1");
+            CncVerificationSecretProtection.Purpose);
     }
 
     internal async Task<OffsetLoaderRelease> CreateOffsetLoaderReleaseAsync(

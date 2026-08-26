@@ -12,7 +12,7 @@ The Color E-Ink Work Tablet is a low-cost, low-power operational display and loc
 
 It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative planning data source. Its one Server write is the scoped `SEND_TO_QC` operational event.
 
-The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside the future setup-verification handshake; the tablet may display a derived response but never receives the raw secret or becomes workflow authority.
+The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside the setup-verification handshake. The authenticated status API supplies a derived fixed-width response only for a valid pending session. The firmware renders that bounded projection as a prominent code or an explicit expired/invalidated/unavailable setup block. It never receives the raw nonce, Machine secret/key, protected-variable mapping, or algorithm internals and never becomes workflow authority.
 
 Primary goals are:
 
@@ -69,7 +69,10 @@ matching tablet/revision skips in-memory drawing and the physical E-Ink update;
 a missing value, changed revision, or reassignment refreshes and then saves the
 new value. NVS is not advanced before the blocking panel update returns. Every
 actual update logs its revision and measured `update()` duration. An unavailable
-or malformed response keeps the retained same-tablet screen and revision.
+or malformed response keeps the retained same-tablet screen and revision,
+except that a possibly visible `IN_SETUP` response code is replaced once with a
+persisted unavailable/do-not-start fail-safe. The next valid response forces a
+repaint even when its revision matches the code screen's stored revision.
 Package download/activation revisions remain separate future state and must not
 be conflated with this status-screen revision.
 
@@ -79,6 +82,7 @@ Server status only to choose wake behavior:
 | Server status | Firmware sleep/wake behavior |
 |---|---|
 | `READY_FOR_SETUP` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
+| `IN_SETUP` | Deep sleep; timer poll after 120 seconds or physical-button wake so time-limited verification state is refreshed. |
 | `IN_SETUP_RUN` | Deep sleep; physical-button wake only. |
 | `IN_QC` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
 | `READY_FOR_PRODUCTION` | Deep sleep; physical-button wake only while the explicit status text remains visible. |
@@ -301,12 +305,19 @@ Machine view shows Machine ID/type, last update, battery, current part/Batch/Ope
 The physical firmware now contains the first 800x480 production layout. It is
 text-only and orders the page as Machine Name/Number with a small tablet ID,
 part, Operation, a prominent framed status, then a fixed three-row tool table.
-Tool rows use numbered pages and never scroll. All seven approved status tokens
+Tool rows use numbered pages and never scroll. All eight approved status tokens
 have operator-readable labels. A successful status response populates the
 official identity/part/Operation/status fields; because that compatibility
 response does not contain tools, the live layout shows `NO TOOL DATA AVAILABLE`
 instead of example rows. The development-only seven-tool fixture is visibly
 marked `LAYOUT DEMO`.
+
+For `IN_SETUP`, the ordinary status/tool region becomes a setup-verification
+panel. `WAITING_FOR_OPERATOR` displays the 4–6 digit Server-projected response
+as text, preserving leading zeroes. `EXPIRED`, `INVALIDATED`, and `UNAVAILABLE`
+display `SETUP BLOCKED` plus a refresh/do-not-start instruction and no code. The
+adapter rejects missing verification data, numeric or malformed codes, codes on
+blocking states, and verification data outside `IN_SETUP`.
 
 The layout model, pagination, same/different/missing/reassigned revision
 decisions, button mapping, page-boundary behavior, single-attempt guard, and
@@ -319,9 +330,10 @@ acceptance gate below.
 A separate compile-time demo image (`xiao-esp32s3-plus-demo`) makes UI work
 independent from unfinished Server status/event routes. It disables Wi-Fi and
 all Server calls, renders production-model fixtures marked `DEMO`, and persists
-a ten-step state cycle: Ready for Setup, In Setup Run, In QC, Ready for
-Production, In Production, Blocked, Wi-Fi Error, Server Error, Unregistered
-Tablet, and Low Battery. D1/long-D4 advances the scenario while D2/short-D4
+a twelve-step state cycle: Ready for Setup, setup verification with code `0388`,
+expired setup verification, In Setup Run, In QC, Ready for Production, In
+Production, Blocked, Wi-Fi Error, Server Error, Unregistered Tablet, and Low
+Battery. D1/long-D4 advances the scenario while D2/short-D4
 exercise tool pages. It never submits a test event or presents fixture state as
 Server authority; the normal production build has demo mode disabled.
 

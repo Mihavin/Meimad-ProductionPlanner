@@ -6,12 +6,21 @@ namespace meimad::tablet_api {
 
 enum class TabletStatus {
   ReadyForSetup,
+  InSetup,
   InSetupRun,
   InQc,
   ReadyForProduction,
   InProduction,
   Blocked,
   Unknown
+};
+
+enum class VerificationState {
+  None,
+  WaitingForOperator,
+  Expired,
+  Invalidated,
+  Unavailable
 };
 
 enum class TabletEventType {
@@ -38,6 +47,13 @@ struct TabletOperation {
   String name;
 };
 
+struct TabletVerification {
+  bool required = false;
+  VerificationState state = VerificationState::None;
+  // Kept as text so fixed-width values such as "0388" retain leading zeroes.
+  String responseCode;
+};
+
 struct TabletStatusResponse {
   uint32_t revision = 0;
   String tabletId;
@@ -46,6 +62,7 @@ struct TabletStatusResponse {
   TabletPart part;
   TabletOperation operation;
   TabletStatus status = TabletStatus::Unknown;
+  TabletVerification verification;
 };
 
 // The request deliberately contains no timestamp. Server time is authoritative.
@@ -117,6 +134,7 @@ bool parseEventPayload(
     String& error);
 
 const char* toToken(TabletStatus status);
+const char* toToken(VerificationState state);
 const char* toToken(TabletEventType eventType);
 const char* toText(ApiResultCode result);
 bool hasValidBatteryVoltage(const BatteryTelemetry& telemetry);

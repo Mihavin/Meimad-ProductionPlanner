@@ -78,6 +78,9 @@ internal static partial class HaasDprintProtocol
             return Fail("invalid_numeric_field", out error);
         if (eventType == "OFFSET_LOADER_COMPLETED" && (!releaseToken.HasValue || !nonce.HasValue))
             return Fail("missing_offset_evidence", out error);
+        if (eventType == "OFFSET_LOADER_COMPLETED"
+            && (releaseToken is < 100000 or > 999999 || nonce is < 100000 or > 999999))
+            return Fail("invalid_offset_evidence_range", out error);
         if (eventType != "OFFSET_LOADER_COMPLETED" && (releaseToken.HasValue || nonce.HasValue))
             return Fail("unexpected_offset_evidence", out error);
         value = new(eventType, map["ID"], sequence, macroVersion,

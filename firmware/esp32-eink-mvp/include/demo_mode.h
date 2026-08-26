@@ -8,6 +8,8 @@ namespace meimad::demo_mode {
 
 enum class DemoScenario : uint8_t {
   ReadyForSetup,
+  SetupVerification,
+  SetupVerificationExpired,
   InSetupRun,
   InQc,
   ReadyForProduction,
@@ -19,7 +21,7 @@ enum class DemoScenario : uint8_t {
   LowBattery
 };
 
-constexpr uint8_t kScenarioCount = 10;
+constexpr uint8_t kScenarioCount = 12;
 
 DemoScenario scenarioForIndex(uint8_t index);
 uint8_t nextScenarioIndex(uint8_t index);

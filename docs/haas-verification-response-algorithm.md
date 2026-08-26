@@ -2,7 +2,7 @@
 
 ## Status
 
-Algorithm v1 is an implemented **reference and bench-test candidate**, not commissioned production behavior. It is not connected to verification sessions, tablet responses, workflow transitions, or CNC enablement. The actual Haas control must reproduce every published vector, including leading-zero responses, before Milestone D may use it.
+Algorithm v1 is an implemented **reference and physically matched arithmetic candidate**, not commissioned production behavior. On 2026-08-26 the VF-3SS reproduced every published vector, including leading-zero response `0282`. It is not yet exposed to tablets or connected to success/failure workflow transitions or CNC enablement. Schema v52 may retain the validated six-digit nonce in a pending one-time Server session, but production input, alarms, cleanup, and protected-key behavior remain uncommissioned.
 
 The algorithm is deliberately controller-friendly rather than cryptographically strong. Its purpose is freshness and replay resistance within a protected setup handshake. Network security, protected-program access, Server authorization, short expiration, and one-time session consumption remain separate controls.
 
@@ -101,9 +101,11 @@ MEIMADSPIKE/V/1/TEST/V01/NONCE/731841/OFFSETRELEASE/483920/NC/654321/DIGITS/6/RE
 
 `V01` through `V07` correspond to the table order. The line contains no Machine key. `scripts/haas-verification-spike.ps1` remains read-only/passive and now grades these captured lines into `responseVectorGrade`; missing, duplicate, malformed, unexpected, or mismatched attempted vectors make the status `FAIL`. A capture containing only the separate `MEIMADSPIKE/CASE/...` identity probes reports vector status `NOT_RUN`, not a vector failure. Captured `MEIMADSPIKE` lines are evidence only and are never ingested as operational workflow events. An existing capture or exported line file can be graded independently with `scripts/haas-verification-grade.ps1`.
 
+The same capture tool grades the direct/nested commissioning pack into `identityTransportGrade`. Cases `1`, `2`, and `4` must each deliver their exact expected supplied identity at least four times; malformed/mismatched lines or insufficient repetitions fail the grade. Four was accepted as the intentional physical sample size on 2026-08-26. This grade proves transport only, never an intrinsic caller identity or production interlock.
+
 ## Protected-program layout candidate
 
-No `.NC` macro is shipped yet because program numbers, variables, DPRNT behavior, `FIX` arithmetic, Reset cleanup, and access protection still require HFO approval on the actual control.
+The commissioning pack now includes O09012/O09013 as a no-motion, public-key vector candidate. It is not production macro code and still requires HFO review plus physical proof of program numbers, temporary variable `#10500`, DPRNT behavior, `FIX` arithmetic, Reset cleanup, and access protection on the actual control.
 
 - The Offset Loader calls the configured protected challenge program only after every offset write succeeds. That program first invalidates prior success, establishes a fresh six-digit nonce, retains the current six-digit Offset Loader token, and emits the strict `OLC` DPRINT.
 - The approved NC file calls the configured protected verification program as its first executable block and passes its six-digit identity through `A...`; Haas documents that `A` maps to local variable `#1`. The decimal point is mandatory in the Meimad hook so the six-digit value is not scaled as an integer macro argument.

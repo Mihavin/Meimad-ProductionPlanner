@@ -64,6 +64,18 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             current.Parameters.AddWithValue("$actor", actor);
             await current.ExecuteNonQueryAsync(token);
         }
+        await using (var invalidate = connection.CreateCommand())
+        {
+            invalidate.Transaction = transaction;
+            invalidate.CommandText = """
+                UPDATE cnc_setup_verification_sessions
+                SET state='SUPERSEDED', resolved_at=$at
+                WHERE machine_id=$machineId AND state IN ('PENDING','SUCCEEDED');
+                """;
+            invalidate.Parameters.AddWithValue("$at", Format(createdAt));
+            invalidate.Parameters.AddWithValue("$machineId", command.MachineId.Trim());
+            await invalidate.ExecuteNonQueryAsync(token);
+        }
         await transaction.CommitAsync(token);
         return new(id, runId, command.MachineId.Trim(), command.NcReleaseId.Trim(),
             command.ToolTableReleaseId.Trim(), releaseToken,
@@ -165,7 +177,8 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         command.CommandText = """
             SELECT release.production_run_id, release.machine_id, release.id,
                    release.nc_release_id, release.verification_release_token,
-                   settings.expected_macro_version, hook.nc_identity_token
+                   settings.expected_macro_version, hook.nc_identity_token,
+                   settings.response_code_digits, settings.verification_timeout_seconds
             FROM production_run_current_offset_loaders current
             JOIN offset_loader_releases release
               ON release.id=current.offset_loader_release_id
@@ -185,7 +198,8 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         await using var reader = await command.ExecuteReaderAsync(token);
         return await reader.ReadAsync(token)
             ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetInt32(6), reader.GetInt32(4), reader.GetInt32(5))
+                reader.GetString(3), reader.GetInt32(6), reader.GetInt32(4), reader.GetInt32(5),
+                reader.GetInt32(7), reader.GetInt32(8))
             : null;
     }
 

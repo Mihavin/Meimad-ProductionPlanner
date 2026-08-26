@@ -13,7 +13,8 @@ internal sealed record TabletStatusSource(
     TabletStatusMachineSource? Machine,
     TabletStatusRunSource? Run,
     IReadOnlyList<TabletStatusOutputSource> Outputs,
-    TabletStatusWorkflowSource? Workflow);
+    TabletStatusWorkflowSource? Workflow,
+    TabletVerificationSessionSource? VerificationSession);
 
 internal sealed record TabletStatusMachineSource(
     string MachineId,
@@ -39,3 +40,15 @@ internal sealed record TabletStatusWorkflowSource(
     string EventId,
     string EventType,
     DateTimeOffset OccurredAt);
+
+internal sealed record TabletVerificationSessionSource(
+    string SessionId,
+    string State,
+    int Nonce,
+    int OffsetLoaderReleaseToken,
+    int NcIdentityToken,
+    int MacroVersion,
+    int ResponseCodeDigits,
+    DateTimeOffset ExpiresAt,
+    string ProtectedSecret,
+    bool ContextIsValid);

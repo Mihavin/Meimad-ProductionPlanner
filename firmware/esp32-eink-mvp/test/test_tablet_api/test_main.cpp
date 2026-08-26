@@ -28,6 +28,10 @@ void check(bool condition, const char* expression, int line) {
   check(String(expected) == String(actual), #actual " equals " #expected, __LINE__)
 
 String validStatusPayload(const char* status = "IN_SETUP_RUN") {
+  const String verification = String(status) == "IN_SETUP"
+      ? ",\"verification\":{\"required\":true,"
+        "\"state\":\"WAITING_FOR_OPERATOR\",\"response_code\":\"0388\"}"
+      : "";
   return String("{")
       + "\"revision\":17,"
       + "\"tablet_id\":\"3041\","
@@ -35,7 +39,7 @@ String validStatusPayload(const char* status = "IN_SETUP_RUN") {
       + "\"nc_run\":{\"id\":845},"
       + "\"part\":{\"number\":\"P-12345\",\"name\":\"Housing\"},"
       + "\"operation\":{\"number\":30,\"name\":\"Finish Milling\"},"
-      + "\"status\":\"" + status + "\"}";
+      + "\"status\":\"" + status + "\"" + verification + "}";
 }
 
 void testParsesExampleAndNormalizesNumericIds() {
@@ -64,7 +68,7 @@ void testParsesExplicitMachineNumber() {
 
 void testAcceptsEveryInitialStatus() {
   const char* statuses[] = {
-      "READY_FOR_SETUP", "IN_SETUP_RUN", "IN_QC", "READY_FOR_PRODUCTION",
+      "READY_FOR_SETUP", "IN_SETUP", "IN_SETUP_RUN", "IN_QC", "READY_FOR_PRODUCTION",
       "IN_PRODUCTION", "BLOCKED", "UNKNOWN"};
   for (const char* status : statuses) {
     TabletStatusResponse response;
@@ -72,6 +76,75 @@ void testAcceptsEveryInitialStatus() {
     CHECK(parseStatusPayload(validStatusPayload(status), "3041", response, error));
     CHECK_STRING(status, toToken(response.status));
   }
+}
+
+void testParsesSetupVerificationWithoutLosingLeadingZeroes() {
+  TabletStatusResponse response;
+  String error;
+  CHECK(parseStatusPayload(validStatusPayload("IN_SETUP"), "3041", response, error));
+  CHECK(response.status == TabletStatus::InSetup);
+  CHECK(response.verification.required);
+  CHECK(response.verification.state == VerificationState::WaitingForOperator);
+  CHECK_STRING("0388", response.verification.responseCode);
+  CHECK_STRING("WAITING_FOR_OPERATOR", toToken(response.verification.state));
+}
+
+void testAcceptsBlockingVerificationStatesWithoutAResponseCode() {
+  const char* states[] = {"EXPIRED", "INVALIDATED", "UNAVAILABLE"};
+  const VerificationState expected[] = {
+      VerificationState::Expired,
+      VerificationState::Invalidated,
+      VerificationState::Unavailable};
+  for (uint8_t index = 0; index < 3; ++index) {
+    String payload = validStatusPayload("IN_SETUP");
+    payload.replace(
+        "\"state\":\"WAITING_FOR_OPERATOR\",\"response_code\":\"0388\"",
+        String("\"state\":\"") + states[index] + "\"");
+    TabletStatusResponse response;
+    String error;
+    CHECK(parseStatusPayload(payload, "3041", response, error));
+    CHECK(response.verification.state == expected[index]);
+    CHECK(response.verification.responseCode.isEmpty());
+  }
+}
+
+void testRejectsUnsafeVerificationPayloads() {
+  TabletStatusResponse response;
+  String error;
+
+  String missingVerification = validStatusPayload("IN_SETUP");
+  missingVerification.replace(
+      ",\"verification\":{\"required\":true,"
+      "\"state\":\"WAITING_FOR_OPERATOR\",\"response_code\":\"0388\"}",
+      "");
+  CHECK(!parseStatusPayload(missingVerification, "3041", response, error));
+  CHECK_STRING("verification must be an object for IN_SETUP", error);
+
+  String numericCode = validStatusPayload("IN_SETUP");
+  numericCode.replace("\"response_code\":\"0388\"", "\"response_code\":388");
+  error = "";
+  CHECK(!parseStatusPayload(numericCode, "3041", response, error));
+  CHECK_STRING("verification.response_code must be a string while waiting", error);
+
+  String malformedCode = validStatusPayload("IN_SETUP");
+  malformedCode.replace("\"response_code\":\"0388\"", "\"response_code\":\"03A8\"");
+  error = "";
+  CHECK(!parseStatusPayload(malformedCode, "3041", response, error));
+  CHECK_STRING("verification.response_code must contain 4 to 6 digits", error);
+
+  String staleCode = validStatusPayload("IN_SETUP");
+  staleCode.replace("WAITING_FOR_OPERATOR", "EXPIRED");
+  error = "";
+  CHECK(!parseStatusPayload(staleCode, "3041", response, error));
+  CHECK_STRING("verification.response_code is forbidden for this state", error);
+
+  String outsideSetup = validStatusPayload("READY_FOR_SETUP");
+  outsideSetup.remove(outsideSetup.length() - 1);
+  outsideSetup += ",\"verification\":{\"required\":true,"
+      "\"state\":\"WAITING_FOR_OPERATOR\",\"response_code\":\"0388\"}}";
+  error = "";
+  CHECK(!parseStatusPayload(outsideSetup, "3041", response, error));
+  CHECK_STRING("verification is allowed only for IN_SETUP", error);
 }
 
 void testRejectsMalformedJsonWithoutChangingPreviousResponse() {
@@ -135,12 +208,20 @@ void testRejectsEventAcknowledgmentWithoutServerTimestamp() {
 
 void testProductionStatusLabelsAndToolPages() {
   CHECK_STRING("READY FOR SETUP", statusText(TabletStatus::ReadyForSetup));
-  CHECK_STRING("IN SETUP", statusText(TabletStatus::InSetupRun));
+  CHECK_STRING("IN SETUP", statusText(TabletStatus::InSetup));
+  CHECK_STRING("IN SETUP RUN", statusText(TabletStatus::InSetupRun));
   CHECK_STRING("IN QUALITY CONTROL", statusText(TabletStatus::InQc));
   CHECK_STRING("READY FOR PRODUCTION", statusText(TabletStatus::ReadyForProduction));
   CHECK_STRING("IN PRODUCTION", statusText(TabletStatus::InProduction));
   CHECK_STRING("BLOCKED", statusText(TabletStatus::Blocked));
   CHECK_STRING("STATUS UNKNOWN", statusText(TabletStatus::Unknown));
+  CHECK_STRING(
+      "ENTER RESPONSE CODE",
+      verificationStateText(VerificationState::WaitingForOperator));
+  CHECK_STRING("CODE EXPIRED", verificationStateText(VerificationState::Expired));
+  CHECK_STRING(
+      "PRESS REFRESH - DO NOT START",
+      verificationInstructionText(VerificationState::Invalidated));
   CHECK(toolPageCount(0) == 1);
   CHECK(toolPageCount(3) == 1);
   CHECK(toolPageCount(4) == 2);
@@ -171,6 +252,27 @@ void testProductionScreenUsesStatusAndExplicitMachineNumber() {
   CHECK(screen.operationNumber == 30);
   CHECK(screen.status == TabletStatus::InQc);
   CHECK(screen.toolCount == 0);
+}
+
+void testProductionScreenCarriesOnlyProjectedVerificationDisplayData() {
+  TabletStatusResponse status;
+  status.status = TabletStatus::InSetup;
+  status.verification.required = true;
+  status.verification.state = VerificationState::WaitingForOperator;
+  status.verification.responseCode = "0388";
+  const ProductionScreenModel screen = makeProductionScreen(status);
+  CHECK(screen.status == TabletStatus::InSetup);
+  CHECK(screen.verificationState == VerificationState::WaitingForOperator);
+  CHECK_STRING("0388", screen.verificationResponseCode);
+}
+
+void testVerificationUnavailableScreenClearsThePreviousCode() {
+  const ProductionScreenModel screen = makeVerificationUnavailableScreen("3041");
+  CHECK(screen.status == TabletStatus::InSetup);
+  CHECK(screen.verificationState == VerificationState::Unavailable);
+  CHECK(screen.verificationResponseCode.isEmpty());
+  CHECK_STRING("LAST CODE CLEARED", screen.partNumber);
+  CHECK_STRING("T3041", screen.tabletId);
 }
 
 void testProductionScreenDoesNotPresentOpaqueIdAsMachineNumber() {
@@ -217,6 +319,11 @@ void testTabletStateMachineUsesOnlyPollingOrButtonWake() {
   CHECK(inSetup.wakeMode == WakeMode::PhysicalButton);
   CHECK(inSetup.pollIntervalSeconds == 0);
 
+  const StatePolicy awaitingVerification = policyFor(TabletStatus::InSetup);
+  CHECK(awaitingVerification.wakeMode == WakeMode::PollServer);
+  CHECK(awaitingVerification.pollIntervalSeconds == 120);
+  CHECK(!awaitingVerification.fallbackPolicy);
+
   const StatePolicy inQc = policyFor(TabletStatus::InQc);
   CHECK(inQc.wakeMode == WakeMode::PollServer);
   CHECK(inQc.pollIntervalSeconds == 120);
@@ -262,6 +369,7 @@ void testWakeButtonMappingUsesLongPressOnlyForSendToQc() {
 
 void testSendToQcIsAvailableOnlyDuringSetupRun() {
   CHECK(!canSendToQc(TabletStatus::ReadyForSetup));
+  CHECK(!canSendToQc(TabletStatus::InSetup));
   CHECK(canSendToQc(TabletStatus::InSetupRun));
   CHECK(!canSendToQc(TabletStatus::InQc));
   CHECK(!canSendToQc(TabletStatus::ReadyForProduction));
@@ -299,6 +407,8 @@ void testBatteryTelemetryUsesVoltageUntilPercentageIsCalibrated() {
 void testCompileTimeDemoCoversEveryRequiredScenario() {
   const DemoScenario expected[] = {
       DemoScenario::ReadyForSetup,
+      DemoScenario::SetupVerification,
+      DemoScenario::SetupVerificationExpired,
       DemoScenario::InSetupRun,
       DemoScenario::InQc,
       DemoScenario::ReadyForProduction,
@@ -317,6 +427,13 @@ void testCompileTimeDemoCoversEveryRequiredScenario() {
   }
 
   CHECK(makeScreen(DemoScenario::ReadyForSetup).status == TabletStatus::ReadyForSetup);
+  CHECK(makeScreen(DemoScenario::SetupVerification).status == TabletStatus::InSetup);
+  CHECK_STRING(
+      "0388",
+      makeScreen(DemoScenario::SetupVerification).verificationResponseCode);
+  CHECK(
+      makeScreen(DemoScenario::SetupVerificationExpired).verificationState
+      == VerificationState::Expired);
   CHECK(makeScreen(DemoScenario::InSetupRun).status == TabletStatus::InSetupRun);
   CHECK(makeScreen(DemoScenario::InQc).status == TabletStatus::InQc);
   CHECK(makeScreen(DemoScenario::ReadyForProduction).status == TabletStatus::ReadyForProduction);
@@ -335,6 +452,9 @@ void setup() {
   testParsesExampleAndNormalizesNumericIds();
   testParsesExplicitMachineNumber();
   testAcceptsEveryInitialStatus();
+  testParsesSetupVerificationWithoutLosingLeadingZeroes();
+  testAcceptsBlockingVerificationStatesWithoutAResponseCode();
+  testRejectsUnsafeVerificationPayloads();
   testRejectsMalformedJsonWithoutChangingPreviousResponse();
   testRejectsMissingFieldsAndUnsupportedStatus();
   testRejectsMismatchedTabletIdentity();
@@ -342,6 +462,8 @@ void setup() {
   testRejectsEventAcknowledgmentWithoutServerTimestamp();
   testProductionStatusLabelsAndToolPages();
   testProductionScreenUsesStatusAndExplicitMachineNumber();
+  testProductionScreenCarriesOnlyProjectedVerificationDisplayData();
+  testVerificationUnavailableScreenClearsThePreviousCode();
   testProductionScreenDoesNotPresentOpaqueIdAsMachineNumber();
   testDevelopmentFixtureIsPagedAndClearlyIdentifiedByCaller();
   testRevisionGateSkipsOnlyMatchingTabletAndRevision();

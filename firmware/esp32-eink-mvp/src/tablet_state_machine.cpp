@@ -10,6 +10,12 @@ StatePolicy policyFor(tablet_api::TabletStatus status) {
           kInitialPollIntervalSeconds,
           "waiting for the Server Offset Loader / setup-start state",
           false};
+    case tablet_api::TabletStatus::InSetup:
+      return {
+          WakeMode::PollServer,
+          kInitialPollIntervalSeconds,
+          "verification code is time-limited; refresh from the Server",
+          false};
     case tablet_api::TabletStatus::InSetupRun:
       return {
           WakeMode::PhysicalButton,

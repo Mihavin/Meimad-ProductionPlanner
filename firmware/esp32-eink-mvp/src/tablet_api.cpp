@@ -93,6 +93,7 @@ bool readRequiredId(
 
 bool parseStatusToken(const String& value, TabletStatus& status) {
   if (value == "READY_FOR_SETUP") status = TabletStatus::ReadyForSetup;
+  else if (value == "IN_SETUP") status = TabletStatus::InSetup;
   else if (value == "IN_SETUP_RUN") status = TabletStatus::InSetupRun;
   else if (value == "IN_QC") status = TabletStatus::InQc;
   else if (value == "READY_FOR_PRODUCTION") status = TabletStatus::ReadyForProduction;
@@ -100,6 +101,83 @@ bool parseStatusToken(const String& value, TabletStatus& status) {
   else if (value == "BLOCKED") status = TabletStatus::Blocked;
   else if (value == "UNKNOWN") status = TabletStatus::Unknown;
   else return false;
+  return true;
+}
+
+bool parseVerificationStateToken(
+    const String& value,
+    VerificationState& state) {
+  if (value == "WAITING_FOR_OPERATOR") {
+    state = VerificationState::WaitingForOperator;
+  } else if (value == "EXPIRED") {
+    state = VerificationState::Expired;
+  } else if (value == "INVALIDATED") {
+    state = VerificationState::Invalidated;
+  } else if (value == "UNAVAILABLE") {
+    state = VerificationState::Unavailable;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool isFixedWidthResponseCode(const String& value) {
+  if (value.length() < 4 || value.length() > 6) return false;
+  for (size_t index = 0; index < value.length(); ++index) {
+    if (value[index] < '0' || value[index] > '9') return false;
+  }
+  return true;
+}
+
+bool parseVerification(
+    JsonObjectConst root,
+    TabletStatus status,
+    TabletVerification& parsed,
+    String& error) {
+  JsonVariantConst value = root["verification"];
+  if (status != TabletStatus::InSetup) {
+    if (!value.isNull()) {
+      error = "verification is allowed only for IN_SETUP";
+      return false;
+    }
+    return true;
+  }
+
+  if (!value.is<JsonObjectConst>()) {
+    error = "verification must be an object for IN_SETUP";
+    return false;
+  }
+  JsonObjectConst verification = value.as<JsonObjectConst>();
+  if (!verification["required"].is<bool>()
+      || !verification["required"].as<bool>()) {
+    error = "verification.required must be true for IN_SETUP";
+    return false;
+  }
+
+  String state;
+  if (!readRequiredString(
+          verification["state"], "verification.state", state, error)
+      || !parseVerificationStateToken(state, parsed.state)) {
+    error = "verification.state is not supported";
+    return false;
+  }
+  parsed.required = true;
+
+  JsonVariantConst responseCode = verification["response_code"];
+  if (parsed.state == VerificationState::WaitingForOperator) {
+    if (!responseCode.is<const char*>()) {
+      error = "verification.response_code must be a string while waiting";
+      return false;
+    }
+    parsed.responseCode = responseCode.as<String>();
+    if (!isFixedWidthResponseCode(parsed.responseCode)) {
+      error = "verification.response_code must contain 4 to 6 digits";
+      return false;
+    }
+  } else if (!responseCode.isNull()) {
+    error = "verification.response_code is forbidden for this state";
+    return false;
+  }
   return true;
 }
 
@@ -209,6 +287,9 @@ bool parseStatusResponse(
   if (!readRequiredString(root["status"], "status", status, error)
       || !parseStatusToken(status, parsed.status)) {
     error = "status is not a supported tablet status";
+    return false;
+  }
+  if (!parseVerification(root, parsed.status, parsed.verification, error)) {
     return false;
   }
 
@@ -387,6 +468,7 @@ ApiResult TabletApiClient::sendEvent(
 const char* toToken(TabletStatus status) {
   switch (status) {
     case TabletStatus::ReadyForSetup: return "READY_FOR_SETUP";
+    case TabletStatus::InSetup: return "IN_SETUP";
     case TabletStatus::InSetupRun: return "IN_SETUP_RUN";
     case TabletStatus::InQc: return "IN_QC";
     case TabletStatus::ReadyForProduction: return "READY_FOR_PRODUCTION";
@@ -395,6 +477,17 @@ const char* toToken(TabletStatus status) {
     case TabletStatus::Unknown: return "UNKNOWN";
   }
   return "UNKNOWN";
+}
+
+const char* toToken(VerificationState state) {
+  switch (state) {
+    case VerificationState::None: return "NONE";
+    case VerificationState::WaitingForOperator: return "WAITING_FOR_OPERATOR";
+    case VerificationState::Expired: return "EXPIRED";
+    case VerificationState::Invalidated: return "INVALIDATED";
+    case VerificationState::Unavailable: return "UNAVAILABLE";
+  }
+  return "NONE";
 }
 
 const char* toToken(TabletEventType eventType) {

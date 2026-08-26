@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Meimad.Planner.Server.Application.Cnc;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace Meimad.Planner.Server.Application.EInk;
 
@@ -11,13 +13,20 @@ internal sealed class TabletStatusService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ITabletStatusRepository repository;
     private readonly IEInkDeviceRegistrationRepository registrations;
+    private readonly IDataProtector verificationSecretProtector;
+    private readonly ILogger<TabletStatusService> logger;
 
     public TabletStatusService(
         ITabletStatusRepository repository,
-        IEInkDeviceRegistrationRepository registrations)
+        IEInkDeviceRegistrationRepository registrations,
+        IDataProtectionProvider dataProtectionProvider,
+        ILogger<TabletStatusService> logger)
     {
         this.repository = repository;
         this.registrations = registrations;
+        verificationSecretProtector = dataProtectionProvider.CreateProtector(
+            CncVerificationSecretProtection.Purpose);
+        this.logger = logger;
     }
 
     internal async Task<TabletStatusResponse> ReadAsync(
@@ -65,6 +74,7 @@ internal sealed class TabletStatusService
 
         var output = source.Outputs[0];
         var status = Status(source.Machine, source.Run, source.Workflow);
+        var verification = Verification(source, status, contactedAt);
         var content = new
         {
             tabletId = source.TabletId,
@@ -72,7 +82,8 @@ internal sealed class TabletStatusService
             run = source.Run.RunId,
             output,
             status,
-            workflowEvent = source.Workflow?.EventId
+            workflowEvent = source.Workflow?.EventId,
+            verification
         };
         return new TabletStatusResponse(
             Revision(content),
@@ -84,7 +95,39 @@ internal sealed class TabletStatusService
             new TabletStatusRunResponse(source.Run.RunId),
             new TabletStatusPartResponse(output.PartNumber, output.PartName),
             new TabletStatusOperationResponse(output.OperationNumber, output.OperationName),
-            status);
+            status,
+            verification);
+    }
+
+    private TabletStatusVerificationResponse? Verification(
+        TabletStatusSource source, string status, DateTimeOffset now)
+    {
+        if (status != "IN_SETUP") return null;
+        var session = source.VerificationSession;
+        if (session is null)
+            return new(true, "UNAVAILABLE", null);
+        if (session.State != "PENDING" || !session.ContextIsValid)
+            return new(true, "INVALIDATED", null);
+        if (now >= session.ExpiresAt)
+            return new(true, "EXPIRED", null);
+
+        try
+        {
+            var secret = verificationSecretProtector.Unprotect(session.ProtectedSecret);
+            var machineKey = CncVerificationResponseAlgorithm.DeriveMachineKey(
+                source.Machine!.MachineId, secret);
+            var response = CncVerificationResponseAlgorithm.Calculate(
+                session.Nonce, session.OffsetLoaderReleaseToken,
+                session.NcIdentityToken, machineKey, session.ResponseCodeDigits);
+            return new(true, "WAITING_FOR_OPERATOR", response);
+        }
+        catch (CryptographicException exception)
+        {
+            logger.LogError(exception,
+                "Unable to decrypt CNC verification configuration. MachineId={MachineId} SessionId={SessionId}",
+                source.Machine!.MachineId, session.SessionId);
+            return new(true, "UNAVAILABLE", null);
+        }
     }
 
     private static string Status(
@@ -139,7 +182,9 @@ internal sealed record TabletStatusResponse(
     TabletStatusRunResponse NcRun,
     TabletStatusPartResponse Part,
     TabletStatusOperationResponse Operation,
-    string Status);
+    string Status,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TabletStatusVerificationResponse? Verification);
 
 internal sealed record TabletStatusMachineResponse(string Id, string Number, string Name);
 
@@ -148,6 +193,13 @@ internal sealed record TabletStatusRunResponse(string Id);
 internal sealed record TabletStatusPartResponse(string Number, string Name);
 
 internal sealed record TabletStatusOperationResponse(int Number, string Name);
+
+internal sealed record TabletStatusVerificationResponse(
+    bool Required,
+    string State,
+    [property: JsonPropertyName("response_code")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ResponseCode);
 
 internal sealed class TabletStatusResourceNotFoundException : Exception;
 

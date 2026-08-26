@@ -38,6 +38,10 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             ? null
             : await ReadWorkflowAsync(
                 connection, transaction, run.RunId, cancellationToken);
+        var verificationSession = run is null || device.Machine is null
+            ? null
+            : await ReadVerificationSessionAsync(
+                connection, transaction, device.Machine.MachineId, run.RunId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new TabletStatusSource(
             device.DeviceId,
@@ -47,7 +51,8 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             device.Machine,
             run,
             outputs,
-            workflow);
+            workflow,
+            verificationSession);
     }
 
     private static async Task<DeviceRow?> ReadDeviceAsync(
@@ -170,6 +175,60 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
         return await reader.ReadAsync(cancellationToken)
             ? new TabletStatusWorkflowSource(
                 reader.GetString(0), reader.GetString(1), Parse(reader.GetString(2)))
+            : null;
+    }
+
+    private static async Task<TabletVerificationSessionSource?> ReadVerificationSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        string runId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT session.id,session.state,session.nonce,
+                   release.verification_release_token,hook.nc_identity_token,
+                   session.macro_version,session.response_code_digits,session.expires_at,
+                   settings.protected_secret,
+                   CASE WHEN settings.enabled=1
+                              AND settings.expected_macro_version=session.macro_version
+                              AND settings.response_code_digits=session.response_code_digits
+                              AND current.offset_loader_release_id=session.offset_loader_release_id
+                              AND release.nc_release_id=session.nc_release_id
+                              AND EXISTS (
+                                  SELECT 1 FROM production_run_programs program
+                                  WHERE program.production_run_id=session.production_run_id
+                                    AND (program.selected_gcode_release_id=session.nc_release_id
+                                         OR program.production_gcode_release_id=session.nc_release_id))
+                              AND ((hook.invocation_kind='G65'
+                                    AND hook.invocation_number=settings.verify_program_number)
+                                   OR (hook.invocation_kind='CUSTOM_GCODE'
+                                       AND hook.invocation_number=settings.custom_gcode_alias))
+                        THEN 1 ELSE 0 END
+            FROM cnc_setup_verification_sessions session
+            JOIN offset_loader_releases release ON release.id=session.offset_loader_release_id
+            JOIN gcode_release_verification_hooks hook ON hook.gcode_release_id=session.nc_release_id
+            JOIN cnc_verification_settings settings ON settings.machine_id=session.machine_id
+            LEFT JOIN production_run_current_offset_loaders current
+              ON current.production_run_id=session.production_run_id
+             AND current.machine_id=session.machine_id
+            WHERE session.machine_id=$machineId
+              AND session.production_run_id=$runId
+              AND session.state IN ('PENDING','SUCCEEDED')
+            ORDER BY session.created_at DESC,session.id DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        command.Parameters.AddWithValue("$runId", runId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new TabletVerificationSessionSource(
+                reader.GetString(0), reader.GetString(1), reader.GetInt32(2),
+                reader.GetInt32(3), reader.GetInt32(4), reader.GetInt32(5),
+                reader.GetInt32(6), Parse(reader.GetString(7)), reader.GetString(8),
+                reader.GetInt32(9) == 1)
             : null;
     }
 

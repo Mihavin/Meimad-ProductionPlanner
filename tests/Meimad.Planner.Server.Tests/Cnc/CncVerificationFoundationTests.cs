@@ -123,7 +123,7 @@ public sealed class CncVerificationFoundationTests
             new SqliteProductionRunWorkflowEventRepository(fixture.Database), new FixedTimeProvider(Now));
         var ingestion = new CncDprintEventIngestionService(repository, workflow,
             NullLogger<CncDprintEventIngestionService>.Instance);
-        var line = $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-1/SEQ/101/MACROVERSION/3/PROGRAM/O1234/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/73184";
+        var line = $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-1/SEQ/101/MACROVERSION/3/PROGRAM/O1234/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841";
         var raw = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC",
             Now, "DPRINT_EVENT", line);
 
@@ -143,6 +143,59 @@ public sealed class CncVerificationFoundationTests
         Assert.Equal(release.OffsetLoaderReleaseId, reader.GetString(1));
         Assert.Equal("gcode-verification", reader.GetString(2));
         Assert.Equal(101, reader.GetInt64(3));
+
+        await reader.DisposeAsync();
+        command.CommandText = """
+            SELECT COUNT(*),production_run_id,machine_id,nc_release_id,
+                   offset_loader_release_id,nonce,macro_version,response_code_digits,
+                   state,created_at,expires_at
+            FROM cnc_setup_verification_sessions;
+            """;
+        await using var session = await command.ExecuteReaderAsync();
+        Assert.True(await session.ReadAsync());
+        Assert.Equal(1, session.GetInt32(0));
+        Assert.Equal("run-verification", session.GetString(1));
+        Assert.Equal("machine-verification", session.GetString(2));
+        Assert.Equal("gcode-verification", session.GetString(3));
+        Assert.Equal(release.OffsetLoaderReleaseId, session.GetString(4));
+        Assert.Equal(731841, session.GetInt32(5));
+        Assert.Equal(3, session.GetInt32(6));
+        Assert.Equal(6, session.GetInt32(7));
+        Assert.Equal("PENDING", session.GetString(8));
+        Assert.Equal(Now, DateTimeOffset.Parse(session.GetString(9)));
+        Assert.Equal(Now.AddSeconds(300), DateTimeOffset.Parse(session.GetString(10)));
+    }
+
+    [Fact]
+    public async Task New_offset_loader_release_supersedes_live_verification_session()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
+        var service = new CncVerificationFoundationService(repository,
+            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+        var authority = new EditAuthority("verification-client", 1);
+        await service.UpdateSettingsAsync("machine-verification", Settings("machine-secret-value", true), 0, authority);
+        var first = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
+            "machine-verification", "gcode-verification", "tools-verification"), authority);
+        var workflow = new ProductionRunWorkflowEventService(
+            new SqliteProductionRunWorkflowEventRepository(fixture.Database), new FixedTimeProvider(Now));
+        var ingestion = new CncDprintEventIngestionService(repository, workflow,
+            NullLogger<CncDprintEventIngestionService>.Instance);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+            $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-OLD/SEQ/101/MACROVERSION/3/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
+
+        await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
+            "machine-verification", "gcode-verification", "tools-verification"), authority);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT state,resolved_at FROM cnc_setup_verification_sessions;";
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("SUPERSEDED", reader.GetString(0));
+        Assert.Equal(Now, DateTimeOffset.Parse(reader.GetString(1)));
     }
 
     private static UpdateCncVerificationSettings Settings(string? secret, bool enabled) => new(

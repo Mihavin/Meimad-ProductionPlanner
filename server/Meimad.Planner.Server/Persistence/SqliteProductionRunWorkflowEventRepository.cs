@@ -106,8 +106,68 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
             await InsertAnomalyAsync(connection, transaction, anomaly, token);
             anomalies.Add(anomaly);
         }
+        if (command.VerificationSession is not null)
+            await StartVerificationSessionAsync(connection, transaction, value,
+                command.VerificationSession, token);
         await transaction.CommitAsync(token);
         return new(value, false, anomalies);
+    }
+
+    private static async Task StartVerificationSessionAsync(
+        SqliteConnection connection, SqliteTransaction transaction,
+        ProductionRunWorkflowEvent workflowEvent, SetupVerificationSessionSeed seed,
+        CancellationToken token)
+    {
+        await using (var supersede = connection.CreateCommand())
+        {
+            supersede.Transaction = transaction;
+            supersede.CommandText = """
+                UPDATE cnc_setup_verification_sessions
+                SET state='SUPERSEDED', resolved_at=$resolvedAt
+                WHERE machine_id=$machineId AND state IN ('PENDING','SUCCEEDED');
+                """;
+            supersede.Parameters.AddWithValue("$resolvedAt", Format(workflowEvent.ServerReceivedAt));
+            supersede.Parameters.AddWithValue("$machineId", workflowEvent.MachineId);
+            await supersede.ExecuteNonQueryAsync(token);
+        }
+
+        await using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
+        insert.CommandText = """
+            INSERT INTO cnc_setup_verification_sessions (
+                id,production_run_id,machine_id,nc_release_id,offset_loader_release_id,
+                nonce,macro_version,response_code_digits,state,created_at,expires_at,
+                resolved_at,source_workflow_event_id,resolution_workflow_event_id)
+            SELECT $id,$runId,$machineId,$ncReleaseId,$offsetReleaseId,
+                   $nonce,$macroVersion,$digits,'PENDING',$createdAt,$expiresAt,
+                   NULL,$workflowEventId,NULL
+            FROM production_run_current_offset_loaders current
+            JOIN offset_loader_releases release ON release.id=current.offset_loader_release_id
+            JOIN cnc_verification_settings settings ON settings.machine_id=release.machine_id
+            WHERE current.production_run_id=$runId
+              AND current.machine_id=$machineId
+              AND current.offset_loader_release_id=$offsetReleaseId
+              AND release.nc_release_id=$ncReleaseId
+              AND settings.enabled=1
+              AND settings.expected_macro_version=$macroVersion
+              AND settings.response_code_digits=$digits
+              AND settings.verification_timeout_seconds=$timeout;
+            """;
+        insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        insert.Parameters.AddWithValue("$runId", workflowEvent.ProductionRunId);
+        insert.Parameters.AddWithValue("$machineId", workflowEvent.MachineId);
+        insert.Parameters.AddWithValue("$ncReleaseId", workflowEvent.NcReleaseId!);
+        insert.Parameters.AddWithValue("$offsetReleaseId", workflowEvent.OffsetLoaderReleaseId!);
+        insert.Parameters.AddWithValue("$nonce", seed.Nonce);
+        insert.Parameters.AddWithValue("$macroVersion", seed.MacroVersion);
+        insert.Parameters.AddWithValue("$digits", seed.ResponseCodeDigits);
+        insert.Parameters.AddWithValue("$timeout", seed.TimeoutSeconds);
+        insert.Parameters.AddWithValue("$createdAt", Format(workflowEvent.ServerReceivedAt));
+        insert.Parameters.AddWithValue("$expiresAt", Format(workflowEvent.ServerReceivedAt.AddSeconds(seed.TimeoutSeconds)));
+        insert.Parameters.AddWithValue("$workflowEventId", workflowEvent.EventId);
+        if (await insert.ExecuteNonQueryAsync(token) != 1)
+            throw new ProductionRunWorkflowTargetException(
+                "The current Offset Loader and enabled Machine verification settings no longer match the session request.");
     }
 
     private static async Task InsertAnomalyAsync(

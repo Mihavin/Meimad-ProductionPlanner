@@ -56,7 +56,8 @@ internal sealed class DatabaseMigrator
         new SchemaV48TabletTerminalsMigration(),
         new SchemaV49OperationalWorkflowEventsMigration(),
         new SchemaV50CncVerificationFoundationMigration(),
-        new SchemaV51NcVerificationHookMigration()
+        new SchemaV51NcVerificationHookMigration(),
+        new SchemaV52SetupVerificationSessionsMigration()
     ];
 
     private readonly SqliteDatabase database;

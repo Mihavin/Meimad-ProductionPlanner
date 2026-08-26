@@ -27,6 +27,9 @@ struct ProductionScreenModel {
   int32_t operationNumber = 0;
   String operationName;
   tablet_api::TabletStatus status = tablet_api::TabletStatus::Unknown;
+  tablet_api::VerificationState verificationState =
+      tablet_api::VerificationState::None;
+  String verificationResponseCode;
   String notice;
   bool lowBattery = false;
   ToolRow tools[kMaximumTools];
@@ -36,8 +39,11 @@ struct ProductionScreenModel {
 ProductionScreenModel makeProductionScreen(
     const tablet_api::TabletStatusResponse& status);
 ProductionScreenModel makeDevelopmentFixture(const String& tabletId);
+ProductionScreenModel makeVerificationUnavailableScreen(const String& tabletId);
 
 const char* statusText(tablet_api::TabletStatus status);
+const char* verificationStateText(tablet_api::VerificationState state);
+const char* verificationInstructionText(tablet_api::VerificationState state);
 uint8_t toolPageCount(uint8_t toolCount);
 uint8_t normalizedToolPage(uint8_t requestedPage, uint8_t toolCount);
 uint8_t previousToolPage(uint8_t currentPage, uint8_t toolCount);

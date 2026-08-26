@@ -49,6 +49,8 @@ ProductionScreenModel makeProductionScreen(
   model.operationNumber = status.operation.number;
   model.operationName = status.operation.name;
   model.status = status.status;
+  model.verificationState = status.verification.state;
+  model.verificationResponseCode = status.verification.responseCode;
   return model;
 }
 
@@ -73,10 +75,24 @@ ProductionScreenModel makeDevelopmentFixture(const String& tabletId) {
   return model;
 }
 
+ProductionScreenModel makeVerificationUnavailableScreen(const String& tabletId) {
+  ProductionScreenModel model;
+  model.machineName = "MACHINE";
+  model.machineNumber = "NOT CONFIRMED";
+  model.tabletId = tabletLabel(tabletId);
+  model.partNumber = "LAST CODE CLEARED";
+  model.partName = "SERVER CONTACT FAILED";
+  model.operationName = "REFRESH REQUIRED";
+  model.status = tablet_api::TabletStatus::InSetup;
+  model.verificationState = tablet_api::VerificationState::Unavailable;
+  return model;
+}
+
 const char* statusText(tablet_api::TabletStatus status) {
   switch (status) {
     case tablet_api::TabletStatus::ReadyForSetup: return "READY FOR SETUP";
-    case tablet_api::TabletStatus::InSetupRun: return "IN SETUP";
+    case tablet_api::TabletStatus::InSetup: return "IN SETUP";
+    case tablet_api::TabletStatus::InSetupRun: return "IN SETUP RUN";
     case tablet_api::TabletStatus::InQc: return "IN QUALITY CONTROL";
     case tablet_api::TabletStatus::ReadyForProduction: return "READY FOR PRODUCTION";
     case tablet_api::TabletStatus::InProduction: return "IN PRODUCTION";
@@ -84,6 +100,35 @@ const char* statusText(tablet_api::TabletStatus status) {
     case tablet_api::TabletStatus::Unknown: return "STATUS UNKNOWN";
   }
   return "STATUS UNKNOWN";
+}
+
+const char* verificationStateText(tablet_api::VerificationState state) {
+  switch (state) {
+    case tablet_api::VerificationState::WaitingForOperator:
+      return "ENTER RESPONSE CODE";
+    case tablet_api::VerificationState::Expired:
+      return "CODE EXPIRED";
+    case tablet_api::VerificationState::Invalidated:
+      return "SETUP CHANGED";
+    case tablet_api::VerificationState::Unavailable:
+      return "CODE UNAVAILABLE";
+    case tablet_api::VerificationState::None:
+      return "VERIFICATION UNAVAILABLE";
+  }
+  return "VERIFICATION UNAVAILABLE";
+}
+
+const char* verificationInstructionText(tablet_api::VerificationState state) {
+  switch (state) {
+    case tablet_api::VerificationState::WaitingForOperator:
+      return "TYPE THIS CODE AT THE CNC";
+    case tablet_api::VerificationState::Expired:
+    case tablet_api::VerificationState::Invalidated:
+    case tablet_api::VerificationState::Unavailable:
+    case tablet_api::VerificationState::None:
+      return "PRESS REFRESH - DO NOT START";
+  }
+  return "PRESS REFRESH - DO NOT START";
 }
 
 uint8_t toolPageCount(uint8_t toolCount) {
@@ -160,6 +205,44 @@ void drawProductionScreen(
   display.drawString(operation, 424, 102);
   display.setTextSize(2);
   display.drawString(fitText(display, model.operationName, 350), 424, 142);
+
+  if (model.status == tablet_api::TabletStatus::InSetup) {
+    // Verification replaces the ordinary status/tool region so the transient
+    // Server-projected code or blocking reason cannot be mistaken for tool data.
+    display.drawRect(kLeft, 190, kContentWidth, 270, TFT_BLACK);
+    display.drawRect(kLeft + 1, 191, kContentWidth - 2, 268, TFT_BLACK);
+    display.setTextSize(1);
+    display.drawString("SETUP VERIFICATION", 40, 206);
+    display.setTextSize(3);
+    display.drawString(
+        fitText(display, verificationStateText(model.verificationState), 690),
+        40,
+        236);
+
+    if (model.verificationState
+        == tablet_api::VerificationState::WaitingForOperator) {
+      display.setTextSize(7);
+      const int codeWidth = display.textWidth(model.verificationResponseCode);
+      display.drawString(
+          model.verificationResponseCode,
+          kLeft + (kContentWidth - codeWidth) / 2,
+          292);
+    } else {
+      display.setTextSize(4);
+      display.drawString("SETUP BLOCKED", 40, 306);
+    }
+
+    display.drawFastHLine(40, 388, 720, TFT_BLACK);
+    display.setTextSize(2);
+    display.drawString(
+        fitText(
+            display,
+            verificationInstructionText(model.verificationState),
+            700),
+        40,
+        410);
+    return;
+  }
 
   // The thick framed status band is the most prominent changing value.
   display.drawRect(kLeft, 190, kContentWidth, 110, TFT_BLACK);

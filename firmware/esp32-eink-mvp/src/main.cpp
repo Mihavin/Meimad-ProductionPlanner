@@ -42,6 +42,8 @@ constexpr uint8_t kWifiMaximumAttempts = 3;
 constexpr char kPreferencesNamespace[] = "meimad";
 constexpr char kLastRevisionKey[] = "last_revision";
 constexpr char kLastRevisionTabletKey[] = "last_rev_tab";
+constexpr char kLastDisplayedStatusKey[] = "last_status";
+constexpr char kVerificationFailSafeKey[] = "verify_block";
 constexpr char kToolPageKey[] = "tool_page";
 constexpr char kConfirmationPendingKey[] = "confirm_clear";
 constexpr char kBatteryLowKey[] = "battery_low";
@@ -161,6 +163,38 @@ bool saveLastRevision(const String& tabletId, uint32_t revision) {
       static_cast<unsigned long>(revision),
       tabletId.c_str());
   return true;
+}
+
+String loadLastDisplayedStatus() {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) return String();
+  const String status = preferences.getString(kLastDisplayedStatusKey, "");
+  preferences.end();
+  return status;
+}
+
+void saveLastDisplayedStatus(meimad::tablet_api::TabletStatus status) {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) return;
+  preferences.putString(
+      kLastDisplayedStatusKey,
+      meimad::tablet_api::toToken(status));
+  preferences.end();
+}
+
+bool loadVerificationFailSafe() {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) return false;
+  const bool active = preferences.getBool(kVerificationFailSafeKey, false);
+  preferences.end();
+  return active;
+}
+
+void saveVerificationFailSafe(bool active) {
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) return;
+  preferences.putBool(kVerificationFailSafeKey, active);
+  preferences.end();
 }
 
 uint8_t loadToolPage() {
@@ -755,6 +789,7 @@ void setup() {
       : lowBattery;
   const bool confirmationPending = loadConfirmationPending();
   bool confirmationDisplayed = false;
+  bool verificationFailSafeDisplayed = false;
   bool statePolicyFromServer = !serverContactRequired
       && previousSleepState.available
       && previousSleepState.serverStateAvailable;
@@ -769,6 +804,9 @@ void setup() {
         statePolicyFromServer ? "server" : "fallback");
   }
   const auto lastRevision = loadLastRevision();
+  const bool verificationFailSafeActive = loadVerificationFailSafe();
+  const bool lastDisplayedSetupVerification =
+      loadLastDisplayedStatus() == "IN_SETUP";
   const bool retainedScreenMatchesTablet = lastRevision.available
       && lastRevision.tabletId == activeConfiguration.tabletId;
   refreshScreen = !retainedScreenMatchesTablet;
@@ -806,7 +844,8 @@ void setup() {
           lastRevision,
           tabletStatus.tabletId,
           serverRevision);
-      refreshScreen = serverContentChanged || confirmationPending || batteryWarningChanged;
+      refreshScreen = serverContentChanged || verificationFailSafeActive
+          || confirmationPending || batteryWarningChanged;
       if (serverContentChanged) toolPage = 0;
       toolPage = meimad::production_ui::normalizedToolPage(
           toolPage, productionScreen.toolCount);
@@ -887,12 +926,58 @@ void setup() {
         }
       }
     } else {
-      if (retainedScreenMatchesTablet) {
+      const bool retainedVerificationCodeCouldBeVisible =
+          retainedScreenMatchesTablet
+          && (lastDisplayedSetupVerification
+              || (previousSleepState.available
+                  && previousSleepState.status
+                      == meimad::tablet_api::TabletStatus::InSetup));
+      if (retainedVerificationCodeCouldBeVisible && !verificationFailSafeActive) {
+        productionScreen =
+            meimad::production_ui::makeVerificationUnavailableScreen(
+                activeConfiguration.tabletId);
+        productionScreen.lowBattery = lowBattery;
+        developmentFixture = false;
+        refreshScreen = true;
+        verificationFailSafeDisplayed = true;
+        serverStatus = meimad::tablet_api::TabletStatus::Unknown;
+        statePolicyFromServer = false;
+        MEIMAD_LOG(
+            "DISPLAY",
+            "verification code cleared reason=status_unavailable");
+      } else if (retainedScreenMatchesTablet) {
         refreshScreen = false;
         Serial.println(
             "E-Ink screen refresh skipped: retaining last-known screen without a valid Server revision.");
       }
     }
+  }
+
+  // Connection/bootstrap failures occur before requestTabletStatus(), so apply
+  // the same fail-safe here as for a malformed or failed status response.
+  const bool retainedVerificationCodeCouldStillBeVisible =
+      serverContactRequired
+      && !receivedServerRevision
+      && retainedScreenMatchesTablet
+      && (lastDisplayedSetupVerification
+          || (previousSleepState.available
+              && previousSleepState.status
+                  == meimad::tablet_api::TabletStatus::InSetup));
+  if (retainedVerificationCodeCouldStillBeVisible
+      && !verificationFailSafeActive
+      && !verificationFailSafeDisplayed) {
+    productionScreen =
+        meimad::production_ui::makeVerificationUnavailableScreen(
+            activeConfiguration.tabletId);
+    productionScreen.lowBattery = lowBattery;
+    developmentFixture = false;
+    refreshScreen = true;
+    verificationFailSafeDisplayed = true;
+    serverStatus = meimad::tablet_api::TabletStatus::Unknown;
+    statePolicyFromServer = false;
+    MEIMAD_LOG(
+        "DISPLAY",
+        "verification code cleared reason=server_unavailable");
   }
 
   if (serverContactRequired) {
@@ -944,12 +1029,16 @@ void setup() {
     saveToolPage(toolPage);
     if (receivedServerRevision) {
       saveLastRevision(activeConfiguration.tabletId, serverRevision);
+      saveLastDisplayedStatus(serverStatus);
+      saveVerificationFailSafe(false);
       if (confirmationDisplayed) {
         saveConfirmationPending(true);
       } else if (confirmationPending) {
         saveConfirmationPending(false);
       }
       saveBatteryLowWarning(lowBattery);
+    } else if (verificationFailSafeDisplayed) {
+      saveVerificationFailSafe(true);
     }
   }
   const auto statePolicy = meimad::tablet_state_machine::policyFor(serverStatus);

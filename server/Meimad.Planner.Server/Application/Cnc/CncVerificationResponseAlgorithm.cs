@@ -6,8 +6,8 @@ using System.Text;
 namespace Meimad.Planner.Server.Application.Cnc;
 
 /// <summary>
-/// Reference implementation for the uncommissioned controller-friendly response algorithm.
-/// It is intentionally not wired to workflow or tablet APIs until real-controller vectors pass.
+/// Server implementation of the physically vector-matched controller-friendly response algorithm.
+/// Production CNC success/failure enforcement remains separately commissioned.
 /// </summary>
 internal static class CncVerificationResponseAlgorithm
 {

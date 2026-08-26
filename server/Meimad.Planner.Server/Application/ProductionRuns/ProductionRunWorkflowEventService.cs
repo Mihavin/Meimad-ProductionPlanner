@@ -25,7 +25,11 @@ internal sealed record AppendProductionRunWorkflowEvent(
     string SourceEventId, long? SourceSequence = null,
     DateTimeOffset? MachineTimestamp = null, string? NcReleaseId = null,
     string? OffsetLoaderReleaseId = null, string? TabletDeviceId = null,
-    string? UserId = null, string MetadataJson = "{}");
+    string? UserId = null, string MetadataJson = "{}",
+    SetupVerificationSessionSeed? VerificationSession = null);
+
+internal sealed record SetupVerificationSessionSeed(
+    int Nonce, int MacroVersion, int ResponseCodeDigits, int TimeoutSeconds);
 
 internal sealed record ProductionRunWorkflowAppendResult(
     ProductionRunWorkflowEvent Event, bool WasDuplicate,
@@ -61,6 +65,23 @@ internal sealed class ProductionRunWorkflowEventService(
         if (command.SourceSequence is < 0)
             throw new ProductionRunWorkflowEventValidationException(
                 "sourceSequence", "invalid_sequence", "Source sequence must be zero or greater.");
+        if (command.VerificationSession is { } session)
+        {
+            if (command.EventType != "OFFSET_LOADER_COMPLETED")
+                throw new ProductionRunWorkflowEventValidationException(
+                    "verificationSession", "invalid_session_event",
+                    "A setup-verification session can start only with OFFSET_LOADER_COMPLETED.");
+            if (session.Nonce is < 100000 or > 999999)
+                throw new ProductionRunWorkflowEventValidationException(
+                    "nonce", "invalid_nonce", "Verification nonce must contain exactly six digits.");
+            if (session.MacroVersion <= 0 || session.ResponseCodeDigits is < 4 or > 6
+                || session.TimeoutSeconds is < 30 or > 3600)
+                throw new ProductionRunWorkflowEventValidationException(
+                    "verificationSession", "invalid_session_configuration",
+                    "Verification session configuration is outside the supported range.");
+            Required(command.NcReleaseId, "ncReleaseId");
+            Required(command.OffsetLoaderReleaseId, "offsetLoaderReleaseId");
+        }
         try
         {
             using var metadata = JsonDocument.Parse(command.MetadataJson);

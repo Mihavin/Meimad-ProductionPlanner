@@ -6,8 +6,9 @@ using Meimad.Planner.Server.Domain.Cnc;
 namespace Meimad.Planner.Server.Infrastructure.Haas;
 
 /// <summary>
-/// Converts valid current Offset Loader DPRNT evidence into the shared raw event stream.
-/// Verification and cycle decisions remain disabled until their later milestones.
+/// Atomically converts valid current Offset Loader DPRNT evidence into the shared raw event
+/// stream and a one-time pending setup-verification session. Later milestones own response
+/// projection and success/failure decisions.
 /// </summary>
 internal sealed class CncDprintEventIngestionService(
     ICncVerificationFoundationRepository verification,
@@ -60,7 +61,9 @@ internal sealed class CncDprintEventIngestionService(
                 $"HAAS_DPRINT:{machineId}", parsed.SourceEventId, parsed.Sequence,
                 NcReleaseId: context.NcReleaseId,
                 OffsetLoaderReleaseId: context.OffsetLoaderReleaseId,
-                MetadataJson: metadata), token);
+                MetadataJson: metadata,
+                VerificationSession: new(parsed.Nonce!.Value, parsed.MacroVersion,
+                    context.ResponseCodeDigits, context.VerificationTimeoutSeconds)), token);
         }
     }
 }

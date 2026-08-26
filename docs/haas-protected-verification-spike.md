@@ -55,7 +55,7 @@ During the capture, run only an HFO-reviewed, no-motion protected probe. Identit
 | E | O1234 | Reset during probe | No stale success/identity survives. |
 | F | O1234 | power cycle, rerun | Variable persistence and sequence reset behavior are recorded. |
 
-Repeat A and B at least five times. Also run once with Setting 23 off to inspect/load, then on to prove ordinary access restriction. Do not test alarms with spindle or feed motion enabled.
+Repeat each selected identity case at least four times. Also run once with Setting 23 off to inspect/load, then on to prove ordinary access restriction. Do not test alarms with spindle or feed motion enabled.
 
 ## Decision outcomes
 
@@ -69,3 +69,17 @@ The architecture choice for the unavailable/ambiguous outcome is now the one-tim
 The independently reproducible response algorithm, public vectors, non-deployable protected-program layout, and additional arithmetic/input acceptance checks are specified in [Haas setup-verification response algorithm](haas-verification-response-algorithm.md). Passing its .NET tests or standalone PowerShell calculator is not CNC acceptance.
 
 No PASS is valid from simulator output, public documentation, Q500 alone, or unit tests. The reviewed physical evidence, exact controller version, approved mappings, reset/power-cycle results, and sign-off must be appended here before changing the implementation-plan status.
+
+## Physical evidence review — 2026-08-26 partial capture
+
+The ignored local capture `vf3ss-generic-hook-001.json` contains real VF-3SS evidence for controller software `100.21.000.1001`. It is a **partial result, not Milestone C acceptance**:
+
+- O9010 received supplied identity `123401` directly four times, supplied identity `432101` directly five times, and supplied identity `123501` through the O9011 nested wrapper six times.
+- The captured lines prove G65 `A`-argument transport, nested forwarding, and DPRNT delivery for those supplied values. They do not prove intrinsic caller identity; the selected generic-hook architecture does not rely on one.
+- The operator confirmed that four case-1 executions were intentional. On 2026-08-26 the physical sample requirement was accepted as four matching executions per case, so automated identity grading is `PASS`: case 1 has four, case 2 has five, and nested case 4 has six.
+- Response vectors were not attempted (`NOT_RUN`). Setting 23 access restriction, Reset behavior, power-cycle behavior, approved variables, operator input, arithmetic, cleanup, and alarm-before-motion remain unrecorded.
+- The operator record is still `UNREVIEWED`, and an unrelated production PartName line appeared later in the ten-minute DPRNT window. Therefore this file cannot certify that the entire capture interval remained an isolated no-motion test.
+- Tool v1.1.0 exposed a serialization defect in this file: task-completion values appeared as empty JSON objects beside MDC/DPRNT results. The capture script now suppresses those incidental pipeline values and separately records `identityTransportGrade` and `responseVectorGrade`; a clean rerun is required to verify the corrected evidence shape.
+- A fresh 2026-08-26 VF-3SS capture then emitted exactly V01 through V07. Automated `responseVectorGrade` is `PASS`; every response matches the independent reference, including the four-digit leading-zero vector `0282`. This closes the controller arithmetic-vector portion of Milestone C. Production input, alarms, cleanup after Reset/power cycle, and protected-key access remain separate physical gates.
+
+No Machine address, secret, protected variable value, or response code is copied into this document.

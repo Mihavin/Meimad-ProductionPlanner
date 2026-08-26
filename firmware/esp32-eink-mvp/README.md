@@ -3,14 +3,17 @@
 This is the buildable firmware/development environment for the E-Ink tablet.
 It includes observable boot diagnostics, bounded Wi-Fi and tablet-status API
 calls, a first production screen layout, revision-gated refresh, and the first
-status-driven deep-sleep state machine with wake-button actions. Package
+status-driven deep-sleep state machine with wake-button actions. It also parses
+and renders the Server-projected setup-verification response. Package
 activation and the broader checklist/comment input state machine remain future
 work.
 
 Workflow status is Server-projected from immutable Production Run events. The
-persistent CNC Setup/Production macro variable is removed. Future protected,
-temporary verification variables belong only to the commissioned CNC
-challenge/response handshake and are not tablet or firmware state.
+persistent CNC Setup/Production macro variable is removed. Protected temporary
+verification variables belong only to the commissioned CNC challenge/response
+handshake and are not tablet or firmware state; the firmware receives only the
+bounded display projection, never the nonce, secret, variable mapping, or
+algorithm.
 
 ## Hardware status
 
@@ -68,6 +71,11 @@ The 800x480 screen is text-only and prioritizes Machine identity, part,
 Operation, a framed status band, and a fixed three-row tool table. Tool rows are
 paginated rather than scrolled, and the footer reports `TOOLS n / total`.
 Status tokens are converted to operator-readable text and never rely on color.
+For `IN_SETUP`, the ordinary status/tool region is replaced by a prominent
+setup-verification panel. `WAITING_FOR_OPERATOR` centers the fixed-width 4–6
+digit response code and tells the operator to enter it at the CNC. `EXPIRED`,
+`INVALIDATED`, and `UNAVAILABLE` show a text-only `SETUP BLOCKED` reason and
+`PRESS REFRESH - DO NOT START`, with no response code.
 
 The initial `/api/tablet/ping?hardwareId=<mac>` bootstrap sends the provisioned
 bearer credential and accepts the Server-assigned short Tablet ID only after the
@@ -97,9 +105,10 @@ pio run -e xiao-esp32s3-plus-demo -t upload
 This image enables `MEIMAD_DEMO_MODE=1`. It never connects Wi-Fi, pings the
 Server, requests status, sends battery metadata, or submits `SEND_TO_QC`.
 Instead, it uses compiled fixtures with the same production screen model and
-renderer. The persistent scenario cycle covers Ready for Setup, In Setup Run,
-In QC, Ready for Production, In Production, Blocked, Wi-Fi Error, Server Error,
-Unregistered Tablet, and Low Battery.
+renderer. The persistent scenario cycle covers Ready for Setup, setup
+verification with leading-zero code `0388`, expired setup verification, In
+Setup Run, In QC, Ready for Production, In Production, Blocked, Wi-Fi Error,
+Server Error, Unregistered Tablet, and Low Battery.
 
 Use D1/Refresh or a long D4 press to advance to the next scenario; D2 moves to
 the previous tool page and short D4 moves to the next one. The screen carries a
@@ -118,7 +127,9 @@ tablet's equal numeric revision.
 - The new revision is written to NVS only after the panel update returns.
 - An equal revision for the same tablet skips both rendering and `epaper.update()`.
 - If the status request fails and the retained screen belongs to the same
-  tablet, that screen remains untouched.
+  tablet, that screen normally remains untouched. A retained `IN_SETUP` code is
+  the safety exception: it is replaced once with `CODE UNAVAILABLE` and `DO NOT
+  START`, and the next valid response forces a repaint even at the same revision.
 
 Every actual refresh logs its source, revision, and measured panel-update
 duration. Skipped refreshes log the equality or last-known-screen reason without
@@ -134,6 +145,7 @@ screen/revision decision:
 | Server status | Tablet wake policy |
 |---|---|
 | `READY_FOR_SETUP` | Deep sleep with a 120-second timer and physical-button wake. |
+| `IN_SETUP` | Deep sleep with a 120-second timer and physical-button wake so the time-limited verification projection is refreshed. |
 | `IN_SETUP_RUN` | Deep sleep with physical-button wake only. |
 | `IN_QC` | Deep sleep with a 120-second timer and physical-button wake. |
 | `READY_FOR_PRODUCTION` | Deep sleep with physical-button wake only. |
@@ -262,12 +274,19 @@ POST /api/tablets/{tablet_id}/events
 
 The status response requires `revision`, matching `tablet_id`, `machine`,
 `nc_run`, `part`, `operation`, and one of these exact tokens:
-`READY_FOR_SETUP`, `IN_SETUP_RUN`, `IN_QC`, `READY_FOR_PRODUCTION`,
+`READY_FOR_SETUP`, `IN_SETUP`, `IN_SETUP_RUN`, `IN_QC`, `READY_FOR_PRODUCTION`,
 `IN_PRODUCTION`, `BLOCKED`, or `UNKNOWN`. Opaque string IDs are preferred;
 integer IDs from the example payload are also accepted and normalized to
 strings in memory. Missing fields, wrong types, a mismatched tablet ID,
 unsupported tokens, and invalid JSON are rejected as malformed without
 replacing a previously valid response.
+
+`IN_SETUP` additionally requires a `verification` object with `required: true`
+and one of `WAITING_FOR_OPERATOR`, `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE`.
+Only the waiting state may carry `response_code`; it must be a JSON string of
+4–6 decimal digits so leading zeroes survive. A missing verification object,
+a numeric/malformed code, a code attached to a blocking state, or verification
+data outside `IN_SETUP` is rejected rather than rendered.
 
 The production header uses `machine.number` when the response supplies it. For
 compatibility with the original numeric-ID example, a missing number is rendered
