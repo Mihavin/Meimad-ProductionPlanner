@@ -39,6 +39,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             () => !IsBusy,
             () => !IsBusy && apiClient is not null);
         UserTerminals = new UserTerminalsViewModel();
+        QcQueue = new QcQueueViewModel();
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
@@ -111,6 +112,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public SetupViewModel Setup { get; }
 
     public UserTerminalsViewModel UserTerminals { get; }
+
+    public QcQueueViewModel QcQueue { get; }
 
     public string ClientId
     {
@@ -386,6 +389,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Timeline.AttachSession(apiClient);
         Setup.AttachSession(apiClient, ClientId, status);
         UserTerminals.AttachSession(apiClient, ClientId, status);
+        QcQueue.AttachSession(
+            apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, status);
     }
 
     private void SetOffline(string headline, string detail)
@@ -405,6 +410,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Timeline.AttachSession(apiClient);
         Setup.AttachSession(apiClient, ClientId, null);
         UserTerminals.AttachSession(apiClient, ClientId, null);
+        QcQueue.AttachSession(
+            apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
         RaiseCommandStates();
     }
 
@@ -422,6 +429,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Timeline.AttachSession(apiClient);
         Setup.AttachSession(apiClient, ClientId, null);
         UserTerminals.AttachSession(apiClient, ClientId, null);
+        QcQueue.AttachSession(
+            apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
         RaiseCommandStates();
     }
 

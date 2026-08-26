@@ -372,6 +372,163 @@ public sealed class EInkApiTests
     }
 
     [Fact]
+    public async Task Qc_queue_supports_fail_resend_and_pass_with_user_reason_and_approval_time()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await EnterSetupRunAsync(application.Services);
+            var planningBefore = await ReadPlanningFingerprintAsync(application.Services);
+            using (var send = await client.SendAsync(PostEvent(
+                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+
+            using (var queueResponse = await client.GetAsync("/api/v1/qc-queue"))
+            {
+                Assert.Equal(HttpStatusCode.OK, queueResponse.StatusCode);
+                using var queue = JsonDocument.Parse(await queueResponse.Content.ReadAsStringAsync());
+                var item = Assert.Single(queue.RootElement.GetProperty("items").EnumerateArray());
+                Assert.Equal("M-EINK-1", item.GetProperty("machineNumber").GetString());
+                Assert.Equal("PN-EINK", item.GetProperty("part").GetString());
+                Assert.Equal("OP10 Rough", item.GetProperty("operation").GetString());
+                Assert.Equal("run:batch-operation:operation-eink-1",
+                    item.GetProperty("productionRunId").GetString());
+                Assert.Equal("Setup Worker", item.GetProperty("setupistName").GetString());
+                Assert.True(item.GetProperty("receivedAt").GetDateTimeOffset()
+                    > DateTimeOffset.MinValue);
+            }
+
+            using (var unauthorized = await client.SendAsync(PostQcDecision(
+                       "PASS", "not authorized", includeAuthority: false)))
+                Assert.Equal((HttpStatusCode)428, unauthorized.StatusCode);
+
+            await GrantEditAsync(application.Services);
+            using (var failedResponse = await client.SendAsync(PostQcDecision(
+                       "FAIL", "Surface finish outside limit")))
+            {
+                Assert.Equal(HttpStatusCode.OK, failedResponse.StatusCode);
+                using var failed = JsonDocument.Parse(await failedResponse.Content.ReadAsStringAsync());
+                Assert.Equal("IN_SETUP_RUN", failed.RootElement.GetProperty("resultingStatus").GetString());
+                Assert.Equal(JsonValueKind.Null,
+                    failed.RootElement.GetProperty("productionApprovedAt").ValueKind);
+            }
+
+            using (var statusResponse = await client.SendAsync(Get("/api/tablets/3041/status")))
+            {
+                using var status = JsonDocument.Parse(await statusResponse.Content.ReadAsStringAsync());
+                Assert.Equal("IN_SETUP_RUN", status.RootElement.GetProperty("status").GetString());
+            }
+            Assert.Empty((await ReadQueueAsync(client)).EnumerateArray());
+
+            using (var resendResponse = await client.SendAsync(PostEvent(
+                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+            {
+                Assert.Equal(HttpStatusCode.OK, resendResponse.StatusCode);
+                using var resend = JsonDocument.Parse(await resendResponse.Content.ReadAsStringAsync());
+                Assert.False(resend.RootElement.GetProperty("duplicate").GetBoolean());
+            }
+            Assert.Equal(2, await CountSendToQcAsync(application.Services));
+            Assert.Single((await ReadQueueAsync(client)).EnumerateArray());
+
+            DateTimeOffset approvedAt;
+            using (var passedResponse = await client.SendAsync(PostQcDecision(
+                       "PASS", "First article accepted")))
+            {
+                Assert.Equal(HttpStatusCode.OK, passedResponse.StatusCode);
+                using var passed = JsonDocument.Parse(await passedResponse.Content.ReadAsStringAsync());
+                Assert.Equal("READY_FOR_PRODUCTION",
+                    passed.RootElement.GetProperty("resultingStatus").GetString());
+                approvedAt = passed.RootElement.GetProperty("productionApprovedAt").GetDateTimeOffset();
+                Assert.Equal(
+                    passed.RootElement.GetProperty("timestamp").GetDateTimeOffset(), approvedAt);
+            }
+            Assert.Empty((await ReadQueueAsync(client)).EnumerateArray());
+            using (var statusResponse = await client.SendAsync(Get("/api/tablets/3041/status")))
+            {
+                using var status = JsonDocument.Parse(await statusResponse.Content.ReadAsStringAsync());
+                Assert.Equal("READY_FOR_PRODUCTION", status.RootElement.GetProperty("status").GetString());
+            }
+            using (var duplicateDecision = await client.SendAsync(PostQcDecision("PASS", null)))
+                Assert.Equal(HttpStatusCode.Conflict, duplicateDecision.StatusCode);
+
+            Assert.Equal(planningBefore, await ReadPlanningFingerprintAsync(application.Services));
+            var audit = await ReadQcAuditAsync(application.Services);
+            Assert.Equal(2, audit.Count);
+            Assert.All(audit, value => Assert.Equal("eink-admin-user", value.UserId));
+            Assert.Equal("Surface finish outside limit", audit[0].Reason);
+            Assert.Equal("First article accepted", audit[1].Reason);
+            Assert.Equal(approvedAt, audit[1].Timestamp);
+        });
+    }
+
+    [Fact]
+    public async Task Qc_decisions_reject_wrong_state_scope_authority_and_payload()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await GrantEditAsync(application.Services);
+
+            using (var premature = await client.SendAsync(PostQcDecision("PASS", null)))
+                Assert.Equal(HttpStatusCode.Conflict, premature.StatusCode);
+
+            await EnterSetupRunAsync(application.Services);
+            using (var send = await client.SendAsync(PostEvent(
+                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+
+            using (var invalidDecision = await client.SendAsync(
+                       PostQcDecision("HOLD", null)))
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, invalidDecision.StatusCode);
+            using (var longReason = await client.SendAsync(
+                       PostQcDecision("FAIL", new string('x', 1001))))
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, longReason.StatusCode);
+            using (var staleAuthority = await client.SendAsync(
+                       PostQcDecision("PASS", null, generation: "2")))
+                Assert.Equal(HttpStatusCode.Conflict, staleAuthority.StatusCode);
+            using (var wrongUser = await client.SendAsync(
+                       PostQcDecision("PASS", null, userId: "other-user")))
+                Assert.Equal(HttpStatusCode.Conflict, wrongUser.StatusCode);
+            using (var unknownRun = await client.SendAsync(PostQcDecision(
+                       "PASS", null, productionRunId: "unknown-run")))
+                Assert.Equal(HttpStatusCode.NotFound, unknownRun.StatusCode);
+            using (var deviceMutation = await client.SendAsync(PostQcDecision(
+                       "PASS", null, bearerToken: Token)))
+                Assert.Equal(HttpStatusCode.Forbidden, deviceMutation.StatusCode);
+
+            Assert.Single((await ReadQueueAsync(client)).EnumerateArray());
+            Assert.Empty(await ReadQcAuditAsync(application.Services));
+        });
+    }
+
+    [Fact]
+    public async Task Concurrent_qc_decisions_append_exactly_one_result()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await GrantEditAsync(application.Services);
+            await EnterSetupRunAsync(application.Services);
+            using (var send = await client.SendAsync(PostEvent(
+                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+
+            var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(async index =>
+            {
+                using var response = await client.SendAsync(PostQcDecision(
+                    "PASS", $"Concurrent decision {index}"));
+                return response.StatusCode;
+            }));
+
+            Assert.Single(responses, value => value == HttpStatusCode.OK);
+            Assert.Single(responses, value => value == HttpStatusCode.Conflict);
+            var audit = await ReadQcAuditAsync(application.Services);
+            Assert.Single(audit);
+            Assert.Empty((await ReadQueueAsync(client)).EnumerateArray());
+        });
+    }
+
+    [Fact]
     public async Task Tablet_status_exposes_only_the_derived_code_for_a_valid_pending_session()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
@@ -611,6 +768,40 @@ public sealed class EInkApiTests
         return request;
     }
 
+    private static HttpRequestMessage PostQcDecision(
+        string decision,
+        string? reason,
+        bool includeAuthority = true,
+        string productionRunId = "run:batch-operation:operation-eink-1",
+        string generation = "1",
+        string? bearerToken = null,
+        string userId = "eink-admin-user")
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/qc-queue/{Uri.EscapeDataString(productionRunId)}/decision")
+        {
+            Content = JsonContent.Create(new { decision, reason })
+        };
+        if (bearerToken is not null)
+            request.Headers.Authorization = new("Bearer", bearerToken);
+        if (includeAuthority)
+        {
+            request.Headers.Add("X-Meimad-Client-Id", "eink-admin-client");
+            request.Headers.Add("X-Meimad-User-Id", userId);
+            request.Headers.Add("X-Meimad-Edit-Generation", generation);
+        }
+        return request;
+    }
+
+    private static async Task<JsonElement> ReadQueueAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("/api/v1/qc-queue");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("items").Clone();
+    }
+
     private static Task EnterSetupRunAsync(IServiceProvider services) => ExecuteAsync(
         services,
         """
@@ -660,6 +851,31 @@ public sealed class EInkApiTests
             """;
         return (string)(await command.ExecuteScalarAsync())!;
     }
+
+    private static async Task<IReadOnlyList<QcAuditRow>> ReadQcAuditAsync(
+        IServiceProvider services)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT user_id,json_extract(metadata_json,'$.reason'),server_received_at
+            FROM production_run_workflow_events
+            WHERE event_type IN ('QC_FAIL','QC_PASS')
+            ORDER BY server_received_at,id;
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+        var values = new List<QcAuditRow>();
+        while (await reader.ReadAsync())
+            values.Add(new(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1),
+                DateTimeOffset.Parse(reader.GetString(2))));
+        return values;
+    }
+
+    private sealed record QcAuditRow(
+        string UserId, string? Reason, DateTimeOffset Timestamp);
 
     private static async Task<byte[]> SeedAsync(IServiceProvider services, string packageRoot)
     {
@@ -729,8 +945,10 @@ public sealed class EInkApiTests
                 ('device-eink-2', '3042', 'A4:CF:12:83:76:92', 'eink', 'Tablet Two', NULL,
                  $otherCredentialHash, 'read_only', 1);
             INSERT INTO eink_package_revisions (
-                id, batch_operation_id, revision, tool_cart_id, published_at)
-            VALUES ('package-eink-1', 'operation-eink-1', 'R1', 'TC-12', $publishedAt);
+                id, batch_operation_id, revision, tool_cart_id, published_at,
+                setup_worker_id, setup_worker_first_name, setup_worker_last_name)
+            VALUES ('package-eink-1', 'operation-eink-1', 'R1', 'TC-12', $publishedAt,
+                    'resource-eink-setup', 'Setup', 'Worker');
             INSERT INTO eink_package_files (
                 id, package_revision_id, logical_path, storage_relative_path,
                 media_type, byte_length, sha256, modified_at, display_order)

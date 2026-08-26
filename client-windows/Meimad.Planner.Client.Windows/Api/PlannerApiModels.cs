@@ -1689,6 +1689,36 @@ internal sealed record CreateUserTerminalRequest(string DeviceName, string? Mach
 
 internal sealed record UpdateUserTerminalRequest(string? MachineId, bool IsEnabled, bool RotateCredential);
 
+internal sealed record QcQueueItem(
+    string ProductionRunId,
+    string MachineId,
+    string MachineNumber,
+    string MachineName,
+    string Part,
+    string Operation,
+    DateTimeOffset ReceivedAt,
+    string? SetupistId,
+    string? SetupistName)
+{
+    public string MachineText => $"{MachineNumber} — {MachineName}";
+    public string ReceivedText => ReceivedAt.ToLocalTime().ToString("g");
+    public string SetupistText => !string.IsNullOrWhiteSpace(SetupistName)
+        ? SetupistName
+        : SetupistId ?? "Not recorded";
+}
+
+internal sealed record QcDecisionRequest(string Decision, string? Reason);
+
+internal sealed record QcDecisionResult(
+    string EventId,
+    string ProductionRunId,
+    string Decision,
+    string ResultingStatus,
+    string UserId,
+    string? Reason,
+    DateTimeOffset Timestamp,
+    DateTimeOffset? ProductionApprovedAt);
+
 internal sealed class PlannerApiException : Exception
 {
     internal PlannerApiException(

@@ -316,6 +316,8 @@ Schema v35 adds immutable released-production history without duplicating `CaseO
 | `gcode_releases` | Stable ID, Case Operation, exact process/Postprocessor/tool-table IDs, positive Postprocessor-specific revision, immutable file metadata/hash, release audit/comment, and `LOCAL_POST_REVISION` or `NEW_PROCESS_REVISION`. Unique `(process_revision_id, postprocessor_id, post_specific_revision)`; update/delete triggers reject mutation. No Draft/status column exists. |
 | `gcode_release_verification_hooks` | Schema-v51 optional one-to-one immutable metadata for a G-code release: hook version, `G65` or `CUSTOM_GCODE` invocation and number, globally unique six-digit NC identity, source line, and timestamps. New publications require the row; migrated historical releases deliberately have none. Update/delete triggers reject mutation. |
 
+Task 18 adds no table. A retained `CYCLE_START` or `CYCLE_END` uses the existing schema-v49 workflow row; resolved Production Run Program identity and supplied Machine evidence are retained in its JSON metadata, while the pinned NC release uses `nc_release_id`. A valid END and its existing schema-v47 `production_run_cycle_events` row commit in the same transaction as exact coupled-output and aggregate updates. `(source, source_event_id)` remains the cross-table dedupe identity. Raw controller counters do not create cycle rows.
+
 The current G-code is derived as the greatest Postprocessor-specific revision for the active process and Postprocessor; an earlier record is never edited to become non-current. A release has no Machine foreign key. Machine applicability is evaluated only by joining its Postprocessor ID to `machine_supported_postprocessors`.
 
 Schema v35 also adds nullable `production_process_revision_id`, `production_gcode_release_id`, `production_tool_table_release_id`, `production_gcode_file_hash`, and `production_tool_table_file_hash` to `batch_operations`. The first Start pins this exact context; subsequent releases do not update it. Reset clears the production pins. Null preserves backward compatibility for work that has not entered managed release history.
@@ -435,10 +437,10 @@ The following are logical support records, not planning authority:
 
 - Implemented immutable opaque Device ID, Server-assigned short Tablet ID, and optional normalized physical Wi-Fi MAC hardware ID. Legacy registrations receive a visible `legacy-...` Tablet ID and must be provisioned with a physical MAC before bootstrap.
 - Optional assigned Machine; a partial unique index permits at most one enabled E-Ink device per Machine.
-- Implemented read-only package/planning access level and enabled/revoked state; the approved `SEND_TO_QC` route remains separate future scope, not general write access.
+- Implemented read-only package/planning access level and enabled/revoked state; the scoped `SEND_TO_QC` route is the only device mutation and is not general write access.
 - The Server generates a high-entropy `mp_eink_...` bearer token, stores only its SHA-256 hash, and returns plaintext only on creation or rotation.
 - Active Windows Edit Mode authority is required to create, bind/unbind, enable/revoke, or rotate a registration; these changes are atomic with the authority check.
-- Authenticated bootstrap records last seen/contact and bounded supplied battery metadata as operational fields only. Firmware profile history and any telemetry retention policy remain open. Schema v49 implements shared event persistence, but not the authenticated `SEND_TO_QC` command route.
+- Authenticated bootstrap/status/event calls record last seen/contact and bounded supplied battery/firmware/IP/RSSI metadata as operational fields only. Firmware profile history and telemetry retention remain open. Schema v54 implements the authenticated, idempotent `SEND_TO_QC` command route.
 - Authenticated physical status reads resolve the enabled credential and path Tablet ID to its bound Machine, first non-final Machine-backlog Production Run, current Program, and exactly one output. The response revision is a deterministic hash of tablet-visible identity, Machine, Run, Program/output, workflow, and status fields; polling/contact timestamps do not change it. Multi-output Programs are rejected rather than reduced to one output by an implicit choice.
 
 ### 10.2 Operational Workflow Events and Tablet QC target
@@ -447,18 +449,25 @@ Schema v49 implements Server-owned append-only operational records, separate
 from planning/package tables. Rows carry Production Run, assigned Machine,
 event type, source/idempotency identity, Server receipt time, optional Machine
 time/sequence/release/device/user evidence, and JSON metadata. Update and delete
-are trigger-blocked. For the future `SEND_TO_QC` route, the request supplies no
-target IDs or time; the Server must add its device authorization, eligibility,
-same-run retry semantics, and response contract atomically.
+are trigger-blocked. The implemented `SEND_TO_QC` request supplies no target IDs
+or time; one immediate transaction authenticates the tablet, resolves its bound
+Machine/current Run, validates `IN_SETUP_RUN`, records Server UTC, and returns
+the first event timestamp while that inspection attempt remains `IN_QC`.
+Schema v54 originally enforced one event per Run. Schema v55 removes that
+overly broad index so `QC_FAIL` can create a new eligibility attempt; retry
+idempotency remains enforced by the unique source identity derived from the
+specific verification-success or `QC_FAIL` event.
 
 The tablet status projection derives `IN_QC` from this record and incorporates
 the event identity/timestamp into its revision seed. The record cannot satisfy
 or mutate Production Run lifecycle, Production Run Program cycles, Outputs,
 Orders, Batches, Batch Operations, Machine Assignments, backlog order,
-readiness, or package publication. A later transition out of `IN_QC` requires
-its own approved Server-owned rule; no such tablet command is implied here.
-Retention/history access, the authenticated tablet command, and the Windows
-QC-completion action remain implementation work.
+readiness, or package publication. Implemented Windows `QC_PASS` and `QC_FAIL`
+events are the only current transitions out of `IN_QC`. They store the acting
+user, Server receipt timestamp, and optional reason in the immutable event.
+`QC_PASS.server_received_at` is the `production_approved_at` projection;
+`QC_FAIL` returns the projection to `IN_SETUP_RUN` and allows a later, distinct
+tablet send. Retention/history read access remains implementation work.
 
 ### 10.3 E-Ink Package Revision
 
@@ -544,7 +553,7 @@ Schema v36 adds structured immutable released-tool rows and the derived required
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-The implemented migrations through schema v53 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, v50 adds the CNC-verification identity/configuration foundation, v51 adds immutable generic NC verification-hook identity, v52 adds one-time setup-verification sessions, and v53 adds bounded tablet Wi-Fi monitoring observations. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
+The implemented migrations through schema v55 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, v50 adds the CNC-verification identity/configuration foundation, v51 adds immutable generic NC verification-hook identity, v52 adds one-time setup-verification sessions, v53 adds bounded tablet Wi-Fi monitoring observations, v54 adds first-attempt `SEND_TO_QC` idempotency, and v55 preserves per-attempt retry identity while allowing reinspection after `QC_FAIL`. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
 Schema v39 treats Batch `planned_quantity` as the required raw-material piece count, consistent with the existing material-order report and inclusive of scrap allocation. `verified_material_receipts` is local physical evidence rather than ERP inventory. `batch_material_reservations` makes consumption intent explicit. Trigger and repository validation prevent cross-Case reservation, receipt over-reservation, and reservation above Batch quantity. Material readiness is derived for every Batch Operation from its parent Batch reservation coverage; the schema-v37 manual material table is retained only as legacy history and is no longer authoritative.
 ## Production Run target model
 

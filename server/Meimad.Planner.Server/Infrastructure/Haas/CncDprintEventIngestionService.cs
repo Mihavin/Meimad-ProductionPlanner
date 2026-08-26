@@ -13,6 +13,7 @@ namespace Meimad.Planner.Server.Infrastructure.Haas;
 internal sealed class CncDprintEventIngestionService(
     ICncVerificationFoundationRepository verification,
     ProductionRunWorkflowEventService workflow,
+    IProductionRunCncObservationRepository productionRuns,
     ILogger<CncDprintEventIngestionService> logger) : ICncRawTelemetryConsumer
 {
     public async Task ConsumeAsync(
@@ -26,7 +27,19 @@ internal sealed class CncDprintEventIngestionService(
                     machineId, parseError);
                 continue;
             }
-            if (parsed!.EventType != "OFFSET_LOADER_COMPLETED")
+            if (parsed!.EventType is "CYCLE_START" or "CYCLE_END")
+            {
+                var result = await productionRuns.ConsumeCycleEventAsync(new(
+                    machineId, parsed.EventType, parsed.SourceEventId, parsed.Sequence,
+                    parsed.MacroVersion, parsed.ProductionRunId, parsed.ProgramIdentity,
+                    parsed.RawLine), token);
+                if (!result.Accepted)
+                    logger.LogWarning(
+                        "Rejected CNC production-cycle event. MachineId={MachineId} EventType={EventType} EventId={EventId} Code={Code}",
+                        machineId, parsed.EventType, parsed.SourceEventId, result.Code);
+                continue;
+            }
+            if (parsed.EventType != "OFFSET_LOADER_COMPLETED")
             {
                 logger.LogInformation("Deferred CNC DPRINT event until its workflow milestone. MachineId={MachineId} EventType={EventType}",
                     machineId, parsed.EventType);

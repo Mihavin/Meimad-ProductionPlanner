@@ -177,6 +177,15 @@ internal interface IPlannerApiClient : IDisposable
         string deviceId, UpdateUserTerminalRequest request, string clientId, long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<QcQueueItem>>([]);
+
+    Task<QcDecisionResult> DecideQcAsync(
+        string productionRunId, QcDecisionRequest request,
+        string clientId, string userId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<MachineResource> GetMachineAsync(string machineId, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
@@ -1209,6 +1218,28 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(value, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<UserTerminal>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
+
+    public async Task<QcDecisionResult> DecideQcAsync(
+        string productionRunId, QcDecisionRequest value,
+        string clientId, string userId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/qc-queue/{Uri.EscapeDataString(productionRunId)}/decision",
+            clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(value, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<QcDecisionResult>(response, cancellationToken);
     }
 
     public async Task<MachineResource> GetMachineAsync(

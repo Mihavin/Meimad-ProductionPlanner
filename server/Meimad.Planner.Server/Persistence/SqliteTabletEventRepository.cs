@@ -41,26 +41,26 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
                 "tablet_no_current_run",
                 "No current Production Run is assigned to the tablet's Machine.");
 
-        var existing = await ReadExistingAsync(
-            connection, transaction, run.RunId, command.TabletId, cancellationToken);
-        if (existing is not null)
+        var latestEvent = await ReadLatestEventAsync(
+            connection, transaction, run.RunId, cancellationToken);
+        if (latestEvent?.EventType == "SEND_TO_QC")
         {
             await transaction.CommitAsync(cancellationToken);
-            return existing;
+            return new(command.TabletId, "SEND_TO_QC", latestEvent.ReceivedAt, true);
         }
 
-        var latestEvent = await ReadLatestEventTypeAsync(
-            connection, transaction, run.RunId, cancellationToken);
         if (!run.MachineIsActive
             || string.Equals(run.RunStatus, "SUSPENDED", StringComparison.Ordinal)
-            || latestEvent is not ("SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL"))
+            || latestEvent?.EventType is not ("SETUP_VERIFICATION_SUCCEEDED" or "QC_FAIL"))
         {
             throw new TabletEventStateException(
                 "tablet_event_not_allowed",
                 "SEND_TO_QC is allowed only while the current Production Run is IN_SETUP_RUN.");
         }
 
-        var timestamp = serverReceivedAt.ToUniversalTime();
+        var timestamp = serverReceivedAt.ToUniversalTime() > latestEvent.ReceivedAt
+            ? serverReceivedAt.ToUniversalTime()
+            : latestEvent.ReceivedAt.AddTicks(1);
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = transaction;
@@ -76,7 +76,7 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
             insert.Parameters.AddWithValue("$runId", run.RunId);
             insert.Parameters.AddWithValue("$machineId", device.MachineId);
             insert.Parameters.AddWithValue(
-                "$sourceEventId", $"SEND_TO_QC:{device.DeviceId}:{run.RunId}");
+                "$sourceEventId", $"SEND_TO_QC:{device.DeviceId}:{run.RunId}:{latestEvent.EventId}");
             insert.Parameters.AddWithValue("$receivedAt", Format(timestamp));
             insert.Parameters.AddWithValue("$deviceId", device.DeviceId);
             await insert.ExecuteNonQueryAsync(cancellationToken);
@@ -135,29 +135,7 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
             : null;
     }
 
-    private static async Task<TabletEventResult?> ReadExistingAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string runId,
-        string tabletId,
-        CancellationToken cancellationToken)
-    {
-        await using var query = connection.CreateCommand();
-        query.Transaction = transaction;
-        query.CommandText = """
-            SELECT server_received_at
-            FROM production_run_workflow_events
-            WHERE production_run_id=$runId AND event_type='SEND_TO_QC'
-            LIMIT 1;
-            """;
-        query.Parameters.AddWithValue("$runId", runId);
-        var value = await query.ExecuteScalarAsync(cancellationToken);
-        return value is null or DBNull
-            ? null
-            : new(tabletId, "SEND_TO_QC", Parse((string)value), true);
-    }
-
-    private static async Task<string?> ReadLatestEventTypeAsync(
+    private static async Task<LatestEventRow?> ReadLatestEventAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string runId,
@@ -166,14 +144,17 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
         await using var query = connection.CreateCommand();
         query.Transaction = transaction;
         query.CommandText = """
-            SELECT event_type
+            SELECT id,event_type,server_received_at
             FROM production_run_workflow_events
             WHERE production_run_id=$runId
             ORDER BY server_received_at DESC,id DESC
             LIMIT 1;
             """;
         query.Parameters.AddWithValue("$runId", runId);
-        return await query.ExecuteScalarAsync(cancellationToken) as string;
+        await using var reader = await query.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new(reader.GetString(0), reader.GetString(1), Parse(reader.GetString(2)))
+            : null;
     }
 
     private static async Task RecordContactAsync(
@@ -216,4 +197,6 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
         string DeviceId, string? CredentialHash, bool IsEnabled, string? MachineId);
 
     private sealed record RunRow(string RunId, string RunStatus, bool MachineIsActive);
+    private sealed record LatestEventRow(
+        string EventId, string EventType, DateTimeOffset ReceivedAt);
 }

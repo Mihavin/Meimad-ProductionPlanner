@@ -1,0 +1,75 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.QcQueueView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+  <Grid Margin="8">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="5*" />
+      <ColumnDefinition Width="12" />
+      <ColumnDefinition Width="2*" MinWidth="310" />
+    </Grid.ColumnDefinitions>
+
+    <Grid Grid.Column="0">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <DockPanel Margin="0,0,0,8">
+        <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" />
+        <StackPanel>
+          <TextBlock Text="QC Queue" FontSize="20" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding EditModeText}" Foreground="{StaticResource MutedTextBrush}" />
+        </StackPanel>
+      </DockPanel>
+      <TextBlock Grid.Row="1" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}"
+                 TextWrapping="Wrap" Margin="0,0,0,8" />
+      <DataGrid Grid.Row="2" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}"
+                AutoGenerateColumns="False" IsReadOnly="True" MinHeight="300"
+                HorizontalScrollBarVisibility="Auto" FrozenColumnCount="1">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="Machine" Binding="{Binding MachineText}" Width="170" />
+          <DataGridTextColumn Header="Part(s)" Binding="{Binding Part}" Width="150" />
+          <DataGridTextColumn Header="Operation(s)" Binding="{Binding Operation}" Width="220" />
+          <DataGridTextColumn Header="Production Run" Binding="{Binding ProductionRunId}" Width="190" />
+          <DataGridTextColumn Header="Received in QC" Binding="{Binding ReceivedText}" Width="145" />
+          <DataGridTextColumn Header="Setupist" Binding="{Binding SetupistText}" Width="150" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Grid>
+
+    <Border Grid.Column="2" Background="White" BorderBrush="#D8DDE3"
+            BorderThickness="1" Padding="14">
+      <StackPanel>
+        <TextBlock Text="Inspection decision" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock Text="Select a waiting Production Run. PASS and FAIL require the active Edit Mode generation."
+                   TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
+                   Margin="0,6,0,12" />
+        <TextBlock Text="Machine" FontWeight="SemiBold" />
+        <TextBlock Text="{Binding Selected.MachineText, TargetNullValue=Select a queue item}" />
+        <TextBlock Text="Part / operation" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <TextBlock Text="{Binding Selected.Part, TargetNullValue=—}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Selected.Operation, TargetNullValue=—}" TextWrapping="Wrap" />
+        <TextBlock Text="Production Run" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <TextBlock Text="{Binding Selected.ProductionRunId, TargetNullValue=—}" TextWrapping="Wrap" />
+        <TextBlock Text="Received / setupist" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <TextBlock Text="{Binding Selected.ReceivedText, TargetNullValue=—}" />
+        <TextBlock Text="{Binding Selected.SetupistText, TargetNullValue=—}" />
+
+        <Separator Margin="0,14" />
+        <TextBlock Text="Optional reason / comment" />
+        <TextBox Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}"
+                 AcceptsReturn="True" TextWrapping="Wrap" Height="90"
+                 MaxLength="1000" IsEnabled="{Binding IsEditor}" />
+        <StackPanel Orientation="Horizontal" Margin="0,12,0,0"
+                    IsEnabled="{Binding IsEditor}">
+          <Button Content="PASS" Command="{Binding PassCommand}" MinWidth="90" />
+          <Button Content="FAIL" Command="{Binding FailCommand}" MinWidth="90" Margin="0" />
+        </StackPanel>
+        <TextBlock Text="PASS records READY_FOR_PRODUCTION. FAIL returns the same Run to IN_SETUP_RUN. No CNC variable is written."
+                   TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
+                   Margin="0,12,0,0" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

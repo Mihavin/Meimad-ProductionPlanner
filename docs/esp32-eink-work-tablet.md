@@ -266,7 +266,9 @@ The authenticated GET status route is implemented on the Server and returns the
 exact snake-case payload consumed by `TabletApiClient`. It records narrow
 last-contact/battery metadata, resolves the current Production Run on the bound
 Machine, and keeps its numeric revision stable while visible content is
-unchanged. The POST event route remains pending. A multi-output current Program
+unchanged. Schema v54 implements the scoped, idempotent POST event route, and
+schema v55 permits a distinct new send after an authorized `QC_FAIL` while
+retaining retry idempotency within each inspection attempt. A multi-output current Program
 currently returns an explicit projection conflict because this firmware payload
 can display only one part/operation; it never silently hides a coupled output.
 

@@ -196,6 +196,9 @@
             <TabItem Header="User Terminals" ToolTip="Monitor and configure E-Ink tablets">
                 <views:UserTerminalsView DataContext="{Binding UserTerminals}" Margin="5" />
             </TabItem>
+            <TabItem Header="QC Queue" ToolTip="Inspect Production Runs sent to Quality Control">
+                <views:QcQueueView DataContext="{Binding QcQueue}" Margin="5" />
+            </TabItem>
         </TabControl>
 
         <Border Grid.Row="3" Background="#E7EBEF" Padding="14,5">

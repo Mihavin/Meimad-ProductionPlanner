@@ -21,6 +21,22 @@ public sealed class HaasDprintProtocolTests
     }
 
     [Theory]
+    [InlineData("CST", "CYCLE_START")]
+    [InlineData("CEN", "CYCLE_END")]
+    public void Production_cycle_event_requires_source_identity_and_sequence(
+        string wireCode, string eventType)
+    {
+        var line = $"MEIMAD/V/1/EVENT/{wireCode}/ID/VF3-201/SEQ/201/MACROVERSION/3/RUN/RUN-42/PROGRAM/654321";
+
+        Assert.True(HaasDprintProtocol.TryParse(line, out var value, out var error), error);
+        Assert.Equal(eventType, value!.EventType);
+        Assert.Equal("VF3-201", value.SourceEventId);
+        Assert.Equal(201, value.Sequence);
+        Assert.Equal("RUN-42", value.ProductionRunId);
+        Assert.Equal("654321", value.ProgramIdentity);
+    }
+
+    [Theory]
     [InlineData("EVENT/OLC/OFFSETRELEASE/1/NONCE/2", "invalid_prefix")]
     [InlineData("MEIMAD/V/2/EVENT/CST/ID/E1/SEQ/1/MACROVERSION/3", "unsupported_protocol_version")]
     [InlineData("MEIMAD/V/1/EVENT/OLC/ID/E1/SEQ/1/MACROVERSION/3/OFFSETRELEASE/1", "missing_offset_evidence")]

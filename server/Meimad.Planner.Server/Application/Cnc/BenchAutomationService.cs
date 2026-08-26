@@ -1,12 +1,11 @@
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Domain.Haas;
-using Meimad.Planner.Server.Application.ProductionRuns;
 
 namespace Meimad.Planner.Server.Application.Cnc;
 
 /// <summary>Consumes only normalized CNC state; vendor protocol details never enter Bench rules.</summary>
-internal sealed class BenchAutomationService(IHaasIntegrationRepository repository,IProductionRunCncObservationRepository? productionRuns = null) : ICncSnapshotConsumer
+internal sealed class BenchAutomationService(IHaasIntegrationRepository repository) : ICncSnapshotConsumer
 {
     public async Task<CncSnapshotConsumptionResult> ConsumeAsync(
         MachineSnapshot snapshot, CancellationToken token)
@@ -35,12 +34,8 @@ internal sealed class BenchAutomationService(IHaasIntegrationRepository reposito
             snapshot.LastSeenAt,
             previous?.Version + 1 ?? 1);
         var result = await repository.ApplyObservationAsync(normalized, snapshot.Timestamp, token);
-        var runEvents = partCounter.HasValue && productionRuns is not null
-            ? await productionRuns.ConsumeCounterAsync(snapshot.MachineId,
-                snapshot.Program.PartName.Stale ? null : snapshot.Program.PartName.Value,
-                snapshot.Program.ProgramNumber.Stale ? null : snapshot.Program.ProgramNumber.Value,
-                previous?.PartCounter, partCounter.Value, snapshot.Timestamp, token)
-            : [];
-        return new([.. result.CreatedEventTypes, .. runEvents]);
+        // Controller counters remain diagnostics only. Official output advances only
+        // from a validated DPRINT CYCLE_START/CYCLE_END pair after QC approval.
+        return new(result.CreatedEventTypes);
     }
 }

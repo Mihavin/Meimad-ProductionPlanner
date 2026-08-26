@@ -2263,6 +2263,41 @@ public sealed class PlannerApiClientTests
         Assert.DoesNotContain("protectedSecret", handler.Requests[1].Body, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Qc_queue_read_and_decision_use_typed_contract_and_user_edit_authority()
+    {
+        const string queueJson = """
+            {"items":[{"productionRunId":"run:1","machineId":"machine-1",
+            "machineNumber":"M-1","machineName":"Mill One","part":"PN-100",
+            "operation":"OP10 Rough","receivedAt":"2026-08-26T10:00:00Z",
+            "setupistId":"setup-1","setupistName":"Setup Worker"}]}
+            """;
+        const string decisionJson = """
+            {"eventId":"qc-event-1","productionRunId":"run:1","decision":"PASS",
+            "resultingStatus":"READY_FOR_PRODUCTION","userId":"qc-user",
+            "reason":"Accepted","timestamp":"2026-08-26T10:05:00Z",
+            "productionApprovedAt":"2026-08-26T10:05:00Z"}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, queueJson),
+            Json(HttpStatusCode.OK, decisionJson));
+        using var api = CreateClient(handler);
+
+        var queue = await api.ListQcQueueAsync();
+        var result = await api.DecideQcAsync(
+            "run:1", new("PASS", "Accepted"), "qc-client", "qc-user", 12);
+
+        Assert.Equal("PN-100", Assert.Single(queue).Part);
+        Assert.Equal("READY_FOR_PRODUCTION", result.ResultingStatus);
+        Assert.Equal("/api/v1/qc-queue", handler.Requests[0].Path);
+        Assert.Equal("/api/v1/qc-queue/run%3A1/decision", handler.Requests[1].Path);
+        Assert.Equal("qc-client", handler.Requests[1].ClientId);
+        Assert.Equal("qc-user", handler.Requests[1].UserId);
+        Assert.Equal("12", handler.Requests[1].Generation);
+        Assert.Contains("\"decision\":\"PASS\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"reason\":\"Accepted\"", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
     private static PlannerApiClient CreateClient(HttpMessageHandler handler) => new(
         new HttpClient(handler)
         {

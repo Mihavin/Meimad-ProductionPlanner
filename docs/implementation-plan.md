@@ -20,9 +20,42 @@ reassign, mark spare, enable/revoke, or rotate a credential. Tablet ping/status 
 record bounded firmware/IP/RSSI headers alongside existing battery/contact telemetry;
 no secret, credential hash, plaintext existing token, or planning mutation is exposed.
 
+Task 16 is implemented in schema v54. `POST /api/tablets/{tablet_id}/events`
+accepts only `{ "event_type": "SEND_TO_QC" }`, authenticates the path-matched
+enabled tablet, atomically resolves its bound Machine and first current backlog
+Production Run, requires event-derived `IN_SETUP_RUN`, and writes one immutable
+Server-timestamped workflow event. The event's eligibility-derived source identity
+collapses sequential and concurrent retries to the original timestamp. Schema v55
+allows a new inspection attempt only after `QC_FAIL` returns the Run to setup. Tests cover
+wrong token/tablet, premature state, unsupported event, forbidden target/time
+fields, concurrent retry collapse, status transition, and preservation of
+planning/run/package facts. Physical long-D4 execution remains unverified.
+
+Task 17 is implemented in schema v55 and the Windows client. The read-only
+**QC Queue** lists every Production Run whose latest workflow event is
+`SEND_TO_QC`, including Machine, atomic output parts/operations, Server receipt
+time, and the latest packaged setup worker when known. The active Edit Mode
+holder can record PASS or FAIL with a local user identity and optional bounded
+reason. Both actions append immutable Server-timestamped events: FAIL projects
+`IN_SETUP_RUN` and permits reinspection; PASS projects
+`READY_FOR_PRODUCTION`, with its receipt time exposed as
+`production_approved_at`. Tests cover monitoring without Edit Mode, authority,
+payload and state rejection, E-Ink denial, user/reason audit evidence,
+FAIL/resend/PASS, and preservation of planning facts.
+
+Task 18 is implemented without a schema change. Strict DPRINT `CST`/`CEN`
+ingestion begins only after `QC_PASS`, resolves exactly one assigned active Run
+program, validates supplied Run/program evidence when present, and requires END
+to be the immediately consecutive same-source event for its START. A valid END
+atomically retains the immutable workflow fact and advances the existing
+idempotent Production Run cycle/output records, including every coupled output
+and parent status. Duplicate delivery cannot double-count. Haas part counters
+remain monitoring diagnostics and no longer mutate official production quantity.
+Interrupted START/START attempts and orphan-END anomaly retention remain Task 19.
+
 ## Multi-output Production Run workstream
 
-Task 1 was accepted on 2026-08-23. Tasks 2–10 are implemented: schema v45 adds reusable Manufacturing Programs, v46 adds Production Runs and assignment migration, and v47 adds durable idempotent cycle observations. Server APIs cover composition, allocation, assignment, readiness, execution, cancellation, and reads. Planning Board and Timeline expose compressed run/program projections; Windows provides the multi-select Production Run dialog; normalized CNC observations resolve and advance exactly one active program. The architecture impact map remains authoritative.
+Task 1 was accepted on 2026-08-23. Tasks 2–10 are implemented: schema v45 adds reusable Manufacturing Programs, v46 adds Production Runs and assignment migration, and v47 adds durable idempotent cycle observations. Server APIs cover composition, allocation, assignment, readiness, execution, cancellation, and reads. Planning Board and Timeline expose compressed run/program projections; Windows provides the multi-select Production Run dialog. Task 18 restricts automatic CNC advancement to a valid post-QC DPRINT START/END pair resolved to exactly one active program; normalized part counters remain diagnostic. The architecture impact map remains authoritative.
 
 - **Status:** Server foundation, SQLite schema v26, staged legacy Excel working-plan import, core planning-resource and Setup slices, extended Operation timing, Machine maintenance/breakdown lifecycle, assignment-owned planning modes, derived Batch/Order lifecycles, one canonical embedded/separate-window Timeline, compact Machine Board, read-only TV Dashboard, official job-package generation, E-Ink API/simulator, Single Edit Mode, verified backup, and Windows Case/Operation/Order/Batch/Machine/Machine-Type/Calendar/Machine-Availability/administrative workspaces implemented; package approval/retention and full conflict policy remain unimplemented
 - **Sequence source:** Functional Specification v0.3, expanded with decision and verification gates
@@ -312,7 +345,7 @@ The real-machine Definition of Done is intentionally not claimed. Haas publicly 
 
 ## 14. Phase 11 - E-Ink API and simulator
 
-**Status:** Server official package generator/read side and browser simulator implemented. The `SEND_TO_QC` operational command is product-approved but its Server route/storage and simulator/firmware interaction are not implemented. Approval/retention, physical-device behavior, full offline fixture simulation, and API stability approval remain open.
+**Status:** Server official package generator/read side, browser simulator, and scoped idempotent `SEND_TO_QC` command are implemented. Approval/retention, physical-device behavior, full offline fixture simulation, and API stability approval remain open.
 
 ### Scope
 
@@ -321,7 +354,7 @@ The real-machine Definition of Done is intentionally not claimed. Haas publicly 
 - Implemented active-editor publication for an assigned Batch Operation with immutable snapshot metadata, safe source/logical/storage paths, configurable allow-list/size limits, staged output, SHA-256, context revalidation, and failure cleanup. Approval roles/UI, signatures, retention, and superseded-revision access remain open.
 - Implemented a dependency-free browser simulator for version-first polling, the structured Machine view, conditional refresh, manifest/file display, SHA-256 verification, and preserving the last rendered screen on request failure. Physical SD staging/atomic activation and local-only annotations remain device work; richer injected offline/corruption fixtures remain future simulator work.
 - Implement the approved authenticated `POST /api/tablets/{tablet_id}/events` command for exact `SEND_TO_QC`: resolve the credential-bound Machine and unique `IN_SETUP_RUN` Production Run on the Server, reject client-supplied target/time fields, atomically persist one append-only Server-timestamped event plus audit record, derive `IN_QC` and a new status revision, and return the first accepted timestamp on same-run retries. Do not require Edit Mode or mutate planning/run lifecycle/package data.
-- Implemented the authenticated `GET /api/tablets/{tablet_id}/status` projection with `nc_run.id` bound to a real Production Run ID, exact firmware snake-case JSON, path/credential scoping, contact/battery recording, and deterministic content revision. The reversible initial mapping uses Run lifecycle plus completed-cycle count and existing QC events; `READY_FOR_PRODUCTION`, QC exit, and richer setup authority remain open. A multi-output Program returns `tablet_projection_ambiguous` until the single-part physical payload is deliberately extended.
+- Implemented the authenticated `GET /api/tablets/{tablet_id}/status` projection with `nc_run.id` bound to a real Production Run ID, exact firmware snake-case JSON, path/credential scoping, contact/battery recording, and deterministic content revision. The event-derived mapping includes `QC_FAIL -> IN_SETUP_RUN` and `QC_PASS -> READY_FOR_PRODUCTION`; the Windows QC Queue owns those guarded transitions. A multi-output Program returns `tablet_projection_ambiguous` until the single-part physical payload is deliberately extended.
 - Task 11 approves voltage-only battery metadata as a separate non-planning scope. Firmware sends it on every existing ping/status/event HTTP request without changing event JSON. The authenticated bootstrap now validates and records the latest bounded voltage/percentage metadata; bounded history, retention, and read/admin policy remain separate work before introducing a telemetry POST route.
 
 ### Tests and exit gate
@@ -486,7 +519,7 @@ The following questions are unresolved in the provided source documents. IDs sho
 - **OD-022 - Package publication:** Partially resolved: the current Windows Edit Mode holder publishes a caller-named immutable revision for an assigned Batch Operation; Machine/Case/Batch/Operation metadata is snapshotted and a correction creates another revision. Define a distinct preparer/approver role or approval UI, audit, revision naming/ordering policy, and whether reassignment should require explicit republish confirmation.
 - **OD-023 - Package format:** Partially resolved: schema v7 stores immutable snapshot/file metadata, asset roles, safe logical/storage-relative paths, stable file IDs, lengths, media types, timestamps/order, and SHA-256. Generation supports in-folder preview, allow-listed NC/text sources, JSON tool table/offsets, and UTF-8 instructions with configurable limits; reads re-verify bytes. Define signatures, additional formats/encoding, compression, range/resume, device staging/activation, rollback, backup inclusion, superseded-revision access, and retention/garbage collection.
 - **OD-024 - Rendering boundary:** Structured JSON is the implemented v1 Server/simulator baseline. The first physical firmware layout renders local text directly from the approved status compatibility response, uses fixed three-row tool pages, and does not implement images; its official tool-row source is not yet connected. Decide whether the final physical firmware consumes the v1 Machine/package projections unchanged or keeps a compatible adapter, and define package-to-tool mapping, panel profile, bitmap/palette/fonts, pagination, localization, Unicode/RTL, and compatibility window.
-- **OD-025 - Telemetry and tablet-originated events:** Partially resolved: schema v49 supplies the shared append-only workflow-event storage and event-driven tablet projection, including migration of prior tablet event rows. `SEND_TO_QC` remains the only tablet-originated operational command. It requires an enabled path-matched device credential, takes no target/time fields, resolves the bound Machine and unique `IN_SETUP_RUN` Production Run on the Server, uses Server UTC, and may change only the tablet workflow projection to `IN_QC`. The compatibility POST route, its authorization/eligibility/idempotent-response behavior, and end-to-end tests remain unimplemented. Firmware physical-button binding, fresh-state eligibility, single-wake submission guard, follow-up refresh, and temporary confirmation rendering are compiled; physical verification is pending. Define authenticated ingestion for the other event sources, history retention/read access, firmware/last-seen fields, hardware-range validation, and battery percentage calibration.
+- **OD-025 - Telemetry and tablet-originated events:** Partially resolved: schema v49 supplies the shared append-only workflow-event storage and event-driven tablet projection, including migration of prior tablet event rows. `SEND_TO_QC` remains the only tablet-originated operational command. The implemented schema-v54 POST route requires an enabled path-matched device credential, takes no target/time fields, resolves the bound Machine and current `IN_SETUP_RUN` Production Run on the Server, uses Server UTC, changes only the tablet workflow projection to `IN_QC`, and returns the original event on sequential or concurrent retries. Firmware physical-button binding, fresh-state eligibility, single-wake submission guard, follow-up refresh, and temporary confirmation rendering are compiled; physical verification is pending. Define authenticated ingestion for the other event sources, history retention/read access, hardware-range validation, and battery percentage calibration.
 - **OD-026 - Device lifecycle:** Partially resolved on the Server: an active editor can register a spare or Machine-bound device, the Server returns a high-entropy token only at create/rotation, stores its SHA-256, permits one enabled E-Ink binding per Machine, and supports rebind/revoke/rotate. Define dedicated administrator authorization/audit, device-side secure storage, token expiry, lost-device/cached-data response, and physical reassignment workflow.
 - **OD-027 - Time/sync:** Partially resolved for Server configuration: time-zone ID, workdays, one shift window, poll interval, retry attempts/backoff, and revision are configurable/readable. Firmware now logs a UTC wake timestamp only when the system clock is already valid and reports unavailable otherwise; it does not fabricate time. The first state machine has a fixed requested 120-second development cadence for `READY_FOR_SETUP`, `IN_SETUP`, and `IN_QC`, but does not yet synchronize the clock, consume Server time configuration, or enforce the mandatory automatic-wake workday/shift gate. Define and implement clock/NTP/RTC, zone portability/DST/holidays/exceptions, multiple windows, manual force-refresh behavior, jitter, stale thresholds, and clock-loss behavior before production automatic polling.
 

@@ -361,7 +361,10 @@ transitions the Server-resolved current run from tablet workflow
 `IN_SETUP_RUN` to `IN_QC`; it supplies no target or device timestamp and grants
 no planning/package mutation authority. The firmware binds it to the guarded
 long-D4 gesture described above and follows the POST with a status GET. The
-Server now has shared append-only workflow-event persistence and derives tablet
-status from it. The compatibility POST route, its device authorization,
-eligibility/idempotent-response behavior, and negative end-to-end tests remain
-unimplemented, so the firmware action cannot yet succeed end to end.
+Server now has shared append-only workflow-event persistence, derives tablet
+status from it, and implements the schema-v54 path/credential authorization,
+`IN_SETUP_RUN` eligibility, per-inspection-attempt idempotency, and
+first-timestamp response. Schema v55 permits a later distinct send after
+`QC_FAIL` returns the same Run to setup.
+Negative and concurrent Server tests pass. The firmware interaction has not yet
+been uploaded and exercised against that endpoint on physical hardware.

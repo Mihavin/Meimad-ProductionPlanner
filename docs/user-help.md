@@ -101,13 +101,23 @@ The TV Dashboard is a read-only kiosk view served by the Server at:
 
 It shows display-enabled machines, the current operation, part picture, operation identity, machine state, and calculated setup/current-part/Batch progress. Conflicts, next jobs, planning controls, and editing forms are intentionally hidden. The small connection indicator changes color with the Server connection state. During a short outage, the last valid snapshot remains on screen.
 
-E-Ink devices display the official package and machine/setup instructions downloaded from the Server. Package content, checklist marks, comments, assignments, and planning facts remain read-only/local as applicable. The approved tablet workflow will allow the setupist to confirm **Send to QC** for the current Server-resolved run. That command supplies no run or timestamp, does not require Edit Mode, and changes only the tablet workflow status from `IN_SETUP_RUN` to `IN_QC`. The Server endpoint and physical button flow are not implemented yet, so current devices must not be operated as if the signal has been accepted.
+E-Ink devices display the official package and machine/setup instructions downloaded from the Server. Package content, checklist marks, comments, assignments, and planning facts remain read-only/local as applicable. While the current Server-resolved run is `IN_SETUP_RUN`, holding D4 for 1.2 seconds submits **Send to QC**. The command supplies no run or timestamp, does not require Edit Mode, and changes only the tablet workflow status to `IN_QC`. The Server endpoint is implemented and idempotent; the physical button/display flow is compiled but still requires hardware verification before shop-floor acceptance.
 
 Use the Windows **User Terminals** page to monitor tablet identity, Machine binding,
 last contact, reported firmware/battery/Wi-Fi, current Production Run, workflow state,
 and package revision. Monitoring works in View Mode. Request Edit Mode before creating
 a tablet, changing its Machine, marking it spare, enabling/revoking it, or rotating its
 credential. Copy a new or rotated credential immediately; it cannot be retrieved later.
+
+Use the Windows **QC Queue** to monitor Production Runs whose latest workflow
+state is `IN_QC`. The queue shows the Machine, part and Operation outputs,
+Production Run, time received, and packaged setup worker when available.
+Monitoring works in View Mode. To record a decision, request Edit Mode, select
+the queue row, optionally enter a reason/comment, and choose **PASS** or
+**FAIL**. PASS records the current Server time as production approval and moves
+the workflow projection to `READY_FOR_PRODUCTION`. FAIL records the same audit
+details, returns it to `IN_SETUP_RUN`, and allows the setupist to correct the
+setup and send it to QC again. Neither button writes a CNC variable.
 
 ## 7. Languages and responsiveness
 

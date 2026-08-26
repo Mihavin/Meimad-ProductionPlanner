@@ -122,6 +122,7 @@ public sealed class CncVerificationFoundationTests
         var workflow = new ProductionRunWorkflowEventService(
             new SqliteProductionRunWorkflowEventRepository(fixture.Database), new FixedTimeProvider(Now));
         var ingestion = new CncDprintEventIngestionService(repository, workflow,
+            new SqliteProductionRunCncObservationRepository(fixture.Database, new FixedTimeProvider(Now)),
             NullLogger<CncDprintEventIngestionService>.Instance);
         var line = $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-1/SEQ/101/MACROVERSION/3/PROGRAM/O1234/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841";
         var raw = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC",
@@ -181,6 +182,7 @@ public sealed class CncVerificationFoundationTests
         var workflow = new ProductionRunWorkflowEventService(
             new SqliteProductionRunWorkflowEventRepository(fixture.Database), new FixedTimeProvider(Now));
         var ingestion = new CncDprintEventIngestionService(repository, workflow,
+            new SqliteProductionRunCncObservationRepository(fixture.Database, new FixedTimeProvider(Now)),
             NullLogger<CncDprintEventIngestionService>.Instance);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
@@ -196,6 +198,166 @@ public sealed class CncVerificationFoundationTests
         Assert.True(await reader.ReadAsync());
         Assert.Equal("SUPERSEDED", reader.GetString(0));
         Assert.Equal(Now, DateTimeOffset.Parse(reader.GetString(1)));
+    }
+
+    [Fact]
+    public async Task Cycle_start_and_matching_end_after_QC_PASS_complete_exactly_one_cycle()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await AddCoupledOutputAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        var ingestion = CycleIngestion(fixture.Database);
+        var start = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
+            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/CYCLE-201/SEQ/201/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        var end = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
+            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CEN/ID/CYCLE-202/SEQ/202/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
+
+        await ingestion.ConsumeAsync("machine-verification", [start], default);
+        await ingestion.ConsumeAsync("machine-verification", [end], default);
+        await ingestion.ConsumeAsync("machine-verification", [end], default);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT completed_cycle_count,status FROM production_run_programs
+            WHERE id='run-program-verification';
+            """;
+        await using var program = await command.ExecuteReaderAsync();
+        Assert.True(await program.ReadAsync());
+        Assert.Equal(1, program.GetInt32(0));
+        Assert.Equal("COMPLETED", program.GetString(1));
+        await program.DisposeAsync();
+
+        command.CommandText = """
+            SELECT produced_quantity,status FROM production_run_outputs
+            WHERE id='output-verification';
+            """;
+        await using var output = await command.ExecuteReaderAsync();
+        Assert.True(await output.ReadAsync());
+        Assert.Equal(1, output.GetInt32(0));
+        Assert.Equal("COMPLETED", output.GetString(1));
+        await output.DisposeAsync();
+
+        command.CommandText = """
+            SELECT produced_quantity,status FROM production_run_outputs
+            WHERE id='output-verification-coupled';
+            """;
+        await using var coupled = await command.ExecuteReaderAsync();
+        Assert.True(await coupled.ReadAsync());
+        Assert.Equal(2, coupled.GetInt32(0));
+        Assert.Equal("COMPLETED", coupled.GetString(1));
+        await coupled.DisposeAsync();
+
+        command.CommandText = "SELECT COUNT(*) FROM production_run_cycle_events WHERE source_event_id='CYCLE-202';";
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT group_concat(event_type,',') FROM production_run_workflow_events WHERE source_event_id IN ('CYCLE-201','CYCLE-202') ORDER BY source_sequence;";
+        Assert.Equal("CYCLE_START,CYCLE_END", await command.ExecuteScalarAsync());
+    }
+
+    [Theory]
+    [InlineData(false, 201, "CST", "cycle_start_requires_qc_pass_or_completed_cycle")]
+    [InlineData(true, 202, "CEN", "cycle_end_requires_matching_start")]
+    public async Task Invalid_cycle_transition_never_advances_output(
+        bool approve, long sequence, string code, string expectedReason)
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database, approve);
+        var repository = new SqliteProductionRunCncObservationRepository(
+            fixture.Database, new FixedTimeProvider(Now));
+        var eventType = code == "CST" ? "CYCLE_START" : "CYCLE_END";
+
+        var result = await repository.ConsumeCycleEventAsync(new(
+            "machine-verification", eventType, $"INVALID-{sequence}", sequence, 3,
+            "RUN-VERIFICATION", "654321",
+            $"MEIMAD/V/1/EVENT/{code}/ID/INVALID-{sequence}/SEQ/{sequence}/MACROVERSION/3"), default);
+
+        Assert.False(result.Accepted);
+        Assert.Equal(expectedReason, result.Code);
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE source_event_id=$id;";
+        command.Parameters.AddWithValue("$id", $"INVALID-{sequence}");
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Cycle_end_with_nonconsecutive_sequence_is_not_a_valid_completion()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        var ingestion = CycleIngestion(fixture.Database);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+            "MEIMAD/V/1/EVENT/CST/ID/GAP-201/SEQ/201/MACROVERSION/3/PROGRAM/654321")], default);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+            "MEIMAD/V/1/EVENT/CEN/ID/GAP-203/SEQ/203/MACROVERSION/3/PROGRAM/654321")], default);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE source_event_id='GAP-203';";
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    private static CncDprintEventIngestionService CycleIngestion(SqliteDatabase database)
+    {
+        var time = new FixedTimeProvider(Now);
+        return new(new SqliteCncVerificationFoundationRepository(database),
+            new ProductionRunWorkflowEventService(
+                new SqliteProductionRunWorkflowEventRepository(database), time),
+            new SqliteProductionRunCncObservationRepository(database, time),
+            NullLogger<CncDprintEventIngestionService>.Instance);
+    }
+
+    private static async Task PrepareProductionApprovalAsync(
+        SqliteDatabase database, bool approve = true)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE production_run_programs
+            SET production_gcode_release_id='gcode-verification'
+            WHERE id='run-program-verification';
+            """ + (approve ? """
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                server_received_at,user_id,metadata_json)
+            VALUES('qc-pass-cycle','run-verification','machine-verification','QC_PASS',
+                   'WINDOWS_QC','QC-CYCLE',$at,'qc-user','{}');
+            """ : string.Empty);
+        command.Parameters.AddWithValue("$at", Now.ToString("O"));
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task AddCoupledOutputAsync(SqliteDatabase database)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO cases(id,part_number,name,working_folder_path)
+            VALUES('case-verification-coupled','PART-B','Part B','C:\\Cases\\PART-B');
+            INSERT INTO case_operations(id,case_id,operation_number,route_position,name)
+            VALUES('case-operation-verification-coupled','case-verification-coupled',10,0,'Mill');
+            INSERT INTO production_batches(id,case_id,batch_number,status,planned_quantity)
+            VALUES('batch-verification-coupled','case-verification-coupled','B-2','in_production',2);
+            INSERT INTO batch_operations(id,production_batch_id,source_case_operation_id,
+                operation_number,route_position,name,status)
+            VALUES('operation-verification-coupled','batch-verification-coupled',
+                   'case-operation-verification-coupled',10,0,'Mill','started');
+            INSERT INTO production_run_outputs(id,production_run_program_id,batch_operation_id,
+                quantity_per_cycle,target_quantity,produced_quantity,status,version,created_at,updated_at)
+            VALUES('output-verification-coupled','run-program-verification',
+                   'operation-verification-coupled',2,2,0,'ALLOCATED',1,$at,$at);
+            """;
+        command.Parameters.AddWithValue("$at", Now.ToString("O"));
+        await command.ExecuteNonQueryAsync();
     }
 
     private static UpdateCncVerificationSettings Settings(string? secret, bool enabled) => new(

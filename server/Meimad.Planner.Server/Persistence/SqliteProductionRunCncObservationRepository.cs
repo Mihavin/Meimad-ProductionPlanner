@@ -1,73 +1,390 @@
 using System.Globalization;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.ProductionRuns;
 
 namespace Meimad.Planner.Server.Persistence;
 
-internal sealed class SqliteProductionRunCncObservationRepository(SqliteDatabase database)
+internal sealed class SqliteProductionRunCncObservationRepository(
+    SqliteDatabase database, TimeProvider timeProvider)
     : IProductionRunCncObservationRepository
 {
-    public async Task<IReadOnlyList<string>> ConsumeCounterAsync(string machineId,string? partName,string? programNumber,
-        int? previousCounter,int currentCounter,DateTimeOffset observedAt,CancellationToken token)
+    public async Task<CncCycleObservationResult> ConsumeCycleEventAsync(
+        CncCycleObservation observation, CancellationToken token)
     {
-        if(previousCounter is null||currentCounter<=previousCounter)return [];
-        var delta=currentCounter-previousCounter.Value;
-        if(delta>100){await LogResolutionAsync(machineId,"cnc_counter_jump_ignored",new{previousCounter,currentCounter},observedAt,token);return ["cnc_counter_jump_ignored"];}
-        var events=new List<string>();
-        for(var counter=previousCounter.Value+1;counter<=currentCounter;counter++)
+        var source = $"HAAS_DPRINT:{observation.MachineId}".ToUpperInvariant();
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+
+        await using (var duplicate = connection.CreateCommand())
         {
-            var eventId=$"{machineId}:{observedAt.UtcTicks}:{counter}";
-            await using var connection=await database.OpenConnectionAsync(token);await using var transaction=connection.BeginTransaction(deferred:false);
-            await using(var duplicate=connection.CreateCommand()){duplicate.Transaction=transaction;duplicate.CommandText="SELECT 1 FROM production_run_cycle_events WHERE source='CNC' AND source_event_id=$event;";duplicate.Parameters.AddWithValue("$event",eventId);if(await duplicate.ExecuteScalarAsync(token)is not null){await transaction.CommitAsync(token);continue;}}
-            var candidates=new List<(string Run,string Program,int Completed,int Target)>();
-            await using(var query=connection.CreateCommand())
+            duplicate.Transaction = transaction;
+            duplicate.CommandText = """
+                SELECT event_type,production_run_id,
+                       json_extract(metadata_json,'$.productionRunProgramId'),
+                       (SELECT completed_cycle_count FROM production_run_cycle_events
+                        WHERE source=$source AND source_event_id=$eventId)
+                FROM production_run_workflow_events
+                WHERE source=$source AND source_event_id=$eventId;
+                """;
+            duplicate.Parameters.AddWithValue("$source", source);
+            duplicate.Parameters.AddWithValue("$eventId", observation.SourceEventId);
+            await using var reader = await duplicate.ExecuteReaderAsync(token);
+            if (await reader.ReadAsync(token))
             {
-                query.Transaction=transaction;query.CommandText="""
-                    SELECT DISTINCT run.id,program.id,program.completed_cycle_count,program.target_cycle_count
-                    FROM machine_assignments assignment JOIN production_runs run ON run.id=assignment.production_run_id
-                    JOIN production_run_programs program ON program.production_run_id=run.id
-                    LEFT JOIN gcode_releases release ON release.id=program.production_gcode_release_id
-                    WHERE assignment.machine_id=$machine AND run.status='IN_PROGRESS' AND program.status='ACTIVE'
-                      AND (($part IS NOT NULL AND EXISTS(
-                            SELECT 1 FROM production_run_outputs output JOIN batch_operations operation ON operation.id=output.batch_operation_id
-                            JOIN production_batches batch ON batch.id=operation.production_batch_id JOIN cases ON cases.id=batch.case_id
-                            WHERE output.production_run_program_id=program.id AND lower(trim(cases.part_number))=lower(trim($part))))
-                           OR ($part IS NULL AND $program IS NOT NULL AND lower(COALESCE(release.original_file_name,'')) LIKE '%'||lower(trim($program))||'%'));
-                    """;
-                query.Parameters.AddWithValue("$machine",machineId);query.Parameters.AddWithValue("$part",(object?)partName??DBNull.Value);query.Parameters.AddWithValue("$program",(object?)programNumber??DBNull.Value);
-                await using var reader=await query.ExecuteReaderAsync(token);while(await reader.ReadAsync(token))candidates.Add((reader.GetString(0),reader.GetString(1),reader.GetInt32(2),reader.GetInt32(3)));
+                var sameType = reader.GetString(0) == observation.EventType;
+                var result = new CncCycleObservationResult(
+                    sameType, sameType, sameType && observation.EventType == "CYCLE_END",
+                    sameType ? "duplicate" : "source_event_conflict",
+                    reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt32(3));
+                await transaction.CommitAsync(token);
+                return result;
             }
-            if(candidates.Count!=1)
-            {
-                await SqliteStructuredEventLogRepository.AppendAsync(connection,transaction,new(candidates.Count==0?"cnc_program_unresolved":"cnc_program_ambiguous",observedAt,"cnc-system",
-                    new Dictionary<string,string>{{"machineId",machineId}},"CNC_OBSERVATION",null,null,new{partName,programNumber,candidateCount=candidates.Count}),token);
-                await transaction.CommitAsync(token);events.Add(candidates.Count==0?"cnc_program_unresolved":"cnc_program_ambiguous");continue;
-            }
-            var candidate=candidates[0];if(candidate.Completed>=candidate.Target){await transaction.RollbackAsync(token);events.Add("cnc_completed_program_rejected");continue;}
-            var next=candidate.Completed+1;var complete=next==candidate.Target;var at=Format(observedAt);
-            await using(var update=connection.CreateCommand())
-            {
-                update.Transaction=transaction;update.CommandText="""
-                    UPDATE production_run_outputs SET produced_quantity=produced_quantity+quantity_per_cycle,
-                      status=CASE WHEN produced_quantity+quantity_per_cycle=target_quantity THEN 'COMPLETED' ELSE 'IN_PRODUCTION' END,
-                      version=version+1,updated_at=$at
-                    WHERE production_run_program_id=$program AND produced_quantity+quantity_per_cycle<=target_quantity;
-                    UPDATE production_run_programs SET completed_cycle_count=$next,status=$status,version=version+1,updated_at=$at WHERE id=$program;
-                    UPDATE batch_operations SET status=CASE WHEN NOT EXISTS(
-                      SELECT 1 FROM production_run_outputs output WHERE output.batch_operation_id=batch_operations.id AND output.target_quantity>output.produced_quantity) THEN 'completed' ELSE 'started' END,
-                      version=version+1,updated_at=$at WHERE id IN(SELECT batch_operation_id FROM production_run_outputs WHERE production_run_program_id=$program);
-                    """;
-                update.Parameters.AddWithValue("$program",candidate.Program);update.Parameters.AddWithValue("$next",next);update.Parameters.AddWithValue("$status",complete?"COMPLETED":"ACTIVE");update.Parameters.AddWithValue("$at",at);await update.ExecuteNonQueryAsync(token);
-            }
-            var remaining=await ScalarAsync(connection,transaction,"SELECT COUNT(*) FROM production_run_programs WHERE production_run_id=$id AND status<>'COMPLETED';",candidate.Run,token);
-            await using(var update=connection.CreateCommand()){update.Transaction=transaction;update.CommandText="UPDATE production_runs SET status=$status,version=version+1,updated_at=$at WHERE id=$id;";update.Parameters.AddWithValue("$status",remaining==0?"COMPLETED":"IN_PROGRESS");update.Parameters.AddWithValue("$at",at);update.Parameters.AddWithValue("$id",candidate.Run);await update.ExecuteNonQueryAsync(token);}
-            await using(var insert=connection.CreateCommand()){insert.Transaction=transaction;insert.CommandText="INSERT INTO production_run_cycle_events(id,production_run_id,production_run_program_id,source,source_event_id,observed_at,completed_cycle_count,created_at,updated_at) VALUES($id,$run,$program,'CNC',$event,$at,$next,$at,$at);";insert.Parameters.AddWithValue("$id",Guid.NewGuid().ToString("N"));insert.Parameters.AddWithValue("$run",candidate.Run);insert.Parameters.AddWithValue("$program",candidate.Program);insert.Parameters.AddWithValue("$event",eventId);insert.Parameters.AddWithValue("$at",at);insert.Parameters.AddWithValue("$next",next);await insert.ExecuteNonQueryAsync(token);}
-            await SqliteStructuredEventLogRepository.AppendAsync(connection,transaction,new("production_run_program_cycle_completed",observedAt,"cnc-system",new Dictionary<string,string>{{"machineId",machineId},{"productionRunId",candidate.Run},{"productionRunProgramId",candidate.Program}},"CNC_OBSERVATION",null,null,new{partName,programNumber,counter,completedCycleCount=next}),token);
-            await transaction.CommitAsync(token);events.Add("production_run_program_cycle_completed");
         }
-        return events;
+
+        var candidates = new List<CycleTarget>();
+        await using (var query = connection.CreateCommand())
+        {
+            query.Transaction = transaction;
+            query.CommandText = """
+                SELECT run.id,program.id,
+                       COALESCE(program.production_gcode_release_id,program.selected_gcode_release_id),
+                       hook.nc_identity_token,release.original_file_name
+                FROM machine_assignments assignment
+                JOIN production_runs run ON run.id=assignment.production_run_id
+                JOIN production_run_programs program ON program.production_run_id=run.id
+                LEFT JOIN gcode_releases release ON release.id=COALESCE(
+                    program.production_gcode_release_id,program.selected_gcode_release_id)
+                LEFT JOIN gcode_release_verification_hooks hook
+                    ON hook.gcode_release_id=release.id
+                WHERE assignment.machine_id=$machineId
+                  AND run.status='IN_PROGRESS' AND program.status='ACTIVE'
+                  AND ($runIdentity IS NULL OR upper(run.id)=upper($runIdentity))
+                  AND ($programIdentity IS NULL
+                       OR upper(program.id)=upper($programIdentity)
+                       OR CAST(hook.nc_identity_token AS TEXT)=$programIdentity
+                       OR upper(COALESCE(release.original_file_name,''))=upper($programIdentity));
+                """;
+            query.Parameters.AddWithValue("$machineId", observation.MachineId);
+            query.Parameters.AddWithValue("$runIdentity", Db(observation.ProductionRunIdentity));
+            query.Parameters.AddWithValue("$programIdentity", Db(observation.ProgramIdentity));
+            await using var reader = await query.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+                candidates.Add(new(reader.GetString(0), reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2)));
+        }
+        if (candidates.Count != 1)
+        {
+            await transaction.RollbackAsync(token);
+            return new(false, false, false,
+                candidates.Count == 0 ? "cycle_target_unresolved" : "cycle_target_ambiguous");
+        }
+
+        var target = candidates[0];
+        LatestCycleWorkflow? latest = null;
+        await using (var query = connection.CreateCommand())
+        {
+            query.Transaction = transaction;
+            query.CommandText = """
+                SELECT event_type,source,source_sequence,server_received_at,
+                       json_extract(metadata_json,'$.productionRunProgramId')
+                FROM production_run_workflow_events
+                WHERE production_run_id=$runId
+                ORDER BY server_received_at DESC,id DESC LIMIT 1;
+                """;
+            query.Parameters.AddWithValue("$runId", target.RunId);
+            await using var reader = await query.ExecuteReaderAsync(token);
+            if (await reader.ReadAsync(token))
+                latest = new(reader.GetString(0), reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                    DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind).ToUniversalTime(),
+                    reader.IsDBNull(4) ? null : reader.GetString(4));
+        }
+
+        var valid = observation.EventType == "CYCLE_START"
+            ? latest?.EventType is "QC_PASS" or "CYCLE_END"
+            : latest is { EventType: "CYCLE_START" }
+              && latest.Source == source
+              && latest.ProgramId == target.ProgramId
+              && latest.Sequence.HasValue
+              && observation.Sequence == latest.Sequence.Value + 1;
+        if (!valid)
+        {
+            await transaction.RollbackAsync(token);
+            return new(false, false, false,
+                observation.EventType == "CYCLE_START"
+                    ? "cycle_start_requires_qc_pass_or_completed_cycle"
+                    : "cycle_end_requires_matching_start",
+                target.RunId, target.ProgramId);
+        }
+
+        var now = timeProvider.GetUtcNow().ToUniversalTime();
+        var receivedAt = latest is not null && now <= latest.ReceivedAt
+            ? latest.ReceivedAt.AddTicks(1)
+            : now;
+        long? previousSourceSequence = null;
+        await using (var previous = connection.CreateCommand())
+        {
+            previous.Transaction = transaction;
+            previous.CommandText = """
+                SELECT MAX(source_sequence) FROM production_run_workflow_events
+                WHERE machine_id=$machineId AND source=$source
+                  AND source_sequence IS NOT NULL;
+                """;
+            previous.Parameters.AddWithValue("$machineId", observation.MachineId);
+            previous.Parameters.AddWithValue("$source", source);
+            var scalar = await previous.ExecuteScalarAsync(token);
+            previousSourceSequence = scalar is null or DBNull
+                ? null
+                : Convert.ToInt64(scalar, CultureInfo.InvariantCulture);
+        }
+        var workflowEventId = Guid.NewGuid().ToString("N");
+        var metadata = JsonSerializer.Serialize(new
+        {
+            productionRunProgramId = target.ProgramId,
+            suppliedRunIdentity = observation.ProductionRunIdentity,
+            suppliedProgramIdentity = observation.ProgramIdentity,
+            macroVersion = observation.MacroVersion,
+            rawLine = observation.RawLine
+        });
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO production_run_workflow_events(
+                    id,production_run_id,machine_id,event_type,source,source_event_id,
+                    source_sequence,server_received_at,nc_release_id,metadata_json)
+                VALUES($id,$runId,$machineId,$eventType,$source,$sourceEventId,
+                       $sequence,$receivedAt,$releaseId,$metadata);
+                """;
+            insert.Parameters.AddWithValue("$id", workflowEventId);
+            insert.Parameters.AddWithValue("$runId", target.RunId);
+            insert.Parameters.AddWithValue("$machineId", observation.MachineId);
+            insert.Parameters.AddWithValue("$eventType", observation.EventType);
+            insert.Parameters.AddWithValue("$source", source);
+            insert.Parameters.AddWithValue("$sourceEventId", observation.SourceEventId);
+            insert.Parameters.AddWithValue("$sequence", observation.Sequence);
+            insert.Parameters.AddWithValue("$receivedAt", Format(receivedAt));
+            insert.Parameters.AddWithValue("$releaseId", Db(target.NcReleaseId));
+            insert.Parameters.AddWithValue("$metadata", metadata);
+            await insert.ExecuteNonQueryAsync(token);
+        }
+        if (previousSourceSequence.HasValue
+            && observation.Sequence != previousSourceSequence.Value + 1)
+        {
+            var anomalyType = observation.Sequence <= previousSourceSequence.Value
+                ? "EVENT_SEQUENCE_OUT_OF_ORDER"
+                : "EVENT_SEQUENCE_GAP";
+            await using var anomaly = connection.CreateCommand();
+            anomaly.Transaction = transaction;
+            anomaly.CommandText = """
+                INSERT INTO production_run_workflow_anomalies(
+                    id,production_run_id,machine_id,source,source_event_id,
+                    anomaly_type,previous_sequence,expected_sequence,received_sequence,
+                    workflow_event_id,detected_at,details_json)
+                VALUES($id,$runId,$machineId,$source,$sourceEventId,$type,$previous,
+                       $expected,$received,$workflowEventId,$at,$details);
+                """;
+            anomaly.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+            anomaly.Parameters.AddWithValue("$runId", target.RunId);
+            anomaly.Parameters.AddWithValue("$machineId", observation.MachineId);
+            anomaly.Parameters.AddWithValue("$source", source);
+            anomaly.Parameters.AddWithValue("$sourceEventId", observation.SourceEventId);
+            anomaly.Parameters.AddWithValue("$type", anomalyType);
+            anomaly.Parameters.AddWithValue("$previous", previousSourceSequence.Value);
+            anomaly.Parameters.AddWithValue("$expected", previousSourceSequence.Value + 1);
+            anomaly.Parameters.AddWithValue("$received", observation.Sequence);
+            anomaly.Parameters.AddWithValue("$workflowEventId", workflowEventId);
+            anomaly.Parameters.AddWithValue("$at", Format(receivedAt));
+            anomaly.Parameters.AddWithValue("$details", JsonSerializer.Serialize(new
+            {
+                previousSequence = previousSourceSequence.Value,
+                expectedSequence = previousSourceSequence.Value + 1,
+                receivedSequence = observation.Sequence
+            }));
+            await anomaly.ExecuteNonQueryAsync(token);
+        }
+
+        var completed = default(int?);
+        if (observation.EventType == "CYCLE_END")
+            completed = await RecordResolvedCycleAsync(connection, transaction, target,
+                source, observation.SourceEventId, receivedAt, observation.MachineId, token);
+
+        await transaction.CommitAsync(token);
+        return new(true, false, completed.HasValue, "accepted", target.RunId,
+            target.ProgramId, completed);
     }
-    private async Task LogResolutionAsync(string machine,string name,object payload,DateTimeOffset at,CancellationToken token){await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await SqliteStructuredEventLogRepository.AppendAsync(c,t,new(name,at,"cnc-system",new Dictionary<string,string>{{"machineId",machine}},"CNC_OBSERVATION",null,null,payload),token);await t.CommitAsync(token);}
+
+    private static async Task<int> RecordResolvedCycleAsync(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        Microsoft.Data.Sqlite.SqliteTransaction transaction,
+        CycleTarget target, string source, string sourceEventId,
+        DateTimeOffset observedAt, string machineId, CancellationToken token)
+    {
+        int completed;
+        int targetCount;
+        await using (var query = connection.CreateCommand())
+        {
+            query.Transaction = transaction;
+            query.CommandText = """
+                SELECT completed_cycle_count,target_cycle_count
+                FROM production_run_programs
+                WHERE id=$programId AND production_run_id=$runId AND status='ACTIVE';
+                """;
+            query.Parameters.AddWithValue("$programId", target.ProgramId);
+            query.Parameters.AddWithValue("$runId", target.RunId);
+            await using var reader = await query.ExecuteReaderAsync(token);
+            if (!await reader.ReadAsync(token))
+                throw new InvalidOperationException("The resolved Production Run Program is no longer active.");
+            completed = reader.GetInt32(0);
+            targetCount = reader.GetInt32(1);
+        }
+        if (completed >= targetCount)
+            throw new InvalidOperationException("The Production Run Program already reached its exact target.");
+
+        var next = checked(completed + 1);
+        var at = Format(observedAt);
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE production_run_outputs
+                SET produced_quantity=produced_quantity+quantity_per_cycle,
+                    status=CASE WHEN produced_quantity+quantity_per_cycle=target_quantity
+                                THEN 'COMPLETED' ELSE 'IN_PRODUCTION' END,
+                    version=version+1,updated_at=$at
+                WHERE production_run_program_id=$programId
+                  AND produced_quantity+quantity_per_cycle<=target_quantity;
+                """;
+            update.Parameters.AddWithValue("$programId", target.ProgramId);
+            update.Parameters.AddWithValue("$at", at);
+            var changed = await update.ExecuteNonQueryAsync(token);
+            await using var count = connection.CreateCommand();
+            count.Transaction = transaction;
+            count.CommandText = "SELECT COUNT(*) FROM production_run_outputs WHERE production_run_program_id=$programId;";
+            count.Parameters.AddWithValue("$programId", target.ProgramId);
+            if (changed != Convert.ToInt32(await count.ExecuteScalarAsync(token)))
+                throw new InvalidOperationException("The cycle would exceed an output target quantity.");
+        }
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE production_run_programs
+                SET completed_cycle_count=$next,
+                    status=CASE WHEN $next=target_cycle_count THEN 'COMPLETED' ELSE 'ACTIVE' END,
+                    version=version+1,updated_at=$at
+                WHERE id=$programId;
+                """;
+            update.Parameters.AddWithValue("$next", next);
+            update.Parameters.AddWithValue("$at", at);
+            update.Parameters.AddWithValue("$programId", target.ProgramId);
+            await update.ExecuteNonQueryAsync(token);
+        }
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE batch_operations
+                SET status=CASE WHEN NOT EXISTS(
+                    SELECT 1 FROM production_run_outputs output
+                    WHERE output.batch_operation_id=batch_operations.id
+                      AND output.target_quantity>output.produced_quantity)
+                    THEN 'completed' ELSE 'started' END,
+                    version=version+1,updated_at=$at
+                WHERE id IN (SELECT batch_operation_id FROM production_run_outputs
+                             WHERE production_run_program_id=$programId);
+                """;
+            update.Parameters.AddWithValue("$programId", target.ProgramId);
+            update.Parameters.AddWithValue("$at", at);
+            await update.ExecuteNonQueryAsync(token);
+        }
+        await using (var propagate = connection.CreateCommand())
+        {
+            propagate.Transaction = transaction;
+            propagate.CommandText = """
+                UPDATE production_batches
+                SET status=CASE WHEN NOT EXISTS(
+                    SELECT 1 FROM batch_operations operation
+                    WHERE operation.production_batch_id=production_batches.id
+                      AND operation.status<>'completed')
+                    THEN 'completed' ELSE 'in_progress' END,
+                    version=version+1,updated_at=$at
+                WHERE id IN(
+                    SELECT DISTINCT operation.production_batch_id
+                    FROM production_run_outputs output
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    WHERE output.production_run_program_id=$programId);
+                UPDATE orders
+                SET status=CASE WHEN NOT EXISTS(
+                    SELECT 1 FROM batch_allocations allocation
+                    JOIN production_batches batch ON batch.id=allocation.production_batch_id
+                    WHERE allocation.order_id=orders.id AND batch.status<>'completed')
+                    THEN 'complete' ELSE 'active' END,
+                    version=version+1,updated_at=$at
+                WHERE id IN(
+                    SELECT DISTINCT allocation.order_id
+                    FROM production_run_outputs output
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    JOIN batch_allocations allocation
+                      ON allocation.production_batch_id=operation.production_batch_id
+                    WHERE output.production_run_program_id=$programId
+                      AND allocation.order_id IS NOT NULL);
+                """;
+            propagate.Parameters.AddWithValue("$programId", target.ProgramId);
+            propagate.Parameters.AddWithValue("$at", at);
+            await propagate.ExecuteNonQueryAsync(token);
+        }
+        var remaining = await ScalarAsync(connection, transaction,
+            "SELECT COUNT(*) FROM production_run_programs WHERE production_run_id=$id AND status<>'COMPLETED';",
+            target.RunId, token);
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE production_runs SET status=$status,version=version+1,updated_at=$at WHERE id=$id;";
+            update.Parameters.AddWithValue("$status", remaining == 0 ? "COMPLETED" : "IN_PROGRESS");
+            update.Parameters.AddWithValue("$at", at);
+            update.Parameters.AddWithValue("$id", target.RunId);
+            await update.ExecuteNonQueryAsync(token);
+        }
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO production_run_cycle_events(
+                    id,production_run_id,production_run_program_id,source,source_event_id,
+                    observed_at,completed_cycle_count,created_at,updated_at)
+                VALUES($id,$runId,$programId,$source,$sourceEventId,$at,$next,$at,$at);
+                """;
+            insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+            insert.Parameters.AddWithValue("$runId", target.RunId);
+            insert.Parameters.AddWithValue("$programId", target.ProgramId);
+            insert.Parameters.AddWithValue("$source", source);
+            insert.Parameters.AddWithValue("$sourceEventId", sourceEventId);
+            insert.Parameters.AddWithValue("$at", at);
+            insert.Parameters.AddWithValue("$next", next);
+            await insert.ExecuteNonQueryAsync(token);
+        }
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
+            new("production_run_program_cycle_completed", observedAt, "cnc-system",
+                new Dictionary<string, string>
+                {
+                    ["machineId"] = machineId,
+                    ["productionRunId"] = target.RunId,
+                    ["productionRunProgramId"] = target.ProgramId
+                }, "CNC_OBSERVATION", null, null,
+                new { source, sourceEventId, completedCycleCount = next, targetCycleCount = targetCount }), token);
+        return next;
+    }
+
     private static async Task<int> ScalarAsync(Microsoft.Data.Sqlite.SqliteConnection c,Microsoft.Data.Sqlite.SqliteTransaction t,string sql,string id,CancellationToken token){await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=sql;q.Parameters.AddWithValue("$id",id);return Convert.ToInt32(await q.ExecuteScalarAsync(token));}
+    private static object Db(object? value) => value ?? DBNull.Value;
     private static string Format(DateTimeOffset value)=>value.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture);
+
+    private sealed record CycleTarget(string RunId, string ProgramId, string? NcReleaseId);
+    private sealed record LatestCycleWorkflow(
+        string EventType, string Source, long? Sequence, DateTimeOffset ReceivedAt,
+        string? ProgramId);
 }

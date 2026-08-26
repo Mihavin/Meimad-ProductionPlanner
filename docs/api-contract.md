@@ -10,7 +10,7 @@ Case/Batch Operation representations include external-delay fields. Planning Boa
 
 `GET|PUT|DELETE /api/v1/master-calendar` reads, selects, or clears the global Israel Master Calendar; mutations require Edit Mode. Machine and employee-resource representations accept/return `respectMasterCalendar`. Working-day external delay requires a whole-number duration and selected active Working Calendar; Timeline dependency calculations count that calendar's working dates and intersect it with the master when enabled.
 
-- **Status:** Draft target contract; schema-v26 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, and E-Ink read/simulator slices are implemented as identified below; E-Ink `SEND_TO_QC` is approved but not Server-implemented
+- **Status:** Draft target contract; schema-v26 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, E-Ink read/simulator, scoped `SEND_TO_QC`, and Windows QC Queue slices are implemented as identified below
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -37,7 +37,7 @@ device tests pass.
 - Case, Order, Batch creation/read, Machine and Machine Type master data, Working Calendar CRUD and Setup Calendar selection, Machine backlog read, BatchOperation assignment, Single Edit Mode, TV Dashboard, and the E-Ink routes identified below are implemented. Other planning routes remain proposed.
 - The source's conceptual `/api/eink/...` paths are implemented as `/api/v1/eink/...`. Future compatibility guarantees/OpenAPI freezing remain TBD.
 - JSON field names are `camelCase` except the approved Task 5 compatibility routes under `/api/tablets/{tablet_id}`, which preserve their explicit `snake_case` wire contract. Examples explicitly labeled Implemented describe the tested wire shape; approved-but-unimplemented examples remain target behavior until the Server tests pass and OpenAPI is updated.
-- Human/TV authentication and authorization mechanisms remain TBD. E-Ink device reads use implemented revocable bearer tokens with stored SHA-256 hashes and device/Machine scoping; the same credential will need a separate `SEND_TO_QC` capability check when that route is implemented.
+- Human/TV authentication and authorization mechanisms remain TBD. E-Ink device reads and the exact `SEND_TO_QC` route use implemented revocable bearer tokens with stored SHA-256 hashes and device/Machine scoping; every other mutation remains forbidden to that credential.
 
 Do not implement client and server independently against unreviewed examples. Freeze an OpenAPI document and simulator after Phase 0 decisions, then treat compatibility changes deliberately.
 
@@ -1385,7 +1385,9 @@ MEIMAD/V/1/EVENT/<CODE>/ID/<SOURCE_EVENT_ID>/SEQ/<NONNEGATIVE_INTEGER>/MACROVERS
 
 The v1 event codes are `OLC`, `SVR`, `SVS`, `SVF`, `STQ`, `QCP`, `QCF`, `CST`, `CEN`, `CIN`, `PSO`, and `PSC`, mapping in order to the workflow event types defined above. This representation deliberately avoids `|`, `=`, `_`, and other punctuation outside Haas's documented DPRNT literal-text set. The complete line accepts only uppercase letters, digits, `/`, and `-`; IDs use the same set without `/`.
 
-Optional fields may be omitted but, when present, remain in the displayed order. Unknown, duplicate, reordered, empty, malformed, unsupported, lowercase, or whitespace-containing fields fail parsing. `OLC` requires both `OFFSETRELEASE` and `NONCE` as six-digit integers; other currently defined event codes reject those two fields. Only an enabled Machine configuration, matching expected macro version, optional matching Run, current release token, and schema-v51 NC hook allow this event to enter `production_run_workflow_events`. `(source, sourceEventId)` is idempotent. Sequence gaps/out-of-order values produce immutable anomaly rows while preserving the received event and never inventing missing events. Other parsed event types remain raw diagnostics until their later milestone owns validation and projection.
+Optional fields may be omitted but, when present, remain in the displayed order. Unknown, duplicate, reordered, empty, malformed, unsupported, lowercase, or whitespace-containing fields fail parsing. `OLC` requires both `OFFSETRELEASE` and `NONCE` as six-digit integers; other currently defined event codes reject those two fields. Only an enabled Machine configuration, matching expected macro version, optional matching Run, current release token, and schema-v51 NC hook allow `OLC` to enter `production_run_workflow_events`. `(source, sourceEventId)` is idempotent. Sequence gaps/out-of-order values produce immutable anomaly rows for retained events and never cause synthetic events.
+
+`CST` and `CEN` are implemented production observations. The Server resolves exactly one assigned `IN_PROGRESS` Run and `ACTIVE` Run Program; optional `RUN` and `PROGRAM` fields must match it. `PROGRAM` may carry the Run Program ID, pinned release filename, or preferably the pinned release's stable six-digit NC identity. A START requires the latest Run workflow event to be `QC_PASS` or a valid preceding `CYCLE_END`. An END must immediately follow the same-source START for the same resolved program and use `start.sequence + 1`. Only that valid END appends a `production_run_cycle_events` row and advances all program outputs atomically. Duplicate END delivery returns the original observation without a second increment. Controller counters and all other parsed event types remain raw/monitoring diagnostics until a later milestone owns them.
 
 This contract is a foundation, not completed setup verification. Schema v51 selects the generic-hook fallback, so the protected call's stored six-digit identity—not `PROGRAM`—is the intended exact NC release input. `PROGRAM` remains untrusted Machine evidence. Schema v52 atomically creates one `PENDING` session with the retained `OLC` event. The immutable session context contains Machine, Run, exact NC/Offset Loader releases, six-digit nonce, macro version, response width, creation, expiration, and source event; it stores no secret or response. A newer Offset Loader supersedes a live session. The existing assigned-tablet status route uses the physically matched algorithm under the fail-closed contract in section 8.9; there is no separate response-code endpoint. Commissioned production macro input, success/failure ingestion, and execution blocking remain unimplemented.
 
@@ -1455,9 +1457,9 @@ All E-Ink routes require an implemented revocable `mp_eink_...` bearer credentia
 | `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/files/{fileId}` | Download one authorized manifest file or preview. |
 | `GET` | `/api/v1/eink/devices/{deviceId}/time-config` | Read workday, shift-window, and polling configuration. |
 | `GET` | `/api/tablets/{tablet_id}/status` | Implemented authenticated physical-firmware status projection. |
-| `POST` | `/api/tablets/{tablet_id}/events` | Approved `SEND_TO_QC` operational command; Server implementation pending. |
+| `POST` | `/api/tablets/{tablet_id}/events` | Implemented idempotent `SEND_TO_QC` operational command. |
 
-The currently implemented device routes are GET-only. The approved POST event route is the only exception once implemented. E-Ink credentials receive `403` on planning, Edit Mode, TV, device-registration administration, every other mutation, and any future telemetry route not explicitly scoped to that credential. A path/credential device mismatch returns scoped `404` so it does not reveal another device's registration.
+E-Ink planning/package routes remain GET-only. The implemented POST event route is the sole scoped exception. E-Ink credentials receive `403` on planning, Edit Mode, TV, device-registration administration, every other mutation, and any future telemetry route not explicitly scoped to that credential. A path/credential device mismatch returns scoped `404` so it does not reveal another device's registration.
 
 ### 8.0 Registration and binding administration
 
@@ -1670,11 +1672,13 @@ Automatic checks are permitted only inside these workday/shift windows. The cont
 
 There is intentionally no route to upload tool checks, local statuses, or comments. The manifest supplies checklist seed data and declares device-SD storage with `syncToServer: false`; completed marks and comments remain on the tablet.
 
-### 8.7 Telemetry decision
+### 8.7 Operational contact metadata
 
-The source's optional `GET .../ping?battery=...&fw=...` is not part of the baseline because it creates a side effect and conflicts with the stated read-only boundary.
-
-If telemetry is explicitly approved later, use a separately scoped, rate-limited command such as `POST /api/v1/eink/devices/{deviceId}/telemetry`, keep its fields bounded, and guarantee that it cannot mutate planning state. Treat last-seen/battery/firmware as operational records only.
+Authenticated ping, status, and event calls record only bounded last-contact,
+battery, firmware, local-IP, and RSSI observations in the device registry. This
+operational metadata is exposed to the Windows User Terminals monitor and cannot
+mutate planning, package, workflow, quantity, execution, or backlog state. There
+is no separate general telemetry mutation endpoint.
 
 ### 8.8 E-Ink error behavior
 
@@ -1697,12 +1701,12 @@ GET /api/tablets/{tablet_id}/status
 POST /api/tablets/{tablet_id}/events
 ```
 
-The authenticated GET status route, schema-v49 event-driven projection, and schema-v52 setup-verification response projection are implemented.
-The shared event table is append-only and retains Server receipt time separately
-from optional Machine time. The POST event route remains pending. The physical firmware compiles the guarded
-button binding described below, but it is not yet end-to-end or physically
-verified. Until the POST exception is added, the existing E-Ink guard continues
-to reject device-credential POSTs.
+The authenticated GET status route, schema-v49 event-driven projection,
+schema-v52 setup-verification response projection, schema-v54 idempotent
+`SEND_TO_QC` POST, and schema-v55 repeat-inspection behavior are implemented. The shared event table is append-only and
+retains Server receipt time separately from optional Machine time. The physical
+firmware compiles the guarded button binding and compatible request/response
+parser, but the interaction is not physically verified.
 
 The GET response uses `revision`, `tablet_id`, `machine`, `nc_run`, `part`,
 `operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP`, `IN_SETUP_RUN`,
@@ -1758,13 +1762,12 @@ return the actual Machine Number.
 `nc_run.id` is a Production Run ID, never a Batch Operation ID. The complete
 wire contract uses opaque string IDs; the firmware temporarily accepts numeric
 IDs from early example fixtures for compatibility but must not infer meaning
-from either representation. The current reversible projection maps
-`DRAFT`/`PLANNED` to `READY_FOR_SETUP`, `IN_PROGRESS` with zero completed cycles
-to `IN_SETUP_RUN`, `IN_PROGRESS` after the first completed cycle to
-`IN_PRODUCTION`, `SUSPENDED` or an inactive Machine to `BLOCKED`, and an existing
-tablet QC event to `IN_QC`. No persisted planning fact is changed by this
-mapping. `READY_FOR_PRODUCTION` and the transition out of QC remain open
-decisions. The approved `SEND_TO_QC` transition is exactly
+from either representation. The current reversible projection maps no workflow
+event to `READY_FOR_SETUP`; Offset Loader/verification-request/failure events to
+`IN_SETUP`; verification success or `QC_FAIL` to `IN_SETUP_RUN`; `SEND_TO_QC` to
+`IN_QC`; `QC_PASS` to `READY_FOR_PRODUCTION`; and cycle/session-open events to
+`IN_PRODUCTION`. A suspended Run or inactive Machine is always `BLOCKED`. No
+persisted planning fact is changed by this mapping. The approved `SEND_TO_QC` transition is exactly
 `IN_SETUP_RUN -> IN_QC` for the same resolved Production Run. A repeated command
 while that same run remains `IN_QC` is an idempotent success.
 
@@ -1807,8 +1810,9 @@ accepted response, an `IN_QC` follow-up after an uncertain POST result, an
 explicit rejection, and an uncertain result produce distinct temporary
 on-screen notices. If the POST result is uncertain and the follow-up GET also
 fails, the firmware selects its conservative timer retry policy. Server-side
-per-run idempotency remains mandatory across reboot, lost response, or later
-wake cycles. This mapping is an implemented prototype decision, while enclosure
+per-inspection-attempt idempotency remains mandatory across reboot, lost
+response, or later wake cycles. A `QC_FAIL` creates new setup eligibility and
+therefore permits a later distinct send. This mapping is an implemented prototype decision, while enclosure
 labels, hold ergonomics, and physical debounce/wake behavior remain OD-029 and
 hardware-acceptance work.
 
@@ -1831,14 +1835,16 @@ Successful response:
 {
   "tablet_id": "3041",
   "event_type": "SEND_TO_QC",
-  "timestamp": "2026-08-25T10:15:30Z"
+  "timestamp": "2026-08-25T10:15:30Z",
+  "duplicate": false
 }
 ```
 
-On first acceptance, the Server atomically creates one append-only tablet QC
-event and matching audit entry using Server UTC, changes only the tablet
-workflow projection to `IN_QC`, and advances the status revision. A retry for
-the same Production Run returns `200` with the original timestamp and creates
+On first acceptance, the Server atomically creates one append-only audited tablet QC
+workflow event using Server UTC, changes only the tablet
+workflow projection to `IN_QC`, and advances the status revision. A retry while
+the same Production Run remains in that inspection attempt returns `200`,
+`duplicate: true`, and the original timestamp, and creates
 no duplicate event or revision. The command does not assign, reorder, start,
 suspend, finish, allocate, count cycles, change Production Run lifecycle, alter
 readiness, or publish/modify package content.
@@ -1847,9 +1853,11 @@ Error behavior is bounded and device-scoped:
 
 | HTTP | Code | Meaning |
 |---:|---|---|
-| `400` | `invalid_tablet_event_request` | Malformed JSON, extra targeting/timestamp fields, or missing `event_type`. |
-| `404` | `device_resource_not_found` | Unknown, disabled, revoked, unbound, or path/credential-mismatched tablet. |
-| `409` | `tablet_event_not_allowed` | No unique run in `IN_SETUP_RUN`, or current workflow state does not permit the event. |
+| `400` | framework validation | Malformed JSON that cannot be parsed. |
+| `404` | `device_resource_not_found` | Unknown, disabled, revoked, or path/credential-mismatched tablet. |
+| `409` | `tablet_unassigned` / `tablet_no_current_run` | The authenticated tablet has no Machine or current Run. |
+| `409` | `tablet_event_not_allowed` | The resolved current workflow state is not `IN_SETUP_RUN`. |
+| `422` | `tablet_event_invalid` | The JSON is not an object containing only `event_type`, including any client-supplied target/time field. |
 | `422` | `unsupported_tablet_event` | `event_type` is not exactly `SEND_TO_QC`. |
 | `503` | `service_unavailable` | Server cannot complete the atomic event/status write. |
 
@@ -1878,12 +1886,82 @@ The eventual Server health record has this normalized shape, with
 { "battery_voltage": 3.91 }
 ```
 
-The current Server may ignore the headers. A future Server implementation must
-authenticate/path-scope the device, assign the receipt timestamp, validate a
-finite voltage within a documented hardware range, store bounded per-tablet
-history independently of planning/workflow tables, and retain device-health
-failure behavior separately from `SEND_TO_QC`. No extra firmware POST is made
-until that endpoint and retention policy are implemented.
+The current Server authenticates/path-scopes the device, assigns the receipt
+timestamp, validates bounded header values, and stores the latest observation
+independently of planning and tablet workflow state. Bounded observation
+history and its retention policy remain future work. No extra firmware POST is
+made for this metadata.
+
+### 8.11 Windows QC Queue and decision contract
+
+```http
+GET /api/v1/qc-queue
+POST /api/v1/qc-queue/{productionRunId}/decision
+```
+
+The GET route is implemented and read-only, requiring no Edit Mode authority.
+It returns one row per Production Run whose latest immutable workflow event is
+`SEND_TO_QC`, ordered by Server receipt time. Multi-output work remains one
+atomic row; `part` and `operation` are stable joined summaries of all outputs.
+`setupistId` and `setupistName` come from the latest official package snapshot
+when known and otherwise are null.
+
+```json
+{
+  "items": [{
+    "productionRunId": "run-42",
+    "machineId": "machine-10",
+    "machineNumber": "M10",
+    "machineName": "VF-3",
+    "part": "P-12345",
+    "operation": "OP30 Finish",
+    "receivedAt": "2026-08-26T10:15:30Z",
+    "setupistId": "employee-7",
+    "setupistName": "Setup Worker"
+  }]
+}
+```
+
+The decision route requires `X-Meimad-Client-Id`, `X-Meimad-User-Id`, and the
+active `X-Meimad-Edit-Generation`; both client and user must match the current
+holder. It accepts only:
+
+```json
+{ "decision": "PASS", "reason": "First article accepted" }
+```
+
+`decision` is exactly `PASS` or `FAIL`; `reason` is optional and limited to
+1000 characters. The Server rechecks inside one immediate transaction that the
+latest event is still `SEND_TO_QC`, then appends `QC_PASS` or `QC_FAIL` with the
+acting user, Server UTC, and reason metadata. `PASS` projects
+`READY_FOR_PRODUCTION`; its event timestamp is returned as
+`productionApprovedAt`. `FAIL` projects `IN_SETUP_RUN`, returns null approval
+time, and permits a later tablet send as a new inspection attempt.
+
+```json
+{
+  "eventId": "qc-event-1",
+  "productionRunId": "run-42",
+  "decision": "PASS",
+  "resultingStatus": "READY_FOR_PRODUCTION",
+  "userId": "local-user-id",
+  "reason": "First article accepted",
+  "timestamp": "2026-08-26T10:22:00Z",
+  "productionApprovedAt": "2026-08-26T10:22:00Z"
+}
+```
+
+The decision writes no CNC variable and changes no planning, assignment,
+backlog, package, quantity, cycle, or Production Run lifecycle fact. E-Ink
+credentials receive `403` on this route.
+
+| HTTP | Code | Meaning |
+|---:|---|---|
+| `404` | `qc_production_run_not_found` | The Production Run does not exist. |
+| `409` | `edit_authority_required` | The caller does not hold the active Edit Mode generation. |
+| `409` | `qc_decision_not_allowed` | The latest event is not `SEND_TO_QC`; the Run is not currently `IN_QC`. |
+| `422` | `qc_decision_invalid` | Decision, Run identity, or user identity is invalid. |
+| `422` | `qc_reason_too_long` | The optional reason exceeds 1000 characters. |
 
 ## 9. Caching and consistency
 
@@ -1959,9 +2037,10 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Single Edit Mode | `/edit-mode`, `/edit-mode/requests`, request outcome/decision, `/edit-mode/release` | Implemented development identity headers; Windows-only credential policy pending auth. |
 | TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
-| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; authenticated `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, token-plus-MAC bootstrap, and Production-Run-backed physical status. The event compatibility route remains pending; `SEND_TO_QC` is the only approved device mutation. |
+| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; authenticated `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, token-plus-MAC bootstrap, Production-Run-backed physical status, and idempotent `SEND_TO_QC`; it is the only approved device mutation. |
+| QC Queue | `/qc-queue`, `/qc-queue/{productionRunId}/decision` | Windows read in View Mode; PASS/FAIL require the active editor and append user-attributed events. |
 
-Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, and E-Ink simulator described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
+Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, E-Ink simulator, and Windows QC Queue described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 
 The contract cannot be frozen until the API, identity, edit-token, data-model, timeline, rendering, package, and telemetry questions in [Implementation plan](implementation-plan.md#open-decisions) are resolved.
 ## Production Run API target
