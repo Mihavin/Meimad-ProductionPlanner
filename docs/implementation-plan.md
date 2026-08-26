@@ -61,6 +61,15 @@ typed immutable anomaly evidence without changing quantities. Existing sequence
 gap/out-of-order rows are preserved by the ordered migration; retries cannot
 duplicate interruption or anomaly facts.
 
+Task 20 is implemented without a schema change. Manual Production Run cycle
+commands and validated CNC `CYCLE_END` observations now call one shared
+schema-v47 accounting component inside their caller-owned SQLite transaction.
+That component alone applies exact target/overproduction guards, increments all
+coupled outputs, completes programs/runs, propagates Batch Operation, Batch, and
+Order status, appends the idempotent cycle row, and writes the structured audit
+fact. Windows retains Edit Mode/version checks; CNC retains post-QC START/END,
+Machine/Run/program resolution, sequence, anomaly, and source-event checks.
+
 ## Multi-output Production Run workstream
 
 Task 1 was accepted on 2026-08-23. Tasks 2–10 are implemented: schema v45 adds reusable Manufacturing Programs, v46 adds Production Runs and assignment migration, and v47 adds durable idempotent cycle observations. Server APIs cover composition, allocation, assignment, readiness, execution, cancellation, and reads. Planning Board and Timeline expose compressed run/program projections; Windows provides the multi-select Production Run dialog. Task 18 restricts automatic CNC advancement to a valid post-QC DPRINT START/END pair resolved to exactly one active program; normalized part counters remain diagnostic. The architecture impact map remains authoritative.

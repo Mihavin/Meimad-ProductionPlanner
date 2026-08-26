@@ -290,6 +290,64 @@ public sealed class MigrationTests
     }
 
     [Fact]
+    public async Task Version_56_preserves_sequence_anomalies_and_accepts_orphan_cycle_evidence()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            "Data Source=:memory:;Foreign Keys=False");
+        await connection.OpenAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.CommandText = """
+                CREATE TABLE production_run_workflow_anomalies (
+                    id TEXT PRIMARY KEY,production_run_id TEXT NOT NULL,machine_id TEXT NOT NULL,
+                    source TEXT NOT NULL,source_event_id TEXT NOT NULL,
+                    anomaly_type TEXT NOT NULL CHECK(anomaly_type IN(
+                        'EVENT_SEQUENCE_GAP','EVENT_SEQUENCE_OUT_OF_ORDER')),
+                    previous_sequence INTEGER NOT NULL,expected_sequence INTEGER NOT NULL,
+                    received_sequence INTEGER NOT NULL,workflow_event_id TEXT NOT NULL,
+                    detected_at TEXT NOT NULL,details_json TEXT NOT NULL DEFAULT '{}',
+                    UNIQUE(source,source_event_id,anomaly_type));
+                CREATE INDEX ix_production_run_workflow_anomalies_machine_time
+                    ON production_run_workflow_anomalies(machine_id,detected_at DESC,id);
+                CREATE TRIGGER production_run_workflow_anomalies_immutable_update
+                    BEFORE UPDATE ON production_run_workflow_anomalies
+                    BEGIN SELECT RAISE(ABORT,'Workflow anomalies are immutable'); END;
+                CREATE TRIGGER production_run_workflow_anomalies_immutable_delete
+                    BEFORE DELETE ON production_run_workflow_anomalies
+                    BEGIN SELECT RAISE(ABORT,'Workflow anomalies are immutable'); END;
+                INSERT INTO production_run_workflow_anomalies VALUES(
+                    'old','run','machine','SOURCE','EVENT','EVENT_SEQUENCE_GAP',
+                    10,11,12,'workflow','2026-08-26T00:00:00Z','{}');
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        await using (var transaction = connection.BeginTransaction())
+        {
+            await new SchemaV56CycleWorkflowAnomaliesMigration().ApplyAsync(
+                connection, transaction, default);
+            await transaction.CommitAsync();
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT anomaly_type || ':' || previous_sequence || ':' || received_sequence FROM production_run_workflow_anomalies WHERE id='old';";
+        Assert.Equal("EVENT_SEQUENCE_GAP:10:12", await command.ExecuteScalarAsync());
+        command.CommandText = """
+            INSERT INTO production_run_workflow_anomalies(
+                id,production_run_id,machine_id,source,source_event_id,anomaly_type,
+                previous_sequence,expected_sequence,received_sequence,workflow_event_id,
+                detected_at,details_json)
+            VALUES('orphan','run','machine','SOURCE','END',
+                   'CYCLE_END_WITHOUT_START',NULL,NULL,20,'workflow',
+                   '2026-08-26T00:00:01Z','{}');
+            """;
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        command.CommandText = "UPDATE production_run_workflow_anomalies SET received_sequence=21 WHERE id='orphan';";
+        await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(
+            () => command.ExecuteNonQueryAsync());
+    }
+
+    [Fact]
     public async Task Version_45_preserves_multi_revision_release_history_and_adds_single_output_recipes()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();

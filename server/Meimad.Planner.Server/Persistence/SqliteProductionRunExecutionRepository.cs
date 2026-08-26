@@ -69,78 +69,13 @@ internal sealed class SqliteProductionRunExecutionRepository(
             }
         }
         await EnsureRunAsync(connection, transaction, runId, expectedVersion, ["IN_PROGRESS"], token);
-        int completed, target; string status;
-        await using (var query = connection.CreateCommand())
-        {
-            query.Transaction = transaction;
-            query.CommandText = "SELECT completed_cycle_count,target_cycle_count,status FROM production_run_programs WHERE id=$program AND production_run_id=$run;";
-            query.Parameters.AddWithValue("$program", programId); query.Parameters.AddWithValue("$run", runId);
-            await using var reader = await query.ExecuteReaderAsync(token);
-            if (!await reader.ReadAsync(token)) throw new ProductionRunNotFoundException(programId);
-            completed = reader.GetInt32(0); target = reader.GetInt32(1); status = reader.GetString(2);
-        }
-        if (status != "ACTIVE") throw new ProductionRunStateException("program_not_active", "Only the active Production Run Program can record a cycle.");
-        if (completed >= target) throw new ProductionRunStateException("program_cycle_overrun", "The program already reached its exact target-cycle count.");
-        var next = checked(completed + 1); var now = timeProvider.GetUtcNow(); var programComplete = next == target;
-        await using (var update = connection.CreateCommand())
-        {
-            update.Transaction = transaction;
-            update.CommandText = """
-                UPDATE production_run_outputs
-                SET produced_quantity=produced_quantity+quantity_per_cycle,
-                    status=CASE WHEN produced_quantity+quantity_per_cycle=target_quantity THEN 'COMPLETED' ELSE 'IN_PRODUCTION' END,
-                    version=version+1,updated_at=$at
-                WHERE production_run_program_id=$program
-                  AND produced_quantity+quantity_per_cycle<=target_quantity;
-                """;
-            update.Parameters.AddWithValue("$program", programId); update.Parameters.AddWithValue("$at", Format(now));
-            var changed = await update.ExecuteNonQueryAsync(token);
-            await using var count = connection.CreateCommand(); count.Transaction = transaction;
-            count.CommandText = "SELECT COUNT(*) FROM production_run_outputs WHERE production_run_program_id=$program;";
-            count.Parameters.AddWithValue("$program", programId);
-            if (changed != Convert.ToInt32(await count.ExecuteScalarAsync(token)))
-                throw new ProductionRunStateException("output_overproduction", "The cycle would exceed an output target quantity.");
-        }
-        await using (var update = connection.CreateCommand())
-        {
-            update.Transaction = transaction;
-            update.CommandText = "UPDATE production_run_programs SET completed_cycle_count=$next,status=$status,version=version+1,updated_at=$at WHERE id=$program;";
-            update.Parameters.AddWithValue("$next", next); update.Parameters.AddWithValue("$status", programComplete ? "COMPLETED" : "ACTIVE");
-            update.Parameters.AddWithValue("$at", Format(now)); update.Parameters.AddWithValue("$program", programId); await update.ExecuteNonQueryAsync(token);
-        }
-        await using (var operation = connection.CreateCommand())
-        {
-            operation.Transaction = transaction;
-            operation.CommandText = """
-                UPDATE batch_operations SET status=CASE
-                    WHEN (SELECT SUM(target_quantity-produced_quantity) FROM production_run_outputs WHERE batch_operation_id=batch_operations.id)=0 THEN 'completed'
-                    ELSE 'started' END,
-                    version=version+1,updated_at=$at
-                WHERE id IN (SELECT batch_operation_id FROM production_run_outputs WHERE production_run_program_id=$program);
-                """;
-            operation.Parameters.AddWithValue("$program", programId); operation.Parameters.AddWithValue("$at", Format(now)); await operation.ExecuteNonQueryAsync(token);
-        }
-        var allComplete = await ScalarIntAsync(connection, transaction,
-            "SELECT COUNT(*) FROM production_run_programs WHERE production_run_id=$id AND status<>'COMPLETED';", runId, token) == 0;
-        await using (var runUpdate = connection.CreateCommand())
-        {
-            runUpdate.Transaction = transaction;
-            runUpdate.CommandText = "UPDATE production_runs SET status=$status,version=version+1,updated_at=$at WHERE id=$id;";
-            runUpdate.Parameters.AddWithValue("$status", allComplete ? "COMPLETED" : "IN_PROGRESS"); runUpdate.Parameters.AddWithValue("$at", Format(now)); runUpdate.Parameters.AddWithValue("$id", runId);
-            await runUpdate.ExecuteNonQueryAsync(token);
-        }
-        await using (var insert = connection.CreateCommand())
-        {
-            insert.Transaction = transaction;
-            insert.CommandText = "INSERT INTO production_run_cycle_events(id,production_run_id,production_run_program_id,source,source_event_id,observed_at,completed_cycle_count,created_at,updated_at) VALUES($id,$run,$program,$source,$event,$observed,$count,$at,$at);";
-            insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N")); insert.Parameters.AddWithValue("$run", runId); insert.Parameters.AddWithValue("$program", programId);
-            insert.Parameters.AddWithValue("$source", command.Source); insert.Parameters.AddWithValue("$event", command.SourceEventId); insert.Parameters.AddWithValue("$observed", Format(command.ObservedAt));
-            insert.Parameters.AddWithValue("$count", next); insert.Parameters.AddWithValue("$at", Format(now)); await insert.ExecuteNonQueryAsync(token);
-        }
-        await PropagateParentsAsync(connection, transaction, programId, now, token);
-        await AuditAsync(connection, transaction, "production_run_program_cycle_completed", actor, runId, programId,
-            new { command.Source, command.SourceEventId, completedCycleCount = next, targetCycleCount = target, programComplete, runComplete = allComplete }, now, token);
-        await transaction.CommitAsync(token); return new((await runs.GetAsync(runId, token))!, false, next);
+        var now = timeProvider.GetUtcNow();
+        var result = await SqliteProductionRunCycleAccounting.RecordAsync(
+            connection, transaction, new(
+                runId, programId, command.Source, command.SourceEventId,
+                command.ObservedAt, now, actor, "PRODUCTION_EXECUTION"), token);
+        await transaction.CommitAsync(token);
+        return new((await runs.GetAsync(runId, token))!, false, result.CompletedCycleCount);
     }
 
     public Task<ProductionRun> SuspendAsync(string runId, int expectedVersion, string reason, EditAuthority authority, CancellationToken token) =>
@@ -174,12 +109,5 @@ internal sealed class SqliteProductionRunExecutionRepository(
     private static async Task ExecuteAsync(SqliteConnection c,SqliteTransaction t,string sql,string id,DateTimeOffset at,CancellationToken token){await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=sql;q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$at",Format(at));await q.ExecuteNonQueryAsync(token);}
     private static async Task<int> ScalarIntAsync(SqliteConnection c,SqliteTransaction t,string sql,string id,CancellationToken token){await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=sql;q.Parameters.AddWithValue("$id",id);return Convert.ToInt32(await q.ExecuteScalarAsync(token));}
     private static async Task AuditAsync(SqliteConnection c,SqliteTransaction t,string name,string actor,string run,string? program,object? after,DateTimeOffset at,CancellationToken token){var ids=new Dictionary<string,string>{{"productionRunId",run}};if(program is not null)ids["productionRunProgramId"]=program;await SqliteStructuredEventLogRepository.AppendAsync(c,t,new(name,at,actor,ids,"PRODUCTION_EXECUTION",null,null,after),token);}
-    private static async Task PropagateParentsAsync(SqliteConnection c,SqliteTransaction t,string program,DateTimeOffset at,CancellationToken token)
-    {await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="""
-        UPDATE production_batches SET status=CASE WHEN NOT EXISTS(SELECT 1 FROM batch_operations o WHERE o.production_batch_id=production_batches.id AND o.status<>'completed') THEN 'completed' ELSE 'in_progress' END,version=version+1,updated_at=$at
-        WHERE id IN(SELECT DISTINCT o.production_batch_id FROM production_run_outputs x JOIN batch_operations o ON o.id=x.batch_operation_id WHERE x.production_run_program_id=$program);
-        UPDATE orders SET status=CASE WHEN NOT EXISTS(SELECT 1 FROM batch_allocations a JOIN production_batches b ON b.id=a.production_batch_id WHERE a.order_id=orders.id AND b.status<>'completed') THEN 'complete' ELSE 'active' END,version=version+1,updated_at=$at
-        WHERE id IN(SELECT DISTINCT a.order_id FROM production_run_outputs x JOIN batch_operations o ON o.id=x.batch_operation_id JOIN batch_allocations a ON a.production_batch_id=o.production_batch_id WHERE x.production_run_program_id=$program AND a.order_id IS NOT NULL);
-        """;q.Parameters.AddWithValue("$program",program);q.Parameters.AddWithValue("$at",Format(at));await q.ExecuteNonQueryAsync(token);}
     private static string Format(DateTimeOffset v)=>v.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture);
 }

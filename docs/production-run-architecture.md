@@ -206,6 +206,8 @@ Schema v51 implements the selected generic-hook fallback. Each new approved G-co
 
 Task 18 connects post-QC Haas `CYCLE_START`/`CYCLE_END` evidence to this execution architecture without adding a counter model. The Server resolves one assigned active Run Program and validates any supplied Run/program identity. Only a same-source, immediately consecutive END for the open START is a completed cycle. Its immutable workflow event, schema-v47 dedupe record, every coupled output increment, aggregate statuses, and structured audit commit in one transaction. Machine part counters remain diagnostic. Task 19/schema v56 records START/START as an explicit interrupted attempt before opening the new START, and retains orphan or nonconsecutive END events with typed anomalies. Neither path mutates completed quantity.
 
+Task 20 removes the temporary duplication between manual and CNC cycle updates. Both now invoke one shared SQLite transaction component for exact-cycle guards, every coupled output, program/run and Batch Operation/Batch/Order propagation, the schema-v47 cycle record, and structured audit. Caller-specific Edit Mode/version checks and CNC workflow/identity/sequence checks remain outside that component and are not weakened.
+
 Read models:
 
 - Planning Board returns run cards in Machine backlogs and Batch Operations with remaining unallocated quantity in the pool.

@@ -1,20 +1,20 @@
 # Architectural and correctness verification report
 
-This report retains earlier milestone evidence below. The current Task 18 aggregate results are the separately executed Debug suites recorded here.
+This report retains earlier milestone evidence below. The current Task 20 aggregate results are the separately executed Debug suites recorded here.
 
 - **Baseline verification date:** 2026-08-11
 - **Current change review date:** 2026-08-26
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
-- **Verdict:** The current combined Debug evidence is 817 tests (581 Server and 236 Windows Client), with no failures or skips when the two suites are run separately. Task 18 coverage proves strict `CST`/`CEN` parsing, post-QC START gating, matching consecutive END validation, retry idempotency, rejection of premature/orphan/gapped completion, and one-transaction advancement of coupled Production Run outputs. Schema remains v55. Controller counters are diagnostic only. All three ESP32 production, demo, and contract-test targets remain compiled from the preceding milestone; Task 18 changes no firmware source. Physical CNC DPRINT execution, tablet interaction, and factory acceptance remain outstanding.
+- **Verdict:** The current combined Debug evidence is 819 tests (583 Server and 236 Windows Client), with no failures or skips when the two suites are run separately. Task 20 introduces no schema or API change: editor-authorized and validated CNC cycle completions now use one shared transactional accounting component. Existing coverage proves identical coupled-output arithmetic, exact target/overproduction protection, idempotent cycle records, aggregate completion propagation, and caller-specific authorization/workflow boundaries. Controller counters remain diagnostic only. All three ESP32 production, demo, and contract-test targets remain compiled from the preceding milestone; Task 20 changes no firmware source. Physical CNC DPRINT execution, tablet interaction, and factory acceptance remain outstanding.
 
-Current Task 18 Debug result:
+Current Task 20 Debug result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 581 | 0 | 0 |
+| `Meimad.Planner.Server.Tests` | 583 | 0 | 0 |
 | `Meimad.Planner.Client.Windows.Tests` | 236 | 0 | 0 |
-| **Total** | **817** | **0** | **0** |
+| **Total** | **819** | **0** | **0** |
 
 Installer build evidence on 2026-08-18: `installer\build-installers.ps1` published self-contained `win-x64` payloads and produced both MSI packages with WiX 5.0.2. A non-installing administrative extraction verified 641 client files, including `runtimes\win-x64\native\TKernel.dll`, and 400 Server files. Windows Installer table inspection verified the automatic `Meimad Planner Server` ServiceInstall entry and install-start/stop/remove ServiceControl entry. This proves package construction and payload shape, not elevated install/uninstall, upgrade preservation, service recovery, code signing, or production-host acceptance.
 
