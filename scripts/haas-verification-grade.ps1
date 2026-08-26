@@ -9,6 +9,7 @@ param(
 
     [Parameter(Mandatory = $true, ParameterSetName = 'Lines')]
     [AllowEmptyCollection()]
+    [AllowEmptyString()]
     [string[]]$InputLines
 )
 

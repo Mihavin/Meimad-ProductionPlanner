@@ -6,24 +6,43 @@ This report retains earlier milestone evidence below. The current Tasks 24-32 re
 - **Current change review date:** 2026-08-26
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
-- **Verdict:** The current combined Debug evidence is 837 tests (600 Server and 237 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 credits the existing physical VF-3SS public-vector arithmetic result only; every other production commissioning row remains `NOT_TESTED`, so protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
+- **Verdict:** The current combined Debug evidence is 838 tests (600 Server and 238 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 credits the existing physical VF-3SS public-vector arithmetic result only; every other production commissioning row remains `NOT_TESTED`, so protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
 
 Current Tasks 24-32 repository Debug result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
 | `Meimad.Planner.Server.Tests` | 600 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 237 | 0 | 0 |
-| **Total** | **837** | **0** | **0** |
+| `Meimad.Planner.Client.Windows.Tests` | 238 | 0 | 0 |
+| **Total** | **838** | **0** | **0** |
 
 Focused development evidence also includes a successful build and `--validate-only`
 run of `tools/Meimad.Planner.CncSimulator/scenario.full.json` (15 strict DPRNT
-events), plus the E-Ink simulator contract test. The integrated CNC workflow test
+events), successful compilation of the production, contract-test, and backend-free
+demo ESP32 environments, plus the E-Ink simulator contract test. The tablet
+administration integration test now also proves that registration, replacement
+assignment/credential rotation, and revocation retain editor-attributed audit rows.
+The integrated CNC workflow test
 uses real Server services and schema rather than an unauthenticated simulator
 mutation endpoint. See [CNC commissioning checklist](cnc-commissioning-checklist.md)
 for the physical evidence still required.
 
-Installer build evidence on 2026-08-18: `installer\build-installers.ps1` published self-contained `win-x64` payloads and produced both MSI packages with WiX 5.0.2. A non-installing administrative extraction verified 641 client files, including `runtimes\win-x64\native\TKernel.dll`, and 400 Server files. Windows Installer table inspection verified the automatic `Meimad Planner Server` ServiceInstall entry and install-start/stop/remove ServiceControl entry. This proves package construction and payload shape, not elevated install/uninstall, upgrade preservation, service recovery, code signing, or production-host acceptance.
+Installer build evidence was refreshed on 2026-08-26: `installer\build-installers.ps1`
+published self-contained `win-x64` version `0.1.38` payloads and produced both MSI
+packages. The final client package is 107,579,629 bytes (SHA-256
+`F23582A0623B20BBDA2DB417B08C09570B38AECA9410C3781A7290A41FFDEC07`) and the
+Server package is 43,090,823 bytes (SHA-256
+`0FEB7C1856FDAE0E1399017B30FFC8548410B9061DDEB0302127C816385096F2`). Both WiX
+builds completed with zero warnings and zero errors. MSI table inspection proves the
+advertised all-users Start Menu shortcut is owned by the executable component in the
+same feature; a source-level regression test guards that relationship. A fresh
+non-installing administrative extraction verified 641 client files, including the
+client executable. The earlier 2026-08-18 extraction additionally recorded
+`runtimes\win-x64\native\TKernel.dll` and 400 Server files. Windows Installer table
+inspection verified the automatic `Meimad Planner Server` ServiceInstall entry and
+install-start/stop/remove ServiceControl entry. This proves package construction and
+payload shape, not elevated install/uninstall, upgrade preservation, service recovery,
+code signing, or production-host acceptance.
 
 ## 0. Schema-v25 change addendum (combined automated pass; manual checks pending)
 

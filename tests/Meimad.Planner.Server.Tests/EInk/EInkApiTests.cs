@@ -717,6 +717,14 @@ public sealed class EInkApiTests
                 $"/api/v1/eink/devices/{deviceId}/version",
                 rotatedToken));
             Assert.Equal(HttpStatusCode.NotFound, revoked.StatusCode);
+
+            var audit = await ReadTabletAdministrationAuditAsync(
+                application.Services, deviceId);
+            Assert.Equal(1, audit.Registered);
+            Assert.Equal(2, audit.RecoveryActions);
+            Assert.Equal(1, audit.CredentialRotations);
+            Assert.Equal(1, audit.Revocations);
+            Assert.Equal(3, audit.AttributedToEditor);
         });
     }
 
@@ -843,6 +851,36 @@ public sealed class EInkApiTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private static async Task<TabletAdministrationAudit> ReadTabletAdministrationAuditAsync(
+        IServiceProvider services,
+        string deviceId)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+              SUM(CASE WHEN event_type='tablet_registered' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN event_type='tablet_administration_recovery' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN event_type='tablet_administration_recovery'
+                        AND json_extract(after_data_json,'$.credentialRotated')=1
+                       THEN 1 ELSE 0 END),
+              SUM(CASE WHEN event_type='tablet_administration_recovery'
+                        AND json_extract(after_data_json,'$.isEnabled')=0
+                       THEN 1 ELSE 0 END),
+              SUM(CASE WHEN user_id='eink-admin-user' THEN 1 ELSE 0 END)
+            FROM structured_event_log
+            WHERE json_extract(related_entity_ids_json,'$.tabletDeviceId')=$deviceId
+              AND event_type IN('tablet_registered','tablet_administration_recovery');
+            """;
+        command.Parameters.AddWithValue("$deviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new(
+            reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
+            reader.GetInt32(3), reader.GetInt32(4));
+    }
+
     private static async Task<string> ReadPlanningFingerprintAsync(IServiceProvider services)
     {
         var database = services.GetRequiredService<SqliteDatabase>();
@@ -887,6 +925,13 @@ public sealed class EInkApiTests
 
     private sealed record QcAuditRow(
         string UserId, string? Reason, DateTimeOffset Timestamp);
+
+    private sealed record TabletAdministrationAudit(
+        int Registered,
+        int RecoveryActions,
+        int CredentialRotations,
+        int Revocations,
+        int AttributedToEditor);
 
     private static async Task<byte[]> SeedAsync(IServiceProvider services, string packageRoot)
     {

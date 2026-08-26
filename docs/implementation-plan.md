@@ -4,6 +4,10 @@ The eleven-item task list extends existing authority boundaries: staged Case/Ord
 
 ## CNC operational workflow workstream
 
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** only for the configured, separately commissioned
+handshake; they never persist or determine Server workflow state.
+
 Milestone A is implemented in schema v49: the persistent CNC Setup/Production variable, its settings/snapshot projections, public read/reset routes, write permission, Windows controls, and macro-write audit table are removed. Immutable `production_run_workflow_events` retain Server receipt time, separate Machine time, source/idempotency identity, optional sequence/release/device/user evidence, and JSON metadata. Tablet status is projected from those events rather than run counters or CNC mode.
 
 Milestone B is implemented in schema v50. It adds immutable Offset Loader releases and an explicit current pointer for the active Production Run/Machine; strict CNC-safe DPRINT v1 parsing; idempotent ingestion of a valid current `OFFSET_LOADER_COMPLETED`; per-source monotonic sequence gap/out-of-order anomalies without invented events; and protected, optimistic per-Machine verification configuration exposed only to Windows planning configuration. A newly created release makes older releases non-current without modifying their approved NC or tool-table releases. Configuration may be stored while disabled, but enabling it does not prove or deploy protected controller macros.

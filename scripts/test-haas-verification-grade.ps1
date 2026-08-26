@@ -58,6 +58,24 @@ if ($identityNotRun.status -ne 'NOT_RUN' -or $identityNotRun.attempted -or
     throw 'Expected vector-only input to leave identity grading not run.'
 }
 
+$identityLinesWithTransportBlank = @('') + [System.IO.File]::ReadAllLines(
+    (Join-Path $fixtures 'haas-verification-identity-pass.txt'))
+$identityWithTransportBlank = ((& $grader -Mode Identity `
+    -InputLines $identityLinesWithTransportBlank) | ConvertFrom-Json)
+if ($identityWithTransportBlank.status -ne 'PASS' -or
+    -not $identityWithTransportBlank.allPassed) {
+    throw 'Expected a blank DPRNT transport record not to prevent identity grading.'
+}
+
+$vectorLinesWithTransportBlank = [System.IO.File]::ReadAllLines(
+    (Join-Path $fixtures 'haas-verification-vectors-pass.txt')) + @('')
+$vectorsWithTransportBlank = ((& $grader `
+    -InputLines $vectorLinesWithTransportBlank) | ConvertFrom-Json)
+if ($vectorsWithTransportBlank.status -ne 'PASS' -or
+    -not $vectorsWithTransportBlank.allPassed) {
+    throw 'Expected a blank DPRNT transport record not to prevent vector grading.'
+}
+
 $candidateRoot = Join-Path $repositoryRoot 'HaasVF3-NC_Example'
 $runnerPath = Join-Path $candidateRoot '9012.CNC'
 $calculatorPath = Join-Path $candidateRoot '9013.CNC'

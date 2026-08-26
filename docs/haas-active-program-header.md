@@ -34,7 +34,7 @@ The share credential field is a reference only. No password is stored in the Mac
 
 The configured VF-3SS agent returned HTTP 200 and MTConnect 1.2 XML from both root `/probe` and `/current`. Meimad's production reader and the full `/haas/test-mtconnect` API path were executed against that agent successfully. The feed reported one device (`VF-3SS`), `AVAILABLE`, controller mode `AUTOMATIC`, execution state, `PROGRAM=1500.CNC`, M30 counters, spindle observations, and Haas macro-range `Source` metadata. The adapter deliberately fetches unfiltered documents because this agent's XPath query behavior is not relied upon.
 
-The probe also exposed macro-range metadata, but those observations are not workflow state. The previously inspected value has no Setup/Production meaning and changing it cannot create a Server workflow transition. This evidence may inform the later protected-verification technical spike, but it does not approve a variable range or challenge/response mapping.
+The probe also exposed macro-range metadata, but those observations are not workflow state. The previously inspected value has no Setup/Production meaning and changing it cannot create a Server workflow transition. The resolved generic-hook decision and public-vector arithmetic spike use separate configured protected temporary variables; this observation does not approve their Machine-specific range, challenge/response mapping, or physical fail-closed behavior.
 
 ## Required VF-3 validation before production enablement
 

@@ -54,7 +54,7 @@ Attach or link sanitized evidence; never record the Machine secret, bearer token
 
 ## Decision and sign-off
 
-Current commissioning decision: **NOT READY — PHYSICAL TESTS NOT EXECUTED**
+Current commissioning decision: **NOT READY — PHYSICAL COMMISSIONING INCOMPLETE**
 
 | Role | Name | Date | Decision/signature |
 |---|---|---|---|

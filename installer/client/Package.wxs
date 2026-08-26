@@ -22,7 +22,6 @@
     <Feature Id="MainFeature" Title="Meimad Production Planner Client" Level="1">
       <ComponentGroupRef Id="ClientPayloadComponents" />
       <ComponentRef Id="ClientExecutableComponent" />
-      <ComponentRef Id="ClientShortcutComponent" />
     </Feature>
   </Package>
 
@@ -33,22 +32,12 @@
           Id="ClientExecutable"
           Source="$(var.ClientExecutableDir)\Meimad.Planner.Client.Windows.exe"
           KeyPath="yes" />
-      </Component>
-      <Component Id="ClientShortcutComponent" Guid="{C06B3371-4F28-4CDA-8657-7BE22F2F7D44}">
-        <RegistryValue
-          Root="HKCU"
-          Key="Software\Meimad\Production Planner"
-          Name="ClientShortcut"
-          Type="integer"
-          Value="1"
-          KeyPath="yes" />
         <Shortcut
           Id="ClientStartMenuShortcut"
           Directory="PROGRAMMENUDIR"
           Name="Meimad Production Planner"
           Description="Open the Meimad Production Planner Windows client"
-          Advertise="no"
-          Target="[#ClientExecutable]"
+          Advertise="yes"
           WorkingDirectory="INSTALLFOLDER" />
         <RemoveFolder
           Id="RemoveClientProgramMenuFolder"

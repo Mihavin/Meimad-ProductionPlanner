@@ -1,7 +1,11 @@
 # Data Model
 
-- **Status:** Logical model plus SQLite schema version 31; implemented Kitaron state includes encrypted connection settings, reviewed mapping, one-way sync status, ownership-aware source links, and Case Component/BOM storage
+- **Status:** Logical model plus implemented SQLite schema version 59, including immutable Production Run workflow events, Offset Loader and setup-verification state, raw cycle attempts/session closure, and the operational-anomaly ledger
 - **Authority:** Server-owned SQLite in MVP
+
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** only inside the configured, separately
+commissioned handshake; they never persist or determine Server workflow state.
 
 This document separates source-required concepts from proposed implementation fields. Logical names use English `camelCase`; implemented SQL names are recorded separately and do not freeze future API JSON.
 

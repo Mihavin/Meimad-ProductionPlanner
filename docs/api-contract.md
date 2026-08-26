@@ -1,5 +1,10 @@
 # API Contract
 
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** only inside the configured, separately
+commissioned handshake. No tablet or ordinary planning contract exposes their
+mapping, nonce, Machine secret/key, or algorithm internals.
+
 NC cycle estimates returned with G-code releases are estimates for one complete NC program
 execution cycle. The `estimateBasis` value is `NC_PROGRAM_EXECUTION_CYCLE`; for migrated
 single-output programs this remains numerically identical to the former per-part estimate.
@@ -10,7 +15,7 @@ Case/Batch Operation representations include external-delay fields. Planning Boa
 
 `GET|PUT|DELETE /api/v1/master-calendar` reads, selects, or clears the global Israel Master Calendar; mutations require Edit Mode. Machine and employee-resource representations accept/return `respectMasterCalendar`. Working-day external delay requires a whole-number duration and selected active Working Calendar; Timeline dependency calculations count that calendar's working dates and intersect it with the master when enabled.
 
-- **Status:** Draft target contract; schema-v26 legacy import plus planning-resource, assignment-mode, Setup/Calendar/Machine-Type/Machine-Availability/administrative, canonical Timeline, TV, E-Ink read/simulator, scoped `SEND_TO_QC`, and Windows QC Queue slices are implemented as identified below
+- **Status:** Draft target contract; implemented slices are identified through schema v59, including the CNC event workflow, setup verification, QC/cycle processing, anomaly/debug reads and safe recovery, alongside the earlier planning, TV, E-Ink, and Windows administration surfaces
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
