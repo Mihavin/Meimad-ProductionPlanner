@@ -419,6 +419,8 @@
                                     </DataGrid>
 
                                     <TextBlock Text="Release G-code" FontWeight="SemiBold" Margin="0,14,0,6"/>
+                                    <TextBlock Text="The NC file must contain exactly one generic verification hook as its first executable block: G65 P9xxx Axxxxxx. (MEIMAD VERIFY V1), or the approved custom G-code equivalent. The six-digit NC identity must be unique. Meimad validates the file but never edits it."
+                                               TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <UniformGrid Columns="2">
                                         <StackPanel Style="{StaticResource FormField}">
                                             <TextBlock Text="Postprocessor" Style="{StaticResource FieldLabel}"/>
@@ -482,6 +484,7 @@
                                             <DataGridTextColumn Header="Post rev" Binding="{Binding PostSpecificRevision}" Width="70"/>
                                             <DataGridTextColumn Header="Original filename" Binding="{Binding OriginalFileName}" Width="180"/>
                                             <DataGridTextColumn Header="Header Part" Binding="{Binding HeaderPartName}" Width="150"/>
+                                            <DataGridTextColumn Header="Verification identity" Binding="{Binding VerificationHookSummary}" Width="260"/>
                                             <DataGridTextColumn Header="SHA-256" Binding="{Binding ShortHash}" Width="110"/>
                                             <DataGridTemplateColumn Header="Calculated cycle / part" Width="230">
                                                 <DataGridTemplateColumn.CellTemplate>

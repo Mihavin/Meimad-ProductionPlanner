@@ -356,9 +356,11 @@ internal sealed class SqliteManufacturingProgramRepository : IManufacturingProgr
                        release.post_specific_revision, release.original_file_name,
                        release.file_size, release.file_hash, release.released_at,
                        release.released_by, release.change_scope, release.release_comment,
-                       release.tool_table_release_id
+                       release.tool_table_release_id, hook.hook_version, hook.invocation_kind,
+                       hook.invocation_number, hook.nc_identity_token, hook.line_number
                 FROM gcode_releases release
                 JOIN process_revisions revision ON revision.id = release.process_revision_id
+                LEFT JOIN gcode_release_verification_hooks hook ON hook.gcode_release_id = release.id
                 WHERE revision.manufacturing_program_id = $id
                 ORDER BY revision.revision_number DESC, release.postprocessor_id,
                          release.post_specific_revision DESC;
@@ -369,7 +371,9 @@ internal sealed class SqliteManufacturingProgramRepository : IManufacturingProgr
                 releases.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
                     reader.GetInt32(3), reader.GetString(4), reader.GetInt64(5), reader.GetString(6),
                     Parse(reader.GetString(7)), reader.GetString(8), reader.GetString(9),
-                    reader.GetString(10), reader.GetString(11)));
+                    reader.GetString(10), reader.GetString(11), reader.IsDBNull(12) ? null : new(
+                        reader.GetInt32(12), reader.GetString(13), reader.GetInt32(14),
+                        reader.GetInt32(15), reader.GetInt32(16))));
         }
         return new(programId, name, defaultOperation, version, created, updated,
             revisions.FirstOrDefault(value => value.IsActive), revisions, releases);

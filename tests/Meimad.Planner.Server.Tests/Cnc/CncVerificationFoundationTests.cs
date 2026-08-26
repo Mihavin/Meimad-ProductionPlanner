@@ -92,6 +92,22 @@ public sealed class CncVerificationFoundationTests
     }
 
     [Fact]
+    public async Task Historical_NC_without_generic_hook_cannot_create_verification_offset_loader()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        var service = Service(fixture.Database);
+
+        var error = await Assert.ThrowsAsync<CncVerificationTargetException>(() =>
+            service.CreateOffsetLoaderReleaseAsync("run-verification", new(
+                "machine-verification", "gcode-historical", "tools-verification"),
+                new EditAuthority("verification-client", 1)));
+
+        Assert.Equal("offset_loader_context_invalid", error.Code);
+        Assert.Contains("hook-eligible", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Current_offset_loader_DPRINT_is_ingested_idempotently_with_release_evidence()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
@@ -159,12 +175,14 @@ public sealed class CncVerificationFoundationTests
             VALUES('process-verification','case-operation-verification',1,1,'tools-verification',$at,'user','release',1,$at,'case-operation:case-operation-verification');
             INSERT INTO gcode_releases(id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,change_scope,release_comment,tool_table_release_id,created_at,updated_at)
             VALUES('gcode-verification','case-operation-verification','process-verification','post-verification',1,'part.nc','gcode/part.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','release','tools-verification',$at,$at);
+            INSERT INTO gcode_releases(id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,change_scope,release_comment,tool_table_release_id,created_at,updated_at)
+            VALUES('gcode-historical','case-operation-verification','process-verification','post-verification',2,'old.nc','gcode/old.nc',1,$hash,$at,'user','LOCAL_POST_REVISION','historical','tools-verification',$at,$at);
             INSERT INTO gcode_release_verification_hooks(gcode_release_id,hook_version,invocation_kind,invocation_number,nc_identity_token,line_number,created_at,updated_at)
             VALUES('gcode-verification',1,'G65',9002,654321,3,$at,$at);
             INSERT INTO production_runs(id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,version,created_at,updated_at)
             VALUES('run-verification','PLANNED',0,'{}',NULL,1,$at,$at);
-            INSERT INTO production_run_programs(id,production_run_id,manufacturing_program_id,process_revision_id,selected_gcode_release_id,sequence_position,target_cycle_count,completed_cycle_count,status,legacy_unmanaged,version,created_at,updated_at)
-            VALUES('run-program-verification','run-verification','case-operation:case-operation-verification','process-verification','gcode-verification',0,1,0,'ACTIVE',0,1,$at,$at);
+            INSERT INTO production_run_programs(id,production_run_id,manufacturing_program_id,process_revision_id,selected_gcode_release_id,production_gcode_release_id,sequence_position,target_cycle_count,completed_cycle_count,status,legacy_unmanaged,version,created_at,updated_at)
+            VALUES('run-program-verification','run-verification','case-operation:case-operation-verification','process-verification','gcode-verification','gcode-historical',0,1,0,'ACTIVE',0,1,$at,$at);
             INSERT INTO production_run_outputs(id,production_run_program_id,batch_operation_id,quantity_per_cycle,target_quantity,produced_quantity,status,version,created_at,updated_at)
             VALUES('output-verification','run-program-verification','operation-verification',1,1,0,'ALLOCATED',1,$at,$at);
             INSERT INTO machine_assignments(id,batch_operation_id,machine_id,backlog_position,planning_mode,production_run_id)

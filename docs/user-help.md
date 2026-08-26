@@ -73,12 +73,13 @@ An operation can be blocked by missing material, an unassigned machine, incompat
 For a released G-code revision:
 
 1. Select the postprocessor and change scope.
-2. Choose the released G-code and the exact physical tool table supplied to the machine.
-3. Enter the release comment and process-change description.
-4. Confirm the physical tool table and the creation of the new manufacturing-process revision.
-5. Release the G-code and review the revision history.
+2. Confirm the postprocessor generated exactly one generic verification hook as the first executable block: `G65 P9xxx Axxxxxx. (MEIMAD VERIFY V1)` or the approved custom-G-code equivalent. The six-digit `A` identity must be new for this exact release.
+3. Choose the released G-code and the exact physical tool table supplied to the machine.
+4. Enter the release comment and process-change description.
+5. Confirm the physical tool table and the creation of the new manufacturing-process revision.
+6. Release the G-code and review the recorded verification identity in revision history.
 
-Releasing a new manufacturing-process revision makes other postprocessor releases non-current for that revision until they are regenerated. Original NC files are never overwritten.
+Releasing a new manufacturing-process revision makes other postprocessor releases non-current for that revision until they are regenerated. Meimad validates and stores the hook identity but never inserts it or overwrites original NC files. Historical releases created before schema v51 remain downloadable, show the hook as unavailable, and cannot support protected NC verification until intentionally re-released with a valid hook.
 
 ## 5. Haas NGC connection and part identity
 

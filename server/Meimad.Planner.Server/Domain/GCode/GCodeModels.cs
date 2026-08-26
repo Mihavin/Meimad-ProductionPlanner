@@ -81,7 +81,8 @@ internal sealed record ManufacturingProgramRelease(
     string ReleasedBy,
     string ChangeScope,
     string ReleaseComment,
-    string ToolTableReleaseId);
+    string ToolTableReleaseId,
+    Meimad.Planner.Server.Application.GCode.NcVerificationHook? VerificationHook = null);
 
 internal sealed record GCodeRelease(
     string GCodeReleaseId,

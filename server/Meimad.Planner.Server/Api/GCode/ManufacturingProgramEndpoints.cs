@@ -323,13 +323,15 @@ internal sealed record ManufacturingProgramReleaseResponse(
     string ReleasedBy,
     string ChangeScope,
     string ReleaseComment,
-    string ToolTableReleaseId)
+    string ToolTableReleaseId,
+    NcVerificationHookResponse? VerificationHook)
 {
     internal static ManufacturingProgramReleaseResponse FromDomain(ManufacturingProgramRelease value) =>
         new(value.GCodeReleaseId, value.ProcessRevisionId, value.PostprocessorId,
             value.PostSpecificRevision, value.OriginalFileName, value.FileSize,
             value.FileHash, value.ReleasedAt, value.ReleasedBy, value.ChangeScope,
-            value.ReleaseComment, value.ToolTableReleaseId);
+            value.ReleaseComment, value.ToolTableReleaseId,
+            value.VerificationHook is null ? null : NcVerificationHookResponse.FromDomain(value.VerificationHook));
 }
 
 internal sealed record ManufacturingProgramListResponse(

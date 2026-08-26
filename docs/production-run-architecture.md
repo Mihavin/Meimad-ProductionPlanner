@@ -202,6 +202,8 @@ Schema v49 adds a distinct append-only operational workflow stream for setup ver
 
 Schema v50 adds Offset Loader release identity without changing Production Run composition or approved NC files. Each release pins the Run, Machine, approved G-code release, exact tool-table release, and numeric verification token; a separate current pointer supersedes but never rewrites history. Strict DPRINT ingestion can record a current `OFFSET_LOADER_COMPLETED` event and sequence anomaly evidence, but it does not yet create a verification session or assert that the protected macro identified the active NC program.
 
+Schema v51 implements the selected generic-hook fallback. Each new approved G-code release must carry one first-block hook with a globally unique six-digit NC identity; the immutable mapping is separate release metadata, and the Server never modifies NC bytes. Historical releases retain no inferred identity. Current Offset Loader DPRINT resolution also requires that the release hook invocation match the target Machine's enabled protected-verification configuration. This supplies explicit release identity evidence but does not claim the protected Haas macro, response calculation, or machining interlock has passed physical commissioning.
+
 Read models:
 
 - Planning Board returns run cards in Machine backlogs and Batch Operations with remaining unallocated quantity in the pool.

@@ -201,6 +201,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                 FROM machine_assignments assignment
                 JOIN production_run_programs program ON program.production_run_id=assignment.production_run_id
                 JOIN gcode_releases release ON release.id=$ncReleaseId
+                JOIN gcode_release_verification_hooks hook ON hook.gcode_release_id=release.id
                 WHERE assignment.production_run_id=$runId
                   AND assignment.machine_id=$machineId
                   AND (program.selected_gcode_release_id=release.id
@@ -213,7 +214,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         command.Parameters.AddWithValue("$toolReleaseId", value.ToolTableReleaseId.Trim());
         if (Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) != 1)
             throw new CncVerificationTargetException("offset_loader_context_invalid",
-                "The Machine, Production Run, approved NC release, and tool measurement release do not form one current run context.");
+                "The Machine, Production Run, hook-eligible approved NC release, and tool measurement release do not form one current run context.");
     }
 
     private static async Task<int> FindAvailableReleaseTokenAsync(

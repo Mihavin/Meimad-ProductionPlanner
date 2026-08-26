@@ -127,6 +127,8 @@ public sealed class GCodeReleaseApiTests
                 Assert.Single(historyJson.RootElement.GetProperty("releases").EnumerateArray());
                 Assert.Equal(revision1,
                     historyJson.RootElement.GetProperty("releases")[0].GetProperty("processRevisionId").GetString());
+                Assert.Equal(222222, historyJson.RootElement.GetProperty("releases")[0]
+                    .GetProperty("verificationHook").GetProperty("ncIdentityToken").GetInt32());
             }
 
             client.DefaultRequestHeaders.TryAddWithoutValidation(

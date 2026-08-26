@@ -2,7 +2,7 @@
 
 ## Status and hard gate
 
-Milestone C is prepared but **not physically proven**. Haas publicly documents protected `O9000` storage, G65 macro calls, general/system macro variables, programmable alarms, and TCP DPRNT. Its published NGC macro-variable table does not identify a supported variable that unambiguously returns the active top-level or caller NC program from inside a protected macro. Therefore Meimad must not claim NC identity verification and `cnc_verification_settings.enabled` must remain false until the real controller test below is completed.
+Milestone C is prepared but **not physically proven**. Haas publicly documents protected `O9000` storage, G65 macro calls, general/system macro variables, programmable alarms, and TCP DPRNT. Its published NGC macro-variable table does not identify a supported variable that unambiguously returns the active top-level or caller NC program from inside a protected macro. Meimad has therefore selected the explicit generic-hook fallback: every newly approved NC release carries a unique release identity into the protected call. This repository decision does not prove the protected macro or interlock, and `cnc_verification_settings.enabled` must remain false until the real controller test below is completed.
 
 This spike performs no cutting motion, offset write, CNC variable write from the Server, planning mutation, or automatic macro deployment. A Haas Factory Outlet/controller specialist must approve the candidate read-only identity source and temporary variable range before the probe program is loaded.
 
@@ -62,6 +62,10 @@ Repeat A and B at least five times. Also run once with Setting 23 off to inspect
 - **PASS — intrinsic identity:** all repetitions return the correct stable top-level NC identity without a caller-supplied identity. Milestone C may then define the response algorithm using that approved source.
 - **FAIL — macro identity only:** the candidate returns the protected O9000 program or immediate nested macro. This cannot verify the NC release.
 - **FAIL — supplied/previous-block value:** the result depends on a G65 argument or previous `O` address. This is replayable and cannot be presented as intrinsic NC verification.
-- **UNAVAILABLE/AMBIGUOUS:** behavior is unsupported, undocumented on the installed software, or inconsistent. Meimad remains Offset-Loader-only. The architecture must explicitly choose a one-time generic hook in every approved NC program or another controller-level automatic execution hook before Milestone D.
+- **UNAVAILABLE/AMBIGUOUS:** behavior is unsupported, undocumented on the installed software, or inconsistent. Meimad uses the selected one-time generic hook and does not treat an intrinsic caller identity as available.
+
+The architecture choice for the unavailable/ambiguous outcome is now the one-time generic hook. The commissioning cases remain useful for documenting controller behavior, but an intrinsic caller-program variable is no longer required for release identity: the protected call receives the immutable six-digit identity stored for that exact approved release. Physical proof of argument handling, protected storage, arithmetic, failure alarms, cleanup, DPRNT, Reset, and power-cycle behavior remains a hard gate.
+
+The independently reproducible response algorithm, public vectors, non-deployable protected-program layout, and additional arithmetic/input acceptance checks are specified in [Haas setup-verification response algorithm](haas-verification-response-algorithm.md). Passing its .NET tests or standalone PowerShell calculator is not CNC acceptance.
 
 No PASS is valid from simulator output, public documentation, Q500 alone, or unit tests. The reviewed physical evidence, exact controller version, approved mappings, reset/power-cycle results, and sign-off must be appended here before changing the implementation-plan status.
