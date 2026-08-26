@@ -353,6 +353,24 @@
                                                     <Button Content="Load verification configuration" Command="{Binding LoadVerificationConfigurationCommand}"/>
                                                     <Button Content="Save verification configuration" Command="{Binding SaveVerificationConfigurationCommand}" Margin="0"/>
                                                 </WrapPanel>
+                                                <Border BorderBrush="#C62828" BorderThickness="1" Padding="9" Margin="0,12,0,0">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Audited recovery — no verification bypass" FontWeight="Bold"/>
+                                                        <TextBlock Text="Use only to restore a valid process. Invalidate/revoke require a reason; immutable releases and workflow evidence are preserved."
+                                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8"/>
+                                                        <UniformGrid Columns="2">
+                                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Production Run ID" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationRecoveryRunId}"/></StackPanel>
+                                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Recovery reason (required)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationRecoveryReason}"/></StackPanel>
+                                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Approved NC release ID" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationRecoveryNcReleaseId}"/></StackPanel>
+                                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Tool-table release ID" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationRecoveryToolTableReleaseId}"/></StackPanel>
+                                                        </UniformGrid>
+                                                        <WrapPanel>
+                                                            <Button Content="Generate replacement Offset Loader" Command="{Binding GenerateOffsetLoaderReleaseCommand}"/>
+                                                            <Button Content="Invalidate current verification" Command="{Binding InvalidateVerificationCommand}"/>
+                                                            <Button Content="Revoke current Offset Loader" Command="{Binding RevokeCurrentOffsetLoaderCommand}" Margin="0"/>
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
                                             </StackPanel>
                                         </Expander>
                                         <TextBlock Text="BENCH TIMELINE" FontWeight="Bold" Margin="0,10,0,4"/>

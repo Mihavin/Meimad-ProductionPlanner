@@ -103,6 +103,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool verificationEnabled;
     private bool verificationSecretConfigured;
     private int verificationSettingsVersion;
+    private string verificationRecoveryRunId = string.Empty;
+    private string verificationRecoveryNcReleaseId = string.Empty;
+    private string verificationRecoveryToolTableReleaseId = string.Empty;
+    private string verificationRecoveryReason = string.Empty;
     private MachineDowntime? selectedDowntime;
     private string? editingDowntimeId;
     private PlannerMachine? selectedDowntimeMachine;
@@ -211,6 +215,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ReconnectCncCommand = new AsyncCommand(ReconnectCncAsync, CanManageHaas);
         LoadVerificationConfigurationCommand = new AsyncCommand(LoadVerificationConfigurationAsync, CanReadHaas);
         SaveVerificationConfigurationCommand = new AsyncCommand(SaveVerificationConfigurationAsync, CanManageHaas);
+        GenerateOffsetLoaderReleaseCommand = new AsyncCommand(GenerateOffsetLoaderReleaseAsync, CanManageHaas);
+        InvalidateVerificationCommand = new AsyncCommand(InvalidateVerificationAsync, CanManageHaas);
+        RevokeCurrentOffsetLoaderCommand = new AsyncCommand(RevokeCurrentOffsetLoaderAsync, CanManageHaas);
         NewPlannedMaintenanceCommand = new AsyncCommand(BeginNewPlannedMaintenanceAsync, CanManage);
         ReportBreakdownCommand = new AsyncCommand(BeginNewBreakdownAsync, CanManage);
         SaveDowntimeCommand = new AsyncCommand(SaveDowntimeAsync, CanSaveDowntime);
@@ -306,6 +313,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand ReconnectCncCommand { get; }
     public AsyncCommand LoadVerificationConfigurationCommand { get; }
     public AsyncCommand SaveVerificationConfigurationCommand { get; }
+    public AsyncCommand GenerateOffsetLoaderReleaseCommand { get; }
+    public AsyncCommand InvalidateVerificationCommand { get; }
+    public AsyncCommand RevokeCurrentOffsetLoaderCommand { get; }
     public AsyncCommand NewPlannedMaintenanceCommand { get; }
     public AsyncCommand ReportBreakdownCommand { get; }
     public AsyncCommand SaveDowntimeCommand { get; }
@@ -521,6 +531,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string VerificationCodeDigits { get => verificationCodeDigits; set => SetField(ref verificationCodeDigits, value); }
     public string VerificationTimeoutSeconds { get => verificationTimeoutSeconds; set => SetField(ref verificationTimeoutSeconds, value); }
     public bool VerificationEnabled { get => verificationEnabled; set => SetField(ref verificationEnabled, value); }
+    public string VerificationRecoveryRunId { get => verificationRecoveryRunId; set => SetField(ref verificationRecoveryRunId, value); }
+    public string VerificationRecoveryNcReleaseId { get => verificationRecoveryNcReleaseId; set => SetField(ref verificationRecoveryNcReleaseId, value); }
+    public string VerificationRecoveryToolTableReleaseId { get => verificationRecoveryToolTableReleaseId; set => SetField(ref verificationRecoveryToolTableReleaseId, value); }
+    public string VerificationRecoveryReason { get => verificationRecoveryReason; set => SetField(ref verificationRecoveryReason, value); }
     public string VerificationSecretStatus => verificationSecretConfigured
         ? "Secret configured; leave blank to preserve it." : "A new 16+ character secret is required.";
 
@@ -1186,6 +1200,58 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         verificationSecretConfigured = value.SecretConfigured;
         verificationSettingsVersion = value.Version;
         OnPropertyChanged(nameof(VerificationSecretStatus));
+    }
+
+    internal async Task GenerateOffsetLoaderReleaseAsync()
+    {
+        if (!CanManageHaas()) return;
+        var runId = VerificationRecoveryRunId.Trim();
+        var ncReleaseId = VerificationRecoveryNcReleaseId.Trim();
+        var toolTableReleaseId = VerificationRecoveryToolTableReleaseId.Trim();
+        if (runId.Length == 0 || ncReleaseId.Length == 0 || toolTableReleaseId.Length == 0)
+        {
+            HaasDiagnostics = "Production Run, approved NC release, and tool-table release are required to generate an Offset Loader release.";
+            return;
+        }
+        await RunHaasReadAsync(async () =>
+        {
+            var value = await apiClient!.CreateOffsetLoaderReleaseAsync(
+                runId, new(SelectedMachine!.MachineId, ncReleaseId, toolTableReleaseId),
+                clientId, editGeneration);
+            HaasDiagnostics = $"New current Offset Loader {value.OffsetLoaderReleaseId} created; verification token {value.VerificationReleaseToken:D6}. Prior releases remain immutable history.";
+        });
+    }
+
+    internal Task InvalidateVerificationAsync() => RunVerificationRecoveryAsync(
+        "invalidate the current verification session",
+        (runId, request) => apiClient!.InvalidateCncVerificationAsync(
+            runId, request, clientId, editGeneration),
+        "Current verification session invalidated. Run the current Offset Loader again before verification.");
+
+    internal Task RevokeCurrentOffsetLoaderAsync() => RunVerificationRecoveryAsync(
+        "revoke the current Offset Loader",
+        (runId, request) => apiClient!.RevokeCurrentOffsetLoaderAsync(
+            runId, request, clientId, editGeneration),
+        "Current Offset Loader revoked. Generate and execute a valid replacement; immutable release history was preserved.");
+
+    private async Task RunVerificationRecoveryAsync(
+        string action,
+        Func<string, CncRecoveryRequest, Task<CncRecoveryResult>> submit,
+        string successMessage)
+    {
+        if (!CanManageHaas()) return;
+        var runId = VerificationRecoveryRunId.Trim();
+        var reason = VerificationRecoveryReason.Trim();
+        if (runId.Length == 0 || reason.Length == 0)
+        {
+            HaasDiagnostics = $"Production Run and a recovery reason are required to {action}.";
+            return;
+        }
+        await RunHaasReadAsync(async () =>
+        {
+            await submit(runId, new(SelectedMachine!.MachineId, reason));
+            HaasDiagnostics = successMessage;
+        });
     }
 
     internal Task TestHaasMdcAsync() => RunHaasReadAsync(async () =>
@@ -2303,6 +2369,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveHaasConfigurationCommand.RaiseCanExecuteChanged();
         LoadVerificationConfigurationCommand.RaiseCanExecuteChanged();
         SaveVerificationConfigurationCommand.RaiseCanExecuteChanged();
+        GenerateOffsetLoaderReleaseCommand.RaiseCanExecuteChanged();
+        InvalidateVerificationCommand.RaiseCanExecuteChanged();
+        RevokeCurrentOffsetLoaderCommand.RaiseCanExecuteChanged();
         TestHaasConnectionCommand.RaiseCanExecuteChanged();
         TestHaasMtConnectCommand.RaiseCanExecuteChanged();
         TestHaasMdcCommand.RaiseCanExecuteChanged();

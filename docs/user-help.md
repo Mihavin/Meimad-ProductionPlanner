@@ -91,6 +91,14 @@ The active NC program’s machine-side header/DPRNT `PartName` is the authoritat
 
 The **Protected setup verification** expander stores commissioning configuration only. Keep it disabled until the real Machine passes [the protected-verification technical spike](haas-protected-verification-spike.md). The Machine secret is write-only: leaving the field blank preserves an existing secret, and neither the client nor tablet can read it back.
 
+The same expander contains **Audited recovery — no verification bypass** for the
+active editor. Enter the Production Run and a reason to invalidate the current
+verification session or revoke the current Offset Loader. To restore the process,
+enter the approved NC and tool-table release IDs and generate a replacement Offset
+Loader. Prior releases and workflow evidence remain immutable. Replacement tablets
+and credential rotation are handled on **User Terminals**; a failed QC inspection
+returns to setup and uses the normal correct/resend path.
+
 For a local NC share, the path must be reachable by the **Server service account**, not only by your interactive Windows user. A mapped drive is not sufficient for a Windows service; use a UNC path and grant the service account read permission.
 
 ## 6. TV Dashboard and E-Ink
@@ -169,6 +177,6 @@ Verify that the Case preview or machine picture path is inside an allowed Server
 
 ## 10. Current implementation notes
 
-The Server APIs and execution model support Production Runs, including multi-output planning data. Some Windows Timeline/Planning Board and TV/E-Ink cards do not yet render every Production Run field; where a Run-specific field is absent, use the operation card and Server projection as the authoritative view. The application does not yet provide automatic scheduling, ERP inventory authority, public Internet access, or native mobile editing. `SEND_TO_QC` is approved but not yet implemented end to end; every other E-Ink write-back remains excluded.
+The Server APIs and execution model support Production Runs, including multi-output planning data. Some Windows Timeline/Planning Board and TV/E-Ink cards do not yet render every Production Run field; where a Run-specific field is absent, use the operation card and Server projection as the authoritative view. The application does not yet provide automatic scheduling, ERP inventory authority, public Internet access, or native mobile editing. `SEND_TO_QC` is implemented in the Server, Windows QC flow, browser simulator, and compiled firmware; its physical tablet gesture/display behavior remains uncommissioned. Every other E-Ink write-back remains excluded.
 
 For deployment and engineering details, see the repository [README](../README.md), [functional specification](functional-spec.md), and [performance/stability audit](performance-stability-audit-2026-08-23.md).

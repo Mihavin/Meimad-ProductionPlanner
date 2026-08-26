@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.ProductionRuns;
 using Microsoft.Data.Sqlite;
 
@@ -91,6 +92,9 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
             insert.Parameters.AddWithValue("$metadata", value.MetadataJson);
             await insert.ExecuteNonQueryAsync(token);
         }
+        if (value.EventType == "OFFSET_LOADER_COMPLETED")
+            await ClosePriorProductionSessionAsync(
+                connection, transaction, value, token);
         var anomalies = new List<ProductionRunWorkflowAnomaly>();
         if (previousSequence.HasValue && command.SourceSequence.HasValue
             && command.SourceSequence.Value != previousSequence.Value + 1)
@@ -109,8 +113,194 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
         if (command.VerificationSession is not null)
             await StartVerificationSessionAsync(connection, transaction, value,
                 command.VerificationSession, token);
+        if (command.VerificationResolution is not null)
+            await ResolveVerificationSessionAsync(connection, transaction, value,
+                command.VerificationResolution, token);
         await transaction.CommitAsync(token);
         return new(value, false, anomalies);
+    }
+
+    private static async Task ClosePriorProductionSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ProductionRunWorkflowEvent triggeringEvent,
+        CancellationToken cancellationToken)
+    {
+        string? priorRunId = null;
+        await using (var candidate = connection.CreateCommand())
+        {
+            candidate.Transaction = transaction;
+            candidate.CommandText = """
+                SELECT event.production_run_id
+                FROM production_run_workflow_events event
+                WHERE event.machine_id=$machineId
+                  AND event.production_run_id<>$triggeringRunId
+                  AND event.event_type='CYCLE_START'
+                  AND NOT EXISTS(
+                      SELECT 1 FROM production_run_session_closures closure
+                      WHERE closure.production_run_id=event.production_run_id)
+                  AND NOT EXISTS(
+                      SELECT 1 FROM production_run_workflow_events closed
+                      WHERE closed.production_run_id=event.production_run_id
+                        AND closed.event_type='PRODUCTION_SESSION_CLOSED')
+                ORDER BY event.server_received_at DESC,event.id DESC
+                LIMIT 1;
+                """;
+            candidate.Parameters.AddWithValue("$machineId", triggeringEvent.MachineId);
+            candidate.Parameters.AddWithValue("$triggeringRunId", triggeringEvent.ProductionRunId);
+            priorRunId = await candidate.ExecuteScalarAsync(cancellationToken) as string;
+        }
+        if (priorRunId is null) return;
+
+        var rows = new List<SessionCycleTiming>();
+        await using (var query = connection.CreateCommand())
+        {
+            query.Transaction = transaction;
+            query.CommandText = """
+                SELECT event.id,event.event_type,event.source,event.source_event_id,
+                       event.source_sequence,event.server_received_at,event.machine_timestamp,
+                       json_extract(event.metadata_json,'$.productionRunProgramId'),
+                       EXISTS(
+                           SELECT 1 FROM production_run_cycle_events cycle
+                           WHERE cycle.source=event.source
+                             AND cycle.source_event_id=event.source_event_id)
+                FROM production_run_workflow_events event
+                WHERE event.production_run_id=$runId
+                  AND event.machine_id=$machineId
+                  AND event.event_type IN('CYCLE_START','CYCLE_END')
+                ORDER BY event.server_received_at,event.id;
+                """;
+            query.Parameters.AddWithValue("$runId", priorRunId);
+            query.Parameters.AddWithValue("$machineId", triggeringEvent.MachineId);
+            await using var reader = await query.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                rows.Add(new(
+                    reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                    Parse(reader.GetString(5)),
+                    reader.IsDBNull(6) ? null : Parse(reader.GetString(6)),
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.GetInt32(8) == 1));
+        }
+        var last = rows.LastOrDefault(row =>
+            row.EventType == "CYCLE_START" || row.IsCompletedEnd);
+        if (last is null) return;
+
+        DateTimeOffset? observedEndAt = null;
+        DateTimeOffset? effectiveEndAt = null;
+        var endTimeInferred = false;
+        object inferenceBasis;
+        if (last.IsCompletedEnd)
+        {
+            observedEndAt = last.MachineTimestamp ?? last.ServerReceivedAt;
+            effectiveEndAt = observedEndAt;
+            inferenceBasis = new
+            {
+                kind = "OBSERVED_CYCLE_END",
+                workflowEventId = last.EventId,
+                clock = last.MachineTimestamp.HasValue ? "MACHINE" : "SERVER_RECEIPT"
+            };
+        }
+        else
+        {
+            var minimum = MinimumValidatedCycleDuration(rows);
+            if (minimum.HasValue)
+            {
+                effectiveEndAt = (last.MachineTimestamp ?? last.ServerReceivedAt)
+                    .Add(minimum.Value);
+                endTimeInferred = true;
+            }
+            inferenceBasis = new
+            {
+                kind = minimum.HasValue
+                    ? "LAST_START_PLUS_MINIMUM_VALIDATED_CYCLE"
+                    : "UNAVAILABLE_NO_VALIDATED_CYCLE_DURATION",
+                lastStartWorkflowEventId = last.EventId,
+                minimumValidatedCycleSeconds = minimum?.TotalSeconds,
+                startClock = last.MachineTimestamp.HasValue ? "MACHINE" : "SERVER_RECEIPT"
+            };
+        }
+
+        var closureEventId = Guid.NewGuid().ToString("N");
+        var metadata = JsonSerializer.Serialize(new
+        {
+            triggeringProductionRunId = triggeringEvent.ProductionRunId,
+            triggeringWorkflowEventId = triggeringEvent.EventId,
+            observedEndAt,
+            effectiveEndAt,
+            endTimeInferred,
+            inferenceBasis
+        });
+        await using (var workflow = connection.CreateCommand())
+        {
+            workflow.Transaction = transaction;
+            workflow.CommandText = """
+                INSERT INTO production_run_workflow_events(
+                    id,production_run_id,machine_id,event_type,source,source_event_id,
+                    server_received_at,metadata_json)
+                VALUES($id,$runId,$machineId,'PRODUCTION_SESSION_CLOSED',
+                       'SERVER_SESSION',$sourceEventId,$closedAt,$metadata);
+                """;
+            workflow.Parameters.AddWithValue("$id", closureEventId);
+            workflow.Parameters.AddWithValue("$runId", priorRunId);
+            workflow.Parameters.AddWithValue("$machineId", triggeringEvent.MachineId);
+            workflow.Parameters.AddWithValue("$sourceEventId", $"NEXT_SETUP:{triggeringEvent.EventId}");
+            workflow.Parameters.AddWithValue("$closedAt", Format(triggeringEvent.ServerReceivedAt));
+            workflow.Parameters.AddWithValue("$metadata", metadata);
+            await workflow.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var closure = connection.CreateCommand())
+        {
+            closure.Transaction = transaction;
+            closure.CommandText = """
+                INSERT INTO production_run_session_closures(
+                    id,production_run_id,machine_id,triggering_production_run_id,
+                    triggering_workflow_event_id,closure_workflow_event_id,
+                    observed_end_at,effective_end_at,end_time_inferred,
+                    inference_basis_json,closed_at)
+                VALUES($id,$runId,$machineId,$triggeringRunId,$triggeringEventId,
+                       $closureEventId,$observedEndAt,$effectiveEndAt,$inferred,$basis,$closedAt);
+                """;
+            closure.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+            closure.Parameters.AddWithValue("$runId", priorRunId);
+            closure.Parameters.AddWithValue("$machineId", triggeringEvent.MachineId);
+            closure.Parameters.AddWithValue("$triggeringRunId", triggeringEvent.ProductionRunId);
+            closure.Parameters.AddWithValue("$triggeringEventId", triggeringEvent.EventId);
+            closure.Parameters.AddWithValue("$closureEventId", closureEventId);
+            closure.Parameters.AddWithValue("$observedEndAt",
+                Db(observedEndAt.HasValue ? Format(observedEndAt.Value) : null));
+            closure.Parameters.AddWithValue("$effectiveEndAt",
+                Db(effectiveEndAt.HasValue ? Format(effectiveEndAt.Value) : null));
+            closure.Parameters.AddWithValue("$inferred", endTimeInferred ? 1 : 0);
+            closure.Parameters.AddWithValue("$basis", JsonSerializer.Serialize(inferenceBasis));
+            closure.Parameters.AddWithValue("$closedAt", Format(triggeringEvent.ServerReceivedAt));
+            await closure.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static TimeSpan? MinimumValidatedCycleDuration(
+        IReadOnlyList<SessionCycleTiming> rows)
+    {
+        var starts = rows
+            .Where(row => row.EventType == "CYCLE_START" && row.Sequence.HasValue)
+            .GroupBy(row => (row.Source, row.Sequence!.Value, row.ProgramId))
+            .ToDictionary(
+                group => group.Key,
+                group => group.Last());
+        TimeSpan? minimum = null;
+        foreach (var end in rows.Where(row => row.IsCompletedEnd && row.Sequence.HasValue))
+        {
+            if (!starts.TryGetValue(
+                    (end.Source, end.Sequence!.Value - 1, end.ProgramId), out var start))
+                continue;
+            var duration = end.MachineTimestamp.HasValue && start.MachineTimestamp.HasValue
+                ? end.MachineTimestamp.Value - start.MachineTimestamp.Value
+                : end.ServerReceivedAt - start.ServerReceivedAt;
+            if (duration <= TimeSpan.Zero) continue;
+            if (!minimum.HasValue || duration < minimum.Value) minimum = duration;
+        }
+        return minimum;
     }
 
     private static async Task StartVerificationSessionAsync(
@@ -168,6 +358,32 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
         if (await insert.ExecuteNonQueryAsync(token) != 1)
             throw new ProductionRunWorkflowTargetException(
                 "The current Offset Loader and enabled Machine verification settings no longer match the session request.");
+    }
+
+    private static async Task ResolveVerificationSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ProductionRunWorkflowEvent workflowEvent,
+        SetupVerificationResolutionSeed resolution,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE cnc_setup_verification_sessions
+            SET state=$state,resolved_at=$at,resolution_workflow_event_id=$eventId
+            WHERE id=$sessionId AND machine_id=$machineId AND production_run_id=$runId
+              AND state='PENDING' AND expires_at>$at;
+            """;
+        command.Parameters.AddWithValue("$state", resolution.Succeeded ? "SUCCEEDED" : "FAILED");
+        command.Parameters.AddWithValue("$at", Format(workflowEvent.ServerReceivedAt));
+        command.Parameters.AddWithValue("$eventId", workflowEvent.EventId);
+        command.Parameters.AddWithValue("$sessionId", resolution.SessionId);
+        command.Parameters.AddWithValue("$machineId", workflowEvent.MachineId);
+        command.Parameters.AddWithValue("$runId", workflowEvent.ProductionRunId);
+        if (await command.ExecuteNonQueryAsync(token) != 1)
+            throw new ProductionRunWorkflowTargetException(
+                "The setup-verification session is no longer pending and current.");
     }
 
     private static async Task InsertAnomalyAsync(
@@ -229,4 +445,15 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
     private static object Db(object? value) => value ?? DBNull.Value;
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
     private static DateTimeOffset Parse(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
+
+    private sealed record SessionCycleTiming(
+        string EventId,
+        string EventType,
+        string Source,
+        string? SourceEventId,
+        long? Sequence,
+        DateTimeOffset ServerReceivedAt,
+        DateTimeOffset? MachineTimestamp,
+        string? ProgramId,
+        bool IsCompletedEnd);
 }

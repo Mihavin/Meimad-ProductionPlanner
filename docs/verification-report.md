@@ -1,20 +1,27 @@
 # Architectural and correctness verification report
 
-This report retains earlier milestone evidence below. The current Task 20 aggregate results are the separately executed Debug suites recorded here.
+This report retains earlier milestone evidence below. The current Tasks 24-32 repository aggregate results are the separately executed Debug suites recorded here.
 
 - **Baseline verification date:** 2026-08-11
 - **Current change review date:** 2026-08-26
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
-- **Verdict:** The current combined Debug evidence is 819 tests (583 Server and 236 Windows Client), with no failures or skips when the two suites are run separately. Task 20 introduces no schema or API change: editor-authorized and validated CNC cycle completions now use one shared transactional accounting component. Existing coverage proves identical coupled-output arithmetic, exact target/overproduction protection, idempotent cycle records, aggregate completion propagation, and caller-specific authorization/workflow boundaries. Controller counters remain diagnostic only. All three ESP32 production, demo, and contract-test targets remain compiled from the preceding milestone; Task 20 changes no firmware source. Physical CNC DPRINT execution, tablet interaction, and factory acceptance remain outstanding.
+- **Verdict:** The current combined Debug evidence is 837 tests (600 Server and 237 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 credits the existing physical VF-3SS public-vector arithmetic result only; every other production commissioning row remains `NOT_TESTED`, so protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
 
-Current Task 20 Debug result:
+Current Tasks 24-32 repository Debug result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 583 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 236 | 0 | 0 |
-| **Total** | **819** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 600 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 237 | 0 | 0 |
+| **Total** | **837** | **0** | **0** |
+
+Focused development evidence also includes a successful build and `--validate-only`
+run of `tools/Meimad.Planner.CncSimulator/scenario.full.json` (15 strict DPRNT
+events), plus the E-Ink simulator contract test. The integrated CNC workflow test
+uses real Server services and schema rather than an unauthenticated simulator
+mutation endpoint. See [CNC commissioning checklist](cnc-commissioning-checklist.md)
+for the physical evidence still required.
 
 Installer build evidence on 2026-08-18: `installer\build-installers.ps1` published self-contained `win-x64` payloads and produced both MSI packages with WiX 5.0.2. A non-installing administrative extraction verified 641 client files, including `runtimes\win-x64\native\TKernel.dll`, and 400 Server files. Windows Installer table inspection verified the automatic `Meimad Planner Server` ServiceInstall entry and install-start/stop/remove ServiceControl entry. This proves package construction and payload shape, not elevated install/uninstall, upgrade preservation, service recovery, code signing, or production-host acceptance.
 

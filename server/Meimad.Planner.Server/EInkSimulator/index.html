@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base href="/eink-simulator/">
   <title>Meimad E-Ink Work Tablet Simulator</title>
-  <meta name="description" content="Read-only simulator for Meimad Color E-Ink Work Tablets">
+  <meta name="description" content="Scoped workflow simulator for Meimad Color E-Ink Work Tablets">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -14,13 +14,13 @@
       <div class="eyebrow">MEIMAD PLANNER • DEVELOPMENT TOOL</div>
       <h1>Color E-Ink Work Tablet Simulator</h1>
     </div>
-    <div class="boundary-label">▣ READ-ONLY • NO WRITE-BACK • NO CNC TRANSFER</div>
+    <div class="boundary-label">▣ PACKAGE READ-ONLY • SEND_TO_QC ONLY • NO CNC TRANSFER</div>
   </header>
 
   <section class="connection-panel" aria-labelledby="connection-heading">
     <div>
       <h2 id="connection-heading">Device configuration</h2>
-      <p>Enter a registered device ID and its read-only token. These values stay in this browser.</p>
+      <p>Enter a registered device ID and its scoped token. These values stay in this browser.</p>
     </div>
     <label>Device ID<input id="device-id" autocomplete="off" spellcheck="false"></label>
     <label>Device token<input id="device-token" type="password" autocomplete="off" spellcheck="false"></label>
@@ -29,6 +29,32 @@
   </section>
 
   <main>
+    <section class="scenario-panel" aria-labelledby="scenario-heading">
+      <div>
+        <h2 id="scenario-heading">Development scenarios</h2>
+        <p>Local simulation never changes Server data. The separate SEND_TO_QC button uses the official scoped endpoint.</p>
+      </div>
+      <label>Workflow state
+        <select id="scenario-status">
+          <option>READY_FOR_SETUP</option><option>IN_SETUP</option><option>IN_SETUP_RUN</option>
+          <option>IN_QC</option><option>READY_FOR_PRODUCTION</option><option>IN_PRODUCTION</option>
+          <option>BLOCKED</option>
+        </select>
+      </label>
+      <label>Verification
+        <select id="scenario-verification">
+          <option value="none">No code</option><option value="code">Show response code</option>
+          <option value="failed">Verification failed</option><option value="expired">Verification expired</option>
+        </select>
+      </label>
+      <label class="check-label"><input id="scenario-offline" type="checkbox"> Server offline</label>
+      <label class="check-label"><input id="scenario-low-battery" type="checkbox"> Low battery</label>
+      <button id="apply-scenario" type="button">Apply local scenario</button>
+      <button id="change-revision" type="button">Simulate revision change</button>
+      <button id="send-to-qc" type="button" disabled>SEND_TO_QC (official)</button>
+      <div id="scenario-state" class="connection-state" role="status">No local scenario active</div>
+    </section>
+
     <nav class="local-tabs" aria-label="Simulator pages">
       <button type="button" class="tab active" data-page="machine">Machine</button>
       <button type="button" class="tab" data-page="package">Package</button>
@@ -46,6 +72,7 @@
 
         <section id="machine-page" class="screen-page active-page">
           <div id="status-block" class="status-block status-idle"><span class="status-symbol">■</span><strong>NO DATA</strong></div>
+          <div id="verification-block" class="verification-block" hidden></div>
           <div class="machine-layout">
             <article class="current-card">
               <div class="label">CURRENT JOB</div>

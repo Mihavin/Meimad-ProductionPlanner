@@ -48,6 +48,17 @@ internal sealed record CncDprintIngestionContext(
     string NcReleaseId, int NcIdentityToken, int VerificationReleaseToken,
     int ExpectedMacroVersion, int ResponseCodeDigits, int VerificationTimeoutSeconds);
 
+internal sealed record CncPendingVerificationContext(
+    string SessionId, string ProductionRunId, string MachineId,
+    string OffsetLoaderReleaseId, string NcReleaseId, int NcIdentityToken,
+    int MacroVersion, int ExpectedMacroVersion, DateTimeOffset ExpiresAt,
+    string SessionState, bool WasDuplicate);
+
+internal sealed record CncRecoveryResult(
+    string Action, string ProductionRunId, string MachineId,
+    string? VerificationSessionId, string? OffsetLoaderReleaseId,
+    string Reason, string PerformedBy, DateTimeOffset PerformedAt);
+
 internal interface ICncVerificationFoundationRepository
 {
     Task<OffsetLoaderRelease> CreateOffsetLoaderReleaseAsync(
@@ -61,6 +72,15 @@ internal interface ICncVerificationFoundationRepository
         EditAuthority authority, CancellationToken token);
     Task<CncDprintIngestionContext?> ResolveCurrentOffsetLoaderAsync(
         string machineId, int verificationReleaseToken, CancellationToken token);
+    Task<CncPendingVerificationContext?> ResolvePendingVerificationAsync(
+        string machineId, string sourceEventId, DateTimeOffset detectedAt,
+        CancellationToken token);
+    Task<CncRecoveryResult> InvalidateVerificationAsync(
+        string productionRunId, string machineId, string reason,
+        DateTimeOffset performedAt, EditAuthority authority, CancellationToken token);
+    Task<CncRecoveryResult> RevokeCurrentOffsetLoaderAsync(
+        string productionRunId, string machineId, string reason,
+        DateTimeOffset performedAt, EditAuthority authority, CancellationToken token);
 }
 
 internal sealed class CncVerificationFoundationService
@@ -69,7 +89,7 @@ internal sealed class CncVerificationFoundationService
     private readonly TimeProvider timeProvider;
     private readonly IDataProtector secretProtector;
 
-    internal CncVerificationFoundationService(
+    public CncVerificationFoundationService(
         ICncVerificationFoundationRepository repository,
         TimeProvider timeProvider,
         IDataProtectionProvider dataProtectionProvider)
@@ -166,6 +186,36 @@ internal sealed class CncVerificationFoundationService
         return Public(await repository.UpsertSettingsAsync(stored, expectedVersion, authority, token));
     }
 
+    internal Task<CncRecoveryResult> InvalidateVerificationAsync(
+        string productionRunId,
+        string machineId,
+        string reason,
+        EditAuthority authority,
+        CancellationToken token = default)
+    {
+        Required(productionRunId, "productionRunId");
+        Required(machineId, "machineId");
+        reason = RecoveryReason(reason);
+        return repository.InvalidateVerificationAsync(
+            productionRunId.Trim(), machineId.Trim(), reason,
+            timeProvider.GetUtcNow(), authority, token);
+    }
+
+    internal Task<CncRecoveryResult> RevokeCurrentOffsetLoaderAsync(
+        string productionRunId,
+        string machineId,
+        string reason,
+        EditAuthority authority,
+        CancellationToken token = default)
+    {
+        Required(productionRunId, "productionRunId");
+        Required(machineId, "machineId");
+        reason = RecoveryReason(reason);
+        return repository.RevokeCurrentOffsetLoaderAsync(
+            productionRunId.Trim(), machineId.Trim(), reason,
+            timeProvider.GetUtcNow(), authority, token);
+    }
+
     private static CncVerificationSettings Public(StoredCncVerificationSettings value) => new(
         value.MachineId, value.DprintTransport, value.DprintPort,
         value.ChallengeProgramNumber, value.VerifyProgramNumber, value.CustomGcodeAlias,
@@ -198,6 +248,17 @@ internal sealed class CncVerificationFoundationService
         if (value < minimum || value > maximum)
             throw new CncVerificationValidationException(field, "out_of_range",
                 $"{field} must be between {minimum} and {maximum}.");
+    }
+    private static string RecoveryReason(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new CncVerificationValidationException(
+                "reason", "required", "A recovery reason is required.");
+        var result = value.Trim();
+        if (result.Length > 1000)
+            throw new CncVerificationValidationException(
+                "reason", "too_long", "Recovery reason must not exceed 1000 characters.");
+        return result;
     }
 }
 

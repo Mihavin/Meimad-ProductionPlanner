@@ -320,6 +320,12 @@ Task 18 adds no table. A retained `CYCLE_START` or `CYCLE_END` uses the existing
 
 Task 20 changes no schema. Both manual and CNC callers insert `production_run_cycle_events` and mutate program/output/parent aggregates only through the same Server persistence component and within the same transaction as their caller-specific checks or retained workflow END.
 
+| `production_run_session_closures` | Schema-v57 immutable one-to-one closure projection for a prior Production Run session: Machine, triggering next Run and Offset Loader workflow event, derived closure event, nullable `observed_end_at`, nullable `effective_end_at`, explicit `end_time_inferred`, inference-basis JSON, and Server `closed_at`. A measured end requires observed=effective and inferred=false; an inferred end requires observed null and effective non-null. Update/delete triggers reject mutation. |
+| `production_run_cycle_attempts` | Schema-v58 immutable START facts: Run, nullable resolved Run Program, Machine, unique START workflow event, source/event/sequence, Server receipt time, optional Machine timestamp, and creation time. One retained sequenced START creates one row. |
+| `production_run_cycle_attempt_outcomes` | Schema-v58 optional immutable one-to-one attempt outcome. State is `COMPLETED` or `INTERRUPTED`; the row retains its workflow event, boundary source/event/sequence, Server receipt time, and optional Machine timestamp. A validated schema-v47 cycle event is required for completion. No row means the attempt remains `OPEN` in `production_run_cycle_attempt_timing`. |
+
+Task 23 adds no table. The operational debug timeline is a bounded read projection over `production_run_workflow_events`, `production_run_cycle_attempts`, `production_run_cycle_attempt_outcomes`, and `production_run_workflow_anomalies`. It does not copy messages or calculated interpretation back into SQLite. Stable source IDs and raw clocks remain authoritative; human wording can evolve without rewriting evidence.
+
 The current G-code is derived as the greatest Postprocessor-specific revision for the active process and Postprocessor; an earlier record is never edited to become non-current. A release has no Machine foreign key. Machine applicability is evaluated only by joining its Postprocessor ID to `machine_supported_postprocessors`.
 
 Schema v35 also adds nullable `production_process_revision_id`, `production_gcode_release_id`, `production_tool_table_release_id`, `production_gcode_file_hash`, and `production_tool_table_file_hash` to `batch_operations`. The first Start pins this exact context; subsequent releases do not update it. Reset clears the production pins. Null preserves backward compatibility for work that has not entered managed release history.
@@ -532,7 +538,7 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 50.
+- Ordered server-owned migrations are implemented through version 59.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 
 Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL Server host/port, database, schema/view, username, refresh interval, enable flag, optimistic version, and last read-only connection-test status. The password is stored only as an ASP.NET Data Protection ciphertext bound to the Server application; API responses expose only `passwordConfigured`. No Kitaron source rows or source database credentials are stored as plaintext, and this schema does not yet add source identity/import rows.
@@ -555,8 +561,16 @@ Schema v36 adds structured immutable released-tool rows and the derived required
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-The implemented migrations through schema v56 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, v50 adds the CNC-verification identity/configuration foundation, v51 adds immutable generic NC verification-hook identity, v52 adds one-time setup-verification sessions, v53 adds bounded tablet Wi-Fi monitoring observations, v54 adds first-attempt `SEND_TO_QC` idempotency, v55 preserves per-attempt retry identity while allowing reinspection after `QC_FAIL`, and v56 adds immutable unmatched-cycle anomaly types. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
+The implemented migrations through schema v59 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, v50 adds the CNC-verification identity/configuration foundation, v51 adds immutable generic NC verification-hook identity, v52 adds one-time setup-verification sessions, v53 adds bounded tablet Wi-Fi monitoring observations, v54 adds first-attempt `SEND_TO_QC` idempotency, v55 preserves per-attempt retry identity while allowing reinspection after `QC_FAIL`, v56 adds immutable unmatched-cycle anomaly types, v57 adds immutable automatic production-session closure, v58 adds immutable raw cycle-attempt start/outcome timing, and v59 adds the immutable typed operational-anomaly ledger with idempotent detection identity. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
 Schema v39 treats Batch `planned_quantity` as the required raw-material piece count, consistent with the existing material-order report and inclusive of scrap allocation. `verified_material_receipts` is local physical evidence rather than ERP inventory. `batch_material_reservations` makes consumption intent explicit. Trigger and repository validation prevent cross-Case reservation, receipt over-reservation, and reservation above Batch quantity. Material readiness is derived for every Batch Operation from its parent Batch reservation coverage; the schema-v37 manual material table is retained only as legacy history and is no longer authoritative.
+Schema v59 adds `operational_anomalies`. It is an append-only,
+trigger-protected ledger for wrong/unavailable NC identity, Offset Loader,
+verification, cycle, CNC sequence/duplicate/Run-resolution, and tablet
+availability/revocation facts. Each row retains type, Server detection time,
+optional Machine/Run/tablet/workflow references, source identity, safe details
+JSON, and a unique detection key. Query filters never repair planning state or
+synthesize missing CNC facts.
+
 ## Production Run target model
 
 The multi-output schema is specified in [Production Run and multi-output Manufacturing Program architecture](production-run-architecture.md). Schema v45 implements `manufacturing_programs` and immutable revision outputs. Schema v46 implements `production_runs`, `production_run_programs`, and `production_run_outputs`, and makes `machine_assignments.production_run_id` authoritative while retaining `batch_operation_id` only as a compatibility projection. Schema v47 adds append-only `production_run_cycle_events` with a unique `(source, source_event_id)` identity. Active allocations exclude cancelled/aborted runs; produced quantities remain historical. Started structure is trigger-protected and foreign-key restrictive.

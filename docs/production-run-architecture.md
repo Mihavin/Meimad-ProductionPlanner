@@ -1,5 +1,9 @@
 # Production Run and multi-output Manufacturing Program architecture
 
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** only for the configured, commissioned
+challenge/response handshake and never as durable workflow state.
+
 **Status:** Accepted by the product owner on 2026-08-23. This document is the authoritative Task 1 architecture gate for the sequential implementation tasks.
 
 ## 1. Purpose and terminology
@@ -207,6 +211,12 @@ Schema v51 implements the selected generic-hook fallback. Each new approved G-co
 Task 18 connects post-QC Haas `CYCLE_START`/`CYCLE_END` evidence to this execution architecture without adding a counter model. The Server resolves one assigned active Run Program and validates any supplied Run/program identity. Only a same-source, immediately consecutive END for the open START is a completed cycle. Its immutable workflow event, schema-v47 dedupe record, every coupled output increment, aggregate statuses, and structured audit commit in one transaction. Machine part counters remain diagnostic. Task 19/schema v56 records START/START as an explicit interrupted attempt before opening the new START, and retains orphan or nonconsecutive END events with typed anomalies. Neither path mutates completed quantity.
 
 Task 20 removes the temporary duplication between manual and CNC cycle updates. Both now invoke one shared SQLite transaction component for exact-cycle guards, every coupled output, program/run and Batch Operation/Batch/Order propagation, the schema-v47 cycle record, and structured audit. Caller-specific Edit Mode/version checks and CNC workflow/identity/sequence checks remain outside that component and are not weakened.
+
+Task 21/schema v57 closes a production session retroactively when the next valid current Offset Loader starts another assigned Run on the Machine. It adds no operator/tablet finish action. The immutable closure links both Runs and workflow events and stores measured and effective end separately. A valid final END supplies measured time; an open final START may use only START plus a minimum duration derived from earlier valid pairs and is explicitly inferred. Raw workflow timestamps remain unchanged.
+
+Task 22/schema v58 adds an immutable raw attempt projection without replacing workflow or cycle facts. Each sequenced START retains its Server receipt time, optional Machine time, source identity, sequence, Run/program, and Machine. Its separate outcome retains the corresponding boundary evidence and is `COMPLETED` only after a validated cycle row or `INTERRUPTED` after the existing START/START rule; no outcome means `OPEN`. Analytics derive durations and idle later from these timestamps. Min/max/median/distribution and other efficiency or downtime policies are deliberately not stored as one permanent formula.
+
+Task 23 adds a read-only human diagnostic timeline for a related Machine/Production Run pair. It projects workflow events, schema-v58 attempt state, and existing sequence/cycle anomalies into deterministic messages while retaining Server receipt time, optional Machine time, and sequence as separate response fields. It has no Edit Mode requirement and no mutation path. Bounded selection uses newest Server facts and returns them chronologically; raw JSON/DPRINT evidence remains internal.
 
 Read models:
 

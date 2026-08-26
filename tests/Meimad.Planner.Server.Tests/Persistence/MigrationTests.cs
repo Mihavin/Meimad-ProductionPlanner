@@ -63,7 +63,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(56L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(59L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -195,6 +195,28 @@ public sealed class MigrationTests
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 56;";
         Assert.Equal("cycle_workflow_anomalies", await migrationCommand.ExecuteScalarAsync());
 
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 57;";
+        Assert.Equal("production_session_closure", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 58;";
+        Assert.Equal("cycle_attempt_timing", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 59;";
+        Assert.Equal("operational_anomalies", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE (type='table' AND name IN(
+                       'production_run_cycle_attempts',
+                       'production_run_cycle_attempt_outcomes'))
+               OR (type='view' AND name='production_run_cycle_attempt_timing')
+               OR (type='trigger' AND name IN(
+                       'production_run_cycle_attempt_from_start',
+                       'production_run_cycle_attempt_interrupted',
+                       'production_run_cycle_attempt_completed'));
+            """;
+        Assert.Equal(6L, (long)(await migrationCommand.ExecuteScalarAsync())!);
+
         migrationCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ux_production_run_send_to_qc';";
         Assert.Equal(0L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
@@ -286,7 +308,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(56L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(59L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1499,7 +1521,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 57;";
+            command.CommandText = "PRAGMA user_version = 60;";
             await command.ExecuteNonQueryAsync();
         }
 
@@ -1517,6 +1539,17 @@ public sealed class MigrationTests
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DROP TRIGGER operational_anomaly_from_workflow_anomaly;
+            DROP TRIGGER operational_anomaly_from_workflow_event;
+            DROP TRIGGER operational_anomaly_from_expired_verification;
+            DROP TRIGGER operational_anomaly_from_tablet_revoke;
+            DROP TABLE operational_anomalies;
+            DROP VIEW production_run_cycle_attempt_timing;
+            DROP TRIGGER production_run_cycle_attempt_from_start;
+            DROP TRIGGER production_run_cycle_attempt_interrupted;
+            DROP TRIGGER production_run_cycle_attempt_completed;
+            DROP TABLE production_run_cycle_attempt_outcomes;
+            DROP TABLE production_run_cycle_attempts;
             DROP TABLE production_run_cycle_events;
             DELETE FROM schema_migrations WHERE version = 47;
             DROP TRIGGER machine_assignment_run_contains_legacy_operation;

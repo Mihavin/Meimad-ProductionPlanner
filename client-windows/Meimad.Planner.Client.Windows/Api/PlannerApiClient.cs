@@ -229,6 +229,18 @@ internal interface IPlannerApiClient : IDisposable
     Task<CncVerificationSettings> UpdateCncVerificationSettingsAsync(
         string machineId, CncVerificationSettingsUpdate update, string clientId,
         long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<OffsetLoaderRelease> CreateOffsetLoaderReleaseAsync(
+        string productionRunId, CreateOffsetLoaderReleaseRequest request,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncRecoveryResult> InvalidateCncVerificationAsync(
+        string productionRunId, CncRecoveryRequest request,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncRecoveryResult> RevokeCurrentOffsetLoaderAsync(
+        string productionRunId, CncRecoveryRequest request,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<IReadOnlyList<CncAdapterDefinition>> ListCncAdaptersAsync(
         CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<CncAdapterDefinition>>([]);
     Task ReconnectCncAsync(
@@ -1439,6 +1451,48 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<CncVerificationSettings>(response, cancellationToken);
+    }
+
+    public async Task<OffsetLoaderRelease> CreateOffsetLoaderReleaseAsync(
+        string productionRunId, CreateOffsetLoaderReleaseRequest create,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/production-runs/{Uri.EscapeDataString(productionRunId)}/offset-loader-releases",
+            clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<OffsetLoaderRelease>(response, cancellationToken);
+    }
+
+    public Task<CncRecoveryResult> InvalidateCncVerificationAsync(
+        string productionRunId, CncRecoveryRequest recovery,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        SubmitCncRecoveryAsync(productionRunId, "verification/invalidate", recovery,
+            clientId, editGeneration, cancellationToken);
+
+    public Task<CncRecoveryResult> RevokeCurrentOffsetLoaderAsync(
+        string productionRunId, CncRecoveryRequest recovery,
+        string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        SubmitCncRecoveryAsync(productionRunId, "offset-loader/current/revoke", recovery,
+            clientId, editGeneration, cancellationToken);
+
+    private async Task<CncRecoveryResult> SubmitCncRecoveryAsync(
+        string productionRunId, string suffix, CncRecoveryRequest recovery,
+        string clientId, long editGeneration, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/production-runs/{Uri.EscapeDataString(productionRunId)}/{suffix}", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(recovery);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CncRecoveryResult>(response, cancellationToken);
     }
 
     public async Task<IReadOnlyList<CncAdapterDefinition>> ListCncAdaptersAsync(

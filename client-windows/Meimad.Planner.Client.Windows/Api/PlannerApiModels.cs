@@ -492,6 +492,23 @@ internal sealed record CncVerificationSettingsUpdate(
     string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled, int Version);
 
+internal sealed record OffsetLoaderRelease(
+    string OffsetLoaderReleaseId, string ProductionRunId, string MachineId,
+    string NcReleaseId, string ToolTableReleaseId, int VerificationReleaseToken,
+    string? ArtifactHash, DateTimeOffset CreatedAt, string CreatedBy,
+    string MetadataJson, bool IsCurrent);
+
+internal sealed record CreateOffsetLoaderReleaseRequest(
+    string MachineId, string NcReleaseId, string ToolTableReleaseId,
+    string? ArtifactHash = null, string MetadataJson = "{}");
+
+internal sealed record CncRecoveryRequest(string MachineId, string Reason);
+
+internal sealed record CncRecoveryResult(
+    string Action, string ProductionRunId, string MachineId,
+    string? VerificationSessionId, string? OffsetLoaderReleaseId,
+    string Reason, string PerformedBy, DateTimeOffset PerformedAt);
+
 internal sealed record HaasMachineSnapshot(
     string MachineId, DateTimeOffset Timestamp, string ConnectivityState,
     string? MachineStatus, string? ProgramNumber, string? MachineHeaderPartName,

@@ -1,5 +1,9 @@
 # ESP32 / Color E-Ink Work Tablet
 
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** on the CNC only; the tablet receives only a
+Server-derived fixed-width response for a valid session.
+
 - **Concept baseline:** v0.1
 - **Source date:** 11 August 2026
 - **Status:** Hardware and firmware concept; choices marked TBD require prototyping.
@@ -277,7 +281,9 @@ Production Run's tablet workflow projection to `IN_QC`. The request contains
 only the event token. The Server owns target resolution and time, and a retry
 for the same run is idempotent. No Edit Mode is required and no planning/run
 lifecycle/package field changes. The firmware client and JSON/failure handling
-exist; the Server routes/storage and physical input binding remain unimplemented.
+exist; the Server routes/storage and firmware input binding are implemented and
+automatically tested/compiled, while physical button/display behavior remains
+uncommissioned.
 
 ## 11. Wi-Fi provisioning
 

@@ -13,6 +13,9 @@ internal static class ProductionRunEndpoints
         runs.MapGet(string.Empty, ListAsync);
         runs.MapGet("/{runId}", GetAsync);
         runs.MapGet("/{runId}/readiness", GetReadinessAsync);
+        endpoints.MapGet(
+            "/api/v1/machines/{machineId}/production-runs/{runId}/debug-timeline",
+            GetDebugTimelineAsync);
         runs.MapPost(string.Empty, CreateAsync);
         runs.MapPut("/{runId}/composition", UpdateCompositionAsync);
         runs.MapPut("/{runId}/assignment", AssignAsync);
@@ -55,6 +58,37 @@ internal static class ProductionRunEndpoints
     {
         try { return Results.Ok(await service.ReadAsync(runId, token)); }
         catch (Exception exception) when (TryMap(exception, context, out var result)) { return result!; }
+    }
+
+    private static async Task<IResult> GetDebugTimelineAsync(
+        string machineId,
+        string runId,
+        int? limit,
+        HttpContext context,
+        ProductionRunDebugTimelineService service,
+        CancellationToken token)
+    {
+        try
+        {
+            return Results.Ok(await service.ReadAsync(
+                machineId, runId, limit ?? 200, token));
+        }
+        catch (ProductionRunDebugTimelineValidationException exception)
+        {
+            return PlanningHttpSupport.Error(
+                StatusCodes.Status400BadRequest,
+                "invalid_debug_timeline_request",
+                exception.Message,
+                context);
+        }
+        catch (ProductionRunDebugTimelineNotFoundException exception)
+        {
+            return PlanningHttpSupport.Error(
+                StatusCodes.Status404NotFound,
+                "production_run_debug_timeline_not_found",
+                exception.Message,
+                context);
+        }
     }
 
     private static async Task<IResult> CreateAsync(

@@ -1393,7 +1393,64 @@ If a new `CST` arrives while the prior START remains open, the Server appends a 
 
 After caller-specific validation, both this CNC completion path and the existing editor-authorized Production Run cycle command use the same Server transaction component. Their authorization contracts remain different, but their output arithmetic, exact-target protection, aggregate status propagation, durable cycle record, and completion audit are identical.
 
-This contract is a foundation, not completed setup verification. Schema v51 selects the generic-hook fallback, so the protected call's stored six-digit identity—not `PROGRAM`—is the intended exact NC release input. `PROGRAM` remains untrusted Machine evidence. Schema v52 atomically creates one `PENDING` session with the retained `OLC` event. The immutable session context contains Machine, Run, exact NC/Offset Loader releases, six-digit nonce, macro version, response width, creation, expiration, and source event; it stores no secret or response. A newer Offset Loader supersedes a live session. The existing assigned-tablet status route uses the physically matched algorithm under the fail-closed contract in section 8.9; there is no separate response-code endpoint. Commissioned production macro input, success/failure ingestion, and execution blocking remain unimplemented.
+A valid current `OLC` for a different assigned Run is also the authoritative next-setup boundary. In the same transaction, schema v57 closes the most recent prior Run on that Machine that has START evidence and no prior closure. The Server appends `PRODUCTION_SESSION_CLOSED` and stores `observed_end_at`, `effective_end_at`, and `end_time_inferred` separately. A last valid completed END is measured; a final open START is inferable only as START plus the minimum duration of an earlier valid pair. The inference basis names its source events and clock. Missing evidence remains null. The `OLC` retry is idempotent and does not create another closure. There is no tablet `FINISH PRODUCTION` event or endpoint.
+
+Schema v58 adds no new Machine or tablet command. Internally, each retained sequenced START creates immutable raw attempt evidence, and a validated cycle completion or the existing interruption event creates its separate immutable outcome. Both boundaries preserve Server receipt time, optional Machine time, source identity, and sequence. Reports may later derive idle as `next START - previous END` and apply selectable statistical methods; this ingestion contract stores neither calculated duration nor a permanent analytics formula.
+
+This contract includes implemented Server-side setup-verification result ingestion and remains physically uncommissioned. Schema v51 selects the generic-hook fallback, so the protected call's stored six-digit identity—not `PROGRAM`—is the intended exact NC release input. `PROGRAM` remains untrusted Machine evidence. Schema v52 atomically creates one `PENDING` session with the retained `OLC` event. The immutable session context contains Machine, Run, exact NC/Offset Loader releases, six-digit nonce, macro version, response width, creation, expiration, and source event; it stores no secret or response. A newer Offset Loader supersedes a live session. The existing assigned-tablet status route uses the physically matched algorithm under the fail-closed contract in section 8.9; there is no separate response-code endpoint. Success/failure DPRINT ingestion and current-session resolution are implemented. CNC-side operator input, alarm/interlock behavior, and execution blocking remain uncommissioned physical behavior.
+
+The implemented recovery routes require active Edit Mode and a body containing
+the related `machineId` and a non-empty bounded `reason`:
+
+```http
+POST /api/v1/production-runs/{runId}/verification/invalidate
+POST /api/v1/production-runs/{runId}/offset-loader/current/revoke
+```
+
+They invalidate/revoke only current pointers/sessions, preserve every immutable
+release and event, and write user-attributed structured audit facts. Neither is
+a verification bypass.
+
+The operational anomaly queue is read-only:
+
+```http
+GET /api/v1/operational-anomalies?machineId={machineId}&productionRunId={runId}&anomalyType={type}&limit=200
+```
+
+Filters are optional; `limit` is 1-1000. Results contain stable anomaly IDs,
+typed safe messages/details, Server detection time, and applicable references.
+The queue does not expose raw DPRNT lines or mutate workflow/planning data.
+
+The implemented operational debug projection is read-only:
+
+```http
+GET /api/v1/machines/{machineId}/production-runs/{runId}/debug-timeline?limit=200
+```
+
+`limit` defaults to 200 and must be 1-500. The Machine/Run pair must be related by its assignment or retained workflow evidence. Items are the most recent bounded workflow/anomaly facts returned in ascending authoritative Server-receipt order. Each item exposes `itemId`, `kind`, `eventType`, `serverReceivedAt`, optional `machineTimestamp`, optional `sourceSequence`, optional `attemptState`, `isAnomaly`, and a human-readable `message`. The response also names the Machine and current Run status. It never returns `metadata_json`, raw DPRINT lines, response secrets, or another mutable interpretation store. A Machine clock is evidence only and never reorders Server history.
+
+```json
+{
+  "machineId": "machine-10",
+  "machineNumber": "10",
+  "machineName": "VF-3",
+  "productionRunId": "run-74",
+  "productionRunStatus": "IN_PROGRESS",
+  "items": [
+    {
+      "itemId": "workflow:event-211",
+      "kind": "WORKFLOW_EVENT",
+      "eventType": "CYCLE_START",
+      "serverReceivedAt": "2026-08-26T21:27:00Z",
+      "machineTimestamp": "2026-08-26T21:26:59Z",
+      "sourceSequence": 211,
+      "attemptState": "COMPLETED",
+      "isAnomaly": false,
+      "message": "Cycle started #211."
+    }
+  ]
+}
+```
 
 ## 7.6 Official job package generation
 

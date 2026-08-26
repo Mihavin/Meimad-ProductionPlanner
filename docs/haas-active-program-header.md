@@ -1,5 +1,9 @@
 # Haas VF-3 NGC active-program header technical spike
 
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** only after the per-Machine checklist in
+`cnc-commissioning-checklist.md` passes.
+
 ## Decision
 
 Automatic Bench identification is enabled only when Meimad reads a bounded header from the Haas-accessible Local Net Share and proves that the active program locator maps to exactly one readable machine-side file. MDC normally supplies an O-number. MTConnect may instead supply a filename-like `PROGRAM` value, which remains informational until a site test proves a unique header mapping. The filename is never a Part identifier. The shared `INcHeaderParser` extracts `PART` from that machine file, and only that parsed value may match planned work.
@@ -9,7 +13,7 @@ There is no server-release fallback. If the machine file is absent, unreadable, 
 ## What Haas documents
 
 - Haas MDC is a TCP server enabled/configured by Setting 143. Queries use uppercase `?Q###` plus newline and responses are comma-separated records. `Q500` returns the active program locator/status and Parts counter; it does not return NC header content. `Q600` reads a macro/system variable. `E` writes a writable variable and returns `!` or `?`. [Haas NGC Machine Data Collection](https://www.haascnc.com/service/online-manuals/next-gen-control-electrical---service-manual/ngc---machine-data-collection.html)
-- Haas recommends extreme caution for variable writes. Meimad exposes no generic variable-write API and has removed the persistent Setup/Production workflow variable. A later protected setup-verification handshake may use temporary variables only after the controller-specific protected-program mechanism, ranges, reset/power-cycle behavior, and collision risks are bench-tested and recorded. [Haas NGC Machine Data Collection](https://www.haascnc.com/service/online-manuals/next-gen-control-electrical---service-manual/ngc---machine-data-collection.html)
+- Haas recommends extreme caution for variable writes. Meimad exposes no generic variable-write API and has removed the persistent Setup/Production workflow variable. The implemented Server-side protected setup-verification handshake permits temporary variables only after the controller-specific protected-program mechanism, ranges, reset/power-cycle behavior, and collision risks are bench-tested and recorded. [Haas NGC Machine Data Collection](https://www.haascnc.com/service/online-manuals/next-gen-control-electrical---service-manual/ngc---machine-data-collection.html)
 - Haas Local Net Share makes CNC Machine Data and User Data available to a shop PC; Net Share is also used to transfer programs. Haas's public documentation does not state that the currently active program in MEMORY always has a uniquely addressable file in the share. [Haas wired/wireless networking](https://www.haascnc.com/service/troubleshooting-and-how-to/how-to/wired--wireless--network---ngc.html), [Haas NGC operator manual](https://www.haascnc.com/content/dam/haascnc/en/service/manual/operator/english---mill-ngc---operator%27s-manual---2025.pdf)
 
 ## Implemented read-only adapter

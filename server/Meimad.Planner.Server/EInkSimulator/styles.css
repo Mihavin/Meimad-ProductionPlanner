@@ -13,7 +13,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--black); font-family: "Segoe UI", Arial, sans-serif; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 .app-header {
   display: flex;
@@ -47,6 +47,25 @@ button:hover, button:focus-visible { background: #e4f1fc; }
 .connection-state { min-height: 40px; display: flex; align-items: center; padding: 8px 10px; border-left: 6px solid var(--grey); font-weight: 800; }
 .connection-state.connected { border-color: var(--green); }
 .connection-state.error { border-color: var(--red); }
+
+.scenario-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(150px, .8fr)) repeat(2, auto);
+  gap: 12px;
+  align-items: end;
+  max-width: 1080px;
+  margin: 0 auto 14px;
+  padding: 14px 18px;
+  background: white;
+  border: 2px solid #77858f;
+}
+.scenario-panel h2 { margin: 0; font-size: 18px; }
+.scenario-panel p { margin: 4px 0 0; color: #5d6770; font-size: 13px; }
+.scenario-panel select { min-height: 40px; padding: 7px 9px; border: 2px solid #77858f; background: white; }
+.scenario-panel .check-label { display: flex; align-items: center; min-height: 40px; gap: 8px; }
+.scenario-panel .check-label input { min-height: auto; }
+.scenario-panel #scenario-state { grid-column: 1 / -1; }
+#send-to-qc:not(:disabled) { color: white; background: var(--green); border-color: var(--black); }
 
 main { padding: 20px 28px 32px; }
 .local-tabs { display: flex; align-items: center; gap: 8px; max-width: 1080px; margin: 0 auto 12px; }
@@ -86,12 +105,20 @@ main { padding: 20px 28px 32px; }
 
 .screen-page { display: none; min-height: 0; }
 .screen-page.active-page { display: grid; }
-#machine-page { grid-template-rows: 56px 1fr 58px; }
+#machine-page { grid-template-rows: 56px auto 1fr 58px; }
 .status-block { display: flex; align-items: center; justify-content: center; gap: 12px; border-bottom: 3px solid var(--black); font-size: 23px; }
 .status-symbol { font-size: 26px; }
 .status-current { background: var(--blue); color: white; }
 .status-conflict { background: var(--red); color: white; }
 .status-idle, .status-unassigned, .status-unavailable { background: #dedede; }
+.status-ready_for_setup, .status-in_setup { background: var(--yellow); }
+.status-in_setup_run { background: var(--orange); }
+.status-in_qc, .status-ready_for_production { background: var(--green); color: white; }
+.status-in_production { background: var(--blue); color: white; }
+.status-blocked { background: var(--red); color: white; }
+.verification-block { padding: 8px 14px; border-bottom: 3px solid var(--black); font-size: 18px; font-weight: 900; text-align: center; }
+.verification-block.failure { color: white; background: var(--red); }
+.battery-low { color: var(--red); }
 
 .machine-layout { display: grid; grid-template-columns: 1.65fr 1fr; min-height: 0; }
 .current-card, .next-card { padding: 14px 18px; min-width: 0; }
@@ -135,7 +162,7 @@ main { padding: 20px 28px 32px; }
 .protocol-log { font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; }
 
 @media (max-width: 900px) {
-  .app-header, .connection-panel { display: grid; grid-template-columns: 1fr; }
+  .app-header, .connection-panel, .scenario-panel { display: grid; grid-template-columns: 1fr; }
   .tablet-screen { min-height: 480px; }
   .local-tabs { flex-wrap: wrap; }
   .local-tabs span { width: 100%; margin-left: 0; }

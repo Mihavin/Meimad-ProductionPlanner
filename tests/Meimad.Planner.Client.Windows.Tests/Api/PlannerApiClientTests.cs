@@ -2264,6 +2264,50 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Cnc_recovery_and_replacement_loader_use_typed_edit_guarded_contracts()
+    {
+        const string releaseJson = """
+            {"offsetLoaderReleaseId":"ol-2","productionRunId":"run:1","machineId":"machine-1",
+            "ncReleaseId":"nc-1","toolTableReleaseId":"tools-1","verificationReleaseToken":483920,
+            "artifactHash":null,"createdAt":"2026-08-26T12:00:00Z","createdBy":"user-1",
+            "metadataJson":"{}","isCurrent":true}
+            """;
+        const string invalidateJson = """
+            {"action":"INVALIDATE_VERIFICATION","productionRunId":"run:1","machineId":"machine-1",
+            "verificationSessionId":"session-1","offsetLoaderReleaseId":"ol-2","reason":"Fixture changed",
+            "performedBy":"user-1","performedAt":"2026-08-26T12:01:00Z"}
+            """;
+        const string revokeJson = """
+            {"action":"REVOKE_CURRENT_OFFSET_LOADER","productionRunId":"run:1","machineId":"machine-1",
+            "verificationSessionId":null,"offsetLoaderReleaseId":"ol-2","reason":"Offsets invalid",
+            "performedBy":"user-1","performedAt":"2026-08-26T12:02:00Z"}
+            """;
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.Created, releaseJson),
+            Json(HttpStatusCode.OK, invalidateJson),
+            Json(HttpStatusCode.OK, revokeJson));
+        using var api = CreateClient(handler);
+
+        var release = await api.CreateOffsetLoaderReleaseAsync(
+            "run:1", new("machine-1", "nc-1", "tools-1"), "windows-1", 43);
+        var invalidated = await api.InvalidateCncVerificationAsync(
+            "run:1", new("machine-1", "Fixture changed"), "windows-1", 43);
+        var revoked = await api.RevokeCurrentOffsetLoaderAsync(
+            "run:1", new("machine-1", "Offsets invalid"), "windows-1", 43);
+
+        Assert.True(release.IsCurrent);
+        Assert.Equal("INVALIDATE_VERIFICATION", invalidated.Action);
+        Assert.Equal("REVOKE_CURRENT_OFFSET_LOADER", revoked.Action);
+        Assert.Equal("/api/v1/production-runs/run%3A1/offset-loader-releases", handler.Requests[0].Path);
+        Assert.Equal("/api/v1/production-runs/run%3A1/verification/invalidate", handler.Requests[1].Path);
+        Assert.Equal("/api/v1/production-runs/run%3A1/offset-loader/current/revoke", handler.Requests[2].Path);
+        Assert.All(handler.Requests, request => Assert.Equal("43", request.Generation));
+        Assert.Contains("\"machineId\":\"machine-1\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"reason\":\"Fixture changed\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("\"reason\":\"Offsets invalid\"", handler.Requests[2].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Qc_queue_read_and_decision_use_typed_contract_and_user_edit_authority()
     {
         const string queueJson = """

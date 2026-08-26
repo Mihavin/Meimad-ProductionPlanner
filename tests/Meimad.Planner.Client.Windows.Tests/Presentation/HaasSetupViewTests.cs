@@ -23,6 +23,11 @@ public sealed class HaasSetupViewTests
         Assert.Contains("Protected setup verification (commissioning gated)", xaml, StringComparison.Ordinal);
         Assert.Contains("LoadVerificationConfigurationCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("SaveVerificationConfigurationCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("GenerateOffsetLoaderReleaseCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("InvalidateVerificationCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("RevokeCurrentOffsetLoaderCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("no verification bypass", xaml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Recovery reason (required)", xaml, StringComparison.Ordinal);
         Assert.Contains("PasswordBox PasswordChanged=\"VerificationSecret_PasswordChanged\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Keep verification disabled until", xaml, StringComparison.Ordinal);
     }

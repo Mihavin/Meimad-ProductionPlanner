@@ -1,6 +1,7 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.EventLogging;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -22,7 +23,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await ValidateAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var actor = await ValidateAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
         await ValidateMachineAsync(connection, transaction, registration.MachineId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -51,6 +52,16 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
             throw BindingConflict(exception);
         }
 
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection, transaction,
+            new("tablet_registered", registration.CreatedAt, actor,
+                new Dictionary<string, string>
+                {
+                    ["tabletDeviceId"] = registration.DeviceId,
+                    ["tabletId"] = registration.TabletId
+                }, null, null, null,
+                new { registration.MachineId, registration.IsEnabled }), cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
         return registration;
     }
@@ -66,7 +77,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await ValidateAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        var actor = await ValidateAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
         await ValidateMachineAsync(connection, transaction, machineId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -101,6 +112,17 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         }
 
         var value = await ReadOneAsync(connection, transaction, deviceId, cancellationToken);
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection, transaction,
+            new("tablet_administration_recovery", updatedAt, actor,
+                new Dictionary<string, string> { ["tabletDeviceId"] = deviceId },
+                "authorized_recovery", null, null,
+                new
+                {
+                    machineId,
+                    isEnabled,
+                    credentialRotated = credentialHash is not null
+                }), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return value;
     }
@@ -285,7 +307,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         }
     }
 
-    private static async Task ValidateAuthorityAsync(
+    private static async Task<string> ValidateAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         EditAuthority authority,
@@ -293,17 +315,18 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
+        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)
             || reader.IsDBNull(0)
             || !string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != authority.Generation)
+            || reader.GetInt64(2) != authority.Generation)
         {
             throw new EditModeMutationException(
                 "edit_authority_required",
                 "The active Server Edit Mode generation is required for device administration.");
         }
+        return reader.IsDBNull(1) ? authority.ClientId : reader.GetString(1);
     }
 
     private static EInkDeviceRegistration Map(SqliteDataReader reader) => new(

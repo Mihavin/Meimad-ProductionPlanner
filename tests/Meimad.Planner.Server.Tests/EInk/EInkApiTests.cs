@@ -721,7 +721,7 @@ public sealed class EInkApiTests
     }
 
     [Fact]
-    public async Task Simulator_is_local_read_only_and_has_no_write_back_or_usb_surface()
+    public async Task Simulator_covers_workflow_failures_and_only_posts_exact_send_to_qc()
     {
         await RunWithServerAsync(async (_, client, _) =>
         {
@@ -729,14 +729,25 @@ public sealed class EInkApiTests
             Assert.Equal(HttpStatusCode.OK, page.StatusCode);
             var html = await page.Content.ReadAsStringAsync();
             Assert.Contains("READ-ONLY", html, StringComparison.Ordinal);
-            Assert.Contains("NO WRITE-BACK", html, StringComparison.Ordinal);
+            Assert.Contains("SEND_TO_QC", html, StringComparison.Ordinal);
+            foreach (var status in new[] { "READY_FOR_SETUP", "IN_SETUP", "IN_SETUP_RUN", "IN_QC", "READY_FOR_PRODUCTION", "IN_PRODUCTION", "BLOCKED" })
+            {
+                Assert.Contains(status, html, StringComparison.Ordinal);
+            }
+            Assert.Contains("Server offline", html, StringComparison.Ordinal);
+            Assert.Contains("Low battery", html, StringComparison.Ordinal);
+            Assert.Contains("Verification failed", html, StringComparison.Ordinal);
             Assert.DoesNotContain("textarea", html, StringComparison.OrdinalIgnoreCase);
 
             using var script = await client.GetAsync("/eink-simulator/app.js");
             var javascript = await script.Content.ReadAsStringAsync();
             Assert.Contains("GET version (small change check)", javascript, StringComparison.Ordinal);
             Assert.Contains("crypto.subtle.digest", javascript, StringComparison.Ordinal);
-            Assert.DoesNotContain("method: \"POST\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("method: \"POST\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("{ event_type: \"SEND_TO_QC\" }", javascript, StringComparison.Ordinal);
+            Assert.Contains("result.duplicate", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("production_run_id", javascript, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("machine_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
 
             using var usb = await client.SendAsync(Get(

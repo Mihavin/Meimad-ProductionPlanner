@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.Anomalies;
 using Meimad.Planner.Server.Backup;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
@@ -127,6 +128,36 @@ public sealed class ServerApplicationTests
     }
 
     [Fact]
+    public async Task Operational_anomaly_queue_is_routed_filtered_and_returns_actionable_details()
+    {
+        await using var application = CreateTestApplication();
+        await application.StartAsync();
+        try
+        {
+            await application.Services.GetRequiredService<OperationalAnomalyService>()
+                .AppendAsync(new(
+                    "verification_macro_version_mismatch", "TEST", "route-anomaly-1",
+                    DateTimeOffset.Parse("2026-08-26T12:00:00Z"),
+                    SourceEventId: "DPRINT-1",
+                    DetailsJson: "{\"reportedVersion\":2,\"expectedVersion\":3}"));
+            using var client = application.GetTestClient();
+            using var response = await client.GetAsync(
+                "/api/v1/operational-anomalies?anomalyType=verification_macro_version_mismatch&limit=1");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+            Assert.StartsWith("CNC VERIFICATION MACRO UPDATE REQUIRED",
+                item.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.Contains("expectedVersion", item.GetProperty("detailsJson").GetString(),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            await application.StopAsync();
+        }
+    }
+
+    [Fact]
     public void Installed_server_resolves_relative_mutable_paths_below_program_data()
     {
         if (!OperatingSystem.IsWindows())
@@ -174,7 +205,7 @@ public sealed class ServerApplicationTests
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
 
-            Assert.Equal(56L, (long)(await command.ExecuteScalarAsync())!);
+            Assert.Equal(59L, (long)(await command.ExecuteScalarAsync())!);
         }
         finally
         {

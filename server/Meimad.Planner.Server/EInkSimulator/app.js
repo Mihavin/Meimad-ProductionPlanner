@@ -6,7 +6,9 @@ const state = {
   versionEtag: null,
   manifest: null,
   pollTimer: null,
-  imageUrl: null
+  imageUrl: null,
+  realStatus: null,
+  localRevision: 1
 };
 
 const byId = (id) => document.getElementById(id);
@@ -30,6 +32,20 @@ async function getJson(path, extraHeaders = {}) {
     throw new Error(message);
   }
   return response.status === 304 ? { response, value: null } : { response, value: await response.json() };
+}
+
+async function postJson(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try { message = (await response.json()).error?.message || message; } catch { /* safe fallback */ }
+    throw new Error(message);
+  }
+  return response.json();
 }
 
 function devicePath(suffix) {
@@ -71,6 +87,7 @@ async function loadAll(force = false) {
       renderScreen(screen.value);
       renderTime(time.value);
       await loadManifest(screen.value.package);
+      await loadPhysicalStatus();
     }
     setConnection("Connected • authorized read-only device", false, true);
   } catch (error) {
@@ -78,6 +95,19 @@ async function loadAll(force = false) {
     log(`ERROR ${error.message}`);
   } finally {
     schedulePoll();
+  }
+}
+
+async function loadPhysicalStatus() {
+  try {
+    const result = await getJson(`/api/tablets/${encodeURIComponent(state.deviceId)}/status`);
+    state.realStatus = result.value?.status || null;
+    byId("send-to-qc").disabled = state.realStatus !== "IN_SETUP_RUN";
+    log(`GET physical status - ${state.realStatus || "UNKNOWN"}`);
+  } catch (error) {
+    state.realStatus = null;
+    byId("send-to-qc").disabled = true;
+    log(`Physical status unavailable - ${error.message}`);
   }
 }
 
@@ -189,6 +219,53 @@ function showPage(page) {
   byId("screen-title").textContent = page === "machine" ? "MACHINE PAGE" : page === "package" ? "SETUP PACKAGE" : "NC / TEXT VIEWER";
 }
 
+function ensureBatteryLabel() {
+  let element = byId("battery-state");
+  if (!element) {
+    element = document.createElement("span");
+    element.id = "battery-state";
+    document.querySelector(".screen-meta").prepend(element);
+  }
+  return element;
+}
+
+function applyLocalScenario() {
+  const workflow = byId("scenario-status").value;
+  const verification = byId("scenario-verification").value;
+  const offline = byId("scenario-offline").checked;
+  const lowBattery = byId("scenario-low-battery").checked;
+  const status = byId("status-block");
+  const verificationBlock = byId("verification-block");
+  const battery = ensureBatteryLabel();
+
+  status.className = `status-block status-${workflow.toLowerCase()}`;
+  status.innerHTML = `<span class="status-symbol">${workflow === "BLOCKED" ? "!" : "■"}</span><strong>${escapeHtml(workflow.replaceAll("_", " "))}</strong>`;
+  verificationBlock.hidden = verification === "none";
+  verificationBlock.className = `verification-block${verification === "failed" || verification === "expired" ? " failure" : ""}`;
+  verificationBlock.textContent = verification === "code" ? "SETUP RESPONSE CODE: 042731"
+    : verification === "failed" ? "VERIFICATION FAILED - CNC START REMAINS BLOCKED"
+    : verification === "expired" ? "VERIFICATION EXPIRED - RUN OFFSET LOADER AGAIN" : "";
+  battery.textContent = lowBattery ? "LOW BATTERY - REPLACE 3 AA" : "BATTERY OK";
+  battery.className = lowBattery ? "battery-low" : "";
+  setConnection(offline ? "OFFLINE - showing last-known-good content" : `Local ${workflow} scenario`, offline, !offline);
+  byId("scenario-state").textContent = `LOCAL ONLY | ${workflow} | ${offline ? "SERVER OFFLINE" : "SERVER AVAILABLE"} | ${lowBattery ? "LOW BATTERY" : "BATTERY OK"}`;
+  log(`LOCAL scenario ${workflow}${offline ? " offline" : ""}${lowBattery ? " low-battery" : ""}`);
+}
+
+async function sendToQc() {
+  if (state.realStatus !== "IN_SETUP_RUN") return;
+  byId("send-to-qc").disabled = true;
+  try {
+    const result = await postJson(`/api/tablets/${encodeURIComponent(state.deviceId)}/events`, { event_type: "SEND_TO_QC" });
+    log(`POST SEND_TO_QC accepted${result.duplicate ? " (idempotent retry)" : ""}`);
+    setConnection("SEND_TO_QC accepted; refreshing authoritative status", false, true);
+    await loadPhysicalStatus();
+  } catch (error) {
+    setConnection(`SEND_TO_QC uncertain/rejected: ${error.message}`, true);
+    log(`SEND_TO_QC ERROR ${error.message}`);
+  }
+}
+
 function schedulePoll() {
   clearTimeout(state.pollTimer);
   const seconds = Math.max(30, Number(state.pollSeconds) || 300);
@@ -198,5 +275,13 @@ function schedulePoll() {
 byId("device-id").value = state.deviceId;
 byId("device-token").value = state.token;
 byId("connect").addEventListener("click", () => loadAll(true));
+byId("apply-scenario").addEventListener("click", applyLocalScenario);
+byId("change-revision").addEventListener("click", () => {
+  state.localRevision += 1;
+  byId("revision").textContent = `Revision LOCAL-${state.localRevision}`;
+  byId("scenario-state").textContent = "LOCAL ONLY | NEW PACKAGE REVISION AVAILABLE | review before clearing local marks";
+  log(`LOCAL revision changed to ${state.localRevision}`);
+});
+byId("send-to-qc").addEventListener("click", sendToQc);
 document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
 if (state.deviceId && state.token) loadAll(false);

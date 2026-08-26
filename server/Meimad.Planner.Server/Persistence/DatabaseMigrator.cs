@@ -61,7 +61,10 @@ internal sealed class DatabaseMigrator
         new SchemaV53TabletTerminalHealthMigration(),
         new SchemaV54TabletSendToQcMigration(),
         new SchemaV55QcWorkflowMigration(),
-        new SchemaV56CycleWorkflowAnomaliesMigration()
+        new SchemaV56CycleWorkflowAnomaliesMigration(),
+        new SchemaV57ProductionSessionClosureMigration(),
+        new SchemaV58CycleAttemptTimingMigration(),
+        new SchemaV59OperationalAnomaliesMigration()
     ];
 
     private readonly SqliteDatabase database;

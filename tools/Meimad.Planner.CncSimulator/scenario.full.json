@@ -1,0 +1,20 @@
+{
+  "machineId": "MACHINE-VERIFICATION",
+  "events": [
+    { "eventType": "OFFSET_LOADER_COMPLETED", "eventId": "OLC-100", "sequence": 100, "productionRunId": "RUN-100", "programIdentity": "654321", "offsetRelease": 483920, "nonce": 731841, "atMs": 0 },
+    { "eventType": "SETUP_VERIFICATION_FAILED", "eventId": "SVF-101", "sequence": 101, "productionRunId": "RUN-100", "programIdentity": "654321", "delayMs": 250 },
+    { "eventType": "OFFSET_LOADER_COMPLETED", "eventId": "OLC-OLD-102", "sequence": 102, "productionRunId": "RUN-100", "programIdentity": "654321", "offsetRelease": 483919, "nonce": 731842 },
+    { "eventType": "OFFSET_LOADER_COMPLETED", "eventId": "OLC-103", "sequence": 103, "productionRunId": "RUN-100", "programIdentity": "654321", "offsetRelease": 483920, "nonce": 731843 },
+    { "eventType": "SETUP_VERIFICATION_SUCCEEDED", "eventId": "SVS-104", "sequence": 104, "productionRunId": "RUN-100", "programIdentity": "654321" },
+    { "eventType": "SEND_TO_QC", "eventId": "STQ-105", "sequence": 105, "productionRunId": "RUN-100" },
+    { "eventType": "QC_FAIL", "eventId": "QCF-106", "sequence": 106, "productionRunId": "RUN-100" },
+    { "eventType": "SEND_TO_QC", "eventId": "STQ-107", "sequence": 107, "productionRunId": "RUN-100" },
+    { "eventType": "QC_PASS", "eventId": "QCP-108", "sequence": 108, "productionRunId": "RUN-100" },
+    { "eventType": "CYCLE_START", "eventId": "CST-201", "sequence": 201, "productionRunId": "RUN-100", "programIdentity": "654321", "atMs": 2000, "delayMs": 500 },
+    { "eventType": "CYCLE_END", "eventId": "CEN-202", "sequence": 202, "productionRunId": "RUN-100", "programIdentity": "654321", "repeat": 2 },
+    { "eventType": "CYCLE_START", "eventId": "CST-205", "sequence": 205, "productionRunId": "RUN-100", "programIdentity": "654321" },
+    { "eventType": "CYCLE_START", "eventId": "CST-204", "sequence": 204, "productionRunId": "RUN-100", "programIdentity": "654321" },
+    { "eventType": "CYCLE_END", "eventId": "CEN-206", "sequence": 206, "productionRunId": "RUN-100", "programIdentity": "654321", "delayMs": 1000 },
+    { "eventType": "OFFSET_LOADER_COMPLETED", "eventId": "OLC-NEXT-300", "sequence": 300, "productionRunId": "RUN-200", "programIdentity": "754321", "offsetRelease": 583920, "nonce": 831841 }
+  ]
+}

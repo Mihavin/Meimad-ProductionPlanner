@@ -26,10 +26,14 @@ internal sealed record AppendProductionRunWorkflowEvent(
     DateTimeOffset? MachineTimestamp = null, string? NcReleaseId = null,
     string? OffsetLoaderReleaseId = null, string? TabletDeviceId = null,
     string? UserId = null, string MetadataJson = "{}",
-    SetupVerificationSessionSeed? VerificationSession = null);
+    SetupVerificationSessionSeed? VerificationSession = null,
+    SetupVerificationResolutionSeed? VerificationResolution = null);
 
 internal sealed record SetupVerificationSessionSeed(
     int Nonce, int MacroVersion, int ResponseCodeDigits, int TimeoutSeconds);
+
+internal sealed record SetupVerificationResolutionSeed(
+    string SessionId, bool Succeeded);
 
 internal sealed record ProductionRunWorkflowAppendResult(
     ProductionRunWorkflowEvent Event, bool WasDuplicate,
@@ -81,6 +85,14 @@ internal sealed class ProductionRunWorkflowEventService(
                     "Verification session configuration is outside the supported range.");
             Required(command.NcReleaseId, "ncReleaseId");
             Required(command.OffsetLoaderReleaseId, "offsetLoaderReleaseId");
+        }
+        if (command.VerificationResolution is { } resolution)
+        {
+            if (command.EventType is not ("SETUP_VERIFICATION_SUCCEEDED" or "SETUP_VERIFICATION_FAILED"))
+                throw new ProductionRunWorkflowEventValidationException(
+                    "verificationResolution", "invalid_resolution_event",
+                    "A verification resolution requires a setup-verification success or failure event.");
+            Required(resolution.SessionId, "verificationSessionId");
         }
         try
         {

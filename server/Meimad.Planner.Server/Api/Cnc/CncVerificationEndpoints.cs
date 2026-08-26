@@ -11,6 +11,12 @@ internal static class CncVerificationEndpoints
         endpoints.MapPost("/api/v1/production-runs/{runId}/offset-loader-releases", CreateReleaseAsync);
         endpoints.MapGet("/api/v1/machines/{machineId}/verification-configuration", GetSettingsAsync);
         endpoints.MapPut("/api/v1/machines/{machineId}/verification-configuration", UpdateSettingsAsync);
+        endpoints.MapPost(
+            "/api/v1/production-runs/{runId}/verification/invalidate",
+            InvalidateVerificationAsync);
+        endpoints.MapPost(
+            "/api/v1/production-runs/{runId}/offset-loader/current/revoke",
+            RevokeCurrentOffsetLoaderAsync);
     }
 
     private static async Task<IResult> ListReleasesAsync(
@@ -70,6 +76,48 @@ internal static class CncVerificationEndpoints
         catch (Exception exception) when (Map(exception, context, out var result)) { return result!; }
     }
 
+    private static async Task<IResult> InvalidateVerificationAsync(
+        string runId,
+        CncRecoveryRequest request,
+        HttpContext context,
+        CncVerificationFoundationService service,
+        CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+            return error!;
+        try
+        {
+            return Results.Ok(await service.InvalidateVerificationAsync(
+                runId, request.MachineId ?? string.Empty, request.Reason ?? string.Empty,
+                authority!, token));
+        }
+        catch (Exception exception) when (Map(exception, context, out var result))
+        {
+            return result!;
+        }
+    }
+
+    private static async Task<IResult> RevokeCurrentOffsetLoaderAsync(
+        string runId,
+        CncRecoveryRequest request,
+        HttpContext context,
+        CncVerificationFoundationService service,
+        CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+            return error!;
+        try
+        {
+            return Results.Ok(await service.RevokeCurrentOffsetLoaderAsync(
+                runId, request.MachineId ?? string.Empty, request.Reason ?? string.Empty,
+                authority!, token));
+        }
+        catch (Exception exception) when (Map(exception, context, out var result))
+        {
+            return result!;
+        }
+    }
+
     private static bool Map(Exception exception, HttpContext? context, out IResult? result)
     {
         context ??= new DefaultHttpContext();
@@ -100,3 +148,5 @@ internal sealed record UpdateCncVerificationSettingsRequest(
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
     string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled, int Version);
+
+internal sealed record CncRecoveryRequest(string? MachineId, string? Reason);

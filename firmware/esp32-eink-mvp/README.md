@@ -1,5 +1,9 @@
 # Meimad Planner ESP32 E-Ink Tablet MVP
 
+**Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
+verification variables: SUPPORTED** only inside the CNC protected handshake;
+this firmware never reads them or treats them as workflow authority.
+
 This is the buildable firmware/development environment for the E-Ink tablet.
 It includes observable boot diagnostics, bounded Wi-Fi and tablet-status API
 calls, a first production screen layout, revision-gated refresh, and the first
