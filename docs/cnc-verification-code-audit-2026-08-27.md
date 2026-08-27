@@ -1,0 +1,139 @@
+# CNC verification code audit — 2026-08-27
+
+## Decision
+
+**QUARANTINED — NOT PRODUCTION APPROVED.** Do not enable CNC setup verification,
+install a production key, or use bench packages v1, v2, or v3 as a production
+interlock. No further physical CNC work is requested by this audit.
+
+The real VF-3SS on NGC `100.21.000.1001` established useful partial evidence:
+Setting 23 protected O9001/O9002 from ordinary access; the generic G65 hook and
+public response arithmetic worked; correct and incorrect six-digit entry,
+failure-before-return, persistent-variable cleanup, Reset cleanup in macro v4,
+E-stop recovery, and controller reboot cleanup were observed. Those results do
+not overcome the blocking findings below.
+
+## Findings
+
+### C1 — M109 timeout enforcement is not valid (critical, open)
+
+Macro v5 checked `#3001` after the sixth M109 input in source order, but the VF-3SS
+accepted the otherwise correct response after the operator waited at least 130
+seconds at the first prompt. No alarm was raised. This violates the configured
+120-second CNC interlock even though the Server independently rejects a late SVS.
+
+The generator's static test asserted textual ordering only. Haas documents that
+macro expressions execute during look-ahead, that `G103 P1` still interprets one
+block ahead, and that M109 specifically requires a following loop that waits for
+a nonzero response. The candidate has direct IF checks rather than the documented
+loop and has no commissioned execution barrier proving that the post-input timer
+read occurs after operator input.
+
+Disposition: macro versions 3–5 and bench packages v1–v3 are quarantined. Do not
+create a speculative v6. Before another physical test, obtain an HFO-reviewed
+design for a fresh post-M109 timer read—such as a separately protected finalizer
+call or another documented execution barrier—or replace M109 with a commissioned
+input mechanism. Add an automated structural test for the approved pattern, while
+retaining physical proof as the acceptance gate.
+
+### C2 — Event sequence is not monotonic across reboot/wrap (critical, open)
+
+O9001/O9002 derive `SEQ` from `#3001`. Haas defines `#3001` as milliseconds since
+power-on, so controller reboot resets the sequence and eventual wrap can repeat it.
+The Server's per-source sequence logic expects monotonic evidence. A reboot can
+therefore turn later legitimate OLC/SVS/SVF events into gap/out-of-order evidence,
+and date/time-based IDs do not repair the sequence invariant.
+
+Disposition: define a commissioned sequence epoch/counter contract that survives
+or explicitly resets at connection epochs without becoming workflow authority.
+Do not approve the current `#3001` sequence as production evidence.
+
+### H1 — MDC cross-talk could starve DPRNT ingestion (high, fixed in source)
+
+Haas documents that a reply requested by one MDC connection is sent to every MDC
+connection. The old Server assumed the next line was always its own Q500 response.
+The commissioning capture tool simultaneously requested Q101/Q102/Q500, causing
+the installed Server to parse another response as Q500, throw for missing PARTS,
+restart its poll adapter, and skip the DPRNT drain for that cycle.
+
+Source correction:
+
+- the passive capture tool skips MDC by default;
+- the Server filters replies by expected response type;
+- documented `STATUS, BUSY` is represented with unavailable program/counter data
+  instead of failing the whole poll;
+- degraded MDC data no longer prevents the same snapshot from draining DPRNT.
+
+Automated Haas tests pass. This fix is not present in the currently installed
+Windows Service until a new Server MSI is built and deliberately installed.
+
+### H2 — Dead DPRNT sockets could survive controller reboot (high, fixed in source)
+
+`TcpClient.Connected` reports the last known state and is not a liveness probe.
+The old reader returned immediately when `DataAvailable` was false, so a socket
+closed by controller reboot could remain cached forever and never reconnect.
+
+Source correction: the reader now detects a readable socket with zero available
+bytes as disconnected, disposes it, and reconnects. A loopback peer-close test
+covers the behavior. Deployment remains pending.
+
+### H3 — Competing capture clients were unsafe and ambiguous (high, fixed in source)
+
+The live helper previously connected even when the installed Server already owned
+the Haas DPRNT endpoint. Both connections could appear established while only one
+received useful output. The helper now refuses a competing local established
+connection by default. An explicit override is for isolated diagnostics only.
+
+### M1 — Commissioning evidence exposed raw nonce values (medium, fixed in source)
+
+The live helper printed and logged the raw OLC nonce. The revised helper keeps it
+only in memory for the public bench calculation, redacts it in console/file output,
+validates the expected macro version, and rejects a second challenge in one session.
+
+### M2 — Static macro/package tests overstated assurance (medium, open)
+
+The tests prove generated text, hashes, public arithmetic, no-motion sample files,
+and event formatting. They cannot prove Haas look-ahead timing, M109 behavior,
+protected execution, transport ownership, alarm ordering relative to real cutting,
+or power/reset behavior. Test and report wording must keep those boundaries explicit.
+
+### M3 — Installed service state needs an administrative check (medium, external)
+
+Windows recorded one unexpected service termination during the commissioning
+window, interleaved with intentional stop/start attempts. The audit cannot assign
+that event to a code crash without a clean reproduction. Confirm the service is
+Running, inspect its recovery settings, and use a fresh installed build for any
+later LAN soak. This requires no CNC execution.
+
+## Confirmed safe Server behavior
+
+- Server-created verification sessions expire by Server UTC time.
+- A late SVS cannot resolve an expired session successfully.
+- Tablet status omits the response after expiry or invalidation.
+- A newer Offset Loader supersedes a live session.
+- Macro-version, NC identity, Machine, Run, and current-release mismatches reject
+  verification evidence.
+- TV/tablet authorization boundaries remain independent of the CNC macro defect.
+
+## Exit criteria before another CNC visit
+
+1. Approve a documented M109/finalizer or replacement-input design with the HFO,
+   using the [prepared HFO review request](haas-hfo-review-request-2026-08-27.md).
+2. Replace the mixed `#3001`/parts-counter sequence semantics with one reviewed
+   reboot/wrap contract shared by every emitted event type.
+3. Add structural/unit tests for the approved macro pattern and connection epoch.
+4. Run the full Server and Windows regressions and build a new Server MSI.
+5. Rehearse sole-owner MDC/DPRNT capture on a simulator or disconnected bench.
+6. Prepare one short, prewritten physical script covering only the unresolved
+   cases; do not iterate macro versions at the machine.
+7. Keep `cnc_verification_settings.enabled=false` until the checklist and both
+   sign-offs are complete.
+
+## Authoritative references
+
+- Haas M109 Interactive User Input
+- Haas G103 Limit Block Look-Ahead
+- Haas Mill Macros (`#3001` and macro look-ahead)
+- Haas NGC Machine Data Collection (including broadcast replies and Q500)
+- `docs/cnc-commissioning-checklist.md`
+- `docs/haas-verification-response-algorithm.md`

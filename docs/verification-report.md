@@ -6,15 +6,15 @@ This report retains earlier milestone evidence below. The current Tasks 24-32 re
 - **Current change review date:** 2026-08-27
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
-- **Verdict:** The current combined Debug evidence is 838 tests (600 Server and 238 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 credits the existing physical VF-3SS public-vector arithmetic result only. Its fail-closed record audit reports 1 of 14 checks `PASS`, 13 `NOT_TESTED`, nine incomplete Machine/controller fields, and both sign-offs missing; protected CNC execution, physical tablet behavior, and factory acceptance are therefore not production-approved.
+- **Verdict:** The current combined Debug evidence is 840 tests (602 Server and 238 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 now has a blocking physical `FAIL`: the VF-3SS accepted a correct response after at least 130 seconds at M109, and its `#3001` sequence is not monotonic across reboot/wrap. Macro candidates v3-v5 and packages v1-v3 are quarantined. The fail-closed record audit reports 1 `PASS`, 1 `FAIL`, 12 `NOT_TESTED`, nine incomplete Machine/controller fields, and both sign-offs missing; protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
 
 Current Tasks 24-32 repository Debug result:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 600 | 0 | 0 |
+| `Meimad.Planner.Server.Tests` | 602 | 0 | 0 |
 | `Meimad.Planner.Client.Windows.Tests` | 238 | 0 | 0 |
-| **Total** | **838** | **0** | **0** |
+| **Total** | **840** | **0** | **0** |
 
 Tasks 24-32 completion boundary:
 
@@ -27,7 +27,7 @@ Tasks 24-32 completion boundary:
 | 28 | Implemented: development-only loopback TCP/ASCII simulator with strict scenarios for failure, stale/current releases, sequencing, delay, duplicates, out-of-order evidence, cycles, and next Run. | No physical claim. |
 | 29 | Implemented: existing browser simulator covers all fixed states, verification/failure/expiry, offline last-known-good, low battery, revision change, and only official scoped `SEND_TO_QC`. | Physical panel behavior remains separate. |
 | 30 | Implemented: one real-service automated scenario covers all 29 requested steps and verifies quantities, anomalies, audits, closure, and readable timeline. | No physical claim. |
-| 31 | Checklist, public-vector grader, protected-macro candidate generator, matched no-motion NC pair, packaging, and fail-closed readiness audit implemented. Current decision is `NOT_READY`. | Thirteen physical checks, nine Machine/controller fields, two sign-offs, and the one-Machine pilot remain. |
+| 31 | Checklist, public-vector grader, protected-macro candidate generator, matched no-motion NC pair, packaging, and fail-closed readiness audit implemented. Current decision is `NOT_READY`; generated manifests/packages are quarantined after the physical timeout failure. | Resolve the M109 execution-barrier and reboot/wrap sequence designs before one bounded retest; twelve checks, nine Machine/controller fields, two sign-offs, and the one-Machine pilot remain. |
 | 32 | Implemented: required documents explicitly retain `REMOVED` persistent mode and `SUPPORTED` protected temporary handshake variables, with implementation/commissioning status reconciled. | Continue same-change documentation discipline. |
 
 Focused development evidence also includes successful builds and `--validate-only`
@@ -36,8 +36,9 @@ events) and the matched verification-commissioning scenario, successful compilat
 of the production, contract-test, and backend-free demo ESP32 environments, plus
 the E-Ink simulator contract test. Macro/grader/package tests validate the public
 vectors, strict output transcript, no-motion O1991 test Offset Loader, first-block
-O1990 test NC, sensitive local-config exclusion, archive contents, and hashes. The
-commissioning-record gate correctly rejects `-RequireReady`. The tablet
+O1990 test NC, sensitive local-config exclusion, archive contents, hashes, and the
+mandatory quarantine marker. They do not validate Haas M109/look-ahead timing.
+The commissioning-record gate correctly rejects `-RequireReady`. The tablet
 administration integration test now also proves that registration, replacement
 assignment/credential rotation, and revocation retain editor-attributed audit rows.
 The integrated CNC workflow test
@@ -46,11 +47,11 @@ mutation endpoint. See [CNC commissioning checklist](cnc-commissioning-checklist
 for the physical evidence still required.
 
 Installer build evidence was refreshed on 2026-08-27: `installer\build-installers.ps1`
-published self-contained `win-x64` version `0.1.38` payloads and produced both MSI
-packages. The final client package is 107,546,861 bytes (SHA-256
-`2A9004B00BAB8039CF231F33F06BAAC5F1555E35717F13DFFEA0DD23CA358DB3`) and the
-Server package is 43,099,015 bytes (SHA-256
-`2E32AA6866D03ED1D1BB62A38EFFD2F17F60DF91B1E4EC61AE645F5A960B0178`). Both WiX
+published self-contained `win-x64` version `0.1.39` payloads and produced both MSI
+packages. The final client package is 107,559,149 bytes (SHA-256
+`194DE73249358BAE293A4009C601C276A023D69DA389BC42A3B86FE202975534`) and the
+Server package is 43,090,823 bytes (SHA-256
+`C02507E50EC16EDB091E2045FA546ED1B3D169809354B73295A3C7C41FD8EA79`). Both WiX
 builds completed with zero warnings and zero errors. MSI table inspection proves the
 advertised all-users Start Menu shortcut is owned by the executable component in the
 same feature; a source-level regression test guards that relationship. A fresh

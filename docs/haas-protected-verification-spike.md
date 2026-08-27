@@ -4,6 +4,11 @@
 
 Milestone C has **partial physical evidence but is not commissioned**. On the real VF-3SS, supplied generic-hook identity transport and all seven public arithmetic vectors were reproduced as recorded below. Haas publicly documents protected `O9000` storage, G65 macro calls, general/system macro variables, programmable alarms, and TCP DPRNT. Its published NGC macro-variable table does not identify a supported variable that unambiguously returns the active top-level or caller NC program from inside a protected macro. Meimad has therefore selected the explicit generic-hook fallback: every newly approved NC release carries a unique release identity into the protected call. That partial evidence does not prove protected storage, operator entry, cleanup, failure alarms, or the cutting interlock, and `cnc_verification_settings.enabled` must remain false until every commissioning-checklist row and both sign-offs pass.
 
+On 2026-08-27 physical commissioning found a blocking M109 timeout defect and a
+non-monotonic `#3001` sequence design. Macro candidates v3–v5 and bench packages
+v1–v3 are quarantined. See the
+[CNC verification code audit](cnc-verification-code-audit-2026-08-27.md).
+
 This spike performs no cutting motion, offset write, CNC variable write from the Server, planning mutation, or automatic macro deployment. A Haas Factory Outlet/controller specialist must approve the candidate read-only identity source and temporary variable range before the probe program is loaded.
 
 The repository also contains a generator for a no-motion challenge/verify

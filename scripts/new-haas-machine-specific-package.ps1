@@ -59,16 +59,15 @@ MEIMAD HAAS MACHINE-SPECIFIC VERIFICATION CANDIDATE
 ===================================================
 
 MACHINE LABEL: $machineLabel
-STATUS: COMMISSIONING CANDIDATE - NOT PRODUCTION APPROVED
+STATUS: QUARANTINED - PHYSICAL TIMEOUT FAILURE - DO NOT LOAD
 
 This ZIP contains a sensitive derived Machine key inside the protected verify
 program. It does not contain the Server verification secret or the local JSON.
 
-Load only under the controlled physical commissioning work order after an HFO or
-qualified CNC engineer reviews the exact program numbers and variable mapping.
-Keep spindle/feed disabled for initial no-motion tests. Verification must remain
-disabled on the Server until every commissioning-checklist row and both sign-offs
-are PASS. Store or destroy this ZIP under the site's credential procedure.
+Macro candidates v3-v5 failed physical Reset/timeout acceptance. Do not load this
+ZIP. A reviewed replacement input/timer and sequence design is required before a
+new candidate is issued. Verification must remain disabled on the Server. Store
+or destroy this ZIP under the site's credential procedure.
 "@
     [IO.File]::WriteAllText((Join-Path $staging 'README-MACHINE-CANDIDATE.txt'),
         $readme.Replace("`r`n", "`n").Replace("`r", "`n").Replace("`n", "`r`n"),
@@ -116,4 +115,4 @@ finally {
 
 Write-Host "Built Machine-specific commissioning candidate: $resolvedZip"
 Write-Host "SHA-256: $resolvedZip.sha256"
-Write-Warning 'This ZIP is sensitive and remains NOT PRODUCTION APPROVED until physical commissioning passes.'
+Write-Warning 'This ZIP is sensitive and QUARANTINED after a physical timeout failure. Do not load it.'

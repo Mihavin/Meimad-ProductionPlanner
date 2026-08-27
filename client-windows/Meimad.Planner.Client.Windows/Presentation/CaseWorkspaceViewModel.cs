@@ -1516,11 +1516,17 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 return;
             }
 
+            // Keep the operator's explicit postprocessor choice. Replacing the collection
+            // causes WPF to clear SelectedItem, and defaulting to the first active post here
+            // could silently release the file for a different machine/postprocessor.
+            var selectedPostprocessorId = SelectedReleasePostprocessor?.PostprocessorId;
             ActiveProcessRevision = catalog.ActiveProcessRevision;
             Replace(ProcessRevisions, catalog.ProcessRevisions);
             Replace(GCodePostprocessors, catalog.Postprocessors);
             Replace(GCodeReleases, catalog.Releases);
-            SelectedReleasePostprocessor = GCodePostprocessors.FirstOrDefault(value => value.IsActive)
+            SelectedReleasePostprocessor = GCodePostprocessors.FirstOrDefault(value =>
+                    value.PostprocessorId == selectedPostprocessorId)
+                ?? GCodePostprocessors.FirstOrDefault(value => value.IsActive)
                 ?? GCodePostprocessors.FirstOrDefault();
             GCodeChangeScope = ActiveProcessRevision is null
                 ? "NEW_PROCESS_REVISION"
@@ -1545,6 +1551,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         {
             return;
         }
+
+        var selectedPostprocessor = SelectedReleasePostprocessor;
 
         if (string.IsNullOrWhiteSpace(GCodeReleaseComment))
         {
@@ -1586,7 +1594,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 SelectedCase.CaseId,
                 SelectedOperation.CaseOperationId,
                 new GCodeReleaseCreate(
-                    SelectedReleasePostprocessor.PostprocessorId,
+                    selectedPostprocessor.PostprocessorId,
                     GCodeChangeScope,
                     GCodeReleaseComment.Trim(),
                     string.IsNullOrWhiteSpace(ProcessChangeDescription)

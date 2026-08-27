@@ -82,8 +82,8 @@ try {
         $verify -match '\b(?:G0?[0123]|M0?3|M0?4|M0?6|M0?8)\b') {
         throw 'Protected candidates unexpectedly contain a motion/spindle/tool/coolant command.'
     }
-    if ($manifest.status -ne 'COMMISSIONING_CANDIDATE_NOT_PRODUCTION_APPROVED') {
-        throw 'Manifest must retain the commissioning-only status.'
+    if ($manifest.status -ne 'QUARANTINED_PHYSICAL_TIMEOUT_FAILURE') {
+        throw 'Manifest must retain the physical-timeout quarantine status.'
     }
     if ($manifest.files.Count -ne 7) { throw 'Manifest must hash all seven generated artifacts.' }
     foreach ($file in $manifest.files) {

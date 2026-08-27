@@ -57,18 +57,18 @@ try {
 MEIMAD HAAS VERIFICATION BENCH PACKAGE
 ======================================
 
-STATUS: BENCH ONLY - PUBLIC KEY 271828 - NOT PRODUCTION APPROVED
+STATUS: QUARANTINED - PHYSICAL TIMEOUT FAILURE - DO NOT LOAD
 
 This package contains no-motion O9001 challenge and O9002 verification
 commissioning candidates, a matched O1991 test Offset Loader and O1990 test NC,
 insertion snippets, and a simulated strict DPRNT transcript. It must not be
 installed as a production protected-macro package.
 
-Macro version 5 consumes and clears persistent challenge authority before the
-first M109 prompt and rechecks expiry after the final digit. It replaces bench
-macro version 3, which failed the physical Reset-during-input test, and version
-4, which did not recheck expiry after input. Neither older version may be
-reloaded.
+Macro v3 failed Reset-during-input acceptance. Macro v5 then accepted a correct
+response after at least 130 seconds at M109 despite its textual post-input timer
+check. Versions 3-5 and bench packages v1-v3 are quarantined. Do not reload them.
+A reviewed input/timer execution barrier and reboot/wrap sequence design are
+required before another physical test.
 
 Required before any controller load:
 1. Haas Factory Outlet or qualified CNC engineer review.
@@ -131,7 +131,7 @@ key into a production package.
 MEIMAD HAAS MACHINE-SPECIFIC COMMISSIONING TOOLKIT
 ==================================================
 
-STATUS: GENERATION TOOLKIT - NOT A PRODUCTION-APPROVED MACHINE PACKAGE
+STATUS: QUARANTINED GENERATION TOOLKIT - DO NOT LOAD GENERATED MACROS
 
 This ZIP contains no Server secret and no production Machine key. Generate a
 Machine-specific local configuration from a secure interactive prompt:
@@ -157,10 +157,11 @@ program contain the derived Machine key and are sensitive. Apply site access
 control. Do not email or commit them. Delete or archive them under the credential
 procedure after controlled installation.
 
-Generation is not commissioning. The exact controller, O numbers, variables,
-M109 input, DPRNT formatting, Reset/power-cycle behavior, alarm interlock, and
-Setting 23 access restriction require physical evidence and both checklist
-sign-offs before verification is enabled on the Server.
+The current M109 candidate failed physical timeout acceptance and its #3001-only
+sequence is not monotonic across reboot/wrap. Generated macros are quarantined and
+must not be loaded. A reviewed replacement design, new automated evidence, bounded
+physical retest, and both checklist sign-offs are required before verification is
+enabled on the Server.
 '@
 
     foreach ($zip in @($benchZip, $toolkitZip)) {

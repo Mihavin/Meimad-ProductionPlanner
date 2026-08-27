@@ -406,9 +406,10 @@
                                     <TextBlock Text="Select an Operation above to manage its released production artifacts. Meimad has no Draft G-code state."
                                                Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
 
-                                    <TextBlock Text="Postprocessor matrix" FontWeight="SemiBold" Margin="0,0,0,5"/>
-                                    <DataGrid ItemsSource="{Binding GCodePostprocessors}" SelectedItem="{Binding SelectedReleasePostprocessor}"
-                                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="100" MaxHeight="190">
+                                    <TextBlock Text="Postprocessor status (display only)" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                    <DataGrid ItemsSource="{Binding GCodePostprocessors}"
+                                              AutoGenerateColumns="False" IsReadOnly="True" IsHitTestVisible="False" Focusable="False"
+                                              CanUserAddRows="False" MinHeight="100" MaxHeight="190">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="*"/>
                                             <DataGridTextColumn Header="Active process status" Binding="{Binding StatusText}" Width="220"/>
@@ -424,7 +425,7 @@
                                     <UniformGrid Columns="2">
                                         <StackPanel Style="{StaticResource FormField}">
                                             <TextBlock Text="Postprocessor" Style="{StaticResource FieldLabel}"/>
-                                            <ComboBox ItemsSource="{Binding GCodePostprocessors}" SelectedItem="{Binding SelectedReleasePostprocessor}" DisplayMemberPath="PostprocessorName"/>
+                                            <ComboBox ItemsSource="{Binding GCodePostprocessors}" SelectedItem="{Binding SelectedReleasePostprocessor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="PostprocessorName"/>
                                         </StackPanel>
                                         <StackPanel Style="{StaticResource FormField}">
                                             <TextBlock Text="Change scope" Style="{StaticResource FieldLabel}"/>
@@ -447,6 +448,9 @@
                                             <TextBox Text="{Binding ProcessChangeDescription}" AcceptsReturn="True" MinHeight="55"/>
                                         </StackPanel>
                                     </UniformGrid>
+                                    <TextBlock FontWeight="Bold" FontSize="16" Margin="0,4,0,8">
+                                        <Run Text="Release target: "/><Run Text="{Binding SelectedReleasePostprocessor.PostprocessorName}"/>
+                                    </TextBlock>
                                     <TextBlock Text="{Binding NewProcessRevisionWarning}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,2,0,8"/>
                                     <WrapPanel Margin="0,0,0,8">
                                         <CheckBox Content="Reuse the active physical tool table" IsChecked="{Binding ReuseActiveToolTable}" IsEnabled="{Binding IsNewProcessRevisionRelease}" Margin="0,0,18,6"/>

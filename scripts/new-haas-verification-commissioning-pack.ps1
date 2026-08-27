@@ -323,7 +323,7 @@ $manifestFiles = foreach ($name in $files.Keys) {
     }
 }
 $manifest = [ordered]@{
-    status = 'COMMISSIONING_CANDIDATE_NOT_PRODUCTION_APPROVED'
+    status = 'QUARANTINED_PHYSICAL_TIMEOUT_FAILURE'
     generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
     machineLabel = $machineLabel
     macroVersion = $macroVersion
@@ -348,6 +348,6 @@ $manifest = [ordered]@{
 $manifestPath = Join-Path $outputFullPath 'manifest.json'
 Write-NewAsciiFile $manifestPath (($manifest | ConvertTo-Json -Depth 6) + "`r`n") ([bool]$Force)
 
-Write-Host "Generated commissioning candidate pack: $outputFullPath"
-Write-Warning 'NOT PRODUCTION APPROVED. Generated protected macros contain a derived Machine key.'
-Write-Warning 'Do not load or run them until the manifest approval gates are completed on the exact control.'
+Write-Host "Generated quarantined commissioning pack: $outputFullPath"
+Write-Warning 'QUARANTINED after a physical timeout failure. Generated protected macros contain a derived Machine key.'
+Write-Warning 'Do not load or run these macros. A reviewed replacement design is required.'

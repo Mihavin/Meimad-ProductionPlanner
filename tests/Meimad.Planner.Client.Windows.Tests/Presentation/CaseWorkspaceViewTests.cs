@@ -125,7 +125,7 @@ public sealed class CaseWorkspaceViewTests
             "CaseWorkspaceView.xaml"));
 
         Assert.Contains("Content=\"Release G-code\"", caseView, StringComparison.Ordinal);
-        Assert.Contains("Postprocessor matrix", caseView, StringComparison.Ordinal);
+        Assert.Contains("Postprocessor status (display only)", caseView, StringComparison.Ordinal);
         Assert.Contains("Process-revision history", caseView, StringComparison.Ordinal);
         Assert.Contains("Local post-revision history", caseView, StringComparison.Ordinal);
         Assert.Contains("Header=\"Calculated cycle / part\"", caseView, StringComparison.Ordinal);
@@ -133,6 +133,28 @@ public sealed class CaseWorkspaceViewTests
         Assert.Contains("Current file", caseView, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"Save Draft\"", caseView, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Content=\"Draft\"", caseView, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Operation_gcode_postprocessor_selection_updates_the_view_model_immediately()
+    {
+        var caseView = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "client-windows",
+            "Meimad.Planner.Client.Windows",
+            "Views",
+            "CaseWorkspaceView.xaml"));
+
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+            caseView,
+            "SelectedItem=\"\\{Binding SelectedReleasePostprocessor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged\\}\""));
+        Assert.DoesNotContain(
+            "<DataGrid ItemsSource=\"{Binding GCodePostprocessors}\" SelectedItem=",
+            caseView,
+            StringComparison.Ordinal);
+        Assert.Contains("Postprocessor status (display only)", caseView, StringComparison.Ordinal);
+        Assert.Contains("<Run Text=\"Release target: \"/>", caseView, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding SelectedReleasePostprocessor.PostprocessorName}\"", caseView, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

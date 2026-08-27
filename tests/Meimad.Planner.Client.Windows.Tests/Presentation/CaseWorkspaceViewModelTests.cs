@@ -59,6 +59,85 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.Equal(process, viewModel.ActiveProcessRevision);
     }
 
+    [Fact]
+    public async Task Gcode_refresh_preserves_the_operators_selected_postprocessor()
+    {
+        var api = new FakeApiClient(CreateCase());
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            Postprocessors =
+            [
+                new PlannerPostprocessorReleaseStatus("post-doosan", "Doosan 3X", true, "missing", null, null),
+                new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "missing", null, null)
+            ]
+        };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+        await viewModel.RefreshGCodeAsync();
+
+        viewModel.SelectedReleasePostprocessor = viewModel.GCodePostprocessors.Single(value =>
+            value.PostprocessorId == "post-haas");
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            Postprocessors =
+            [
+                new PlannerPostprocessorReleaseStatus("post-doosan", "Doosan 3X", true, "missing", null, null),
+                new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "missing", null, null)
+            ]
+        };
+
+        await viewModel.RefreshGCodeAsync();
+
+        Assert.Equal("post-haas", viewModel.SelectedReleasePostprocessor?.PostprocessorId);
+    }
+
+    [Fact]
+    public async Task Gcode_release_sends_the_postprocessor_selected_by_the_operator()
+    {
+        var tools = new PlannerToolTableRelease(
+            "tools-1", 1, "tools.csv", 10, new string('a', 64),
+            DateTimeOffset.UtcNow, "planner", "Initial tools");
+        var process = new PlannerProcessRevision(
+            "process-1", 1, true, DateTimeOffset.UtcNow,
+            "planner", "Initial process", 1, tools);
+        var api = new FakeApiClient(CreateCase());
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            ActiveProcessRevision = process,
+            ProcessRevisions = [process],
+            Postprocessors =
+            [
+                new PlannerPostprocessorReleaseStatus("post-doosan", "Doosan 3X", true, "missing", null, null),
+                new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "missing", null, null)
+            ]
+        };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+        await viewModel.RefreshGCodeAsync();
+
+        var gcodePath = Path.GetTempFileName();
+        try
+        {
+            viewModel.SelectedReleasePostprocessor = viewModel.GCodePostprocessors.Single(value =>
+                value.PostprocessorId == "post-haas");
+            viewModel.GCodeFilePath = gcodePath;
+            viewModel.GCodeReleaseComment = "HAAS verification test";
+            viewModel.ConfirmToolTable = true;
+
+            await viewModel.ReleaseGCodeAsync();
+
+            Assert.Equal("post-haas", api.LastGCodeReleaseCreate?.PostprocessorId);
+        }
+        finally
+        {
+            File.Delete(gcodePath);
+        }
+    }
+
     private static PlannerNcMachineCycleEstimate Estimate(string machineId, double seconds) => new(
         machineId, "nc-v1", 50, 100, 5, 1, 4, 2, 12000, 4, 1,
         seconds, seconds, [], "HIGH", DateTimeOffset.UtcNow);
@@ -553,6 +632,7 @@ public sealed class CaseWorkspaceViewModelTests
             [],
             [new PlannerPostprocessorReleaseStatus("post-1", "Doosan 3X", true, "missing", null, null)],
             []);
+        internal GCodeReleaseCreate? LastGCodeReleaseCreate { get; private set; }
 
         public Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
             CaseQuery query,
@@ -722,6 +802,40 @@ public sealed class CaseWorkspaceViewModelTests
             string operationId,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(GCodeCatalog);
+
+        public Task<PlannerGCodeRelease> ReleaseGCodeAsync(
+            string caseId,
+            string operationId,
+            GCodeReleaseCreate create,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastGCodeReleaseCreate = create;
+            LastClientId = clientId;
+            LastGeneration = editGeneration;
+            var process = GCodeCatalog.ActiveProcessRevision
+                ?? throw new InvalidOperationException("An active process is required by this test fake.");
+            var postprocessor = GCodeCatalog.Postprocessors.Single(value =>
+                value.PostprocessorId == create.PostprocessorId);
+            return Task.FromResult(new PlannerGCodeRelease(
+                "release-test",
+                process.ProcessRevisionId,
+                process.ProcessRevisionNumber,
+                postprocessor.PostprocessorId,
+                postprocessor.PostprocessorName,
+                1,
+                Path.GetFileName(create.GCodeFilePath),
+                new FileInfo(create.GCodeFilePath).Length,
+                new string('b', 64),
+                DateTimeOffset.UtcNow,
+                "planner",
+                create.ChangeScope,
+                create.ReleaseComment,
+                process.ToolTable.ToolTableReleaseId,
+                true,
+                true));
+        }
 
         public Task<PlannerOrder> CreateOrderAsync(
             OrderCreate create,

@@ -4,6 +4,14 @@
 
 Algorithm v1 is an implemented **reference and physically matched arithmetic candidate**, not commissioned production behavior. On 2026-08-26 the VF-3SS reproduced every published vector, including leading-zero response `0282`. Schema v52 retains the validated six-digit nonce in a pending one-time Server session; the authenticated assigned-tablet status projection derives the fixed-width response in memory, and strict protected-macro success/failure DPRINT events resolve that current session and drive the Server workflow. CNC-side production input, alarms, cleanup, protected-key behavior, and the physical cutting interlock remain uncommissioned.
 
+**Macro candidates v3–v5 and bench packages v1–v3 are quarantined.** On
+2026-08-27 the VF-3SS accepted a correct response after at least 130 seconds at
+the first M109 prompt even though v5 contained a post-input `#3001` check. Haas
+documents M109/look-ahead requirements that the generated candidate did not
+implement robustly. Do not generate a speculative replacement or return to the
+Machine until the design and sequence contract in the
+[code audit](cnc-verification-code-audit-2026-08-27.md) are reviewed.
+
 The algorithm is deliberately controller-friendly rather than cryptographically strong. Its purpose is freshness and replay resistance within a protected setup handshake. Network security, protected-program access, Server authorization, short expiration, and one-time session consumption remain separate controls.
 
 ## Inputs
@@ -109,18 +117,17 @@ The commissioning pack now includes O09012/O09013 as a no-motion, public-key vec
 
 - The Offset Loader calls the configured protected challenge program only after every offset write succeeds. That program first invalidates prior success, establishes a fresh six-digit nonce, retains the current six-digit Offset Loader token, and emits the strict `OLC` DPRINT.
 - The approved NC file calls the configured protected verification program as its first executable block and passes its six-digit identity through `A...`; Haas documents that `A` maps to local variable `#1`. The decimal point is mandatory in the Meimad hook so the six-digit value is not scaled as an integer macro argument.
-- If the same nonce, Offset Loader token, and NC identity are already verified, the macro may return. Otherwise it keeps verification invalid, validates the challenge age, copies the nonce and release token into G65-local variables, and clears the persistent validity marker and challenge variables before the first operator-input prompt. It then obtains the operator's tablet-displayed response through the commissioned input method, calculates v1 independently, clears each entered digit, and rechecks the challenge age after the final digit and before comparison. It either raises the commissioned `#3000` failure alarm or emits `SVS` and permits return. Consuming persistent authority before M109 is mandatory: Reset during input must discard only local calculation state and must not leave a reusable challenge. The post-input age check is also mandatory so operator delay cannot extend the validity window.
+- The v4/v5 candidates copied the nonce and release token into G65-local variables and cleared persistent challenge authority before M109; physical Reset/E-stop/reboot observations showed that this prevented persistent replay. Version 5 then attempted to recheck challenge age after the final digit, but the physical timeout test proved that source ordering did not produce a reliable fresh timer read. Haas documents M109 and macro look-ahead constraints, including a required post-M109 nonzero loop, that must be reflected in the next reviewed design. No current candidate may emit production-authoritative `SVS` or permit cutting.
 - Reset, alarm, another Offset Loader, missing/invalid inputs, macro-version mismatch, and power-cycle recovery must all fail closed. No protected variable becomes a persistent Server workflow mode.
 
 `scripts/new-haas-verification-commissioning-pack.ps1` now generates a reversible,
 local-only commissioning candidate that uses one controlled `M109` prompt per
 response digit. It accepts only a configured response variable in Haas's documented
-`#500`-`#549` or `#10500`-`#10549` target ranges, clears that variable after every
-digit, and marks every output `COMMISSIONING_CANDIDATE_NOT_PRODUCTION_APPROVED`.
-This is a prepared test candidate, not a settled production input decision: HFO
-review and physical tests must prove cancellation, Reset, timeout, look-ahead,
-variable collision, alarm-before-motion, and leading-zero behavior on the exact
-control before the generated programs may be approved.
+`#500`-`#549` or `#10500`-`#10549` target ranges and clears that variable after every
+digit. Following the physical timeout failure, every newly generated output is
+marked `QUARANTINED_PHYSICAL_TIMEOUT_FAILURE`. It must not be loaded. A reviewed
+replacement input/timer and sequence design is required before a new candidate is
+issued.
 
 The generator reads the already-derived six-digit Machine key only from a local
 JSON file, refuses the public `271828` key unless explicitly producing an isolated
