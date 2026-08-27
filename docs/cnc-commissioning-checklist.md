@@ -36,7 +36,7 @@ Allowed result values are `PASS`, `FAIL`, and `NOT_TESTED`. A comment alone is n
 | 10 | Power loss during offset writes cannot emit `OFFSET_LOADER_COMPLETED`; power loss after challenge does not leave cutting enabled or a reusable response. | NOT_TESTED | Physical interruption test required. | — |
 | 11 | Server/controller restart and communication recovery fail closed and do not fabricate success, silently bypass verification, or lose last-known-good tablet content. | NOT_TESTED | Physical restart matrix required. | — |
 | 12 | Configured temporary variable numbers do not collide with probing, tool setting, postprocessor output, operator macros, or other installed options. Values are cleared at the documented boundaries. | NOT_TESTED | Machine program inventory and service review required. | — |
-| 13 | Sequence behavior across normal cycles, RESET, E-stop, program restart, controller reboot, and wraparound is recorded. Server gaps/out-of-order/duplicates remain evidence, never invented events. | NOT_TESTED | Controller persistence/reset behavior required. | — |
+| 13 | Sequence behavior across normal cycles, RESET, E-stop, program restart, controller reboot, and wraparound is recorded. Server gaps/out-of-order/duplicates remain evidence, never invented events. | FAIL | On the VF-3SS running bench macro v3, RESET at the first M109 prompt stopped O1990 without an alarm but retained the nonce, state marker, and release token. Version 4 cleared all four variables before M109: RESET and E-stop alarm 107 both stopped input, and direct O1990 afterward failed without a prompt; a controller reboot also cleared the variables and the no-challenge run failed. Version 5 adds the still-unproved post-input timeout recheck. Timeout, program-restart, and wraparound evidence remain required before this row can pass. | Local sanitized Reset/power/E-stop captures plus operator observations 2026-08-27; the post-restart packet file remains incomplete. |
 | 14 | Reported protected-macro version equals the Server's Machine configuration. A mismatched version blocks verification and displays `CNC VERIFICATION MACRO UPDATE REQUIRED`. | NOT_TESTED | Server automated test passes; controller DPRINT required. | — |
 
 ## Evidence package
@@ -51,6 +51,8 @@ Attach or link sanitized evidence; never record the Machine secret, bearer token
 - Wrong-code alarm photo/video and block-order proof: NOT RECORDED
 - Power-cycle/restart results: NOT RECORDED
 - Variable collision review: NOT RECORDED
+- Generated candidate manifest/checksums: local bench pack available under the
+  git-ignored `.diagnostics` tree; installation checksum NOT RECORDED
 
 ## Decision and sign-off
 
@@ -62,3 +64,15 @@ Current commissioning decision: **NOT READY — PHYSICAL COMMISSIONING INCOMPLET
 | Meimad production owner | — | — | — |
 
 After both approvals, record the exact commissioned values in this file or a Machine-specific copy, set the Server Machine configuration to those values, enable verification, and run the one-Machine pilot. A failed row returns verification to disabled until corrected and re-tested.
+
+The fail-closed record audit is:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\audit-cnc-commissioning-checklist.ps1 -RequireReady
+```
+
+It accepts `READY` only when all 14 numbered checks are `PASS`, every check has
+evidence, all Machine/controller fields are recorded, both roles are signed, and
+the declared decision agrees. It validates record consistency; it cannot create
+or replace physical evidence.

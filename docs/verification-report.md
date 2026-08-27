@@ -3,10 +3,10 @@
 This report retains earlier milestone evidence below. The current Tasks 24-32 repository aggregate results are the separately executed Debug suites recorded here.
 
 - **Baseline verification date:** 2026-08-11
-- **Current change review date:** 2026-08-26
+- **Current change review date:** 2026-08-27
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
-- **Verdict:** The current combined Debug evidence is 838 tests (600 Server and 238 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 credits the existing physical VF-3SS public-vector arithmetic result only; every other production commissioning row remains `NOT_TESTED`, so protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
+- **Verdict:** The current combined Debug evidence is 838 tests (600 Server and 238 Windows Client), with no failures or skips when the two suites are run separately. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 credits the existing physical VF-3SS public-vector arithmetic result only. Its fail-closed record audit reports 1 of 14 checks `PASS`, 13 `NOT_TESTED`, nine incomplete Machine/controller fields, and both sign-offs missing; protected CNC execution, physical tablet behavior, and factory acceptance are therefore not production-approved.
 
 Current Tasks 24-32 repository Debug result:
 
@@ -16,10 +16,28 @@ Current Tasks 24-32 repository Debug result:
 | `Meimad.Planner.Client.Windows.Tests` | 238 | 0 | 0 |
 | **Total** | **838** | **0** | **0** |
 
-Focused development evidence also includes a successful build and `--validate-only`
-run of `tools/Meimad.Planner.CncSimulator/scenario.full.json` (15 strict DPRNT
-events), successful compilation of the production, contract-test, and backend-free
-demo ESP32 environments, plus the E-Ink simulator contract test. The tablet
+Tasks 24-32 completion boundary:
+
+| Task | Repository status | Remaining external gate |
+|---:|---|---|
+| 24 | Implemented: immutable typed anomaly ledger, idempotent detection, bounded read queue, deterministic messages, and tests. | Silence-only `offset_loader_interrupted` and `tablet_offline` require an approved authoritative signal/threshold before automatic detection; the Server does not fabricate them. |
+| 25 | Implemented: editor-authorized invalidation, Offset Loader revocation/replacement, tablet reassignment/credential rotation/revocation, ordinary QC retry, and attributed audit. No bypass route exists. | Physical recovery procedure rehearsal. |
+| 26 | Implemented: expected version per Machine, strict reported-version comparison, blocking anomaly/message, and tests. | Physical protected-macro report proof. |
+| 27 | Implemented: Machine-scoped transport/program/alias/variable/encrypted-secret/version/digits/timeout/enablement configuration; sensitive tablet projections are excluded. | HFO-approved collision-free mappings and key provisioning. |
+| 28 | Implemented: development-only loopback TCP/ASCII simulator with strict scenarios for failure, stale/current releases, sequencing, delay, duplicates, out-of-order evidence, cycles, and next Run. | No physical claim. |
+| 29 | Implemented: existing browser simulator covers all fixed states, verification/failure/expiry, offline last-known-good, low battery, revision change, and only official scoped `SEND_TO_QC`. | Physical panel behavior remains separate. |
+| 30 | Implemented: one real-service automated scenario covers all 29 requested steps and verifies quantities, anomalies, audits, closure, and readable timeline. | No physical claim. |
+| 31 | Checklist, public-vector grader, protected-macro candidate generator, matched no-motion NC pair, packaging, and fail-closed readiness audit implemented. Current decision is `NOT_READY`. | Thirteen physical checks, nine Machine/controller fields, two sign-offs, and the one-Machine pilot remain. |
+| 32 | Implemented: required documents explicitly retain `REMOVED` persistent mode and `SUPPORTED` protected temporary handshake variables, with implementation/commissioning status reconciled. | Continue same-change documentation discipline. |
+
+Focused development evidence also includes successful builds and `--validate-only`
+runs of `tools/Meimad.Planner.CncSimulator/scenario.full.json` (15 strict DPRNT
+events) and the matched verification-commissioning scenario, successful compilation
+of the production, contract-test, and backend-free demo ESP32 environments, plus
+the E-Ink simulator contract test. Macro/grader/package tests validate the public
+vectors, strict output transcript, no-motion O1991 test Offset Loader, first-block
+O1990 test NC, sensitive local-config exclusion, archive contents, and hashes. The
+commissioning-record gate correctly rejects `-RequireReady`. The tablet
 administration integration test now also proves that registration, replacement
 assignment/credential rotation, and revocation retain editor-attributed audit rows.
 The integrated CNC workflow test
@@ -27,18 +45,18 @@ uses real Server services and schema rather than an unauthenticated simulator
 mutation endpoint. See [CNC commissioning checklist](cnc-commissioning-checklist.md)
 for the physical evidence still required.
 
-Installer build evidence was refreshed on 2026-08-26: `installer\build-installers.ps1`
+Installer build evidence was refreshed on 2026-08-27: `installer\build-installers.ps1`
 published self-contained `win-x64` version `0.1.38` payloads and produced both MSI
-packages. The final client package is 107,579,629 bytes (SHA-256
-`F23582A0623B20BBDA2DB417B08C09570B38AECA9410C3781A7290A41FFDEC07`) and the
-Server package is 43,090,823 bytes (SHA-256
-`0FEB7C1856FDAE0E1399017B30FFC8548410B9061DDEB0302127C816385096F2`). Both WiX
+packages. The final client package is 107,546,861 bytes (SHA-256
+`2A9004B00BAB8039CF231F33F06BAAC5F1555E35717F13DFFEA0DD23CA358DB3`) and the
+Server package is 43,099,015 bytes (SHA-256
+`2E32AA6866D03ED1D1BB62A38EFFD2F17F60DF91B1E4EC61AE645F5A960B0178`). Both WiX
 builds completed with zero warnings and zero errors. MSI table inspection proves the
 advertised all-users Start Menu shortcut is owned by the executable component in the
 same feature; a source-level regression test guards that relationship. A fresh
 non-installing administrative extraction verified 641 client files, including the
-client executable. The earlier 2026-08-18 extraction additionally recorded
-`runtimes\win-x64\native\TKernel.dll` and 400 Server files. Windows Installer table
+client executable and `runtimes\win-x64\native\TKernel.dll`, plus 400 Server files.
+Windows Installer table
 inspection verified the automatic `Meimad Planner Server` ServiceInstall entry and
 install-start/stop/remove ServiceControl entry. This proves package construction and
 payload shape, not elevated install/uninstall, upgrade preservation, service recovery,

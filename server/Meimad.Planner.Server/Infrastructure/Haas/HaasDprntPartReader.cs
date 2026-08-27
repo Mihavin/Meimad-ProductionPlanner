@@ -18,6 +18,8 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
     {
         try
         {
+            if (client?.Connected == true && IsDisconnected(client.Client))
+                await DisposeConnectionAsync();
             if (client?.Connected != true)
             {
                 await DisposeConnectionAsync();
@@ -64,6 +66,9 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
         partName = null;
         return false;
     }
+
+    internal static bool IsDisconnected(Socket socket) =>
+        socket.Poll(0, SelectMode.SelectRead) && socket.Available == 0;
 
     private async Task DisposeConnectionAsync()
     {

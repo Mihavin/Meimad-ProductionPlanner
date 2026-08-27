@@ -37,6 +37,21 @@ internal static class CncSimulator
                 ?? throw new InvalidOperationException("Scenario JSON is empty.");
             RequiredMachineId(scenario.MachineId);
             var lines = scenario.Events.Select(BuildLine).ToArray();
+            if (options.OutputPath is not null)
+            {
+                if (File.Exists(options.OutputPath) && !options.Force)
+                    throw new InvalidOperationException(
+                        $"Refusing to overwrite '{options.OutputPath}'. Use --force after reviewing the target.");
+                var parent = Path.GetDirectoryName(options.OutputPath);
+                if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                var deliveredLines = scenario.Events.Zip(lines)
+                    .SelectMany(pair => Enumerable.Repeat(pair.Second, pair.First.Repeat))
+                    .ToArray();
+                await File.WriteAllTextAsync(options.OutputPath,
+                    string.Join("\r\n", deliveredLines) + "\r\n", Encoding.ASCII);
+                Console.WriteLine($"Wrote {deliveredLines.Length} strict Machine-output lines to {options.OutputPath}.");
+                return 0;
+            }
             if (options.ValidateOnly)
             {
                 Console.WriteLine($"Development Machine: {scenario.MachineId}");
@@ -170,7 +185,9 @@ internal sealed record SimulatorOptions(
     string BindAddress,
     int Port,
     string ScenarioPath,
-    bool ValidateOnly)
+    bool ValidateOnly,
+    string? OutputPath,
+    bool Force)
 {
     internal static SimulatorOptions Parse(string[] args)
     {
@@ -178,6 +195,8 @@ internal sealed record SimulatorOptions(
         var bind = "127.0.0.1";
         var port = 8080;
         var validateOnly = false;
+        string? output = null;
+        var force = false;
         for (var index = 0; index < args.Length; index++)
         {
             switch (args[index])
@@ -195,15 +214,26 @@ internal sealed record SimulatorOptions(
                 case "--validate-only":
                     validateOnly = true;
                     break;
+                case "--output" when index + 1 < args.Length:
+                    output = args[++index];
+                    break;
+                case "--force":
+                    force = true;
+                    break;
                 default:
                     throw new InvalidOperationException(
-                        "Usage: --scenario <file.json> [--bind 127.0.0.1] [--port 8080] [--validate-only]");
+                        "Usage: --scenario <file.json> [--bind 127.0.0.1] [--port 8080] [--validate-only | --output <transcript.txt> [--force]]");
             }
         }
         if (scenario is null || !File.Exists(scenario))
             throw new InvalidOperationException("A readable --scenario JSON file is required.");
         if (port is < 1 or > 65535) throw new InvalidOperationException("port must be 1-65535.");
         if (!IPAddress.TryParse(bind, out _)) throw new InvalidOperationException("bind must be an IP address.");
-        return new(bind, port, Path.GetFullPath(scenario), validateOnly);
+        if (validateOnly && output is not null)
+            throw new InvalidOperationException("--validate-only and --output are mutually exclusive.");
+        if (force && output is null)
+            throw new InvalidOperationException("--force is valid only with --output.");
+        return new(bind, port, Path.GetFullPath(scenario), validateOnly,
+            output is null ? null : Path.GetFullPath(output), force);
     }
 }

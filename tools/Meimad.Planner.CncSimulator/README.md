@@ -21,6 +21,20 @@ dotnet run --project tools/Meimad.Planner.CncSimulator -- `
   --bind 127.0.0.1 --port 8080
 ```
 
+Write the exact ASCII/CRLF Machine-output transcript without opening a socket:
+
+```powershell
+dotnet run --project tools/Meimad.Planner.CncSimulator -- `
+  --scenario tools/Meimad.Planner.CncSimulator/scenario.verification-commissioning.json `
+  --output .diagnostics/verification-machine-output.txt
+```
+
+The output command refuses to overwrite an existing transcript unless `--force`
+is supplied. The commissioning scenario models a failed attempt, a fresh Offset
+Loader challenge, success, one valid cycle, duplicate delivery, and an out-of-order
+cycle boundary. It simulates only the Machine's strict output; it does not calculate
+or disclose an operator response or a protected Machine key.
+
 The scenario requires `machineId`; configure that development Machine's DPRNT
 connection to the simulator. Machine identity is connection-scoped and is not
 fabricated inside a DPRNT line. Each event controls evidence through

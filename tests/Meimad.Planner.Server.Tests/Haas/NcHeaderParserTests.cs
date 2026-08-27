@@ -78,6 +78,17 @@ public sealed class NcHeaderParserTests
         Assert.Contains("O01234", value.RawResponse, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Q500_parser_retains_documented_busy_status_without_parts()
+    {
+        var at = DateTimeOffset.Parse("2026-08-27T08:00:00Z");
+        var value = HaasMdcProtocol.ParseQ500(">STATUS, BUSY\r\n", at);
+
+        Assert.Null(value.ProgramNumber);
+        Assert.Equal("BUSY", value.MachineStatus);
+        Assert.Null(value.Parts);
+    }
+
     [Theory]
     [InlineData(">MACRO, 0.0\r\n", 0)]
     [InlineData(">MACRO, 1.000\r\n", 1)]

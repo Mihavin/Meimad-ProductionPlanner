@@ -109,10 +109,39 @@ The commissioning pack now includes O09012/O09013 as a no-motion, public-key vec
 
 - The Offset Loader calls the configured protected challenge program only after every offset write succeeds. That program first invalidates prior success, establishes a fresh six-digit nonce, retains the current six-digit Offset Loader token, and emits the strict `OLC` DPRINT.
 - The approved NC file calls the configured protected verification program as its first executable block and passes its six-digit identity through `A...`; Haas documents that `A` maps to local variable `#1`. The decimal point is mandatory in the Meimad hook so the six-digit value is not scaled as an integer macro argument.
-- If the same nonce, Offset Loader token, and NC identity are already verified, the macro may return. Otherwise it keeps verification invalid, obtains the operator's tablet-displayed response through the commissioned input method, calculates v1 independently, clears the entered response, and either raises the commissioned `#3000` failure alarm or emits `SVS` and permits return.
+- If the same nonce, Offset Loader token, and NC identity are already verified, the macro may return. Otherwise it keeps verification invalid, validates the challenge age, copies the nonce and release token into G65-local variables, and clears the persistent validity marker and challenge variables before the first operator-input prompt. It then obtains the operator's tablet-displayed response through the commissioned input method, calculates v1 independently, clears each entered digit, and rechecks the challenge age after the final digit and before comparison. It either raises the commissioned `#3000` failure alarm or emits `SVS` and permits return. Consuming persistent authority before M109 is mandatory: Reset during input must discard only local calculation state and must not leave a reusable challenge. The post-input age check is also mandatory so operator delay cannot extend the validity window.
 - Reset, alarm, another Offset Loader, missing/invalid inputs, macro-version mismatch, and power-cycle recovery must all fail closed. No protected variable becomes a persistent Server workflow mode.
 
-The initial operator-entry candidate is the configured response variable plus a protected programmable stop/message. The commissioning test must decide whether that is acceptable or whether six controlled `M109` digit prompts are required; current Haas documentation describes `M109` as single-character input and restricts its target variable range, so this choice must not be guessed in deployable macro code.
+`scripts/new-haas-verification-commissioning-pack.ps1` now generates a reversible,
+local-only commissioning candidate that uses one controlled `M109` prompt per
+response digit. It accepts only a configured response variable in Haas's documented
+`#500`-`#549` or `#10500`-`#10549` target ranges, clears that variable after every
+digit, and marks every output `COMMISSIONING_CANDIDATE_NOT_PRODUCTION_APPROVED`.
+This is a prepared test candidate, not a settled production input decision: HFO
+review and physical tests must prove cancellation, Reset, timeout, look-ahead,
+variable collision, alarm-before-motion, and leading-zero behavior on the exact
+control before the generated programs may be approved.
+
+The generator reads the already-derived six-digit Machine key only from a local
+JSON file, refuses the public `271828` key unless explicitly producing an isolated
+bench pack, and permits key-bearing output below the repository only in the
+git-ignored `.diagnostics` tree. It never accepts or derives the Server secret.
+The companion `scripts/new-haas-verification-local-config.ps1` performs the
+documented derivation through an interactive secure-string prompt, writes only the
+derived key to a required `*.local.json` file, and never prints either secret or
+key. The local file is still sensitive commissioning material and requires host
+access control and deletion/archival under the site's credential procedure.
+The generated pack contains the protected challenge and verification programs,
+first-executable-block hook, final Offset Loader call, cycle event blocks, and a
+matched no-motion test pair. The test Offset Loader performs no offset writes and
+calls the challenge only as its final action before `M30`; the test NC begins with
+the exact verification hook and emits no production cycle events. Machine-specific
+generation requires the current Server-issued six-digit Offset Loader token and
+immutable NC identity; the public bench pair works with a Server only when an
+isolated development context intentionally contains its published values. Every
+artifact is covered by the SHA-256 manifest. The bundled development Machine-output
+scenario can emit the matching strict event shapes over loopback TCP or as an
+ASCII/CRLF transcript.
 
 ## Mandatory bench acceptance
 

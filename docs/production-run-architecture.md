@@ -208,6 +208,15 @@ Schema v50 adds Offset Loader release identity without changing Production Run c
 
 Schema v51 implements the selected generic-hook fallback. Each new approved G-code release must carry one first-block hook with a globally unique six-digit NC identity; the immutable mapping is separate release metadata, and the Server never modifies NC bytes. Historical releases retain no inferred identity. Current Offset Loader DPRINT resolution also requires that the release hook invocation match the target Machine's enabled protected-verification configuration. This supplies explicit release identity evidence but does not claim the protected Haas macro, response calculation, or machining interlock has passed physical commissioning.
 
+Schema v52 then atomically creates an expiring one-time verification session with
+the accepted current Offset Loader event, binding the exact Machine, Run, NC
+release, Offset Loader release, nonce, macro version, and response width. Later
+workflow handling resolves strict protected-macro `SVS`/`SVF` evidence only against
+that current pending session; macro-version, Run, and NC mismatches block resolution.
+Schema v59 projects the corresponding immutable operational anomalies. These
+implemented Server decisions do not claim that generated protected macro candidates,
+operator input, cleanup, or the physical cutting interlock have passed commissioning.
+
 Task 18 connects post-QC Haas `CYCLE_START`/`CYCLE_END` evidence to this execution architecture without adding a counter model. The Server resolves one assigned active Run Program and validates any supplied Run/program identity. Only a same-source, immediately consecutive END for the open START is a completed cycle. Its immutable workflow event, schema-v47 dedupe record, every coupled output increment, aggregate statuses, and structured audit commit in one transaction. Machine part counters remain diagnostic. Task 19/schema v56 records START/START as an explicit interrupted attempt before opening the new START, and retains orphan or nonconsecutive END events with typed anomalies. Neither path mutates completed quantity.
 
 Task 20 removes the temporary duplication between manual and CNC cycle updates. Both now invoke one shared SQLite transaction component for exact-cycle guards, every coupled output, program/run and Batch Operation/Batch/Order propagation, the schema-v47 cycle record, and structured audit. Caller-specific Edit Mode/version checks and CNC workflow/identity/sequence checks remain outside that component and are not weakened.

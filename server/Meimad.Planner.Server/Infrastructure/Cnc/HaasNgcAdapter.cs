@@ -318,8 +318,10 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         var health = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["machineState"] = CncComponentStates.Available,
-            ["activeProgram"] = CncComponentStates.Available,
-            ["partCounter"] = CncComponentStates.Available,
+            ["activeProgram"] = status.ProgramNumber is null
+                ? CncComponentStates.Unavailable : CncComponentStates.Available,
+            ["partCounter"] = status.Parts is null
+                ? CncComponentStates.Unavailable : CncComponentStates.Available,
             ["programHeader"] = GetCapabilities().CanReadProgramHeader
                 ? CncComponentStates.Unavailable : CncComponentStates.Unsupported
         };

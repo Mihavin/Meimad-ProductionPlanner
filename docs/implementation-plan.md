@@ -132,7 +132,8 @@ on **User Terminals**, and QC retry remains the ordinary FAIL/correct/resend flo
 Tasks 28-30 are implemented development tooling. The loopback TCP CNC simulator
 loads explicit JSON scenarios with a required connection-scoped Machine ID,
 per-event relative timestamp, Run/NC/Offset Loader identities, sequence, delay,
-and duplicate controls, then emits strict DPRNT lines; it is not a Server
+and duplicate controls, then emits strict DPRNT lines; it can also write an exact
+ASCII/CRLF transcript without opening a socket and is not a Server
 mutation endpoint. The browser E-Ink simulator covers all fixed workflow states,
 verification/failure/expiry, offline last-known-good, low battery, revision
 change, and only the official scoped `SEND_TO_QC` POST. The integrated automated
@@ -143,7 +144,12 @@ session closure, anomaly/audit evidence, and the human debug timeline.
 Task 31 is intentionally not software-complete. The mandatory record is
 `docs/cnc-commissioning-checklist.md`; its physical controller rows are
 `NOT_TESTED` except for the already recorded public-vector arithmetic match, so
-setup verification is not production-ready. Task 32 reconciles
+setup verification is not production-ready. A local-only generator now prepares
+the protected challenge/verify candidates, exact NC/Offset Loader/cycle insertion
+blocks, and checksummed manifest from a git-ignored Machine configuration. Its
+M109 single-digit entry, timer/Reset behavior, program/variable mapping, protected
+key storage, and strict physical DPRNT formatting remain Task 31 approval gates;
+generation is not installation or commissioning. Task 32 reconciles
 the documentation with the implementation while retaining this physical gate.
 
 ## Multi-output Production Run workstream

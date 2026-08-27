@@ -58,7 +58,7 @@ internal sealed record HaasConnectionSettings(
 internal sealed record HaasProgramStatus(
     string? ProgramNumber,
     string MachineStatus,
-    int Parts,
+    int? Parts,
     DateTimeOffset Timestamp,
     string RawResponse);
 

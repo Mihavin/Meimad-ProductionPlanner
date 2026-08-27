@@ -27,6 +27,8 @@ param(
     [ValidateRange(1, 99999)]
     [int[]]$CandidateReadOnlyVariables = @(),
 
+    [switch]$IncludeMdcSnapshot,
+
     [switch]$Force
 )
 
@@ -193,10 +195,16 @@ if ([string]::IsNullOrWhiteSpace($outputDirectory)) {
 
 Write-Warning 'This tool performs read-only MDC queries and passive DPRNT capture only.'
 Write-Warning 'Do not include the Machine secret, response variable, or nonce variable in CandidateReadOnlyVariables.'
+if (-not $IncludeMdcSnapshot -and $CandidateReadOnlyVariables.Count -gt 0) {
+    throw 'CandidateReadOnlyVariables requires -IncludeMdcSnapshot.'
+}
+if (-not $IncludeMdcSnapshot) {
+    Write-Warning 'MDC snapshots are skipped by default because Haas broadcasts one client''s MDC replies to every connected client.'
+}
 $startedAt = [DateTimeOffset]::UtcNow
-$before = Read-MdcSnapshot
+$before = if ($IncludeMdcSnapshot) { Read-MdcSnapshot } else { $null }
 $dprnt = Receive-DprntLines
-$after = Read-MdcSnapshot
+$after = if ($IncludeMdcSnapshot) { Read-MdcSnapshot } else { $null }
 $completedAt = [DateTimeOffset]::UtcNow
 $graderPath = Join-Path $PSScriptRoot 'haas-verification-grade.ps1'
 $capturedLines = @($dprnt.lines | ForEach-Object { $_.line })

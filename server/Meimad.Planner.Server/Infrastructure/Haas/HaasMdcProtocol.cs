@@ -14,11 +14,14 @@ internal static class HaasMdcProtocol
         var programIndex = IndexOf(fields, "PROGRAM");
         var statusIndex = IndexOf(fields, "STATUS");
         var partsIndex = IndexOf(fields, "PARTS");
-        if (partsIndex < 0 || partsIndex + 1 >= fields.Length
-            || !int.TryParse(fields[partsIndex + 1], NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var parts) || parts < 0)
+        int? parts = null;
+        if (partsIndex >= 0)
         {
-            throw new FormatException("Haas Q500 response did not contain a valid PARTS value.");
+            if (partsIndex + 1 >= fields.Length
+                || !int.TryParse(fields[partsIndex + 1], NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out var parsedParts) || parsedParts < 0)
+                throw new FormatException("Haas Q500 response did not contain a valid PARTS value.");
+            parts = parsedParts;
         }
 
         string? program = null;
@@ -34,11 +37,13 @@ internal static class HaasMdcProtocol
         {
             // Haas documents MDI as a valid Q500 program locator.
             program = NormalizeProgram(fields.FirstOrDefault(value => value.StartsWith('O')));
-            status = fields.FirstOrDefault(value =>
-                !value.Equals("PROGRAM", StringComparison.OrdinalIgnoreCase)
-                && !value.Equals("PARTS", StringComparison.OrdinalIgnoreCase)
-                && !value.StartsWith('O')
-                && !int.TryParse(value, out _)) ?? "UNKNOWN";
+            status = statusIndex >= 0 && statusIndex + 1 < fields.Length
+                ? fields[statusIndex + 1]
+                : fields.FirstOrDefault(value =>
+                    !value.Equals("PROGRAM", StringComparison.OrdinalIgnoreCase)
+                    && !value.Equals("PARTS", StringComparison.OrdinalIgnoreCase)
+                    && !value.StartsWith('O')
+                    && !int.TryParse(value, out _)) ?? "UNKNOWN";
         }
 
         return new HaasProgramStatus(program, status.Trim().ToUpperInvariant(), parts, at, raw);
@@ -88,6 +93,7 @@ internal sealed class HaasMdcClient : IHaasMdcClient
     private readonly TimeProvider timeProvider;
     private TcpClient? tcpClient;
     private NetworkStream? stream;
+    private StreamReader? reader;
 
     internal HaasMdcClient(HaasConnectionSettings settings, TimeProvider timeProvider)
     {
@@ -103,19 +109,22 @@ internal sealed class HaasMdcClient : IHaasMdcClient
         timeout.CancelAfter(settings.ConnectionTimeoutMs);
         await tcpClient.ConnectAsync(settings.Host, settings.MdcPort, timeout.Token);
         stream = tcpClient.GetStream();
+        reader = new StreamReader(stream, Encoding.ASCII, false, 4096, true);
     }
 
     public Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
+        reader?.Dispose();
         stream?.Dispose();
         tcpClient?.Dispose();
+        reader = null;
         stream = null;
         tcpClient = null;
         return Task.CompletedTask;
     }
 
     public async Task<HaasProgramStatus> GetMachineStatusAsync(CancellationToken cancellationToken = default) =>
-        HaasMdcProtocol.ParseQ500(await QueryAsync("?Q500", cancellationToken), timeProvider.GetUtcNow());
+        HaasMdcProtocol.ParseQ500(await QueryAsync("?Q500", IsQ500, cancellationToken), timeProvider.GetUtcNow());
 
     public async Task<string?> GetCurrentProgramAsync(CancellationToken cancellationToken = default) =>
         (await GetMachineStatusAsync(cancellationToken)).ProgramNumber;
@@ -123,14 +132,18 @@ internal sealed class HaasMdcClient : IHaasMdcClient
     public async Task<int> GetPartCounterAsync(string source, CancellationToken cancellationToken = default) =>
         source switch
         {
-            HaasPartCounterSources.Q500 => (await GetMachineStatusAsync(cancellationToken)).Parts,
-            HaasPartCounterSources.M30Counter1 => HaasMdcProtocol.ParseCounter(await QueryAsync("?Q402", cancellationToken)),
-            HaasPartCounterSources.M30Counter2 => HaasMdcProtocol.ParseCounter(await QueryAsync("?Q403", cancellationToken)),
+            HaasPartCounterSources.Q500 => (await GetMachineStatusAsync(cancellationToken)).Parts
+                ?? throw new FormatException("The Haas Q500 response did not include a parts counter."),
+            HaasPartCounterSources.M30Counter1 => HaasMdcProtocol.ParseCounter(
+                await QueryAsync("?Q402", value => StartsWith(value, "M30 #1"), cancellationToken)),
+            HaasPartCounterSources.M30Counter2 => HaasMdcProtocol.ParseCounter(
+                await QueryAsync("?Q403", value => StartsWith(value, "M30 #2"), cancellationToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(source))
         };
 
     public async Task<int> ReadMacroAsync(int variableNumber, CancellationToken cancellationToken = default) =>
-        HaasMdcProtocol.ParseMacro(await QueryAsync($"?Q600 {variableNumber}", cancellationToken));
+        HaasMdcProtocol.ParseMacro(await QueryAsync(
+            $"?Q600 {variableNumber}", value => StartsWith(value, "MACRO"), cancellationToken));
 
     public async Task<string> WriteMacroAsync(int variableNumber, int value, CancellationToken cancellationToken = default)
     {
@@ -139,7 +152,10 @@ internal sealed class HaasMdcClient : IHaasMdcClient
             "Direct CNC macro writes are disabled; setup verification is performed by protected controller programs.");
     }
 
-    private async Task<string> QueryAsync(string command, CancellationToken cancellationToken)
+    private async Task<string> QueryAsync(
+        string command,
+        Func<string, bool> accepts,
+        CancellationToken cancellationToken)
     {
         await ConnectAsync(cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -147,17 +163,22 @@ internal sealed class HaasMdcClient : IHaasMdcClient
         var bytes = Encoding.ASCII.GetBytes(command + "\n");
         await stream!.WriteAsync(bytes, timeout.Token);
         await stream.FlushAsync(timeout.Token);
-        var buffer = new byte[4096];
-        var result = new StringBuilder();
-        while (result.Length < 65536)
+        while (!timeout.IsCancellationRequested)
         {
-            var count = await stream.ReadAsync(buffer, timeout.Token);
-            if (count == 0) throw new IOException("The Haas MDC connection closed before a response was received.");
-            result.Append(Encoding.ASCII.GetString(buffer, 0, count));
-            if (result.ToString().Contains("\r\n", StringComparison.Ordinal)) break;
+            var line = await reader!.ReadLineAsync(timeout.Token);
+            if (line is null)
+                throw new IOException("The Haas MDC connection closed before a response was received.");
+            if (accepts(line)) return line;
         }
-        return result.ToString().Trim();
+        throw new TimeoutException($"The Haas MDC response to {command} was not received.");
     }
+
+    private static bool IsQ500(string value) =>
+        StartsWith(value, "PROGRAM") || StartsWith(value, "STATUS");
+
+    private static bool StartsWith(string value, string field) =>
+        value.Trim().TrimStart('>').TrimStart('\u0002')
+            .StartsWith(field, StringComparison.OrdinalIgnoreCase);
 
     public async ValueTask DisposeAsync() => await DisconnectAsync();
 }

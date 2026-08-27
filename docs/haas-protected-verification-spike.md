@@ -6,6 +6,13 @@ Milestone C has **partial physical evidence but is not commissioned**. On the re
 
 This spike performs no cutting motion, offset write, CNC variable write from the Server, planning mutation, or automatic macro deployment. A Haas Factory Outlet/controller specialist must approve the candidate read-only identity source and temporary variable range before the probe program is loaded.
 
+The repository also contains a generator for a no-motion challenge/verify
+commissioning pack and a development Machine-output scenario. Generated files
+remain below `.diagnostics` by default, contain the locally supplied derived
+Machine key, and are explicitly not production-approved. They do not replace any
+physical row in the commissioning record and must not be loaded merely because
+generation, static tests, or simulator validation succeeds.
+
 ## Supported facts
 
 - Setting 23 prevents normal viewing or alteration of files in the `09000` Memory folder. This is the candidate protection mechanism, subject to an operator-access test on the actual control.
