@@ -1660,7 +1660,7 @@ If the registered spare is unassigned, the response remains `200` and uses `mach
 
 `GET /api/v1/eink/devices/{deviceId}/machine-screen`
 
-The implemented v1 form is structured `application/json`, rendered by the simulator and intended for a later firmware consumer. A pre-rendered panel asset is not implemented and would require an explicit compatible media/profile contract.
+The implemented v1 form is structured `application/json` and remains the official package/Machine read projection intended for a later firmware consumer. The physical-firmware browser simulator no longer renders this richer target projection as though it were implemented on the real tablet; it uses the approved status/event adapter in section 8.9. A pre-rendered panel asset is not implemented and would require an explicit compatible media/profile contract.
 
 A structured projection contains Machine ID/type, last server revision, current part/Batch/Operation/quantity/status, next work, status text/icon/color token, and package linkage. Status always has text/symbol semantics independent of color.
 
@@ -1834,7 +1834,7 @@ is no separate general telemetry mutation endpoint.
 
 An exact revision that is no longer the current authorized package returns scoped `404`; the consumer must abort staging and perform a fresh version request. Dedicated rate limiting and a `package_revision_changed` error are not implemented.
 
-Missing/corrupt SD and local checksum failures are device-side states, not upload APIs. The simulator must prove that these failures never activate partial content.
+Missing/corrupt SD and local checksum failures are device-side states, not upload APIs. Server API tests cover manifest and checksum contracts; proving that a physical device never activates partial content remains a firmware/SD acceptance test because the current physical-firmware simulator does not claim an implemented SD/package screen.
 
 ### 8.9 Approved physical-firmware status/event contract
 
@@ -1850,7 +1850,11 @@ schema-v52 setup-verification response projection, schema-v54 idempotent
 `SEND_TO_QC` POST, and schema-v55 repeat-inspection behavior are implemented. The shared event table is append-only and
 retains Server receipt time separately from optional Machine time. The physical
 firmware compiles the guarded button binding and compatible request/response
-parser, but the interaction is not physically verified.
+parser, but the interaction is not physically verified. The browser simulator
+mirrors this adapter, its 800×480 monochrome production/Service layouts, and its
+D1/D2/D4 short/hold inputs; that visual simulator is evidence of web behavior,
+not evidence of physical panel readability, timing, retained content, or GPIO
+behavior.
 
 The GET response uses `revision`, `tablet_id`, `machine`, `nc_run`, `part`,
 `operation`, and an exact status token from `READY_FOR_SETUP`, `IN_SETUP`, `IN_SETUP_RUN`,

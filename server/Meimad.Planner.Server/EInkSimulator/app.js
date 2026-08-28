@@ -1,358 +1,627 @@
 "use strict";
 
+const HOLD_MILLISECONDS = 1200;
+const TOOLS_PER_PAGE = 3;
+const FIRMWARE_VERSION = "0.1.0-mvp";
+
+// Exact classic 5x7 GLCD glyphs used by TFT_eSPI font 1. Each character is
+// five vertical columns plus the firmware renderer's one-column spacing cell.
+// Source lineage: Adafruit_GFX/TFT_eSPI classic bitmap font (BSD licensed).
+const GLCD_FONT = new Uint8Array([
+  0x00,0x00,0x00,0x00,0x00, 0x00,0x00,0x5F,0x00,0x00,
+  0x00,0x07,0x00,0x07,0x00, 0x14,0x7F,0x14,0x7F,0x14,
+  0x24,0x2A,0x7F,0x2A,0x12, 0x23,0x13,0x08,0x64,0x62,
+  0x36,0x49,0x56,0x20,0x50, 0x00,0x08,0x07,0x03,0x00,
+  0x00,0x1C,0x22,0x41,0x00, 0x00,0x41,0x22,0x1C,0x00,
+  0x2A,0x1C,0x7F,0x1C,0x2A, 0x08,0x08,0x3E,0x08,0x08,
+  0x00,0x80,0x70,0x30,0x00, 0x08,0x08,0x08,0x08,0x08,
+  0x00,0x00,0x60,0x60,0x00, 0x20,0x10,0x08,0x04,0x02,
+  0x3E,0x51,0x49,0x45,0x3E, 0x00,0x42,0x7F,0x40,0x00,
+  0x72,0x49,0x49,0x49,0x46, 0x21,0x41,0x49,0x4D,0x33,
+  0x18,0x14,0x12,0x7F,0x10, 0x27,0x45,0x45,0x45,0x39,
+  0x3C,0x4A,0x49,0x49,0x31, 0x41,0x21,0x11,0x09,0x07,
+  0x36,0x49,0x49,0x49,0x36, 0x46,0x49,0x49,0x29,0x1E,
+  0x00,0x00,0x14,0x00,0x00, 0x00,0x40,0x34,0x00,0x00,
+  0x00,0x08,0x14,0x22,0x41, 0x14,0x14,0x14,0x14,0x14,
+  0x00,0x41,0x22,0x14,0x08, 0x02,0x01,0x59,0x09,0x06,
+  0x3E,0x41,0x5D,0x59,0x4E, 0x7C,0x12,0x11,0x12,0x7C,
+  0x7F,0x49,0x49,0x49,0x36, 0x3E,0x41,0x41,0x41,0x22,
+  0x7F,0x41,0x41,0x41,0x3E, 0x7F,0x49,0x49,0x49,0x41,
+  0x7F,0x09,0x09,0x09,0x01, 0x3E,0x41,0x41,0x51,0x73,
+  0x7F,0x08,0x08,0x08,0x7F, 0x00,0x41,0x7F,0x41,0x00,
+  0x20,0x40,0x41,0x3F,0x01, 0x7F,0x08,0x14,0x22,0x41,
+  0x7F,0x40,0x40,0x40,0x40, 0x7F,0x02,0x1C,0x02,0x7F,
+  0x7F,0x04,0x08,0x10,0x7F, 0x3E,0x41,0x41,0x41,0x3E,
+  0x7F,0x09,0x09,0x09,0x06, 0x3E,0x41,0x51,0x21,0x5E,
+  0x7F,0x09,0x19,0x29,0x46, 0x26,0x49,0x49,0x49,0x32,
+  0x03,0x01,0x7F,0x01,0x03, 0x3F,0x40,0x40,0x40,0x3F,
+  0x1F,0x20,0x40,0x20,0x1F, 0x3F,0x40,0x38,0x40,0x3F,
+  0x63,0x14,0x08,0x14,0x63, 0x03,0x04,0x78,0x04,0x03,
+  0x61,0x59,0x49,0x4D,0x43, 0x00,0x7F,0x41,0x41,0x41,
+  0x02,0x04,0x08,0x10,0x20, 0x00,0x41,0x41,0x41,0x7F,
+  0x04,0x02,0x01,0x02,0x04, 0x40,0x40,0x40,0x40,0x40,
+  0x00,0x03,0x07,0x08,0x00, 0x20,0x54,0x54,0x78,0x40,
+  0x7F,0x28,0x44,0x44,0x38, 0x38,0x44,0x44,0x44,0x28,
+  0x38,0x44,0x44,0x28,0x7F, 0x38,0x54,0x54,0x54,0x18,
+  0x00,0x08,0x7E,0x09,0x02, 0x18,0xA4,0xA4,0x9C,0x78,
+  0x7F,0x08,0x04,0x04,0x78, 0x00,0x44,0x7D,0x40,0x00,
+  0x20,0x40,0x40,0x3D,0x00, 0x7F,0x10,0x28,0x44,0x00,
+  0x00,0x41,0x7F,0x40,0x00, 0x7C,0x04,0x78,0x04,0x78,
+  0x7C,0x08,0x04,0x04,0x78, 0x38,0x44,0x44,0x44,0x38,
+  0xFC,0x18,0x24,0x24,0x18, 0x18,0x24,0x24,0x18,0xFC,
+  0x7C,0x08,0x04,0x04,0x08, 0x48,0x54,0x54,0x54,0x24,
+  0x04,0x04,0x3F,0x44,0x24, 0x3C,0x40,0x40,0x20,0x7C,
+  0x1C,0x20,0x40,0x20,0x1C, 0x3C,0x40,0x30,0x40,0x3C,
+  0x44,0x28,0x10,0x28,0x44, 0x4C,0x90,0x90,0x90,0x7C,
+  0x44,0x64,0x54,0x4C,0x44, 0x00,0x08,0x36,0x41,0x00,
+  0x00,0x00,0x77,0x00,0x00, 0x00,0x41,0x36,0x08,0x00,
+  0x02,0x01,0x02,0x04,0x02
+]);
+
 const state = {
-  deviceId: localStorage.getItem("meimad-eink-device-id") || "",
-  tabletId: localStorage.getItem("meimad-eink-tablet-id") || "",
-  token: localStorage.getItem("meimad-eink-device-token") || "",
-  versionEtag: null,
-  manifest: null,
-  pollTimer: null,
-  imageUrl: null,
-  realStatus: null,
-  liveVerificationVisible: false,
-  localRevision: 1
+  hardwareId: localStorage.getItem("meimad-tablet-hardware-id") || "",
+  token: sessionStorage.getItem("meimad-tablet-device-token") || "",
+  wifiSsid: localStorage.getItem("meimad-tablet-wifi-ssid") || "",
+  tabletId: "",
+  status: null,
+  screenModel: null,
+  toolPage: 0,
+  showingService: false,
+  localFixture: false,
+  lastSuccessfulContact: "UNAVAILABLE",
+  lastHttpResult: "NOT CONNECTED",
+  lastRefreshDuration: "NOT RECORDED"
 };
 
-const byId = (id) => document.getElementById(id);
-const escapeHtml = (value) => String(value ?? "")
-  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+const byId = id => document.getElementById(id);
+const escapeHtml = value => String(value ?? "")
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;")
+  .replaceAll("'", "&#039;");
+
+function panelContext() {
+  const context = byId("panel-canvas").getContext("2d", { alpha: false });
+  context.imageSmoothingEnabled = false;
+  return context;
+}
+
+function bitmapTextWidth(value, size) {
+  return String(value ?? "").length * 6 * size;
+}
+
+function fitBitmapText(value, maximumWidth, size) {
+  const text = String(value ?? "");
+  if (bitmapTextWidth(text, size) <= maximumWidth) return text;
+  let fitted = text;
+  while (fitted.length > 0 && bitmapTextWidth(`${fitted}...`, size) > maximumWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+  return `${fitted}...`;
+}
+
+function drawBitmapText(context, value, x, y, size) {
+  const text = String(value ?? "");
+  context.fillStyle = "#000";
+  for (let index = 0; index < text.length; index += 1) {
+    let code = text.charCodeAt(index);
+    if (code < 32 || code > 126) code = 63;
+    const glyphOffset = (code - 32) * 5;
+    for (let column = 0; column < 5; column += 1) {
+      const bits = GLCD_FONT[glyphOffset + column];
+      for (let row = 0; row < 8; row += 1) {
+        if ((bits & (1 << row)) !== 0) {
+          context.fillRect(x + (index * 6 + column) * size, y + row * size, size, size);
+        }
+      }
+    }
+  }
+}
+
+function drawBitmapRight(context, value, right, y, size) {
+  drawBitmapText(context, value, right - bitmapTextWidth(value, size), y, size);
+}
+
+function drawHorizontal(context, x, y, width) {
+  context.fillRect(x, y, width, 1);
+}
+
+function drawVertical(context, x, y, height) {
+  context.fillRect(x, y, 1, height);
+}
+
+function drawOutline(context, x, y, width, height) {
+  drawHorizontal(context, x, y, width);
+  drawHorizontal(context, x, y + height - 1, width);
+  drawVertical(context, x, y, height);
+  drawVertical(context, x + width - 1, y, height);
+}
 
 function log(message) {
-  byId("protocol-log").textContent = `${new Date().toLocaleTimeString()}  ${message}\n${byId("protocol-log").textContent}`.trim();
+  const existing = byId("protocol-log").textContent === "No requests made."
+    ? ""
+    : byId("protocol-log").textContent;
+  byId("protocol-log").textContent = `${new Date().toLocaleTimeString()}  ${message}\n${existing}`.trim();
 }
 
-function headers(extra = {}) {
-  return { ...extra, "Authorization": `Bearer ${state.token}` };
+function setAction(message) {
+  byId("action-state").textContent = message;
 }
 
-async function getJson(path, extraHeaders = {}) {
-  const response = await fetch(path, { method: "GET", headers: headers(extraHeaders), cache: "no-cache" });
-  if (!response.ok && response.status !== 304) {
-    let message = `HTTP ${response.status}`;
-    try { message = (await response.json()).error?.message || message; } catch { /* safe fallback */ }
-    throw new Error(message);
-  }
-  return response.status === 304 ? { response, value: null } : { response, value: await response.json() };
+function setConnection(message, error = false) {
+  const element = byId("connection-state");
+  element.textContent = message;
+  element.className = `connection-state${error ? " error" : ""}`;
+}
+
+function batteryVoltage() {
+  const value = Number.parseFloat(byId("battery-voltage").value);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function requestHeaders(extra = {}) {
+  const headers = { ...extra, Authorization: `Bearer ${state.token}`, "X-Meimad-Firmware-Version": FIRMWARE_VERSION };
+  const voltage = batteryVoltage();
+  if (voltage !== null) headers["X-Meimad-Battery-Voltage"] = voltage.toFixed(3);
+  return headers;
+}
+
+async function getJson(path) {
+  const response = await fetch(path, { method: "GET", headers: requestHeaders(), cache: "no-cache" });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
 }
 
 async function postJson(path, body) {
   const response = await fetch(path, {
     method: "POST",
-    headers: headers({ "Content-Type": "application/json" }),
+    headers: requestHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)
   });
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try { message = (await response.json()).error?.message || message; } catch { /* safe fallback */ }
-    throw new Error(message);
-  }
+  if (!response.ok) throw new Error(await readError(response));
   return response.json();
 }
 
-function devicePath(suffix) {
-  return `/api/v1/eink/devices/${encodeURIComponent(state.deviceId)}${suffix}`;
-}
-
-function physicalTabletPath(suffix) {
-  return `/api/tablets/${encodeURIComponent(state.tabletId)}${suffix}`;
-}
-
-async function checkVersion(force) {
-  const conditional = !force && state.versionEtag ? { "If-None-Match": state.versionEtag } : {};
-  log("GET version (small change check)");
-  const result = await getJson(devicePath("/version"), conditional);
-  if (result.response.status === 304) {
-    log("304 unchanged — no package or screen transfer needed");
-    return false;
+async function readError(response) {
+  try {
+    const body = await response.json();
+    return body?.error?.message || `HTTP ${response.status}`;
+  } catch {
+    return `HTTP ${response.status}`;
   }
-  state.versionEtag = result.response.headers.get("ETag");
-  byId("revision").textContent = `Revision ${result.value.machineScreenRevision}`;
-  log(`Version changed: ${result.value.machineScreenRevision}`);
-  return true;
 }
 
-async function loadAll(force = false) {
-  clearTimeout(state.pollTimer);
-  state.deviceId = byId("device-id").value.trim();
-  state.tabletId = byId("tablet-id").value.trim();
+function readBenchConfiguration() {
+  state.hardwareId = byId("hardware-id").value.trim();
   state.token = byId("device-token").value.trim();
-  if (!state.deviceId || !state.tabletId || !state.token) {
-    setConnection("Device ID, Tablet ID, and token are required.", true);
-    return;
-  }
-  localStorage.setItem("meimad-eink-device-id", state.deviceId);
-  localStorage.setItem("meimad-eink-tablet-id", state.tabletId);
-  localStorage.setItem("meimad-eink-device-token", state.token);
-  setConnection("Checking version…", false);
+  state.wifiSsid = byId("wifi-ssid").value.trim();
+  if (!state.hardwareId || !state.token) throw new Error("Hardware MAC and device token are required.");
+  localStorage.setItem("meimad-tablet-hardware-id", state.hardwareId);
+  localStorage.setItem("meimad-tablet-wifi-ssid", state.wifiSsid);
+  sessionStorage.setItem("meimad-tablet-device-token", state.token);
+}
+
+async function registrationPing() {
+  log("GET /api/tablet/ping (physical firmware registration)");
+  const result = await getJson(`/api/tablet/ping?hardwareId=${encodeURIComponent(state.hardwareId)}`);
+  if (result?.status !== "ok" || !result?.tabletId) throw new Error("Malformed tablet registration response.");
+  state.tabletId = String(result.tabletId);
+  return state.tabletId;
+}
+
+async function requestStatus(reason) {
+  if (!state.tabletId) throw new Error("Tablet is not registered.");
+  log(`GET /api/tablets/${state.tabletId}/status (${reason})`);
+  const value = await getJson(`/api/tablets/${encodeURIComponent(state.tabletId)}/status`);
+  state.status = value;
+  state.lastSuccessfulContact = new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+  state.lastHttpResult = "STATUS HTTP 200";
+  return value;
+}
+
+async function bootOrRefresh(reason = "external-reset") {
+  const started = performance.now();
+  state.localFixture = false;
+  byId("scenario-state").textContent = "Live Server mode";
   try {
-    const changed = await checkVersion(force);
-    if (changed || force) {
-      const [screen, time] = await Promise.all([
-        getJson(devicePath("/machine-screen")),
-        getJson(devicePath("/time-config"))
-      ]);
-      renderScreen(screen.value);
-      renderTime(time.value);
-      await loadManifest(screen.value.package);
+    readBenchConfiguration();
+    setConnection("Connecting...");
+    await registrationPing();
+    const status = await requestStatus(reason);
+    renderProduction(status);
+    state.lastRefreshDuration = `${Math.max(1, Math.round(performance.now() - started))} ms (browser)`;
+    setConnection(`Connected / tablet ${state.tabletId}`);
+    setAction(`${reason === "physical-refresh-button" ? "D1 REFRESH" : "RESET / BOOT"}: Server status displayed.`);
+  } catch (error) {
+    state.lastHttpResult = error.message;
+    handleContactFailure(error.message);
+  }
+}
+
+function handleContactFailure(message) {
+  setConnection(message, true);
+  log(`CONTACT FAILED: ${message}`);
+  setAction("Server contact failed. The E-Ink panel retains its last-known screen.");
+  if (state.screenModel?.status === "IN_SETUP" && state.screenModel?.verification?.state === "WAITING_FOR_OPERATOR") {
+    renderProduction(makeUnavailableModel());
+    setAction("Server contact failed while a response code could be visible. Code cleared; setup remains blocked.");
+  }
+}
+
+function statusText(status) {
+  const labels = {
+    READY_FOR_SETUP: "READY FOR SETUP",
+    IN_SETUP: "IN SETUP",
+    IN_SETUP_RUN: "IN SETUP RUN",
+    IN_QC: "IN QUALITY CONTROL",
+    READY_FOR_PRODUCTION: "READY FOR PRODUCTION",
+    IN_PRODUCTION: "IN PRODUCTION",
+    BLOCKED: "BLOCKED",
+    UNKNOWN: "STATUS UNKNOWN"
+  };
+  return labels[status] || "STATUS UNKNOWN";
+}
+
+function verificationStateText(verification) {
+  const labels = {
+    WAITING_FOR_OPERATOR: "ENTER RESPONSE CODE",
+    EXPIRED: "CODE EXPIRED",
+    INVALIDATED: "SETUP CHANGED",
+    UNAVAILABLE: "CODE UNAVAILABLE"
+  };
+  return labels[verification?.state] || "VERIFICATION UNAVAILABLE";
+}
+
+function normalizeModel(value) {
+  return {
+    tabletId: value?.tablet_id || state.tabletId || "UNREGISTERED",
+    machine: value?.machine || { name: "MACHINE", number: "NOT CONFIRMED" },
+    part: value?.part || { number: "NO PART", name: "NO ACTIVE RUN" },
+    operation: value?.operation || { number: 0, name: "NO OPERATION" },
+    status: String(value?.status || "UNKNOWN"),
+    verification: value?.verification || null,
+    diagnostics: value?.diagnostics || null,
+    revision: value?.revision ?? "UNAVAILABLE",
+    notice: value?.notice || "",
+    tools: Array.isArray(value?.tools) ? value.tools.slice(0, 12) : [],
+    lowBattery: value?.lowBattery ?? ((batteryVoltage() ?? 4.5) <= 3.30)
+  };
+}
+
+function clearPanel(context) {
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, 800, 480);
+  context.fillStyle = "#000";
+}
+
+function drawProductionCanvas(model) {
+  const context = panelContext();
+  clearPanel(context);
+  const left = 24;
+  const right = 776;
+  const contentWidth = right - left;
+  const machine = `${model.machine.name || "MACHINE"}  -  ${model.machine.number || "NOT CONFIRMED"}`;
+  const tablet = String(model.tabletId).startsWith("T") ? String(model.tabletId) : `T${model.tabletId}`;
+
+  drawBitmapText(context, fitBitmapText(machine, 610, 4), left, 18, 4);
+  drawBitmapRight(context, tablet, right, 14, 2);
+  if (model.lowBattery) drawBitmapRight(context, "LOW BATTERY", right, 46, 1);
+  else if (state.localFixture) drawBitmapRight(context, "LAYOUT DEMO", right, 46, 1);
+  drawHorizontal(context, left, 68, contentWidth);
+
+  drawBitmapText(context, "PART", left, 82, 1);
+  drawBitmapText(context, fitBitmapText(model.part.number || "NO PART", 340, 3), left, 102, 3);
+  drawBitmapText(context, fitBitmapText(model.part.name || "NO ACTIVE RUN", 340, 2), left, 142, 2);
+  drawVertical(context, 400, 80, 102);
+  drawBitmapText(context, "OPERATION", 424, 82, 1);
+  drawBitmapText(context, `OP${model.operation.number ?? 0}`, 424, 102, 3);
+  drawBitmapText(context, fitBitmapText(model.operation.name || "NO OPERATION", 350, 2), 424, 142, 2);
+
+  if (model.status === "IN_SETUP") {
+    drawOutline(context, left, 190, contentWidth, 270);
+    drawOutline(context, left + 1, 191, contentWidth - 2, 268);
+    drawBitmapText(context, "SETUP VERIFICATION", 40, 206, 1);
+    drawBitmapText(context, fitBitmapText(verificationStateText(model.verification), 690, 3), 40, 236, 3);
+    const waiting = model.verification?.state === "WAITING_FOR_OPERATOR"
+      && /^[0-9]{4,6}$/.test(String(model.verification?.response_code || ""));
+    if (waiting) {
+      const code = String(model.verification.response_code);
+      drawBitmapText(context, code, left + (contentWidth - bitmapTextWidth(code, 7)) / 2, 292, 7);
+    } else {
+      drawBitmapText(context, "SETUP BLOCKED", 40, 306, 4);
     }
-    // Workflow verification changes independently of the package revision.
-    await loadPhysicalStatus();
-    setConnection("Connected • authorized read-only device", false, true);
-  } catch (error) {
-    clearLiveVerificationDisplay("SERVER CONTACT FAILED - DO NOT START");
-    setConnection(error.message, true);
-    log(`ERROR ${error.message}`);
-  } finally {
-    schedulePoll();
-  }
-}
-
-async function loadPhysicalStatus() {
-  try {
-    const result = await getJson(physicalTabletPath("/status"));
-    state.realStatus = result.value?.status || null;
-    byId("send-to-qc").disabled = state.realStatus !== "IN_SETUP_RUN";
-    renderPhysicalStatus(result.value);
-    log(`GET physical status - ${state.realStatus || "UNKNOWN"}`);
-  } catch (error) {
-    state.realStatus = null;
-    byId("send-to-qc").disabled = true;
-    clearLiveVerificationDisplay("SERVER STATUS UNAVAILABLE - DO NOT START");
-    log(`Physical status unavailable - ${error.message}`);
-  }
-}
-
-function renderPhysicalStatus(value) {
-  const statusToken = String(value?.status || "UNKNOWN");
-  const verification = value?.verification;
-  const waiting = statusToken === "IN_SETUP"
-    && verification?.state === "WAITING_FOR_OPERATOR"
-    && /^[0-9]{4,6}$/.test(String(verification?.response_code || ""));
-  const status = byId("status-block");
-  const verificationBlock = byId("verification-block");
-
-  status.className = `status-block status-${statusToken.toLowerCase()}`;
-  status.innerHTML = `<span class="status-symbol">${statusToken === "BLOCKED" ? "!" : "#"}</span><strong>${escapeHtml(statusToken.replaceAll("_", " "))}</strong>`;
-  byId("machine-number").textContent = value?.machine?.number || "UNASSIGNED";
-  byId("machine-type").textContent = value?.machine?.name || "NO MACHINE";
-  byId("last-update").textContent = `Updated ${new Date().toLocaleString()}`;
-  byId("revision").textContent = `Workflow revision ${value?.revision ?? "-"}`;
-  byId("current-job").innerHTML = value?.part || value?.operation
-    ? `<div class="job-part">${escapeHtml(value?.part?.number || "NO PART")} - ${escapeHtml(value?.part?.name || "")}</div>
-       <div class="job-operation">OP${escapeHtml(value?.operation?.number ?? "-")} - ${escapeHtml(value?.operation?.name || "NO OPERATION")}</div>
-       <div class="job-detail">Run ${escapeHtml(value?.nc_run?.id || "-")}</div>`
-    : `<div class="empty-content">No active physical run.</div>`;
-
-  state.liveVerificationVisible = waiting;
-  verificationBlock.hidden = !verification?.required;
-  verificationBlock.className = `verification-block${verification?.state === "WAITING_FOR_OPERATOR" ? "" : " failure"}`;
-  if (waiting) {
-    verificationBlock.innerHTML = `SERVER RESPONSE CODE<div class="response-code">${escapeHtml(verification.response_code)}</div>`;
-  } else if (verification?.required) {
-    const messages = {
-      EXPIRED: "VERIFICATION EXPIRED - RUN OFFSET LOADER AGAIN",
-      INVALIDATED: "VERIFICATION INVALIDATED - DO NOT START",
-      UNAVAILABLE: "VERIFICATION UNAVAILABLE - DO NOT START"
-    };
-    verificationBlock.textContent = messages[verification.state]
-      || `VERIFICATION ${verification.state || "NOT READY"} - DO NOT START`;
-  } else {
-    verificationBlock.textContent = "";
-  }
-
-  const result = value?.diagnostics?.verification_result || "NONE";
-  const macroVersion = value?.diagnostics?.protected_macro_version || "UNKNOWN";
-  byId("verification-diagnostics").textContent = `SERVER VERIFICATION: ${result} | MACRO: ${macroVersion}`;
-  byId("scenario-state").textContent = `LIVE SERVER | TABLET ${state.tabletId} | ${statusToken}`;
-}
-
-function clearLiveVerificationDisplay(message) {
-  if (!state.liveVerificationVisible) return;
-  state.liveVerificationVisible = false;
-  const verificationBlock = byId("verification-block");
-  verificationBlock.hidden = false;
-  verificationBlock.className = "verification-block failure";
-  verificationBlock.textContent = message;
-  const status = byId("status-block");
-  status.className = "status-block status-blocked";
-  status.innerHTML = '<span class="status-symbol">!</span><strong>VERIFICATION CONTACT LOST</strong>';
-  byId("verification-diagnostics").textContent = "SERVER VERIFICATION: CONTACT LOST | LAST CODE CLEARED";
-}
-
-function renderScreen(screen) {
-  const machine = screen.machine;
-  byId("machine-number").textContent = machine?.number || "UNASSIGNED";
-  byId("machine-type").textContent = machine?.processType || "NO MACHINE";
-  byId("last-update").textContent = `Updated ${new Date(screen.generatedAt).toLocaleString()}`;
-  byId("revision").textContent = `Revision ${screen.machineScreenRevision}`;
-  const status = byId("status-block");
-  status.className = `status-block status-${screen.status.code}`;
-  status.innerHTML = `<span class="status-symbol">${escapeHtml(screen.status.icon)}</span><strong>${escapeHtml(screen.status.label)}</strong>`;
-  byId("current-job").innerHTML = screen.current
-    ? `<div class="job-part">${escapeHtml(screen.current.partNumber)}</div>
-       <div class="job-operation">${escapeHtml(screen.current.batchNumber)} • OP${escapeHtml(screen.current.operationNumber)} • ${escapeHtml(screen.current.operationName)}</div>
-       <div class="job-detail">Quantity ${escapeHtml(screen.current.quantity)} • ${escapeHtml(screen.current.status)}${screen.current.projectedFinish ? ` • Finish ${escapeHtml(new Date(screen.current.projectedFinish).toLocaleString())}` : ""}</div>`
-    : `<div class="empty-content">No current job.</div>`;
-  byId("next-jobs").innerHTML = screen.next.length
-    ? screen.next.map(job => `<li><strong>${escapeHtml(job.partNumber)} • ${escapeHtml(job.batchNumber)}</strong><span>OP${escapeHtml(job.operationNumber)} • ${escapeHtml(job.operationName)}</span></li>`).join("")
-    : "<li>No next jobs</li>";
-  const conflictStrip = byId("conflict-strip");
-  conflictStrip.className = `conflict-strip${screen.conflicts.length ? " has-conflict" : ""}`;
-  conflictStrip.textContent = screen.conflicts.length
-    ? `▲ ${screen.conflicts[0].severity.toUpperCase()} • ${screen.conflicts[0].message}${screen.conflicts.length > 1 ? ` • +${screen.conflicts.length - 1} more` : ""}`
-    : "✓ NO CALCULATED CONFLICTS";
-  log("GET machine-screen — structured display data rendered");
-}
-
-function renderTime(config) {
-  const days = config.workdays.map(day => day.slice(0, 3).toUpperCase()).join(" ");
-  const window = config.shiftWindows[0];
-  byId("time-config").textContent = `${days} • ${window.startsAtLocal}–${window.endsAtLocal} • check every ${config.pollIntervalSeconds}s`;
-  state.pollSeconds = config.pollIntervalSeconds;
-  log("GET time-config — automatic check window loaded");
-}
-
-async function loadManifest(packageLink) {
-  state.manifest = null;
-  if (!packageLink) {
-    byId("package-id").textContent = "No package assigned";
-    byId("package-revision").textContent = "—";
-    byId("tool-cart").textContent = "—";
-    byId("package-context").textContent = "No official work metadata.";
-    byId("package-files").innerHTML = '<div class="empty-content">No official package for the current job.</div>';
+    drawHorizontal(context, 40, 388, 720);
+    const instruction = waiting ? "TYPE THIS CODE AT THE CNC" : "PRESS REFRESH - DO NOT START";
+    drawBitmapText(context, fitBitmapText(instruction, 700, 2), 40, 410, 2);
     return;
   }
-  log("GET package-manifest");
-  const result = await getJson(devicePath("/package-manifest"));
-  state.manifest = result.value;
-  byId("package-id").textContent = result.value.packageId;
-  byId("package-revision").textContent = result.value.revision;
-  byId("tool-cart").textContent = result.value.toolCartId || "—";
-  const metadata = result.value.metadata;
-  byId("package-context").textContent = metadata
-    ? `${metadata.machine.number} • ${metadata.part.partNumber} ${metadata.part.revision || ""} • ${metadata.batch.batchNumber} • OP${metadata.operation.operationNumber} ${metadata.operation.name}`
-    : "Legacy package metadata unavailable";
-  byId("package-files").innerHTML = result.value.files.length
-    ? result.value.files.map(file => `<div class="file-row"><strong>${escapeHtml(file.logicalPath)}</strong><span>${escapeHtml(file.assetType)} • ${escapeHtml(file.mediaType)} • ${escapeHtml(file.byteLength)} bytes</span><button type="button" data-file-id="${escapeHtml(file.fileId)}">VIEW</button></div>`).join("")
-    : '<div class="empty-content">Published manifest contains no files.</div>';
-  document.querySelectorAll("[data-file-id]").forEach(button => {
-    button.addEventListener("click", () => loadFile(button.dataset.fileId));
+
+  drawOutline(context, left, 190, contentWidth, 110);
+  drawOutline(context, left + 1, 191, contentWidth - 2, 108);
+  drawBitmapText(context, "STATUS", 40, 204, 1);
+  if (model.notice) {
+    const notice = fitBitmapText(model.notice, 520, 2);
+    drawBitmapRight(context, notice, right - 16, 202, 2);
+  }
+  drawBitmapText(context, fitBitmapText(statusText(model.status), 710, 4), 40, 238, 4);
+
+  const tools = model.tools || [];
+  const pages = Math.max(1, Math.ceil(tools.length / TOOLS_PER_PAGE));
+  const page = Math.max(0, Math.min(state.toolPage, pages - 1));
+  drawBitmapText(context, "TOOLS", left, 316, 2);
+  drawBitmapRight(context, `TOOLS ${page + 1} / ${pages}`, right, 316, 2);
+  drawBitmapText(context, "TOOL", 34, 344, 1);
+  drawBitmapText(context, "DESCRIPTION", 126, 344, 1);
+  drawBitmapText(context, "OFFSET", 666, 344, 1);
+  drawHorizontal(context, left, 360, contentWidth);
+  drawVertical(context, 112, 338, 136);
+  drawVertical(context, 650, 338, 136);
+
+  const shown = tools.slice(page * TOOLS_PER_PAGE, (page + 1) * TOOLS_PER_PAGE);
+  if (shown.length === 0) {
+    drawBitmapText(context, "NO TOOL DATA AVAILABLE", 126, 378, 2);
+    return;
+  }
+  shown.forEach((tool, row) => {
+    const y = 370 + row * 38;
+    drawBitmapText(context, fitBitmapText(tool.tool, 68, 2), 34, y, 2);
+    drawBitmapText(context, fitBitmapText(tool.description, 500, 2), 126, y, 2);
+    drawBitmapText(context, fitBitmapText(tool.offset, 92, 2), 666, y, 2);
+    if (row < TOOLS_PER_PAGE - 1) drawHorizontal(context, left, y + 28, contentWidth);
   });
 }
 
-async function loadFile(fileId) {
-  const file = state.manifest?.files.find(value => value.fileId === fileId);
-  if (!file) return;
-  showPage("file");
-  byId("file-name").textContent = `${file.logicalPath} • revision ${state.manifest.revision}`;
-  byId("file-verification").textContent = "VERIFYING SHA-256…";
-  byId("file-content").textContent = "Downloading authorized read-only file…";
-  byId("file-content").hidden = false;
-  byId("file-image").hidden = true;
-  log(`GET ${file.downloadPath}`);
+function drawServiceCanvas(leftFields, rightFields) {
+  const context = panelContext();
+  clearPanel(context);
+  drawBitmapText(context, "TABLET SERVICE / DEBUG", 20, 14, 3);
+  drawBitmapText(context, "HOLD D1 / REFRESH 1.2s TO OPEN", 568, 22, 1);
+  drawHorizontal(context, 20, 50, 760);
+  drawVertical(context, 398, 58, 402);
+  const drawField = (label, value, x, y) => {
+    drawBitmapText(context, label, x, y, 1);
+    drawBitmapText(context, fitBitmapText(value || "UNAVAILABLE", 350, 2), x, y + 12, 2);
+  };
+  leftFields.forEach((entry, index) => drawField(entry[0], entry[1], 20, 60 + index * 46));
+  rightFields.forEach((entry, index) => drawField(entry[0], entry[1], 420, 60 + index * 46));
+}
+
+function renderProduction(value) {
+  const model = normalizeModel(value);
+  state.screenModel = model;
+  state.showingService = false;
+  state.toolPage = Math.min(state.toolPage, Math.max(0, Math.ceil(model.tools.length / TOOLS_PER_PAGE) - 1));
+  byId("production-screen").hidden = false;
+  byId("service-screen").hidden = true;
+  byId("machine-heading").textContent = `${model.machine.name || "MACHINE"}  -  ${model.machine.number || "NOT CONFIRMED"}`;
+  byId("tablet-label").textContent = String(model.tabletId).startsWith("T") ? model.tabletId : `T${model.tabletId}`;
+  byId("battery-warning").hidden = !model.lowBattery;
+  byId("part-number").textContent = model.part.number || "NO PART";
+  byId("part-name").textContent = model.part.name || "NO ACTIVE RUN";
+  byId("operation-number").textContent = `OP${model.operation.number ?? 0}`;
+  byId("operation-name").textContent = model.operation.name || "NO OPERATION";
+
+  const verificationVisible = model.status === "IN_SETUP";
+  byId("normal-region").hidden = verificationVisible;
+  byId("verification-region").hidden = !verificationVisible;
+  if (verificationVisible) renderVerification(model.verification);
+  else renderNormalRegion(model);
+  drawProductionCanvas(model);
+  byId("eink-screen").setAttribute(
+    "aria-label",
+    `${model.machine.name || "Machine"} ${model.machine.number || ""}; part ${model.part.number || "none"}; operation ${model.operation.number ?? 0}; status ${statusText(model.status)}`);
+}
+
+function renderNormalRegion(model) {
+  byId("workflow-status").textContent = statusText(model.status);
+  byId("status-notice").textContent = model.notice;
+  renderToolPage();
+}
+
+function renderVerification(verification) {
+  const waiting = verification?.state === "WAITING_FOR_OPERATOR"
+    && /^[0-9]{4,6}$/.test(String(verification?.response_code || ""));
+  byId("verification-state").textContent = verificationStateText(verification);
+  byId("verification-code").hidden = !waiting;
+  byId("verification-code").textContent = waiting ? verification.response_code : "";
+  byId("verification-blocked").hidden = waiting;
+  byId("verification-instruction").textContent = waiting
+    ? "TYPE THIS CODE AT THE CNC"
+    : "PRESS REFRESH - DO NOT START";
+}
+
+function renderToolPage() {
+  const tools = state.screenModel?.tools || [];
+  const pages = Math.max(1, Math.ceil(tools.length / TOOLS_PER_PAGE));
+  state.toolPage = Math.max(0, Math.min(state.toolPage, pages - 1));
+  byId("tool-page-label").textContent = `TOOLS ${state.toolPage + 1} / ${pages}`;
+  const shown = tools.slice(state.toolPage * TOOLS_PER_PAGE, (state.toolPage + 1) * TOOLS_PER_PAGE);
+  byId("tool-rows").innerHTML = shown.length
+    ? shown.map(tool => `<div class="tool-row"><span>${escapeHtml(tool.tool)}</span><span>${escapeHtml(tool.description)}</span><span>${escapeHtml(tool.offset)}</span></div>`).join("")
+    : '<div class="no-tools">NO TOOL DATA AVAILABLE</div>';
+}
+
+function changeToolPage(direction) {
+  if (state.showingService) {
+    setAction(`${direction < 0 ? "D2" : "D4"} ignored: the retained Service/Debug screen remains visible.`);
+    return;
+  }
+  const pages = Math.max(1, Math.ceil((state.screenModel?.tools?.length || 0) / TOOLS_PER_PAGE));
+  const previous = state.toolPage;
+  state.toolPage = Math.max(0, Math.min(state.toolPage + direction, pages - 1));
+  if (state.toolPage === previous) {
+    setAction(`${direction < 0 ? "D2 PREVIOUS" : "D4 NEXT"}: already at tool-page boundary ${state.toolPage + 1} / ${pages}.`);
+  } else {
+    renderToolPage();
+    drawProductionCanvas(state.screenModel);
+    setAction(`${direction < 0 ? "D2 PREVIOUS" : "D4 NEXT"}: tool page ${state.toolPage + 1} / ${pages}.`);
+  }
+}
+
+function serviceField(label, value) {
+  return `<div class="service-field"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "UNAVAILABLE")}</strong></div>`;
+}
+
+async function showServiceScreen() {
+  const started = performance.now();
   try {
-    const response = await fetch(file.downloadPath, { method: "GET", headers: headers(), cache: "no-cache" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const bytes = await response.arrayBuffer();
-    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
-      .map(value => value.toString(16).padStart(2, "0")).join("");
-    if (digest !== file.checksum.value) throw new Error("Downloaded checksum mismatch");
-    byId("file-verification").textContent = "✓ SHA-256 VERIFIED • READ-ONLY";
-    if (file.mediaType.startsWith("image/")) {
-      if (state.imageUrl) URL.revokeObjectURL(state.imageUrl);
-      state.imageUrl = URL.createObjectURL(new Blob([bytes], { type: file.mediaType }));
-      byId("file-image").src = state.imageUrl;
-      byId("file-image").hidden = false;
-      byId("file-content").hidden = true;
-    } else {
-      byId("file-content").textContent = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    }
-    log(`File checksum verified: ${digest}`);
+    readBenchConfiguration();
+    await registrationPing();
+    await requestStatus("service-screen");
   } catch (error) {
-    byId("file-verification").textContent = "▲ FILE REJECTED";
-    byId("file-content").textContent = error.message;
-    log(`FILE REJECTED ${error.message}`);
+    state.lastHttpResult = error.message;
+    log(`SERVICE REFRESH FAILED: ${error.message}`);
   }
-}
-
-function setConnection(message, error, connected = false) {
-  const element = byId("connection-state");
-  element.textContent = message;
-  element.className = `connection-state${error ? " error" : connected ? " connected" : ""}`;
-}
-
-function showPage(page) {
-  document.querySelectorAll(".screen-page").forEach(element => element.classList.toggle("active-page", element.id === `${page}-page`));
-  document.querySelectorAll(".tab").forEach(element => element.classList.toggle("active", element.dataset.page === page));
-  byId("screen-title").textContent = page === "machine" ? "MACHINE PAGE" : page === "package" ? "SETUP PACKAGE" : "NC / TEXT VIEWER";
-}
-
-function ensureBatteryLabel() {
-  let element = byId("battery-state");
-  if (!element) {
-    element = document.createElement("span");
-    element.id = "battery-state";
-    document.querySelector(".screen-meta").prepend(element);
-  }
-  return element;
-}
-
-function applyLocalScenario() {
-  const workflow = byId("scenario-status").value;
-  const verification = byId("scenario-verification").value;
-  const offline = byId("scenario-offline").checked;
-  const lowBattery = byId("scenario-low-battery").checked;
-  const status = byId("status-block");
-  const verificationBlock = byId("verification-block");
-  const battery = ensureBatteryLabel();
-  state.liveVerificationVisible = false;
-
-  status.className = `status-block status-${workflow.toLowerCase()}`;
-  status.innerHTML = `<span class="status-symbol">${workflow === "BLOCKED" ? "!" : "■"}</span><strong>${escapeHtml(workflow.replaceAll("_", " "))}</strong>`;
-  verificationBlock.hidden = verification === "none";
-  verificationBlock.className = `verification-block${verification === "failed" || verification === "expired" ? " failure" : ""}`;
-  verificationBlock.textContent = verification === "code" ? "LOCAL TEST CODE: 042731"
-    : verification === "failed" ? "VERIFICATION FAILED - CNC START REMAINS BLOCKED"
-    : verification === "expired" ? "VERIFICATION EXPIRED - RUN OFFSET LOADER AGAIN" : "";
-  battery.textContent = lowBattery ? "LOW BATTERY - REPLACE 3 AA" : "BATTERY OK";
-  battery.className = lowBattery ? "battery-low" : "";
-  setConnection(offline ? "OFFLINE - showing last-known-good content" : `Local ${workflow} scenario`, offline, !offline);
-  byId("scenario-state").textContent = `LOCAL ONLY | ${workflow} | ${offline ? "SERVER OFFLINE" : "SERVER AVAILABLE"} | ${lowBattery ? "LOW BATTERY" : "BATTERY OK"}`;
-  log(`LOCAL scenario ${workflow}${offline ? " offline" : ""}${lowBattery ? " low-battery" : ""}`);
+  const model = state.status ? normalizeModel(state.status) : (state.screenModel || normalizeModel(null));
+  const voltage = batteryVoltage();
+  const left = [
+    ["TABLET ID", model.tabletId],
+    ["HARDWARE MAC", state.hardwareId],
+    ["FIRMWARE", FIRMWARE_VERSION],
+    ["MACHINE BINDING", `${model.machine.number || ""} - ${model.machine.name || ""}`],
+    ["WI-FI SSID", state.wifiSsid],
+    ["IP / RSSI", "BROWSER / UNAVAILABLE"],
+    ["BATTERY", voltage === null ? "UNAVAILABLE" : `${voltage.toFixed(3)} V`],
+    ["WAKE REASON", "physical-button-ext1"]
+  ];
+  const right = [
+    ["SERVER", location.origin],
+    ["LAST SUCCESSFUL CONTACT", state.lastSuccessfulContact],
+    ["LAST HTTP RESULT", state.lastHttpResult],
+    ["WORKFLOW STATE", model.status],
+    ["CURRENT REVISION", model.revision],
+    ["LAST PANEL REFRESH", state.lastRefreshDuration],
+    ["LAST CNC VERIFICATION", model.diagnostics?.verification_result || "NOT REPORTED"],
+    ["PROTECTED MACRO VERSION", model.diagnostics?.protected_macro_version ?? "NOT REPORTED"]
+  ];
+  byId("service-columns").innerHTML = `<div class="service-column">${left.map(entry => serviceField(entry[0], entry[1])).join("")}</div><div class="service-column">${right.map(entry => serviceField(entry[0], entry[1])).join("")}</div>`;
+  drawServiceCanvas(left, right);
+  byId("eink-screen").setAttribute("aria-label", "Tablet Service and Debug screen");
+  byId("production-screen").hidden = true;
+  byId("service-screen").hidden = false;
+  state.showingService = true;
+  state.lastRefreshDuration = `${Math.max(1, Math.round(performance.now() - started))} ms (browser)`;
+  setAction("D1 held 1.2 seconds: Service/Debug screen displayed after bounded Server contact.");
 }
 
 async function sendToQc() {
-  if (state.realStatus !== "IN_SETUP_RUN") return;
-  byId("send-to-qc").disabled = true;
   try {
-    const result = await postJson(physicalTabletPath("/events"), { event_type: "SEND_TO_QC" });
-    log(`POST SEND_TO_QC accepted${result.duplicate ? " (idempotent retry)" : ""}`);
-    setConnection("SEND_TO_QC accepted; refreshing authoritative status", false, true);
-    await loadPhysicalStatus();
+    readBenchConfiguration();
+    await registrationPing();
+    const current = await requestStatus("before-SEND_TO_QC");
+    if (current?.status !== "IN_SETUP_RUN") {
+      renderProduction(current);
+      setAction(`D4 held 1.2 seconds: SEND_TO_QC ignored because Server status is ${current?.status || "UNKNOWN"}.`);
+      return;
+    }
+    log(`POST /api/tablets/${state.tabletId}/events { event_type: SEND_TO_QC }`);
+    await postJson(`/api/tablets/${encodeURIComponent(state.tabletId)}/events`, { event_type: "SEND_TO_QC" });
+    const refreshed = await requestStatus("after-SEND_TO_QC");
+    refreshed.notice = refreshed.status === "IN_QC" ? "SEND TO QC ACCEPTED" : "QC ACCEPTED - REFRESH PENDING";
+    renderProduction(refreshed);
+    setAction("D4 held 1.2 seconds: one scoped SEND_TO_QC was submitted, then status was refreshed.");
   } catch (error) {
-    setConnection(`SEND_TO_QC uncertain/rejected: ${error.message}`, true);
-    log(`SEND_TO_QC ERROR ${error.message}`);
+    state.lastHttpResult = error.message;
+    handleContactFailure(`SEND_TO_QC uncertain/rejected: ${error.message}`);
   }
 }
 
-function schedulePoll() {
-  clearTimeout(state.pollTimer);
-  const seconds = Math.max(30, Number(state.pollSeconds) || 300);
-  state.pollTimer = setTimeout(() => loadAll(false), seconds * 1000);
+function makeUnavailableModel() {
+  return {
+    tablet_id: state.tabletId || "UNREGISTERED",
+    machine: { name: "MACHINE", number: "NOT CONFIRMED" },
+    part: { number: "LAST CODE CLEARED", name: "SERVER CONTACT FAILED" },
+    operation: { number: 0, name: "REFRESH REQUIRED" },
+    status: "IN_SETUP",
+    verification: { required: true, state: "UNAVAILABLE" },
+    revision: "UNAVAILABLE"
+  };
 }
 
-byId("device-id").value = state.deviceId;
-byId("tablet-id").value = state.tabletId;
+function applyLocalFixture() {
+  const workflow = byId("scenario-status").value;
+  const verificationState = byId("scenario-verification").value;
+  const lowBattery = byId("scenario-low-battery").checked;
+  const offline = byId("scenario-offline").checked;
+  const tools = [
+    { tool: "T01", description: "D10 End Mill", offset: "H01" },
+    { tool: "T02", description: "D6 Ball Mill", offset: "H02" },
+    { tool: "T03", description: "Probe", offset: "H99" },
+    { tool: "T04", description: "D20 Face Mill", offset: "H04" },
+    { tool: "T05", description: "D4 Drill", offset: "H05" },
+    { tool: "T06", description: "D8 Reamer", offset: "H06" },
+    { tool: "T07", description: "Chamfer Mill", offset: "H07" }
+  ];
+  const fixture = {
+    tablet_id: state.tabletId || "3041",
+    machine: { name: "DMG MORI", number: "M10" },
+    part: { number: "P-12345", name: "Housing" },
+    operation: { number: 30, name: "Finish Milling" },
+    status: workflow,
+    verification: workflow === "IN_SETUP" ? {
+      required: true,
+      state: verificationState,
+      response_code: verificationState === "WAITING_FOR_OPERATOR" ? "0388" : null
+    } : null,
+    diagnostics: { verification_result: "LOCAL FIXTURE", protected_macro_version: 5 },
+    revision: "DEMO",
+    tools,
+    lowBattery
+  };
+  state.localFixture = true;
+  state.toolPage = 0;
+  renderProduction(fixture);
+  setConnection(offline ? "OFFLINE / retained local fixture" : "Local fixture / no Server mutation", offline);
+  byId("scenario-state").textContent = `LOCAL ONLY / ${workflow} / ${lowBattery ? "LOW BATTERY" : "BATTERY OK"}`;
+  setAction("Local firmware-layout fixture applied. No request was sent to the Server.");
+  log(`LOCAL FIXTURE ${workflow}${offline ? " OFFLINE" : ""}${lowBattery ? " LOW BATTERY" : ""}`);
+}
+
+function bindHoldButton(element, shortAction, longAction) {
+  let timer = null;
+  let longTriggered = false;
+  const start = event => {
+    if (event.type === "keydown" && event.repeat) return;
+    if (event.type === "keydown" && event.key !== " " && event.key !== "Enter") return;
+    event.preventDefault();
+    longTriggered = false;
+    element.classList.add("pressing");
+    timer = window.setTimeout(() => {
+      longTriggered = true;
+      timer = null;
+      element.classList.remove("pressing");
+      void longAction();
+    }, HOLD_MILLISECONDS);
+  };
+  const finish = event => {
+    if (event.type === "keyup" && event.key !== " " && event.key !== "Enter") return;
+    if (timer !== null) window.clearTimeout(timer);
+    timer = null;
+    element.classList.remove("pressing");
+    if (!longTriggered) void shortAction();
+  };
+  const cancel = () => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = null;
+    element.classList.remove("pressing");
+  };
+  element.addEventListener("pointerdown", start);
+  element.addEventListener("pointerup", finish);
+  element.addEventListener("pointercancel", cancel);
+  element.addEventListener("pointerleave", event => { if (event.buttons === 0) cancel(); });
+  element.addEventListener("keydown", start);
+  element.addEventListener("keyup", finish);
+}
+
+byId("hardware-id").value = state.hardwareId;
 byId("device-token").value = state.token;
-byId("connect").addEventListener("click", () => loadAll(true));
-byId("apply-scenario").addEventListener("click", applyLocalScenario);
-byId("change-revision").addEventListener("click", () => {
-  state.localRevision += 1;
-  byId("revision").textContent = `Revision LOCAL-${state.localRevision}`;
-  byId("scenario-state").textContent = "LOCAL ONLY | NEW PACKAGE REVISION AVAILABLE | review before clearing local marks";
-  log(`LOCAL revision changed to ${state.localRevision}`);
-});
-byId("send-to-qc").addEventListener("click", sendToQc);
-document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
-if (state.deviceId && state.tabletId && state.token) loadAll(false);
+byId("wifi-ssid").value = state.wifiSsid;
+byId("connect").addEventListener("click", () => void bootOrRefresh("external-reset"));
+byId("apply-scenario").addEventListener("click", applyLocalFixture);
+bindHoldButton(byId("button-d1"), () => bootOrRefresh("physical-refresh-button"), showServiceScreen);
+bindHoldButton(byId("button-d4"), () => changeToolPage(1), sendToQc);
+byId("button-d2").addEventListener("click", () => changeToolPage(-1));
+byId("button-reset").addEventListener("click", () => void bootOrRefresh("external-reset"));
+
+renderProduction(makeUnavailableModel());

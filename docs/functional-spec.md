@@ -344,6 +344,13 @@ Implemented baseline: the Server serves a dependency-free kiosk page and `GET /a
 ## 11. E-Ink integration
 
 - MVP uses one unified Color E-Ink Work Tablet, normally one per Machine plus one or two spares.
+
+Implementation-profile note: the selected physical prototype recorded in the
+firmware hardware contract is the TRMNL 7.5-inch OG 800×480 monochrome UC8179
+panel. The physical-firmware browser simulator mirrors that monochrome profile.
+The broader Color E-Ink product wording is retained pending the explicit
+hardware-profile decision recorded in the implementation plan; neither profile
+may rely on color alone.
 - The tablet is read-only relative to official server planning/package data except for the approved `SEND_TO_QC` operational event.
 - Official package revisions download over Wi-Fi and cache on SD/microSD.
 - Local checklist marks and comments remain on the device and never synchronize.

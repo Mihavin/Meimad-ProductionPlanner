@@ -56,19 +56,21 @@ engineering and design desk gates are complete. External HFO approval is not a
 gate.
 
 Installer build evidence was refreshed on 2026-08-28: `installer\build-installers.ps1`
-published self-contained `win-x64` version `0.1.44` payloads and produced both MSI
+published self-contained `win-x64` version `0.1.46` payloads and produced both MSI
 packages.
-The final client package is 107,583,725 bytes (SHA-256
-`CDF626854C84FEAC0C7F7744FC1AD104B5C09D5B52FD7F10A0F64B56B3A172C3`) and the
-Server package is 43,530,556 bytes (SHA-256
-`2C06FEB3F53CB08D14E09B3AA1FA50E05A1C5FC23E1021CF8032709C07C464FD`). The final
+The final client package is 107,620,589 bytes (SHA-256
+`F35A7730F1BD0E6F4923DCE769DB2AC7649C7B4457CD5F18089F7930D73D8E54`) and the
+Server package is 43,522,364 bytes (SHA-256
+`8CE8377439DA21ED532895D6FCA16E2A1A126470D0327A7644C74D3098D39807`). The final
 WiX builds completed with zero warnings and zero errors. MSI table inspection proves the
 advertised all-users Start Menu shortcut is owned by the executable component in the
 same feature; a source-level regression test guards that relationship. A fresh
 non-installing administrative extraction verified 641 client files, including the
 client executable and `runtimes\win-x64\native\TKernel.dll`, plus 400 Server files.
-The extracted Server payload also contains the updated E-Ink simulator markers for
-the physical tablet status route, `WAITING_FOR_OPERATOR`, and fail-safe live-code clearing.
+The extracted Server payload also contains the updated 800×480 monochrome E-Ink
+simulator with all 475 classic TFT bitmap glyph bytes, D1/D2/D4 short/hold
+controls, Service/Debug screen, physical tablet status/event routes,
+`WAITING_FOR_OPERATOR`, and fail-safe live-code clearing.
 Windows Installer table inspection verified the automatic `Meimad Planner Server`
 ServiceInstall entry, install-start/stop/remove ServiceControl entry, and compiled
 `Wix4ServiceConfig` table, and matched both MSIs against the generated two-entry

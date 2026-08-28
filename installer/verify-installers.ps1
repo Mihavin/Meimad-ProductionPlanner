@@ -137,6 +137,12 @@ try {
     $nestedOcctKernels = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -Filter "TKernel.dll" |
         Where-Object { $_.FullName -match "runtimes\\win-x64\\native" })
     $serverExecutables = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "Meimad.Planner.Server.exe")
+    $serverSimulatorHtml = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "index.html" |
+        Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\index\.html$" })
+    $serverSimulatorScript = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "app.js" |
+        Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\app\.js$" })
+    $serverSimulatorStyles = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "styles.css" |
+        Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\styles\.css$" })
 
     if ($clientExecutables.Count -ne 1) {
         throw "Expected one packaged client executable; found $($clientExecutables.Count)."
@@ -147,12 +153,63 @@ try {
     if ($serverExecutables.Count -ne 1) {
         throw "Expected one packaged Server executable; found $($serverExecutables.Count)."
     }
+    if ($serverSimulatorHtml.Count -ne 1 -or
+        $serverSimulatorScript.Count -ne 1 -or
+        $serverSimulatorStyles.Count -ne 1) {
+        throw "Expected one complete packaged E-Ink simulator; found HTML $($serverSimulatorHtml.Count), script $($serverSimulatorScript.Count), styles $($serverSimulatorStyles.Count)."
+    }
+
+    $simulatorHtml = Get-Content -LiteralPath $serverSimulatorHtml[0].FullName -Raw
+    foreach ($marker in @(
+        '800 x 480 monochrome',
+        'id="panel-canvas"',
+        'width="800" height="480"',
+        'id="button-d1"',
+        'id="button-d2"',
+        'id="button-d4"',
+        'id="button-reset"',
+        'HOLD: SERVICE / DEBUG',
+        'HOLD: SEND_TO_QC')) {
+        if ($simulatorHtml.IndexOf($marker, [StringComparison]::Ordinal) -lt 0) {
+            throw "Packaged E-Ink simulator HTML is missing marker: $marker"
+        }
+    }
+
+    $simulatorScript = Get-Content -LiteralPath $serverSimulatorScript[0].FullName -Raw
+    foreach ($marker in @(
+        'const HOLD_MILLISECONDS = 1200',
+        'const GLCD_FONT = new Uint8Array',
+        'function drawBitmapText',
+        'drawProductionCanvas(model)',
+        '/api/tablet/ping?hardwareId=',
+        'requestStatus("before-SEND_TO_QC")',
+        '{ event_type: "SEND_TO_QC" }',
+        'requestStatus("after-SEND_TO_QC")')) {
+        if ($simulatorScript.IndexOf($marker, [StringComparison]::Ordinal) -lt 0) {
+            throw "Packaged E-Ink simulator script is missing marker: $marker"
+        }
+    }
+    $fontBlock = [regex]::Match(
+        $simulatorScript,
+        'const GLCD_FONT = new Uint8Array\(\[(?<data>[\s\S]*?)\]\);').Groups['data'].Value
+    $glyphByteCount = [regex]::Matches($fontBlock, '0x[0-9A-Fa-f]{2}').Count
+    if ($glyphByteCount -ne 475) {
+        throw "Packaged E-Ink simulator must contain 475 classic GLCD glyph bytes; found $glyphByteCount."
+    }
+
+    $simulatorStyles = Get-Content -LiteralPath $serverSimulatorStyles[0].FullName -Raw
+    if ($simulatorStyles.IndexOf('filter: grayscale(1)', [StringComparison]::Ordinal) -lt 0 -or
+        $simulatorStyles.IndexOf('aspect-ratio: 5 / 3', [StringComparison]::Ordinal) -lt 0 -or
+        $simulatorStyles.IndexOf('image-rendering: pixelated', [StringComparison]::Ordinal) -lt 0) {
+        throw 'Packaged E-Ink simulator styles do not prove the monochrome 800x480 profile.'
+    }
 
     [pscustomobject]@{
         ProductVersion = $ExpectedVersion
         ClientExtractedFiles = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -File).Count
         NestedOcctKernel = $nestedOcctKernels[0].FullName.Substring($clientTarget.Length).TrimStart("\")
         ServerExtractedFiles = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -File).Count
+        EInkSimulatorProfile = '800x480 TFT bitmap (475 bytes); D1/D2/D4/reset; guarded SEND_TO_QC'
         ServiceRecoveryPolicy = 'restart 60s; restart 60s; none; reset 1d'
         ChecksumsVerified = $expectedHashes.Count
     } | Format-List

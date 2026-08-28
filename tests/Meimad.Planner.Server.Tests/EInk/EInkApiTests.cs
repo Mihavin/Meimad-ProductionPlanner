@@ -729,43 +729,74 @@ public sealed class EInkApiTests
     }
 
     [Fact]
-    public async Task Simulator_covers_workflow_failures_and_only_posts_exact_send_to_qc()
+    public async Task Simulator_matches_monochrome_firmware_layout_and_physical_button_contract()
     {
         await RunWithServerAsync(async (_, client, _) =>
         {
             using var page = await client.GetAsync("/eink-simulator/");
             Assert.Equal(HttpStatusCode.OK, page.StatusCode);
             var html = await page.Content.ReadAsStringAsync();
-            Assert.Contains("READ-ONLY", html, StringComparison.Ordinal);
+            Assert.Contains("800 x 480 monochrome", html, StringComparison.Ordinal);
+            Assert.Contains("UC8179", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"hardware-id\"", html, StringComparison.Ordinal);
             Assert.Contains("SEND_TO_QC", html, StringComparison.Ordinal);
-            Assert.Contains("id=\"tablet-id\"", html, StringComparison.Ordinal);
-            Assert.Contains("id=\"verification-diagnostics\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"eink-screen\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"panel-canvas\"", html, StringComparison.Ordinal);
+            Assert.Contains("width=\"800\" height=\"480\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"production-screen\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"service-screen\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"button-d1\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"button-d2\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"button-d4\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"button-reset\"", html, StringComparison.Ordinal);
+            Assert.Contains("PREVIOUS TOOL PAGE", html, StringComparison.Ordinal);
+            Assert.Contains("NEXT TOOL PAGE", html, StringComparison.Ordinal);
+            Assert.Contains("HOLD: SERVICE / DEBUG", html, StringComparison.Ordinal);
+            Assert.Contains("HOLD: SEND_TO_QC", html, StringComparison.Ordinal);
+            Assert.Contains("SETUP VERIFICATION", html, StringComparison.Ordinal);
+            Assert.Contains("NO TOOL DATA AVAILABLE", html, StringComparison.Ordinal);
             foreach (var status in new[] { "READY_FOR_SETUP", "IN_SETUP", "IN_SETUP_RUN", "IN_QC", "READY_FOR_PRODUCTION", "IN_PRODUCTION", "BLOCKED" })
             {
                 Assert.Contains(status, html, StringComparison.Ordinal);
             }
             Assert.Contains("Server offline", html, StringComparison.Ordinal);
             Assert.Contains("Low battery", html, StringComparison.Ordinal);
-            Assert.Contains("Verification failed", html, StringComparison.Ordinal);
             Assert.DoesNotContain("textarea", html, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Color E-Ink Work Tablet Simulator", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("data-page=", html, StringComparison.Ordinal);
+
+            using var styles = await client.GetAsync("/eink-simulator/styles.css");
+            var css = await styles.Content.ReadAsStringAsync();
+            Assert.Contains("aspect-ratio: 5 / 3", css, StringComparison.Ordinal);
+            Assert.Contains("filter: grayscale(1)", css, StringComparison.Ordinal);
+            Assert.Contains("background: var(--paper)", css, StringComparison.Ordinal);
+            Assert.Contains("image-rendering: pixelated", css, StringComparison.Ordinal);
+            Assert.Contains(".screen-view { display: none", css, StringComparison.Ordinal);
+            Assert.DoesNotContain("--blue:", css, StringComparison.Ordinal);
+            Assert.DoesNotContain("linear-gradient", css, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("font-family: Arial", css, StringComparison.OrdinalIgnoreCase);
 
             using var script = await client.GetAsync("/eink-simulator/app.js");
             var javascript = await script.Content.ReadAsStringAsync();
-            Assert.Contains("GET version (small change check)", javascript, StringComparison.Ordinal);
-            Assert.Contains("crypto.subtle.digest", javascript, StringComparison.Ordinal);
+            Assert.Contains("const HOLD_MILLISECONDS = 1200", javascript, StringComparison.Ordinal);
+            Assert.Contains("const GLCD_FONT = new Uint8Array", javascript, StringComparison.Ordinal);
+            Assert.Contains("function drawBitmapText", javascript, StringComparison.Ordinal);
+            Assert.Contains("drawProductionCanvas(model)", javascript, StringComparison.Ordinal);
+            Assert.Contains("drawBitmapText(context, fitBitmapText(machine, 610, 4), left, 18, 4)", javascript, StringComparison.Ordinal);
+            Assert.Contains("/api/tablet/ping?hardwareId=", javascript, StringComparison.Ordinal);
             Assert.Contains("method: \"POST\"", javascript, StringComparison.Ordinal);
             Assert.Contains("{ event_type: \"SEND_TO_QC\" }", javascript, StringComparison.Ordinal);
-            Assert.Contains("result.duplicate", javascript, StringComparison.Ordinal);
-            Assert.Contains("physicalTabletPath(\"/status\")", javascript, StringComparison.Ordinal);
-            Assert.Contains("physicalTabletPath(\"/events\")", javascript, StringComparison.Ordinal);
-            Assert.Contains("renderPhysicalStatus(result.value)", javascript, StringComparison.Ordinal);
-            Assert.Contains("statusToken === \"IN_SETUP\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("requestStatus(\"before-SEND_TO_QC\")", javascript, StringComparison.Ordinal);
+            Assert.Contains("requestStatus(\"after-SEND_TO_QC\")", javascript, StringComparison.Ordinal);
+            Assert.Contains("current?.status !== \"IN_SETUP_RUN\"", javascript, StringComparison.Ordinal);
             Assert.Contains("verification?.state === \"WAITING_FOR_OPERATOR\"", javascript, StringComparison.Ordinal);
-            Assert.Contains("value?.part?.number", javascript, StringComparison.Ordinal);
-            Assert.Contains("value?.operation?.number", javascript, StringComparison.Ordinal);
-            Assert.Contains("clearLiveVerificationDisplay", javascript, StringComparison.Ordinal);
-            Assert.Contains("LAST CODE CLEARED", javascript, StringComparison.Ordinal);
-            Assert.Contains("LOCAL TEST CODE", javascript, StringComparison.Ordinal);
+            Assert.Contains("renderProduction(makeUnavailableModel())", javascript, StringComparison.Ordinal);
+            Assert.Contains("changeToolPage(-1)", javascript, StringComparison.Ordinal);
+            Assert.Contains("changeToolPage(1)", javascript, StringComparison.Ordinal);
+            Assert.Contains("showServiceScreen", javascript, StringComparison.Ordinal);
+            Assert.Contains("LOW BATTERY", html, StringComparison.Ordinal);
+            Assert.DoesNotContain("/api/v1/eink/devices/", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("crypto.subtle.digest", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("production_run_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("machine_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);

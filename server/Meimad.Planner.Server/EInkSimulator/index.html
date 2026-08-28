@@ -4,118 +4,154 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base href="/eink-simulator/">
-  <title>Meimad E-Ink Work Tablet Simulator</title>
-  <meta name="description" content="Scoped workflow simulator for Meimad Color E-Ink Work Tablets">
+  <title>Meimad Physical E-Ink Tablet Simulator</title>
+  <meta name="description" content="Simulator for the implemented TRMNL 7.5-inch 800x480 monochrome Meimad tablet firmware">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="app-header">
     <div>
-      <div class="eyebrow">MEIMAD PLANNER • DEVELOPMENT TOOL</div>
-      <h1>Color E-Ink Work Tablet Simulator</h1>
+      <div class="eyebrow">MEIMAD PLANNER / FIRMWARE BENCH</div>
+      <h1>Physical E-Ink Tablet Simulator</h1>
+      <p>TRMNL 7.5-inch OG / UC8179 / 800 x 480 monochrome</p>
     </div>
-    <div class="boundary-label">▣ PACKAGE READ-ONLY • SEND_TO_QC ONLY • NO CNC TRANSFER</div>
+    <div class="boundary-label">READ-ONLY DISPLAY + SCOPED SEND_TO_QC</div>
   </header>
 
-  <section class="connection-panel" aria-labelledby="connection-heading">
-    <div>
-      <h2 id="connection-heading">Device configuration</h2>
-      <p>Enter the registration Device ID, operator-facing Tablet ID, and scoped token. These values stay in this browser.</p>
-    </div>
-    <label>Device ID<input id="device-id" autocomplete="off" spellcheck="false" placeholder="Registration device ID"></label>
-    <label>Tablet ID<input id="tablet-id" autocomplete="off" spellcheck="false" placeholder="For example 8672"></label>
-    <label>Device token<input id="device-token" type="password" autocomplete="off" spellcheck="false"></label>
-    <button id="connect" type="button">Connect / Refresh</button>
-    <div id="connection-state" class="connection-state" role="status">Not connected</div>
-  </section>
-
   <main>
-    <section class="scenario-panel" aria-labelledby="scenario-heading">
-      <div>
-        <h2 id="scenario-heading">Development scenarios</h2>
-        <p>Local simulation never changes Server data. The separate SEND_TO_QC button uses the official scoped endpoint.</p>
+    <details class="bench-panel" open>
+      <summary>Connection and bench controls (not part of the tablet)</summary>
+      <div class="bench-grid">
+        <label>Hardware MAC
+          <input id="hardware-id" autocomplete="off" spellcheck="false" placeholder="A4:CF:12:83:76:91">
+        </label>
+        <label>Device token
+          <input id="device-token" type="password" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Wi-Fi SSID (service-screen fixture)
+          <input id="wifi-ssid" autocomplete="off" spellcheck="false" placeholder="Factory Wi-Fi">
+        </label>
+        <label>Battery voltage
+          <input id="battery-voltage" inputmode="decimal" value="4.50" aria-describedby="battery-help">
+        </label>
+        <button id="connect" type="button">BOOT / CONNECT</button>
+        <div id="connection-state" class="connection-state" role="status">Not connected</div>
+        <small id="battery-help">LOW BATTERY appears at or below 3.30 V, matching firmware.</small>
       </div>
-      <label>Workflow state
-        <select id="scenario-status">
-          <option>READY_FOR_SETUP</option><option>IN_SETUP</option><option>IN_SETUP_RUN</option>
-          <option>IN_QC</option><option>READY_FOR_PRODUCTION</option><option>IN_PRODUCTION</option>
-          <option>BLOCKED</option>
-        </select>
-      </label>
-      <label>Verification
-        <select id="scenario-verification">
-          <option value="none">No code</option><option value="code">Show response code</option>
-          <option value="failed">Verification failed</option><option value="expired">Verification expired</option>
-        </select>
-      </label>
-      <label class="check-label"><input id="scenario-offline" type="checkbox"> Server offline</label>
-      <label class="check-label"><input id="scenario-low-battery" type="checkbox"> Low battery</label>
-      <button id="apply-scenario" type="button">Apply local scenario</button>
-      <button id="change-revision" type="button">Simulate revision change</button>
-      <button id="send-to-qc" type="button" disabled>SEND_TO_QC (official)</button>
-      <div id="scenario-state" class="connection-state" role="status">No local scenario active</div>
-    </section>
 
-    <nav class="local-tabs" aria-label="Simulator pages">
-      <button type="button" class="tab active" data-page="machine">Machine</button>
-      <button type="button" class="tab" data-page="package">Package</button>
-      <button type="button" class="tab" data-page="file">File viewer</button>
-      <span>Simulator navigation is device-local and never changes Server data.</span>
-    </nav>
-
-    <section class="tablet-shell" aria-label="Simulated 7.5 inch Color E-Ink display">
-      <div class="tablet-screen">
-        <div class="screen-header">
-          <div><strong id="machine-number">NO DEVICE</strong><span id="machine-type">UNASSIGNED</span></div>
-          <div class="screen-title" id="screen-title">MACHINE PAGE</div>
-          <div class="screen-meta"><span id="last-update">Never updated</span><span id="revision">Revision —</span></div>
+      <details class="scenario-panel">
+        <summary>Local screen fixtures (not sent to Server)</summary>
+        <div class="scenario-grid">
+          <label>Workflow state
+            <select id="scenario-status">
+              <option>READY_FOR_SETUP</option>
+              <option>IN_SETUP</option>
+              <option>IN_SETUP_RUN</option>
+              <option>IN_QC</option>
+              <option>READY_FOR_PRODUCTION</option>
+              <option>IN_PRODUCTION</option>
+              <option>BLOCKED</option>
+              <option>UNKNOWN</option>
+            </select>
+          </label>
+          <label>Verification
+            <select id="scenario-verification">
+              <option value="WAITING_FOR_OPERATOR">Response code</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="INVALIDATED">Invalidated</option>
+              <option value="UNAVAILABLE">Unavailable</option>
+            </select>
+          </label>
+          <label class="check-label"><input id="scenario-offline" type="checkbox"> Server offline</label>
+          <label class="check-label"><input id="scenario-low-battery" type="checkbox"> Low battery</label>
+          <button id="apply-scenario" type="button">APPLY LOCAL FIXTURE</button>
+          <div id="scenario-state" class="connection-state" role="status">Live Server mode</div>
         </div>
+      </details>
+    </details>
 
-        <section id="machine-page" class="screen-page active-page">
-          <div id="status-block" class="status-block status-idle"><span class="status-symbol">■</span><strong>NO DATA</strong></div>
-          <div id="verification-block" class="verification-block" hidden></div>
-          <div id="verification-diagnostics" class="verification-diagnostics">SERVER VERIFICATION: NOT CONNECTED</div>
-          <div class="machine-layout">
-            <article class="current-card">
-              <div class="label">CURRENT JOB</div>
-              <div id="current-job" class="job-content empty-content">Connect a registered device.</div>
-            </article>
-            <article class="next-card">
-              <div class="label">NEXT JOBS</div>
-              <ol id="next-jobs" class="next-list"><li>No data</li></ol>
-            </article>
+    <section class="device" aria-label="Simulated TRMNL 7.5 inch monochrome E-Ink tablet">
+      <div class="device-profile">XIAO ESP32-S3 PLUS / TRMNL 7.5 OG</div>
+
+      <div id="eink-screen" class="eink-screen" role="img" aria-label="800 by 480 monochrome E-Ink panel">
+        <canvas id="panel-canvas" class="panel-canvas" width="800" height="480" aria-hidden="true"></canvas>
+        <section id="production-screen" class="screen-view production-screen">
+          <header class="production-header">
+            <div id="machine-heading" class="machine-heading">MACHINE - NOT CONFIRMED</div>
+            <div id="tablet-label" class="tablet-label">UNREGISTERED</div>
+            <div id="battery-warning" class="battery-warning" hidden>LOW BATTERY</div>
+          </header>
+
+          <div class="identity-row">
+            <div class="part-block">
+              <div class="screen-label">PART</div>
+              <div id="part-number" class="identity-primary">LAST CODE CLEARED</div>
+              <div id="part-name" class="identity-secondary">SERVER CONTACT FAILED</div>
+            </div>
+            <div class="operation-block">
+              <div class="screen-label">OPERATION</div>
+              <div id="operation-number" class="identity-primary">OP0</div>
+              <div id="operation-name" class="identity-secondary">REFRESH REQUIRED</div>
+            </div>
           </div>
-          <div id="conflict-strip" class="conflict-strip">✓ No conflict data</div>
+
+          <section id="normal-region" class="normal-region">
+            <div class="status-frame">
+              <div class="screen-label">STATUS</div>
+              <div id="status-notice" class="status-notice"></div>
+              <div id="workflow-status" class="workflow-status">STATUS UNKNOWN</div>
+            </div>
+            <div class="tools-heading">
+              <span>TOOLS</span>
+              <span id="tool-page-label">TOOLS 1 / 1</span>
+            </div>
+            <div class="tools-table">
+              <div class="tool-table-heading tool-cell">TOOL</div>
+              <div class="description-table-heading tool-cell">DESCRIPTION</div>
+              <div class="offset-table-heading tool-cell">OFFSET</div>
+              <div id="tool-rows" class="tool-rows"><div class="no-tools">NO TOOL DATA AVAILABLE</div></div>
+            </div>
+          </section>
+
+          <section id="verification-region" class="verification-region" hidden>
+            <div class="screen-label">SETUP VERIFICATION</div>
+            <div id="verification-state" class="verification-state">CODE UNAVAILABLE</div>
+            <div id="verification-code" class="verification-code" hidden></div>
+            <div id="verification-blocked" class="verification-blocked">SETUP BLOCKED</div>
+            <div id="verification-instruction" class="verification-instruction">PRESS REFRESH - DO NOT START</div>
+          </section>
         </section>
 
-        <section id="package-page" class="screen-page">
-          <div class="package-header">
-            <div><span class="label">OFFICIAL PACKAGE</span><strong id="package-id">No package assigned</strong></div>
-            <div><span class="label">REVISION</span><strong id="package-revision">—</strong></div>
-            <div><span class="label">TOOL CART</span><strong id="tool-cart">—</strong></div>
-          </div>
-          <div id="package-context" class="package-context">Package work metadata unavailable</div>
-          <div class="readonly-banner">▣ OFFICIAL FILES ARE READ-ONLY • LOCAL CHECKLIST/COMMENTS ARE NOT SENT TO SERVER</div>
-          <div id="package-files" class="package-files"><div class="empty-content">No manifest loaded.</div></div>
+        <section id="service-screen" class="screen-view service-screen" hidden>
+          <header>
+            <strong>TABLET SERVICE / DEBUG</strong>
+            <span>HOLD D1 / REFRESH 1.2s TO OPEN</span>
+          </header>
+          <div id="service-columns" class="service-columns"></div>
         </section>
-
-        <section id="file-page" class="screen-page">
-          <div class="file-header"><strong id="file-name">No file selected</strong><span id="file-verification">READ-ONLY</span></div>
-          <pre id="file-content">Select a package file to preview it.</pre>
-          <img id="file-image" alt="Authorized package preview" hidden>
-        </section>
-
-        <div class="screen-footer">
-          <span id="time-config">Refresh configuration unavailable</span>
-          <span>REFRESH = version check first</span>
-          <span>PAGE = local simulator navigation</span>
-        </div>
       </div>
+
+      <div class="physical-controls" aria-label="Physical tablet controls">
+        <button id="button-d1" class="physical-button" type="button" data-hold-action="service">
+          <span>D1</span><strong>REFRESH</strong><small>HOLD: SERVICE / DEBUG</small>
+        </button>
+        <button id="button-d2" class="physical-button" type="button">
+          <span>D2</span><strong>PREVIOUS TOOL PAGE</strong><small>GPIO3</small>
+        </button>
+        <button id="button-d4" class="physical-button" type="button" data-hold-action="send-to-qc">
+          <span>D4</span><strong>NEXT TOOL PAGE</strong><small>HOLD: SEND_TO_QC</small>
+        </button>
+        <button id="button-reset" class="reset-button" type="button" title="External reset">RESET</button>
+      </div>
+      <p class="hold-help">Press and release for the short action. Hold D1 or D4 for 1.2 seconds for the printed hold action.</p>
     </section>
 
     <section class="protocol-panel">
-      <h2>Protocol status</h2>
-      <div id="protocol-log" class="protocol-log">No requests made.</div>
+      <div>
+        <h2>Simulator evidence</h2>
+        <p id="action-state" role="status">Waiting for a physical-button action.</p>
+      </div>
+      <pre id="protocol-log">No requests made.</pre>
     </section>
   </main>
 

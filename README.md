@@ -34,6 +34,8 @@ The MVP is LAN-only. It excludes public access, automatic scheduling, ERP synchr
 | `installer/` | WiX-based self-contained Windows client and Server MSI packaging, build, and non-installing payload verification. |
 | `scripts/` | Future migration, backup, and additional verification tooling. |
 
+The implemented browser-facing Server URLs are listed in [Server HTTP pages](docs/server-http-pages.md). The list distinguishes the TV dashboard, E-Ink simulator, loopback-only Kitaron setup page, and JSON health endpoint from the wider application API.
+
 ## Documentation
 
 - [User help](docs/user-help.md)
@@ -144,7 +146,7 @@ Active editors publish an immutable official revision with `POST /api/v1/job-pac
 
 E-Ink device reads are under `/api/v1/eink/devices/{deviceId}`: `version`, `machine-screen`, `package-manifest`, exact revision `manifest`/`files/{fileId}`, and `time-config`. Send the one-time device secret as `Authorization: Bearer <token>`. Active editors administer devices with `GET/POST /api/v1/eink/device-registrations` and `PATCH /api/v1/eink/device-registrations/{deviceId}`; create or rotate returns the plaintext token once, while SQLite stores only its hash. Configure the Server-local file root, package limits, and wake policy with the `EInk` section in `appsettings.json`. Package bytes are not stored in SQLite.
 
-The Server serves the development simulator at `/eink-simulator/`. Enter the registered Device ID, operator-facing Tablet ID, and scoped token. The simulator performs the package version check first, displays assigned Machine/current/next work, loads manifests/files, verifies downloaded SHA-256 values in the browser, and polls the physical tablet status independently on every refresh. A valid `IN_SETUP`/`WAITING_FOR_OPERATOR` projection displays the real fixed-width Server response code and bounded diagnostics; loss of Server status contact clears a previously visible live code and displays a do-not-start failure. It has no edit, checklist upload, comment upload, telemetry, USB, or ESP32 firmware behavior.
+The Server serves the physical-firmware simulator at `/eink-simulator/`. It mirrors the implemented TRMNL 7.5-inch 800×480 monochrome UC8179 production and Service/Debug screens. The panel is drawn with the exact classic TFT_eSPI 5×7 bitmap glyphs, integer `textSize` scales, and coordinates used by the firmware, avoiding browser-font metric differences. Its D1, D2, D4, and Reset controls reproduce the firmware's short/1.2-second-hold actions: Refresh/Service, Previous Tool Page, Next Tool Page/`SEND_TO_QC`, and reboot. It registers with the hardware MAC, reads the approved physical tablet status route, and submits only the exact scoped `SEND_TO_QC` event after fresh `IN_SETUP_RUN` status. Bench-only workflow/battery/offline fixtures remain visibly outside the tablet body and never mutate Server data. It does not claim physical E-Ink refresh timing, retained-memory/deep-sleep current, button electronics, Wi-Fi radio behavior, or shop-floor readability.
 
 ## Before further domain implementation
 

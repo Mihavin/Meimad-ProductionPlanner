@@ -250,7 +250,7 @@ GET /api/eink/devices/{device_id}/time-config
 
 The Server implements the versioned `/api/v1/eink/devices/{deviceId}/...` forms documented in [API contract](api-contract.md), including revision-qualified manifest/file routes. Authentication is by a per-device revocable bearer token; only its SHA-256 hash is persisted. A bound device can read only the package associated with the first unfinished Operation on its assigned Machine.
 
-Structured JSON is the implemented v1 Server/simulator baseline. A pre-rendered panel asset may be added only through an explicit compatible contract decision because it changes firmware complexity, fonts, pagination, server rendering, payload size, and display-specific coupling. The browser simulator at `/eink-simulator/` performs the version request first, displays the structured Machine screen, reads manifests/files, verifies file SHA-256, and preserves its last rendered screen on errors. It does not claim physical SD staging, atomic activation, deep sleep, E-Ink refresh, or local annotation behavior.
+Structured JSON remains the implemented v1 Server package/read baseline. A pre-rendered panel asset may be added only through an explicit compatible contract decision because it changes firmware complexity, fonts, pagination, server rendering, payload size, and display-specific coupling. The browser simulator at `/eink-simulator/` now follows the implemented physical-firmware adapter instead: registration ping, physical tablet status, and the exact scoped `SEND_TO_QC` event. It mirrors the current 800×480 monochrome production and Service/Debug layouts plus the D1/D2/D4 short/hold controls. Its canvas renderer uses the same classic TFT_eSPI 5×7 glyph table, whole-pixel `textSize` scales, and drawing coordinates as the firmware; browser font families, weights, and line boxes do not determine the panel layout. Package-manifest/file/checksum behavior remains covered by Server API tests rather than being presented as a physical firmware screen that does not yet exist. The simulator does not claim physical SD staging, atomic activation, deep sleep, E-Ink refresh timing, button electronics, or local annotation behavior.
 
 Authenticated ping/status reads now record narrowly scoped last-contact,
 firmware, battery, local-IP, and RSSI observations for the Windows User
@@ -306,7 +306,14 @@ Server-side credential rotation/revocation and Machine/spare binding are impleme
 
 Transport security, certificate trust, removable-media encryption/signing, secure boot, firmware signing, token storage, and physical attack assumptions are TBD.
 
-## 13. Color E-Ink UI rules
+## 13. E-Ink UI rules and current monochrome hardware profile
+
+The historical product concept and some integrated requirements still use the
+name **Color E-Ink Work Tablet**. The implemented and physically selected
+TRMNL 7.5-inch OG / UC8179 hardware profile is monochrome. The browser
+simulator follows that implemented profile and uses only black, white, and
+panel-neutral greys. Reintroducing a color panel is a separate hardware-profile
+decision and must not make color the only status signal.
 
 - White background and black primary text.
 - Large, flat status blocks.
