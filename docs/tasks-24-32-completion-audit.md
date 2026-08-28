@@ -52,7 +52,7 @@ All actions require the appropriate editor/credential scope and write attributed
 
 Status: `IMPLEMENTED_AND_TESTED`.
 
-`SchemaV50CncVerificationFoundationMigration.cs` stores `expected_macro_version` per Machine. Strict DPRNT parsing requires `MACROVERSION`; `CncDprintEventIngestionService.cs` blocks a mismatch, records `verification_macro_version_mismatch`, and surfaces the exact message `CNC VERIFICATION MACRO UPDATE REQUIRED`.
+`SchemaV50CncVerificationFoundationMigration.cs` stores `expected_macro_version` per Machine. Strict DPRNT parsing requires `MACROVERSION`; `CncDprintEventIngestionService.cs` blocks a mismatch, records `verification_macro_version_mismatch`, and surfaces the exact message `CNC VERIFICATION MACRO UPDATE REQUIRED`. Schema-v61 application validation also refuses to enable quarantined macro versions 1-5 while allowing disabled forensic configuration to remain visible.
 
 Evidence: `CncVerificationFoundationTests.Protected_macro_result_resolves_session_idempotently_and_enforces_version`, API tests, strict simulator transcripts, and the physical checklist's still-open commissioning gate.
 
@@ -60,7 +60,7 @@ Evidence: `CncVerificationFoundationTests.Protected_macro_result_resolves_sessio
 
 Status: `IMPLEMENTED_AND_TESTED` for repository behavior; physical values remain commissioning data.
 
-Schema v50 and `CncVerificationFoundationService.cs` provide Machine-scoped DPRINT transport/port, protected challenge and verify program numbers, optional custom G-code alias, nonce/response/state/release-token variables, Machine verification secret, expected macro version, response-code digits, timeout, and enablement/version control.
+Schemas v50, v60, and v61 plus `CncVerificationFoundationService.cs` provide Machine-scoped DPRINT transport/port, three distinct protected program numbers, optional custom G-code alias, four persistent handshake variables, one persistent event-sequence variable, Machine verification secret, expected macro version, response-code digits, timeout, and enablement/version control. Validation restricts M109 storage, canonicalizes Haas legacy aliases, rejects collisions in both application and database layers, and leaves upgraded null mappings unguessed.
 
 The secret is protected with ASP.NET Data Protection and public DTOs return only `SecretConfigured`. `CncVerificationFoundationTests.Verification_secret_is_encrypted_preserved_on_update_and_never_returned` proves encryption, preservation, and non-return. E-Ink API tests prove ordinary tablet projections contain neither the Machine secret nor nonce/variable mapping.
 
@@ -100,7 +100,7 @@ Status: `IMPLEMENTED_AND_TESTED`.
 
 Status: `PHYSICAL_NOT_READY`.
 
-The authoritative record is `docs/cnc-commissioning-checklist.md`, supported by `scripts/audit-cnc-commissioning-checklist.ps1`, `scripts/test-cnc-commissioning-checklist.ps1`, `docs/cnc-verification-code-audit-2026-08-27.md`, and the internal engineering worksheet retained at the historical path `docs/haas-hfo-review-request-2026-08-27.md`. External HFO approval is not required.
+The authoritative record is `docs/cnc-commissioning-checklist.md`, supported by `scripts/audit-cnc-commissioning-checklist.ps1`, `scripts/test-cnc-commissioning-checklist.ps1`, `docs/cnc-verification-code-audit-2026-08-27.md`, and `docs/haas-internal-engineering-review-2026-08-27.md`. External HFO approval is not required.
 
 Current fail-closed audit result:
 
@@ -110,7 +110,7 @@ Current fail-closed audit result:
 - 5 incomplete Machine/controller identity fields
 - both commissioning sign-offs missing
 
-The blocking physical evidence is that the VF-3SS accepted a correct response after at least 130 seconds at M109 and its `#3001`-derived sequence is not monotonic across reboot/wrap. The full code audit also found that v3-v5 result records lack the release-token/nonce correlation required to prevent a delayed result from binding to a newer challenge. The Server rejects that old format, and v3-v5 plus packages v1-v3 remain quarantined. Schema v60 and `scripts/new-haas-verification-v6-bench-pack.ps1` now provide a separately numbered no-motion candidate with a distinct protected finalizer, exact result correlation, and a configured persistent sequence that fails closed instead of wrapping. Its structural test passes, but it is not internally signed, controller-loaded, or physically approved. `docs/haas-bounded-retest-after-hfo-approval.md` is explicitly `DO NOT RUN` until the written internal engineering/design gates are satisfied. Unit and simulator tests do not make this production-ready.
+The blocking physical evidence is that the VF-3SS accepted a correct response after at least 130 seconds at M109 and its `#3001`-derived sequence is not monotonic across reboot/wrap. The full code audit also found that v3-v5 result records lack the release-token/nonce correlation required to prevent a delayed result from binding to a newer challenge. The Server rejects that old format, and v3-v5 plus packages v1-v3 remain quarantined. Schema v60 and `scripts/new-haas-verification-v6-bench-pack.ps1` now provide a separately numbered no-motion candidate with a distinct protected finalizer, exact result correlation, and a configured persistent sequence that fails closed instead of wrapping. `PERSISTENT_COUNTER` is the selected product design, with one-time positive initialization at 1. `scripts/new-haas-ngc-engineering-test-pack.ps1` and `docs/haas-ngc-engineering-machine-tests.md` provide no-motion real-controller probes for the six open engineering questions, but no physical result has been claimed. The v6 structural test passes, but the candidate is not internally signed, controller-loaded, or physically approved. `docs/haas-bounded-retest-after-internal-approval.md` is explicitly `DO NOT RUN` until the written internal engineering/design gates are satisfied. Unit and simulator tests do not make this production-ready.
 
 ## Task 32 - Documentation Cleanup
 
@@ -139,4 +139,4 @@ The supported variables are temporary, configured, protected handshake data only
 
 ## Regression evidence
 
-The aggregate verification record is `docs/verification-report.md`. Its current separately executed Debug and Release totals are 609 Server tests plus 241 Windows Client tests: 850 passed per configuration, with zero failures and zero skips. Simulator validation, all three ESP32 environments, installer payload verification, and focused commissioning-script checks are also recorded there. This evidence does not replace Task 31 physical acceptance.
+The aggregate verification record is `docs/verification-report.md`. Its current separately executed Debug and Release totals are 619 Server tests plus 244 Windows Client tests: 863 passed per configuration, with zero failures and zero skips. Simulator validation, all three ESP32 environments, installer payload verification, and focused commissioning-script checks are also recorded there. This evidence does not replace Task 31 physical acceptance.

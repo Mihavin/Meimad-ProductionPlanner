@@ -4,8 +4,21 @@ Set-StrictMode -Version Latest
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $temporary = Join-Path $repositoryRoot (".diagnostics\haas-v6-test-" + [Guid]::NewGuid().ToString('N'))
 $localConfig = Join-Path ([IO.Path]::GetTempPath()) ("meimad-haas-v6-" + [Guid]::NewGuid().ToString('N') + '.local.json')
+$aliasConfig = Join-Path ([IO.Path]::GetTempPath()) ("meimad-haas-v6-alias-" + [Guid]::NewGuid().ToString('N') + '.local.json')
 try {
     $secret = ConvertTo-SecureString 'PUBLIC-V6-TEST-SECRET-ONLY' -AsPlainText -Force
+    $aliasRejected = $false
+    try {
+        & (Join-Path $PSScriptRoot 'new-haas-verification-local-config.ps1') `
+            -MachineId 'machine-v6-test' -MachineLabel 'V6-BENCH' `
+            -OutputPath $aliasConfig -VerificationSecret $secret `
+            -NonceVariable 10500 -ResponseVariable 500 `
+            -SampleNcIdentity 654321 -SampleOffsetReleaseToken 483920
+    }
+    catch { $aliasRejected = $_.Exception.Message -match 'legacy aliases' }
+    if (-not $aliasRejected) {
+        throw 'Local configuration must reject #500/#10500 as the same Haas variable.'
+    }
     & (Join-Path $PSScriptRoot 'new-haas-verification-local-config.ps1') `
         -MachineId 'machine-v6-test' -MachineLabel 'V6-BENCH' `
         -OutputPath $localConfig -VerificationSecret $secret `
@@ -99,7 +112,9 @@ try {
     if ($manifest.status -ne 'BENCH_ONLY_INTERNAL_REVIEW_REQUIRED' -or $manifest.productionReady) {
         throw 'V6 manifest must remain explicitly non-production.'
     }
-    if ($manifest.eventSequence.resetOrWrapAllowed -or $manifest.eventSequence.maximum -ne 899999) {
+    if ($manifest.eventSequence.resetOrWrapAllowed -or $manifest.eventSequence.maximum -ne 899999 -or
+        $manifest.eventSequence.initialValue -ne 1 -or
+        $manifest.eventSequence.initialization -ne 'AUTHORIZED_ONE_TIME_POSITIVE_INTEGER_AFTER_SERVER_SOURCE_HISTORY_REVIEW') {
         throw 'V6 manifest does not preserve fail-closed sequence exhaustion.'
     }
     if ($manifest.files.Count -ne 8) { throw 'V6 manifest must hash all eight artifacts.' }
@@ -116,5 +131,8 @@ finally {
     }
     if (Test-Path -LiteralPath $localConfig) {
         Remove-Item -LiteralPath $localConfig -Force
+    }
+    if (Test-Path -LiteralPath $aliasConfig) {
+        Remove-Item -LiteralPath $aliasConfig -Force
     }
 }

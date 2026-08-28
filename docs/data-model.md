@@ -1,6 +1,6 @@
 # Data Model
 
-- **Status:** Logical model plus implemented SQLite schema version 60, including immutable Production Run workflow events, Offset Loader and setup-verification state, raw cycle attempts/session closure, the operational-anomaly ledger, and upgrade-safe CNC finalizer/sequence mappings
+- **Status:** Logical model plus implemented SQLite schema version 61, including immutable Production Run workflow events, Offset Loader and setup-verification state, raw cycle attempts/session closure, the operational-anomaly ledger, and upgrade-safe CNC finalizer/sequence mappings
 - **Authority:** Server-owned SQLite in MVP
 
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
@@ -542,14 +542,18 @@ New-revision migration/clearing, spare reassignment, encryption, battery-replace
 
 ## 14. Migration rules
 
-- Ordered server-owned migrations are implemented through version 60.
+- Ordered server-owned migrations are implemented through version 61.
 
 Schema v60 adds nullable `finalize_program_number` and
 `event_sequence_variable` columns to `cnc_verification_settings`. Upgraded rows
 remain null so migration never guesses controller mappings. A new save requires
 a distinct O9xxx finalizer, an M109-valid response variable, and a distinct
 persistent `#10000-#10999` event counter. The counter is transport evidence only,
-not workflow state.
+not workflow state. `PERSISTENT_COUNTER` is the selected controller design. Its
+deployment contract uses one audited positive initialization at value 1, never
+wraps or silently reseeds, and fails closed at invalid/decreased/exhausted state;
+the controller value itself is not Server workflow authority or a new database
+projection.
 - Applied migration identity is recorded in `schema_migrations`; SQLite `user_version` records the active version and newer unknown versions are rejected.
 
 Schema v28 adds the singleton `kitaron_connection_settings`. It stores the SQL Server host/port, database, schema/view, username, refresh interval, enable flag, optimistic version, and last read-only connection-test status. The password is stored only as an ASP.NET Data Protection ciphertext bound to the Server application; API responses expose only `passwordConfigured`. No Kitaron source rows or source database credentials are stored as plaintext, and this schema does not yet add source identity/import rows.
@@ -567,12 +571,13 @@ Schema v36 adds structured immutable released-tool rows and the derived required
 - Schema v41 adds `kitaron_material_orders`, a read-only-source advisory register keyed by `TBuyRow.BuyRowID`. It retains mapped purchase order, raw-material, quantity, historical received total, requested delivery, and latest supplier-approved delivery fields. Its rows are explicitly separate from schema-v39 verified receipts and reservations and cannot satisfy production readiness.
 - Schema v42 originally added Haas compatibility tables, including the now-retired persistent Setup/Production macro projection. Schema v49 removes those mode columns and macro-write audits; historical ordered migrations remain unchanged. The Batch Operation remains a quantity/dependency obligation and Production Run is the schedulable Machine-session object.
 - Schema v43 adds `machine_connections` (one primary connection per Machine for MVP, adapter/configuration/version/permissions/lifecycle), `machine_current_state` (one normalized snapshot per Machine), `machine_state_history` (meaningful changes only), `machine_connection_events`, and `machine_telemetry_raw`. Typed adapter configuration is serialized into `configuration_json`; username/password values are forbidden there and only opaque secret IDs occupy dedicated columns. Raw telemetry is pruned per connection using `raw_telemetry_retention_days` (default 14, allowed 1-90); business and Bench events are not pruned with telemetry. The v42 Haas tables remain a compatibility and Bench-history projection during this migration slice.
+- Server maintenance adds no schema. Its immutable deletion catalog contains only `machine_telemetry_raw.observed_at`, `machine_state_history.observed_at`, and `machine_connection_events.occurred_at`, with the shared optional `machine_id` filter. A successful purge writes `COLLECTED_DATA_PURGED` to `structured_event_log` with the normalized filter, per-type counts, reason, operator, and verified pre-delete backup metadata. Direct HTTP backup writes `DATABASE_BACKUP_CREATED_HTTP`. The catalog never includes `structured_event_log`, `machine_current_state`, anomalies, releases, Production Run workflow events, attempts, cycles, or output quantities.
 - Each migration is applied transactionally; recovery policy for future non-transactional or failed production upgrades remains TBD.
 - Back up before a risky migration and prove the backup can restore.
 - Test fresh-create, upgrade from every supported prior version, rollback/recovery behavior, and corrupted/incompatible schema handling.
 - Never make direct client-side schema changes.
 
-The implemented migrations through schema v60 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, v50 adds the CNC-verification identity/configuration foundation, v51 adds immutable generic NC verification-hook identity, v52 adds one-time setup-verification sessions, v53 adds bounded tablet Wi-Fi monitoring observations, v54 adds first-attempt `SEND_TO_QC` idempotency, v55 preserves per-attempt retry identity while allowing reinspection after `QC_FAIL`, v56 adds immutable unmatched-cycle anomaly types, v57 adds immutable automatic production-session closure, v58 adds immutable raw cycle-attempt start/outcome timing, and v59 adds the immutable typed operational-anomaly ledger with idempotent detection identity. Schema v60 adds upgrade-safe finalizer/event-sequence mappings without guessing existing Machine values. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
+The implemented migrations through schema v61 are the current persistence/domain contract. Schemas v42-v44 add Haas/CNC connection behavior, v45-v47 add Manufacturing Programs, Production Runs, and cycle observations, v48 adds physical-tablet status support, v49 adds operational workflow events while removing the CNC mode projection, v50 adds the CNC-verification identity/configuration foundation, v51 adds immutable generic NC verification-hook identity, v52 adds one-time setup-verification sessions, v53 adds bounded tablet Wi-Fi monitoring observations, v54 adds first-attempt `SEND_TO_QC` idempotency, v55 preserves per-attempt retry identity while allowing reinspection after `QC_FAIL`, v56 adds immutable unmatched-cycle anomaly types, v57 adds immutable automatic production-session closure, v58 adds immutable raw cycle-attempt start/outcome timing, and v59 adds the immutable typed operational-anomaly ledger with idempotent detection identity. Schema v60 adds upgrade-safe finalizer/event-sequence mappings without guessing existing Machine values. Schema v61 adds persistent-range and Haas legacy-alias collision enforcement. Later changes require new migrations and must never rewrite an applied migration in a deployed system.
 Schema v39 treats Batch `planned_quantity` as the required raw-material piece count, consistent with the existing material-order report and inclusive of scrap allocation. `verified_material_receipts` is local physical evidence rather than ERP inventory. `batch_material_reservations` makes consumption intent explicit. Trigger and repository validation prevent cross-Case reservation, receipt over-reservation, and reservation above Batch quantity. Material readiness is derived for every Batch Operation from its parent Batch reservation coverage; the schema-v37 manual material table is retained only as legacy history and is no longer authoritative.
 Schema v59 adds `operational_anomalies`. It is an append-only,
 trigger-protected ledger for wrong/unavailable NC identity, Offset Loader,

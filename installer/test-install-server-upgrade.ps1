@@ -5,7 +5,8 @@ $installerRoot = Split-Path -Parent $PSCommandPath
 $script = Join-Path $installerRoot 'install-server-upgrade.ps1'
 $result = (& $script -ValidateOnly) | ConvertFrom-Json
 if ($result.status -cne 'READY_FOR_ELEVATED_INSTALL' -or
-$result.msiVersion -cne '0.1.42' -or
+    $result.msiVersion -isnot [string] -or
+$result.msiVersion -cne '0.1.44' -or
     $result.enabledVerificationMachines -ne 0 -or
     -not $result.administratorRequired -or
     [string]$result.sha256 -notmatch '^[0-9A-F]{64}$') {

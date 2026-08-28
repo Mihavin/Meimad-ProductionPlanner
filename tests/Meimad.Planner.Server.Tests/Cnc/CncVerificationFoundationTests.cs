@@ -102,6 +102,39 @@ public sealed class CncVerificationFoundationTests
     }
 
     [Fact]
+    public async Task Verification_v6_normalizes_Haas_legacy_variable_aliases_before_collision_check()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        var command = Settings("machine-secret-value", enabled: false) with
+        {
+            ResponseVariable = 500,
+            NonceVariable = 10500
+        };
+
+        var error = await Assert.ThrowsAsync<CncVerificationValidationException>(() =>
+            Service(fixture.Database).UpdateSettingsAsync(
+                "machine-verification", command, 0,
+                new EditAuthority("verification-client", 1)));
+
+        Assert.Equal("variable_collision", error.Code);
+
+        await Service(fixture.Database).UpdateSettingsAsync(
+            "machine-verification", Settings("machine-secret-value", false), 0,
+            new EditAuthority("verification-client", 1));
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var update = connection.CreateCommand();
+        update.CommandText = """
+            UPDATE cnc_verification_settings
+            SET response_variable=500,nonce_variable=10500
+            WHERE machine_id='machine-verification';
+            """;
+        var databaseError = await Assert.ThrowsAsync<SqliteException>(() =>
+            update.ExecuteNonQueryAsync());
+        Assert.Contains("aliased", databaseError.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Verification_v6_programs_must_be_distinct_and_sequence_must_be_persistent()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
@@ -121,6 +154,25 @@ public sealed class CncVerificationFoundationTests
                 0, authority));
         Assert.Equal("out_of_range", variableError.Code);
         Assert.Equal("eventSequenceVariable", variableError.Field);
+
+        var persistenceError = await Assert.ThrowsAsync<CncVerificationValidationException>(() =>
+            service.UpdateSettingsAsync("machine-verification",
+                Settings("machine-secret-value", false) with { NonceVariable = 501 },
+                0, authority));
+        Assert.Equal("out_of_range", persistenceError.Code);
+        Assert.Equal("nonceVariable", persistenceError.Field);
+
+        var quarantinedError = await Assert.ThrowsAsync<CncVerificationValidationException>(() =>
+            service.UpdateSettingsAsync("machine-verification",
+                Settings("machine-secret-value", true) with { ExpectedMacroVersion = 5 },
+                0, authority));
+        Assert.Equal("quarantined_macro_version", quarantinedError.Code);
+
+        var disabledLegacy = await service.UpdateSettingsAsync("machine-verification",
+            Settings("machine-secret-value", false) with { ExpectedMacroVersion = 5 },
+            0, authority);
+        Assert.False(disabledLegacy.Enabled);
+        Assert.Equal(5, disabledLegacy.ExpectedMacroVersion);
     }
 
     [Fact]
@@ -151,6 +203,58 @@ public sealed class CncVerificationFoundationTests
         Assert.Null(settings.FinalizeProgramNumber);
         Assert.Null(settings.EventSequenceVariable);
         Assert.False(settings.Enabled);
+    }
+
+    [Fact]
+    public async Task Schema_v61_disables_an_existing_aliased_v60_candidate_mapping()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using (var prepare = connection.CreateCommand())
+        {
+            prepare.CommandText = """
+                DROP TRIGGER cnc_verification_settings_v6_mappings_insert;
+                DROP TRIGGER cnc_verification_settings_v6_mappings_update;
+                CREATE TRIGGER cnc_verification_settings_v6_mappings_insert
+                BEFORE INSERT ON cnc_verification_settings WHEN 0
+                BEGIN SELECT 1; END;
+                CREATE TRIGGER cnc_verification_settings_v6_mappings_update
+                BEFORE UPDATE ON cnc_verification_settings WHEN 0
+                BEGIN SELECT 1; END;
+                INSERT INTO cnc_verification_settings(
+                    machine_id,dprint_transport,dprint_port,challenge_program_number,
+                    verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
+                    verification_state_variable,release_token_variable,protected_secret,
+                    expected_macro_version,response_code_digits,verification_timeout_seconds,
+                    enabled,version,created_at,updated_at,finalize_program_number,
+                    event_sequence_variable)
+                VALUES('machine-verification','HAAS_DPRNT_TCP',8080,9001,9002,NULL,
+                    10500,500,10502,10503,'v60-protected-value',6,6,300,1,1,$at,$at,
+                    9003,10504);
+                """;
+            prepare.Parameters.AddWithValue("$at", Now.ToString("O"));
+            await prepare.ExecuteNonQueryAsync();
+        }
+
+        await using (var transaction = connection.BeginTransaction())
+        {
+            await new SchemaV61CncVerificationVariableMappingMigration()
+                .ApplyAsync(connection, transaction, default);
+            await transaction.CommitAsync();
+        }
+
+        await using var query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT enabled,response_variable,nonce_variable
+            FROM cnc_verification_settings
+            WHERE machine_id='machine-verification';
+            """;
+        await using var row = await query.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal(0, row.GetInt32(0));
+        Assert.Equal(500, row.GetInt32(1));
+        Assert.Equal(10500, row.GetInt32(2));
     }
 
     [Fact]
@@ -207,7 +311,7 @@ public sealed class CncVerificationFoundationTests
             new OperationalAnomalyService(new SqliteOperationalAnomalyRepository(fixture.Database)),
             new FixedTimeProvider(Now),
             NullLogger<CncDprintEventIngestionService>.Instance);
-        var line = $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-1/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841";
+        var line = $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-1/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841";
         var raw = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC",
             Now, "DPRINT_EVENT", line);
 
@@ -215,7 +319,7 @@ public sealed class CncVerificationFoundationTests
         await ingestion.ConsumeAsync("machine-verification", [raw], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/OLC/ID/OFFSET-STALE/SEQ/102/MACROVERSION/3/OFFSETRELEASE/999999/NONCE/731842")], default);
+"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-STALE/SEQ/102/MACROVERSION/6/OFFSETRELEASE/999999/NONCE/731842")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -246,7 +350,7 @@ public sealed class CncVerificationFoundationTests
         Assert.Equal("gcode-verification", session.GetString(3));
         Assert.Equal(release.OffsetLoaderReleaseId, session.GetString(4));
         Assert.Equal(731841, session.GetInt32(5));
-        Assert.Equal(3, session.GetInt32(6));
+        Assert.Equal(6, session.GetInt32(6));
         Assert.Equal(6, session.GetInt32(7));
         Assert.Equal("PENDING", session.GetString(8));
         Assert.Equal(Now, DateTimeOffset.Parse(session.GetString(9)));
@@ -287,7 +391,7 @@ public sealed class CncVerificationFoundationTests
             NullLogger<CncDprintEventIngestionService>.Instance);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-OLD/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-OLD/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
 
         await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
             "machine-verification", "gcode-verification", "tools-verification"), authority);
@@ -317,17 +421,17 @@ public sealed class CncVerificationFoundationTests
         var ingestion = VerificationIngestion(fixture.Database, repository);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-NO-LOADER/SEQ/100/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731840")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-NO-LOADER/SEQ/100/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731840")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/VERIFY-OLC/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/VERIFY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         var wrongVersion = new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
             $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OLD/SEQ/102/MACROVERSION/2/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
         await ingestion.ConsumeAsync("machine-verification", [wrongVersion], default);
         var success = new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OK/SEQ/102/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
+$"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OK/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
         await ingestion.ConsumeAsync("machine-verification", [success], default);
         await ingestion.ConsumeAsync("machine-verification", [success], default);
 
@@ -380,22 +484,22 @@ public sealed class CncVerificationFoundationTests
 
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-MISSING-OLC/SEQ/101/MACROVERSION/3/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-MISSING-OLC/SEQ/101/MACROVERSION/6/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-WRONG-OLC/SEQ/102/MACROVERSION/3/PROGRAM/123456/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-WRONG-OLC/SEQ/102/MACROVERSION/6/PROGRAM/123456/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-VALID-OLC/SEQ/103/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-VALID-OLC/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-MISSING-SVS/SEQ/104/MACROVERSION/3/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-MISSING-SVS/SEQ/104/MACROVERSION/6/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-WRONG-SVS/SEQ/105/MACROVERSION/3/PROGRAM/123456/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-WRONG-SVS/SEQ/105/MACROVERSION/6/PROGRAM/123456/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-VALID-SVS/SEQ/106/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-VALID-SVS/SEQ/106/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -445,18 +549,18 @@ public sealed class CncVerificationFoundationTests
         var ingestion = VerificationIngestion(fixture.Database, repository);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/REPLAY-OLC/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/REPLAY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-SUCCESS/SEQ/102/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-SUCCESS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-AFTER-SUCCESS/SEQ/103/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-AFTER-SUCCESS/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         await service.InvalidateVerificationAsync(
             "run-verification", "machine-verification", "Controlled regression test.", authority);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-AFTER-SUPERSEDE/SEQ/104/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-AFTER-SUPERSEDE/SEQ/104/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -491,19 +595,19 @@ public sealed class CncVerificationFoundationTests
         var ingestion = VerificationIngestion(fixture.Database, repository);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/CORRELATE-OLC-1/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/CORRELATE-OLC-1/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
 
         var second = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
             "machine-verification", "gcode-verification", "tools-verification"), authority);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/CORRELATE-OLC-2/SEQ/102/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731842")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/CORRELATE-OLC-2/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731842")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-OLD-RESULT/SEQ/103/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-OLD-RESULT/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-WRONG-NONCE/SEQ/104/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-WRONG-NONCE/SEQ/104/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731841")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -517,7 +621,7 @@ public sealed class CncVerificationFoundationTests
 
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-CURRENT/SEQ/105/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731842")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-CURRENT/SEQ/105/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731842")], default);
         Assert.Equal("SUCCEEDED", await command.ExecuteScalarAsync());
         command.CommandText = """
             SELECT anomaly_type,source_event_id FROM operational_anomalies
@@ -550,7 +654,7 @@ public sealed class CncVerificationFoundationTests
         var ingestion = VerificationIngestion(fixture.Database, repository);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/OLC/ID/RECOVERY-OLC/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/RECOVERY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
 
         var invalidated = await service.InvalidateVerificationAsync(
             "run-verification", "machine-verification", "Operator loaded different fixtures.",
@@ -593,7 +697,7 @@ public sealed class CncVerificationFoundationTests
         await VerificationIngestion(fixture.Database, repository).ConsumeAsync(
             "machine-verification", [new RawCncTelemetry(
                 "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-                $"MEIMAD/V/1/EVENT/OLC/ID/EXPIRE-OLC/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/OLC/ID/EXPIRE-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
 
         var lateTime = new FixedTimeProvider(Now.AddSeconds(301));
         var late = new CncDprintEventIngestionService(
@@ -607,11 +711,11 @@ public sealed class CncVerificationFoundationTests
         await late.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now.AddSeconds(301),
             "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         await late.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now.AddSeconds(301),
             "DPRINT_EVENT",
-            $"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+$"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -632,9 +736,9 @@ public sealed class CncVerificationFoundationTests
         await PrepareProductionApprovalAsync(fixture.Database);
         var ingestion = CycleIngestion(fixture.Database);
         var start = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
-            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/CYCLE-201/SEQ/201/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
+"DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/CYCLE-201/SEQ/201/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
         var end = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
-            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CEN/ID/CYCLE-202/SEQ/202/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
+"DPRINT_EVENT", "MEIMAD/V/1/EVENT/CEN/ID/CYCLE-202/SEQ/202/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
 
         await ingestion.ConsumeAsync("machine-verification", [start], default);
         await ingestion.ConsumeAsync("machine-verification", [end], default);
@@ -722,10 +826,10 @@ public sealed class CncVerificationFoundationTests
         var ingestion = CycleIngestion(fixture.Database);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CST/ID/BACKFILL-301/SEQ/301/MACROVERSION/3/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CST/ID/BACKFILL-301/SEQ/301/MACROVERSION/6/PROGRAM/654321")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CEN/ID/BACKFILL-302/SEQ/302/MACROVERSION/3/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CEN/ID/BACKFILL-302/SEQ/302/MACROVERSION/6/PROGRAM/654321")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using (var removeProjection = connection.CreateCommand())
@@ -776,7 +880,7 @@ public sealed class CncVerificationFoundationTests
         var result = await repository.ConsumeCycleEventAsync(new(
             "machine-verification", "CYCLE_START", "INVALID-201", 201, 3,
             "RUN-VERIFICATION", "654321",
-            "MEIMAD/V/1/EVENT/CST/ID/INVALID-201/SEQ/201/MACROVERSION/3"), default);
+"MEIMAD/V/1/EVENT/CST/ID/INVALID-201/SEQ/201/MACROVERSION/6"), default);
 
         Assert.False(result.Accepted);
         Assert.Equal("cycle_start_requires_qc_pass_or_completed_cycle", result.Code);
@@ -788,7 +892,7 @@ public sealed class CncVerificationFoundationTests
             "machine-verification", [new RawCncTelemetry(
                 "machine-verification", "connection", "HAAS_NGC", Now,
                 "DPRINT_EVENT",
-                "MEIMAD/V/1/EVENT/CST/ID/INVALID-202/SEQ/202/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CST/ID/INVALID-202/SEQ/202/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
         command.CommandText = """
             SELECT COUNT(*) FROM operational_anomalies
             WHERE anomaly_type='cycle_started_before_qc_pass'
@@ -808,11 +912,11 @@ public sealed class CncVerificationFoundationTests
         await PrepareProductionApprovalAsync(fixture.Database);
         var ingestion = CycleIngestion(fixture.Database);
         var first = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
-            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/INT-201/SEQ/201/MACROVERSION/3/PROGRAM/654321");
+"DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/INT-201/SEQ/201/MACROVERSION/6/PROGRAM/654321");
         var second = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
-            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/INT-202/SEQ/202/MACROVERSION/3/PROGRAM/654321");
+"DPRINT_EVENT", "MEIMAD/V/1/EVENT/CST/ID/INT-202/SEQ/202/MACROVERSION/6/PROGRAM/654321");
         var end = new RawCncTelemetry("machine-verification", "connection", "HAAS_NGC", Now,
-            "DPRINT_EVENT", "MEIMAD/V/1/EVENT/CEN/ID/INT-203/SEQ/203/MACROVERSION/3/PROGRAM/654321");
+"DPRINT_EVENT", "MEIMAD/V/1/EVENT/CEN/ID/INT-203/SEQ/203/MACROVERSION/6/PROGRAM/654321");
 
         await ingestion.ConsumeAsync("machine-verification", [first], default);
         await ingestion.ConsumeAsync("machine-verification", [second], default);
@@ -872,7 +976,7 @@ public sealed class CncVerificationFoundationTests
         var observation = new CncCycleObservation(
             "machine-verification", "CYCLE_END", "ORPHAN-202", 202, 3,
             "RUN-VERIFICATION", "654321",
-            "MEIMAD/V/1/EVENT/CEN/ID/ORPHAN-202/SEQ/202/MACROVERSION/3");
+"MEIMAD/V/1/EVENT/CEN/ID/ORPHAN-202/SEQ/202/MACROVERSION/6");
 
         var first = await repository.ConsumeCycleEventAsync(observation, default);
         var retry = await repository.ConsumeCycleEventAsync(observation, default);
@@ -949,15 +1053,15 @@ public sealed class CncVerificationFoundationTests
                 "DPRINT_EVENT", payload)], default);
         }
 
-        await Dprint($"MEIMAD/V/1/EVENT/OLC/ID/E2E-OLC-1/SEQ/101/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
+        await Dprint($"MEIMAD/V/1/EVENT/OLC/ID/E2E-OLC-1/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
         var setup = await Status();
         Assert.Equal("IN_SETUP", setup.Status);
         Assert.Matches("^[0-9]{6}$", Assert.IsType<string>(setup.Verification?.ResponseCode));
 
-        await Dprint($"MEIMAD/V/1/EVENT/SVF/ID/E2E-VERIFY-FAIL/SEQ/102/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
+        await Dprint($"MEIMAD/V/1/EVENT/SVF/ID/E2E-VERIFY-FAIL/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
         Assert.Equal("IN_SETUP", (await Status()).Status);
-        await Dprint($"MEIMAD/V/1/EVENT/OLC/ID/E2E-OLC-2/SEQ/103/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
-        await Dprint($"MEIMAD/V/1/EVENT/SVS/ID/E2E-VERIFY-OK/SEQ/104/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
+        await Dprint($"MEIMAD/V/1/EVENT/OLC/ID/E2E-OLC-2/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
+        await Dprint($"MEIMAD/V/1/EVENT/SVS/ID/E2E-VERIFY-OK/SEQ/104/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
         Assert.Equal("IN_SETUP_RUN", (await Status()).Status);
 
         var tabletEvents = new TabletEventService(
@@ -980,14 +1084,14 @@ public sealed class CncVerificationFoundationTests
             new("run-verification", "PASS", "verification-user", "First article accepted."), authority)).ResultingStatus);
         Assert.Equal("READY_FOR_PRODUCTION", (await Status()).Status);
 
-        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-201/SEQ/201/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-201/SEQ/201/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
         Assert.Equal("IN_PRODUCTION", (await Status()).Status);
-        await Dprint("MEIMAD/V/1/EVENT/CEN/ID/E2E-CYCLE-202/SEQ/202/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
-        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-203/SEQ/203/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
-        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-204/SEQ/204/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
-        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-204/SEQ/204/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
-        await Dprint("MEIMAD/V/1/EVENT/CEN/ID/E2E-CYCLE-205/SEQ/205/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
-        await Dprint("MEIMAD/V/1/EVENT/CEN/ID/E2E-CYCLE-207/SEQ/207/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CEN/ID/E2E-CYCLE-202/SEQ/202/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-203/SEQ/203/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-204/SEQ/204/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CST/ID/E2E-CYCLE-204/SEQ/204/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CEN/ID/E2E-CYCLE-205/SEQ/205/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
+        await Dprint("MEIMAD/V/1/EVENT/CEN/ID/E2E-CYCLE-207/SEQ/207/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321");
 
         clock.Advance();
         await ReassignToNextRunAsync(fixture.Database);
@@ -1029,10 +1133,10 @@ public sealed class CncVerificationFoundationTests
         var ingestion = CycleIngestion(fixture.Database);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CST/ID/GAP-201/SEQ/201/MACROVERSION/3/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CST/ID/GAP-201/SEQ/201/MACROVERSION/6/PROGRAM/654321")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CEN/ID/GAP-203/SEQ/203/MACROVERSION/3/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CEN/ID/GAP-203/SEQ/203/MACROVERSION/6/PROGRAM/654321")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -1058,16 +1162,16 @@ public sealed class CncVerificationFoundationTests
 
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CST/ID/CYCLE-IDENTITY-MISSING/SEQ/200/MACROVERSION/3/RUN/RUN-VERIFICATION")], default);
+"MEIMAD/V/1/EVENT/CST/ID/CYCLE-IDENTITY-MISSING/SEQ/200/MACROVERSION/6/RUN/RUN-VERIFICATION")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CST/ID/CYCLE-CONFLICT/SEQ/201/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CST/ID/CYCLE-CONFLICT/SEQ/201/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CEN/ID/CYCLE-CONFLICT/SEQ/202/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CEN/ID/CYCLE-CONFLICT/SEQ/202/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
-            "MEIMAD/V/1/EVENT/CEN/ID/CYCLE-CONFLICT-END/SEQ/202/MACROVERSION/3/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
+"MEIMAD/V/1/EVENT/CEN/ID/CYCLE-CONFLICT-END/SEQ/202/MACROVERSION/6/RUN/RUN-VERIFICATION/PROGRAM/654321")], default);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -1160,7 +1264,7 @@ public sealed class CncVerificationFoundationTests
 
     private static UpdateCncVerificationSettings Settings(string? secret, bool enabled) => new(
         "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10501, 10500, 10502, 10503,
-        9003, 10504, secret, 3, 6, 300, enabled);
+        9003, 10504, secret, 6, 6, 300, enabled);
 
     private static CncVerificationFoundationService Service(SqliteDatabase database) => new(
         new SqliteCncVerificationFoundationRepository(database),

@@ -16,7 +16,7 @@ This is the required per-Machine acceptance record for the protected Meimad setu
 | Custom G-code alias, if used | NONE in the partial bench; direct `G65 P9001` / `G65 P9002` calls |
 | Approved protected variable mappings | `#10500-#10503` approved collision-free for the partial bench; macro-v6 proposes persistent event counter `#10504`, which remains unapproved, uninitialized, and untested on the Machine |
 | Expected protected-macro version | NOT RECORDED |
-| Sequence persistence/reset rule | NOT RECORDED |
+| Sequence persistence/reset rule | `PERSISTENT_COUNTER` selected: initialize once to positive value 1, increment across OLC/SVS/SVF/CST/CEN, never wrap/reseed, and fail closed at an invalid/decreased/exhausted value. Physical VF-3SS persistence and the exact commissioned variable remain NOT RECORDED. |
 
 Allowed result values are `PASS`, `FAIL`, and `NOT_TESTED`. A comment alone is not evidence.
 
@@ -55,6 +55,11 @@ Attach or link sanitized evidence; never record the Machine secret, bearer token
   git-ignored `.diagnostics` tree; its manifest and adjacent
   `DO-NOT-RUN-QUARANTINED.txt` now explicitly preserve the physical-timeout and
   reboot/wrap sequence quarantine; installation checksum NOT RECORDED
+- Controller engineering probes: generator
+  `scripts/new-haas-ngc-engineering-test-pack.ps1`, structural test
+  `scripts/test-haas-ngc-engineering-test-pack.ps1`, fail-closed result grader
+  `scripts/audit-haas-ngc-engineering-results.ps1`, and physical procedure
+  `docs/haas-ngc-engineering-machine-tests.md`. No physical result is recorded yet.
 - Sanitized running-Server configuration check: Machine
   `5b332822830545d19950a43743779237`, `enabled=false`, settings version `3`, secret
   still configured, recorded 2026-08-27 20:51 UTC through the ordinary audited
@@ -62,7 +67,7 @@ Attach or link sanitized evidence; never record the Machine secret, bearer token
   queried all 16 configured Machines and found zero enabled CNC-verification
   configurations. No secret, key, token, nonce, or response was exported.
 - Windows Service check: installed 0.1.40 service was `Running` / `Automatic` but
-  had no failure actions. The verified 0.1.41 Server MSI adds bounded recovery;
+had no failure actions. The verified 0.1.43 Server MSI adds bounded recovery;
   its non-elevated upgrade attempt was refused with Windows Installer 1730, so the
   installed service remains unchanged pending an administrator-run upgrade.
 

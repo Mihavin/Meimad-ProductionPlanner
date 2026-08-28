@@ -40,13 +40,19 @@ function Get-MsiProperty {
         $windowsInstaller,
         @($Path, 0))
     $view = $database.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$Property'")
-    $view.Execute()
+    [void]$view.Execute()
     $record = $view.Fetch()
     if ($null -eq $record) {
         throw "MSI property '$Property' is missing from $Path."
     }
 
-    return $record.StringData(1)
+    $value = $record.StringData(1) |
+        Where-Object { $null -ne $_ } |
+        Select-Object -Last 1
+    if ([string]::IsNullOrWhiteSpace([string]$value)) {
+        throw "MSI property '$Property' is empty in $Path."
+    }
+    return [string]$value
 }
 
 function Test-MsiTable {
@@ -59,7 +65,7 @@ function Test-MsiTable {
     $database = $windowsInstaller.GetType().InvokeMember(
         "OpenDatabase", "InvokeMethod", $null, $windowsInstaller, @($Path, 0))
     $view = $database.OpenView("SELECT ``Name`` FROM ``_Tables`` WHERE ``Name`` = '$Table'")
-    $view.Execute()
+    [void]$view.Execute()
     return $null -ne $view.Fetch()
 }
 

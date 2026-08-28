@@ -15,10 +15,10 @@ param(
     [ValidateRange(9000, 9999)] [int] $ChallengeProgramNumber = 9001,
     [ValidateRange(9000, 9999)] [int] $VerifyProgramNumber = 9002,
     [ValidateRange(9000, 9999)] [int] $FinalizeProgramNumber = 9003,
-    [ValidateRange(1, 10999)] [int] $NonceVariable = 10501,
+    [ValidateRange(10000, 10999)] [int] $NonceVariable = 10501,
     [ValidateRange(1, 10999)] [int] $ResponseVariable = 10500,
-    [ValidateRange(1, 10999)] [int] $VerificationStateVariable = 10502,
-    [ValidateRange(1, 10999)] [int] $ReleaseTokenVariable = 10503,
+    [ValidateRange(10000, 10999)] [int] $VerificationStateVariable = 10502,
+    [ValidateRange(10000, 10999)] [int] $ReleaseTokenVariable = 10503,
     [ValidateRange(10000, 10999)] [int] $EventSequenceVariable = 10504,
     [ValidateRange(1, 999999)] [int] $MacroVersion = 6,
     [ValidateRange(4, 6)] [int] $ResponseDigits = 6,
@@ -41,9 +41,14 @@ if ((@($ChallengeProgramNumber, $VerifyProgramNumber, $FinalizeProgramNumber) |
     throw 'The three protected program numbers must be distinct.'
 }
 if ($TestNcProgramNumber -eq $TestOffsetLoaderProgramNumber) { throw 'Test program numbers must be distinct.' }
-$variables = @($NonceVariable, $ResponseVariable, $VerificationStateVariable,
+$canonicalResponseVariable = if ($ResponseVariable -ge 500 -and $ResponseVariable -le 549) {
+    $ResponseVariable + 10000
+} else { $ResponseVariable }
+$variables = @($NonceVariable, $canonicalResponseVariable, $VerificationStateVariable,
     $ReleaseTokenVariable, $EventSequenceVariable)
-if (($variables | Select-Object -Unique).Count -ne 5) { throw 'The five macro variables must be distinct.' }
+if (($variables | Select-Object -Unique).Count -ne 5) {
+    throw 'The five macro variables must be distinct after Haas legacy aliases are normalized.'
+}
 if (-not (($ResponseVariable -ge 500 -and $ResponseVariable -le 549) -or
           ($ResponseVariable -ge 10500 -and $ResponseVariable -le 10549))) {
     throw 'ResponseVariable must be in the Haas M109 range 500-549 or 10500-10549.'

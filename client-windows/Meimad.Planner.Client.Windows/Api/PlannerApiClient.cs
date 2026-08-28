@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -11,6 +12,31 @@ namespace Meimad.Planner.Client.Windows.Api;
 internal interface IPlannerApiClient : IDisposable
 {
     Task<ServerHealth> GetHealthAsync(CancellationToken cancellationToken = default);
+
+    Task<ServerMaintenanceCatalog> GetServerMaintenanceAsync(
+        string clientId,
+        string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<CollectedDataPreview> PreviewCollectedDataAsync(
+        CollectedDataPreviewRequest preview,
+        string clientId,
+        string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<CollectedDataPurgeResult> PurgeCollectedDataAsync(
+        CollectedDataPurgeRequest purge,
+        string clientId,
+        string userId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<DatabaseBackupDownload> DownloadDatabaseBackupAsync(
+        string destinationFolder,
+        string clientId,
+        string userId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     Task<EditModeStatus> GetEditModeAsync(
         string clientId,
@@ -850,6 +876,107 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<CaseOperation>(response, cancellationToken);
+    }
+
+    public async Task<ServerMaintenanceCatalog> GetServerMaintenanceAsync(
+        string clientId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateMaintenanceRequest(
+            HttpMethod.Get, "api/v1/server-maintenance/database", clientId, userId);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ServerMaintenanceCatalog>(response, cancellationToken);
+    }
+
+    public async Task<CollectedDataPreview> PreviewCollectedDataAsync(
+        CollectedDataPreviewRequest preview,
+        string clientId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateMaintenanceRequest(
+            HttpMethod.Post, "api/v1/server-maintenance/collected-data/preview", clientId, userId);
+        request.Content = JsonContent.Create(preview, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CollectedDataPreview>(response, cancellationToken);
+    }
+
+    public async Task<CollectedDataPurgeResult> PurgeCollectedDataAsync(
+        CollectedDataPurgeRequest purge,
+        string clientId,
+        string userId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateMaintenanceRequest(
+            HttpMethod.Post, "api/v1/server-maintenance/collected-data/purge", clientId, userId, editGeneration);
+        request.Content = JsonContent.Create(purge, options: JsonOptions);
+        using var response = await importHttpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CollectedDataPurgeResult>(response, cancellationToken);
+    }
+
+    public async Task<DatabaseBackupDownload> DownloadDatabaseBackupAsync(
+        string destinationFolder,
+        string clientId,
+        string userId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(destinationFolder))
+            throw new ArgumentException("A backup destination folder is required.", nameof(destinationFolder));
+        Directory.CreateDirectory(destinationFolder);
+
+        using var request = CreateMaintenanceRequest(
+            HttpMethod.Post, "api/v1/server-maintenance/backups/download", clientId, userId, editGeneration);
+        using var response = await importHttpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            await ThrowApiErrorAsync(response, cancellationToken);
+
+        var serverFileName = response.Content.Headers.ContentDisposition?.FileNameStar
+            ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
+            ?? $"meimad-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.db";
+        var safeFileName = Path.GetFileName(serverFileName);
+        if (string.IsNullOrWhiteSpace(safeFileName))
+            throw new PlannerProtocolException("Server returned an invalid backup file name.");
+        var localPath = UniquePath(destinationFolder, safeFileName);
+        try
+        {
+            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var target = new FileStream(
+                localPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[81920];
+            long length = 0;
+            int read;
+            while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                hasher.AppendData(buffer, 0, read);
+                length += read;
+            }
+            await target.FlushAsync(cancellationToken);
+            var actualHash = Convert.ToHexString(hasher.GetHashAndReset());
+            var expectedHash = Header(response, "X-Meimad-Checksum-SHA256");
+            if (string.IsNullOrWhiteSpace(expectedHash)
+                || !string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                throw new PlannerProtocolException("Downloaded backup checksum did not match the Server checksum.");
+
+            return new(
+                localPath,
+                length,
+                actualHash,
+                DateTimeOffset.TryParse(Header(response, "X-Meimad-Backup-Created-At"),
+                    CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var createdAt) ? createdAt : null,
+                string.Equals(Header(response, "X-Meimad-Integrity-Verified"), "true", StringComparison.OrdinalIgnoreCase),
+                string.Equals(Header(response, "X-Meimad-Restore-Verified"), "true", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            if (File.Exists(localPath)) File.Delete(localPath);
+            throw;
+        }
     }
 
     public async Task<PlannerGCodeCatalog> GetOperationGCodeAsync(
@@ -2213,6 +2340,38 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         var request = new HttpRequestMessage(method, path);
         request.Headers.Add(ClientIdHeader, clientId);
         return request;
+    }
+
+    private static HttpRequestMessage CreateMaintenanceRequest(
+        HttpMethod method,
+        string path,
+        string clientId,
+        string userId,
+        long? editGeneration = null)
+    {
+        var request = CreateRequest(method, path, clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        if (editGeneration.HasValue)
+            request.Headers.Add(EditGenerationHeader,
+                editGeneration.Value.ToString(CultureInfo.InvariantCulture));
+        return request;
+    }
+
+    private static string? Header(HttpResponseMessage response, string name) =>
+        response.Headers.TryGetValues(name, out var values) ? values.SingleOrDefault() : null;
+
+    private static string UniquePath(string folder, string fileName)
+    {
+        var initial = Path.Combine(folder, fileName);
+        if (!File.Exists(initial)) return initial;
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        for (var suffix = 2; suffix < 10_000; suffix++)
+        {
+            var candidate = Path.Combine(folder, $"{stem}-{suffix}{extension}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+        throw new IOException("Could not choose an unused backup file name.");
     }
 
     private static async Task<T> ReadSuccessAsync<T>(

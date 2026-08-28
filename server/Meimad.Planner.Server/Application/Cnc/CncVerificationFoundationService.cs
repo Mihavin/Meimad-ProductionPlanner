@@ -157,20 +157,25 @@ internal sealed class CncVerificationFoundationService
             throw new CncVerificationValidationException("finalizeProgramNumber", "program_collision",
                 "Challenge, verification, and finalizer protected programs must be different.");
         if (command.CustomGcodeAlias.HasValue) Range(command.CustomGcodeAlias.Value, 1, 999, "customGcodeAlias");
-        var variables = new[] { command.NonceVariable, command.ResponseVariable,
-            command.VerificationStateVariable, command.ReleaseTokenVariable,
-            command.EventSequenceVariable };
-        foreach (var value in variables) Range(value, 1, 10999, "verificationVariables");
-        if (variables.Distinct().Count() != variables.Length)
-            throw new CncVerificationValidationException("verificationVariables", "variable_collision",
-                "Verification variables must be distinct.");
+        Range(command.NonceVariable, 10000, 10999, "nonceVariable");
+        Range(command.VerificationStateVariable, 10000, 10999, "verificationStateVariable");
+        Range(command.ReleaseTokenVariable, 10000, 10999, "releaseTokenVariable");
+        Range(command.EventSequenceVariable, 10000, 10999, "eventSequenceVariable");
         if (!IsM109Variable(command.ResponseVariable))
             throw new CncVerificationValidationException("responseVariable", "unsupported_m109_variable",
                 "responseVariable must be in the Haas M109 range 500-549 or 10500-10549.");
-        Range(command.EventSequenceVariable, 10000, 10999, "eventSequenceVariable");
+        var variables = new[] { command.NonceVariable, CanonicalVariable(command.ResponseVariable),
+            command.VerificationStateVariable, command.ReleaseTokenVariable,
+            command.EventSequenceVariable };
+        if (variables.Distinct().Count() != variables.Length)
+            throw new CncVerificationValidationException("verificationVariables", "variable_collision",
+                "Verification variables must be distinct after Haas legacy aliases are normalized.");
         if (command.ExpectedMacroVersion <= 0)
             throw new CncVerificationValidationException("expectedMacroVersion", "out_of_range",
                 "expectedMacroVersion must be positive.");
+        if (command.Enabled && command.ExpectedMacroVersion < 6)
+            throw new CncVerificationValidationException("expectedMacroVersion", "quarantined_macro_version",
+                "Macro versions 1-5 are quarantined and cannot be enabled.");
         Range(command.ResponseCodeDigits, 4, 6, "responseCodeDigits");
         Range(command.VerificationTimeoutSeconds, 30, 3600, "verificationTimeoutSeconds");
 
@@ -267,6 +272,8 @@ internal sealed class CncVerificationFoundationService
     }
     private static bool IsM109Variable(int value) =>
         value is >= 500 and <= 549 or >= 10500 and <= 10549;
+    private static int CanonicalVariable(int value) =>
+        value is >= 500 and <= 549 ? value + 10000 : value;
     private static string RecoveryReason(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

@@ -2,6 +2,10 @@
 
 The eleven-item task list extends existing authority boundaries: staged Case/Order import, a Batch route guard, Batch-Operation backlog/criticality projection, schema-v26 external delay and master-calendar layering, shared icons/application icon, STEP bounding/reference tools, and the row TV dashboard.
 
+## Server database maintenance
+
+Implemented without a schema migration: Windows Setup reads database/WAL/shared-memory and reusable-page size through the Server, downloads a new integrity/restore-verified backup over the factory-LAN HTTP API with SHA-256 verification, and previews/deletes only raw CNC telemetry, normalized Machine state history, and CNC connection events. The Server owns the fixed deletion catalog and half-open UTC semantics; arbitrary table/type input is rejected. Purge requires the active Edit Mode generation, operator identity, reason, positive expected count, a verified backup created before deletion, exact recount in the write transaction, and a structured audit. No maintenance route deletes planning, release, workflow, cycle/output, anomaly, current-state, or audit data. Scheduled retention, compaction policy, encryption, human administrative authentication/TLS, and active-database restore remain separate unresolved operational decisions.
+
 ## CNC operational workflow workstream
 
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
@@ -12,10 +16,16 @@ Schema v60 and `scripts/new-haas-verification-v6-bench-pack.ps1` implement a
 separately numbered no-motion design candidate. It uses a third protected G65
 finalizer for the post-M109 timer read and one configured persistent counter for
 OLC, SVS/SVF, CST, and CEN. The counter fails closed at exhaustion and cannot
-wrap or become workflow authority. This is implementation and structural-test
-evidence only: internal controls-engineering review, collision approval, bounded
+wrap or become workflow authority. `PERSISTENT_COUNTER` is the selected design;
+it is initialized once to a recorded positive value of 1, never silently reseeded,
+and is now covered by a checksummed no-motion physical engineering-test pack.
+This is implementation and structural-test evidence only: internal
+controls-engineering review, collision approval, bounded
 physical retest, and all Task 31 acceptance evidence remain open. Verification
 stays disabled.
+Schema v61 closes the controller-alias gap: cross-call values must use persistent
+globals, `#500`/`#10500`-style aliases collide, invalid upgraded candidates are
+disabled, and macro versions 1-5 cannot be enabled.
 
 Milestone A is implemented in schema v49: the persistent CNC Setup/Production variable, its settings/snapshot projections, public read/reset routes, write permission, Windows controls, and macro-write audit table are removed. Immutable `production_run_workflow_events` retain Server receipt time, separate Machine time, source/idempotency identity, optional sequence/release/device/user evidence, and JSON metadata. Tablet status is projected from those events rather than run counters or CNC mode.
 
@@ -23,7 +33,7 @@ Milestone B is implemented in schema v50. It adds immutable Offset Loader releas
 
 The Milestone C fallback decision is resolved: every newly approved NC release uses one generic verification hook as its first executable block. Schema v51 validates the hook without modifying the upload and immutably binds its unique six-digit NC identity to the exact release. Migrated historical releases remain readable but receive no inferred identity; using one for protected verification requires an explicit new release. Algorithm v1 has a disconnected Server reference implementation, independent PowerShell calculator, public vectors, and protected-program layout in `docs/haas-verification-response-algorithm.md`. On 2026-08-26 the VF-3SS physically proved direct/nested supplied-identity transport with the accepted four-run sample and reproduced all seven arithmetic vectors, including `0282`. On 2026-08-27 Reset/E-stop/reboot tests produced useful partial cleanup evidence, but the correct response was accepted after at least 130 seconds at M109 and the `#3001` event sequence was found non-monotonic across reboot/wrap. Macro candidates v3–v5 and packages v1–v3 are quarantined under `docs/cnc-verification-code-audit-2026-08-27.md`. This closes identity transport and arithmetic-vector evidence only, not a production interlock. Schema v60 and the separately numbered v6 no-motion package implement a candidate finalizer/counter design, but internal review and one bounded physical retest are still required; verification stays disabled.
 
-Milestone D Server behavior is implemented through schema v60. A valid current six-digit-nonce `OFFSET_LOADER_COMPLETED` event and its pending setup-verification session commit atomically. The one-time session immutably binds Machine, Production Run, exact approved NC release, current Offset Loader release, nonce, macro version, response width, source event, and Server creation/expiration; it stores no response or secret. A newer Offset Loader supersedes any live session. The existing authenticated tablet status endpoint derives the fixed-width response in memory only for its assigned, enabled, unexpired, context-valid `PENDING` session and includes verification state in the content revision. Expired, disabled/mismatched, superseded, missing, wrong-path, and wrong-token cases expose no code; nonce, secret/key, variable numbers, and algorithm details never enter tablet JSON. The ESP32 firmware now fail-closed parses that projection, preserves leading zeroes, renders a prominent response-code screen or explicit expired/invalidated/unavailable setup block, and timer-polls while `IN_SETUP`. Task 14 adds a bounded status `diagnostics` projection plus a two-column Service/Debug screen and `[SERVICE]` log opened by a provisional 1.2-second D1 hold; it exposes operational health and Server-known verification result/macro version but no credential, password, nonce, response code, secret, variable mapping, or algorithm data. Production, demo, and contract-test targets compile. Protected CNC success/failure ingestion and the event-derived transition to `IN_SETUP_RUN` are implemented. Physical panel/gesture/readability and CNC execution blocking remain commissioning gates. Milestones E-G are implemented in repository slices; physical commissioning in Milestone H remains open.
+Milestone D Server behavior is implemented through schema v61. A valid current six-digit-nonce `OFFSET_LOADER_COMPLETED` event and its pending setup-verification session commit atomically. The one-time session immutably binds Machine, Production Run, exact approved NC release, current Offset Loader release, nonce, macro version, response width, source event, and Server creation/expiration; it stores no response or secret. A newer Offset Loader supersedes any live session. The existing authenticated tablet status endpoint derives the fixed-width response in memory only for its assigned, enabled, unexpired, context-valid `PENDING` session and includes verification state in the content revision. Expired, disabled/mismatched, superseded, missing, wrong-path, and wrong-token cases expose no code; nonce, secret/key, variable numbers, and algorithm details never enter tablet JSON. The ESP32 firmware now fail-closed parses that projection, preserves leading zeroes, renders a prominent response-code screen or explicit expired/invalidated/unavailable setup block, and timer-polls while `IN_SETUP`. Task 14 adds a bounded status `diagnostics` projection plus a two-column Service/Debug screen and `[SERVICE]` log opened by a provisional 1.2-second D1 hold; it exposes operational health and Server-known verification result/macro version but no credential, password, nonce, response code, secret, variable mapping, or algorithm data. Production, demo, and contract-test targets compile. Protected CNC success/failure ingestion and the event-derived transition to `IN_SETUP_RUN` are implemented. Physical panel/gesture/readability and CNC execution blocking remain commissioning gates. Milestones E-G are implemented in repository slices; physical commissioning in Milestone H remains open.
 
 Task 15 is implemented in schema v53 and the existing Windows client. The **User
 Terminals** page provides View-Mode monitoring for identity, binding, access state,
@@ -111,7 +121,7 @@ and deterministic plain-language messages make setup, verification, QC, cycle,
 interruption, and closure history readable without exposing raw metadata/DPRINT
 or creating a second mutable timeline store. It requires no Edit Mode.
 
-Tasks 24-27 are implemented through schema v60. The append-only
+Tasks 24-27 are implemented through schema v61. The append-only
 `operational_anomalies` ledger and bounded read queue cover NC identity,
 Offset Loader, verification, cycle, source-sequence/duplicate, Run-resolution,
 and tablet availability/revocation types without mutating planning data.
@@ -132,7 +142,7 @@ rotation, and QC decisions retain user-attributed audit evidence. There is no
 verification bypass. On 2026-08-27 the running VF-3SS configuration was found
 enabled despite the physical quarantine and was disabled through the ordinary
 audited Edit Mode API without replacing its protected secret. Settings version 3
-now reads `enabled=false`. The 0.1.41 Server MSI adds bounded Windows Service
+now reads `enabled=false`. The 0.1.43 Server MSI adds bounded Windows Service
 crash recovery and passes build/package verification; applying it remains an
 administrator deployment step because the non-elevated upgrade was correctly
 refused.

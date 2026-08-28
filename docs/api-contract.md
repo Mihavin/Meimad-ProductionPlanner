@@ -15,7 +15,7 @@ Case/Batch Operation representations include external-delay fields. Planning Boa
 
 `GET|PUT|DELETE /api/v1/master-calendar` reads, selects, or clears the global Israel Master Calendar; mutations require Edit Mode. Machine and employee-resource representations accept/return `respectMasterCalendar`. Working-day external delay requires a whole-number duration and selected active Working Calendar; Timeline dependency calculations count that calendar's working dates and intersect it with the master when enabled.
 
-- **Status:** Draft target contract; implemented slices are identified through schema v60, including the CNC event workflow, setup verification, QC/cycle processing, anomaly/debug reads and safe recovery, alongside the earlier planning, TV, E-Ink, and Windows administration surfaces
+- **Status:** Draft target contract; implemented slices are identified through schema v61, including the CNC event workflow, setup verification, QC/cycle processing, anomaly/debug reads and safe recovery, alongside the earlier planning, TV, E-Ink, and Windows administration surfaces
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -1389,6 +1389,20 @@ be in Haas M109 range `#500-#549` or `#10500-#10549`; the increment-only sequenc
 variable must be distinct and in persistent range `#10000-#10999`. Upgraded
 settings return null finalizer/sequence mappings until explicitly reviewed and
 saved. These mappings are configuration, not evidence of physical commissioning.
+The selected controller contract is `PERSISTENT_COUNTER`, initialized once to a
+recorded positive value of 1 and never wrapped or silently reseeded. That initial
+controller write is a commissioned deployment action, not an API mutation or
+Server workflow-state field.
+
+Schema v61 requires nonce, verification-state, release-token, and event-sequence
+mappings in persistent global range `#10000-#10999`. It canonicalizes the M109
+legacy response range before collision checks, so `#500` and `#10500`, for
+example, are the same mapping and cannot both be configured. Database triggers
+enforce the same rule for candidate-enabled rows; legacy upgraded rows with both
+v6 fields null remain readable and disabled until explicitly remapped.
+Configurations may retain an older expected macro version while disabled for
+forensic visibility, but enabling versions 1-5 is rejected as
+`quarantined_macro_version`.
 
 The strict CNC-safe DPRINT v1 line is ASCII printable, at most 512 bytes, and has this exact field ordering:
 
@@ -1517,6 +1531,62 @@ Source files are read-only inputs. `sourceRelativePath` must stay under the Case
 Generation stages files under the configured Server-local package root, enforces configured per-file/total/count/text limits, calculates SHA-256, and moves the staged directory into its final opaque package ID before publishing SQLite metadata. Publication revalidates Edit Mode and the Case/Batch/Operation/assignment/Machine versions atomically. A failure removes the unpublished staged/final directory. SQLite stores paths and checksums only, never file bytes.
 
 The `201` response contains `packageId`, `revision`, `toolCartId`, `publishedAt`, the immutable `snapshot`, and `assets`. Each asset contains `fileId`, `assetType`, safe `logicalPath`, media type, byte length, SHA-256, and display order; it never exposes a source or storage path. There is no package PATCH/PUT/DELETE route.
+
+### 7.7 Server database maintenance
+
+These implemented endpoints are Windows/operator routes on the factory LAN. All require `X-Meimad-Client-Id` and `X-Meimad-User-Id`. Backup download and purge additionally require `X-Meimad-Edit-Generation`; the Server verifies that the client still holds that exact generation. The headers are the current development identity boundary, not production human authentication. Do not expose these routes to the Internet.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/server-maintenance/database` | Read SQLite/WAL/shared-memory size and the fixed deletable-data catalog; never returns a database path. |
+| `POST` | `/api/v1/server-maintenance/collected-data/preview` | Count an exact half-open UTC range by selected safe type and optional Machine. |
+| `POST` | `/api/v1/server-maintenance/collected-data/purge` | Create a verified pre-delete backup, recount, atomically delete the previewed rows, and audit. |
+| `POST` | `/api/v1/server-maintenance/backups/download` | Create, verify, audit, and stream a new managed SQLite backup. |
+
+The only accepted `types` are:
+
+- `cnc_raw_telemetry` (`machine_telemetry_raw.observed_at`)
+- `cnc_state_history` (`machine_state_history.observed_at`)
+- `cnc_connection_events` (`machine_connection_events.occurred_at`)
+
+The catalog is Server-owned and fixed. Callers cannot supply a table or timestamp column. Planning data, releases, Production Run workflow/cycle/output evidence, anomalies, current Machine state, and `structured_event_log` are not deletable through this API.
+
+Preview request:
+
+```json
+{
+  "fromInclusive": "2026-07-01T00:00:00Z",
+  "toExclusive": "2026-08-01T00:00:00Z",
+  "types": ["cnc_raw_telemetry", "cnc_connection_events"],
+  "machineId": "machine-10"
+}
+```
+
+The time test is `fromInclusive <= timestamp < toExclusive`; `machineId` is optional. A successful preview returns the normalized filter, `readAt`, `totalRows`, and one item per selected type with `rowCount`, `oldestAt`, and `newestAt`.
+
+Purge request repeats the exact preview filter:
+
+```json
+{
+  "fromInclusive": "2026-07-01T00:00:00Z",
+  "toExclusive": "2026-08-01T00:00:00Z",
+  "types": ["cnc_raw_telemetry", "cnc_connection_events"],
+  "machineId": "machine-10",
+  "expectedTotalRows": 4281,
+  "reason": "Approved diagnostic retention cleanup"
+}
+```
+
+`expectedTotalRows` must be positive and come from a fresh preview; `reason` is required. The Server validates Edit Mode, repeats the preview, creates an online backup that passes integrity, foreign-key, and isolated restore verification, then starts the delete transaction and recounts again. Any count change returns `409 collected_data_preview_changed` without deleting. Success returns per-type deleted counts, operator/time/reason, verified backup file name/size/SHA-256 (never its Server path), and refreshed database storage. Freed pages are reported as reusable; the request does not run `VACUUM`, so physical file size need not immediately fall.
+
+The backup download response is `application/vnd.sqlite3` with `Content-Disposition: attachment` and:
+
+- `X-Meimad-Checksum-SHA256`
+- `X-Meimad-Backup-Created-At`
+- `X-Meimad-Integrity-Verified: true`
+- `X-Meimad-Restore-Verified: true`
+
+The Windows client streams to a new local file, verifies SHA-256, and removes an incomplete/mismatched local file. This API never restores a database and never gives a client the active database path.
 
 ## 8. E-Ink scoped contract
 

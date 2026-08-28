@@ -124,7 +124,7 @@ Windows recorded one unexpected service termination during the commissioning
 window, interleaved with intentional stop/start attempts. The audit cannot assign
 that event to a code crash without a clean reproduction. The administrative check
 on 2026-08-27 found the installed 0.1.40 service `Running` and `Automatic`, but with
-no configured failure actions. Installer 0.1.41 now compiles the WiX utility
+no configured failure actions. Installer 0.1.43 now compiles the WiX utility
 service configuration for two bounded 60-second restarts, no third automatic
 action, and a one-day failure-count reset. Its final build and extraction passed
 with zero warnings, but the non-elevated install attempt correctly failed with
@@ -157,7 +157,7 @@ exercise the default refusal and the acknowledged artifact's quarantine status.
 
 1. Have the site's qualified CNC controls engineer and Meimad production owner
    approve a documented M109/finalizer or replacement-input design using the
-   [internal engineering worksheet](haas-hfo-review-request-2026-08-27.md).
+   [internal engineering worksheet](haas-internal-engineering-review-2026-08-27.md).
 2. Replace the mixed `#3001`/parts-counter sequence semantics with one reviewed
    reboot/wrap contract shared by every emitted event type.
 3. Add structural/unit tests for the approved macro pattern and connection epoch.

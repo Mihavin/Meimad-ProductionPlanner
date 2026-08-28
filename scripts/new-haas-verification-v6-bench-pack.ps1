@@ -64,14 +64,17 @@ $finalizeProgram = Require-IntegerRange finalizeProgramNumber $config.finalizePr
 if ((@($challengeProgram, $verifyProgram, $finalizeProgram) | Select-Object -Unique).Count -ne 3) {
     throw 'The three protected program numbers must be distinct.'
 }
-$nonceVariable = Require-IntegerRange nonceVariable $config.nonceVariable 1 10999
+$nonceVariable = Require-IntegerRange nonceVariable $config.nonceVariable 10000 10999
 $responseVariable = Require-IntegerRange responseVariable $config.responseVariable 1 10999
-$stateVariable = Require-IntegerRange verificationStateVariable $config.verificationStateVariable 1 10999
-$releaseVariable = Require-IntegerRange releaseTokenVariable $config.releaseTokenVariable 1 10999
+$stateVariable = Require-IntegerRange verificationStateVariable $config.verificationStateVariable 10000 10999
+$releaseVariable = Require-IntegerRange releaseTokenVariable $config.releaseTokenVariable 10000 10999
 $sequenceVariable = Require-IntegerRange eventSequenceVariable $config.eventSequenceVariable 10000 10999
-if ((@($nonceVariable, $responseVariable, $stateVariable, $releaseVariable, $sequenceVariable) |
+$canonicalResponseVariable = if ($responseVariable -ge 500 -and $responseVariable -le 549) {
+    $responseVariable + 10000
+} else { $responseVariable }
+if ((@($nonceVariable, $canonicalResponseVariable, $stateVariable, $releaseVariable, $sequenceVariable) |
         Select-Object -Unique).Count -ne 5) {
-    throw 'The five configured macro variables must be distinct.'
+    throw 'The five configured macro variables must be distinct after Haas legacy aliases are normalized.'
 }
 if (-not (($responseVariable -ge 500 -and $responseVariable -le 549) -or
           ($responseVariable -ge 10500 -and $responseVariable -le 10549))) {
@@ -424,7 +427,8 @@ $manifest = [ordered]@{
     protectedVariables = @($nonceVariable, $responseVariable, $stateVariable, $releaseVariable, $sequenceVariable)
     eventSequence = [ordered]@{
         variable = $sequenceVariable
-        initialization = 'AUTHORIZED_ONE_TIME_ZERO_AFTER_SERVER_SOURCE_HISTORY_REVIEW'
+        initialization = 'AUTHORIZED_ONE_TIME_POSITIVE_INTEGER_AFTER_SERVER_SOURCE_HISTORY_REVIEW'
+        initialValue = 1
         maximum = 899999
         resetOrWrapAllowed = $false
     }

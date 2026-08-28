@@ -16,6 +16,7 @@ using Meimad.Planner.Server.Api.Kitaron;
 using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Materials;
+using Meimad.Planner.Server.Api.Maintenance;
 using Meimad.Planner.Server.Api.Machines;
 using Meimad.Planner.Server.Api.MachineTypes;
 using Meimad.Planner.Server.Api.Orders;
@@ -46,6 +47,7 @@ using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Application.LegacyImport;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Materials;
+using Meimad.Planner.Server.Application.Maintenance;
 using Meimad.Planner.Server.Application.Machines;
 using Meimad.Planner.Server.Application.MachineTypes;
 using Meimad.Planner.Server.Application.Orders;
@@ -126,6 +128,8 @@ public static class ServerApplication
             .SetApplicationName("Meimad.Planner.Server");
         builder.Services.AddSingleton<DatabaseMigrator>();
         builder.Services.AddSingleton<SqliteBackupService>();
+        builder.Services.AddSingleton<IServerMaintenanceRepository, SqliteServerMaintenanceRepository>();
+        builder.Services.AddSingleton<ServerMaintenanceService>();
         builder.Services.AddSingleton<IAdministrativeSetupRepository, SqliteAdministrativeSetupRepository>();
         builder.Services.AddHttpClient<IIsraeliHolidaySource, HebcalIsraeliHolidaySource>(client =>
         {
@@ -341,6 +345,7 @@ public static class ServerApplication
         application.MapOperationalAnomalyEndpoints();
         application.MapQcWorkflowEndpoints();
         application.MapMaterialReconciliationEndpoints();
+        application.MapServerMaintenanceEndpoints();
         application.MapMachineEndpoints();
         application.MapCncEndpoints();
         application.MapCncVerificationEndpoints();

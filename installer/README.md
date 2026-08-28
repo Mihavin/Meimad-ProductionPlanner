@@ -1,6 +1,6 @@
 # Windows installers
 
-Current package version: `0.1.42`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
+Current package version: `0.1.44`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
 
 The repository builds two independent 64-bit Windows Installer packages:
 

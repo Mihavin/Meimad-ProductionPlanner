@@ -53,8 +53,13 @@ foreach ($required in @(
     'Persistent CNC workflow mode variable: REMOVED',
     'Protected temporary setup verification variables: SUPPORTED',
     'new-haas-verification-v6-bench-pack.ps1',
+    'new-haas-ngc-engineering-test-pack.ps1',
+    'PERSISTENT_COUNTER',
+    'one-time positive initialization at 1',
     'distinct protected finalizer',
-    'fails closed instead of wrapping'
+    'fails closed instead of wrapping',
+    'canonicalizes Haas legacy aliases',
+    'refuses to enable quarantined macro versions 1-5'
 )) {
     if ($audit.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Completion audit is missing required statement: $required."

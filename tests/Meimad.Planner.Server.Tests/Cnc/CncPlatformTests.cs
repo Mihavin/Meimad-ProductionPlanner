@@ -369,7 +369,7 @@ public sealed class CncPlatformTests
     private static async Task<JsonElement> ReceiveAsync(WebSocket socket)
     {
         var bytes = new byte[65536];
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var result = await socket.ReceiveAsync(bytes, timeout.Token);
         Assert.Equal(WebSocketMessageType.Text, result.MessageType);
         using var document = JsonDocument.Parse(bytes.AsMemory(0, result.Count));

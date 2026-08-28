@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Security.Cryptography;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
 
@@ -2340,6 +2341,52 @@ public sealed class PlannerApiClientTests
         Assert.Equal("12", handler.Requests[1].Generation);
         Assert.Contains("\"decision\":\"PASS\"", handler.Requests[1].Body, StringComparison.Ordinal);
         Assert.Contains("\"reason\":\"Accepted\"", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Server_maintenance_client_sends_identity_authority_filters_and_verifies_backup_download()
+    {
+        const string database = """{"readAt":"2026-08-28T10:00:00Z","databaseFileBytes":4096,"walFileBytes":0,"sharedMemoryFileBytes":0,"totalOnDiskBytes":4096,"pageSizeBytes":4096,"pageCount":1,"freePageCount":0,"usedPageBytesEstimate":4096,"reusablePageBytes":0,"schemaVersion":61,"collectedData":[]}""";
+        var bytes = Encoding.ASCII.GetBytes("SQLite format 3\0maintenance-test");
+        var backup = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+        backup.Content.Headers.ContentDisposition = new("attachment") { FileName = "\"planner-backup.db\"" };
+        backup.Headers.Add("X-Meimad-Checksum-SHA256", Convert.ToHexString(SHA256.HashData(bytes)));
+        backup.Headers.Add("X-Meimad-Backup-Created-At", "2026-08-28T10:00:00Z");
+        backup.Headers.Add("X-Meimad-Integrity-Verified", "true");
+        backup.Headers.Add("X-Meimad-Restore-Verified", "true");
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, $$"""{"database":{{database}},"deletableTypes":[{"type":"cnc_raw_telemetry","displayName":"Raw CNC telemetry","description":"Raw"}],"backupDownloadMethod":"POST","backupDownloadPath":"/api/v1/server-maintenance/backups/download","deleteRangeSemantics":"half-open"}"""),
+            Json(HttpStatusCode.OK, """{"filter":{"fromInclusive":"2026-08-01T00:00:00Z","toExclusive":"2026-08-02T00:00:00Z","types":["cnc_raw_telemetry"],"machineId":"machine-1"},"items":[{"type":"cnc_raw_telemetry","displayName":"Raw CNC telemetry","rowCount":2,"oldestAt":"2026-08-01T01:00:00Z","newestAt":"2026-08-01T02:00:00Z"}],"totalRows":2,"readAt":"2026-08-28T10:00:00Z"}"""),
+            Json(HttpStatusCode.OK, $$"""{"filter":{"fromInclusive":"2026-08-01T00:00:00Z","toExclusive":"2026-08-02T00:00:00Z","types":["cnc_raw_telemetry"],"machineId":"machine-1"},"deleted":[],"totalDeletedRows":2,"reason":"retention","performedBy":"planner","performedAt":"2026-08-28T10:00:00Z","backup":{"fileName":"managed.db","createdAt":"2026-08-28T10:00:00Z","byteLength":4096,"sha256":"ABC","integrityVerified":true,"restoreVerified":true},"database":{{database}}}"""),
+            backup);
+        using var api = CreateClient(handler);
+        var from = DateTimeOffset.Parse("2026-08-01T00:00:00Z");
+        var to = DateTimeOffset.Parse("2026-08-02T00:00:00Z");
+        var folder = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Client.Backup", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var catalog = await api.GetServerMaintenanceAsync("windows-1", "planner");
+            var preview = await api.PreviewCollectedDataAsync(new(from, to, ["cnc_raw_telemetry"], "machine-1"), "windows-1", "planner");
+            var purge = await api.PurgeCollectedDataAsync(new(from, to, ["cnc_raw_telemetry"], "machine-1", 2, "retention"), "windows-1", "planner", 7);
+            var download = await api.DownloadDatabaseBackupAsync(folder, "windows-1", "planner", 7);
+
+            Assert.Equal(61, catalog.Database.SchemaVersion);
+            Assert.Equal(2, preview.TotalRows);
+            Assert.Equal(2, purge.TotalDeletedRows);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(download.LocalPath));
+            Assert.All(handler.Requests, request => Assert.Equal("windows-1", request.ClientId));
+            Assert.All(handler.Requests, request => Assert.Equal("planner", request.UserId));
+            Assert.Null(handler.Requests[0].Generation);
+            Assert.Null(handler.Requests[1].Generation);
+            Assert.Equal("7", handler.Requests[2].Generation);
+            Assert.Equal("7", handler.Requests[3].Generation);
+            Assert.Contains("\"expectedTotalRows\":2", handler.Requests[2].Body, StringComparison.Ordinal);
+            Assert.Equal("/api/v1/server-maintenance/backups/download", handler.Requests[3].Path);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
     }
 
     private static PlannerApiClient CreateClient(HttpMessageHandler handler) => new(

@@ -825,6 +825,73 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Database / Backup" ToolTip="Inspect database storage, download a verified backup, or remove selected diagnostic collections">
+                <ScrollViewer Margin="8" VerticalScrollBarVisibility="Auto">
+                    <StackPanel DataContext="{Binding ServerMaintenance}" MaxWidth="900" HorizontalAlignment="Left">
+                        <Border Style="{StaticResource SetupSection}">
+                            <StackPanel>
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Refresh database size" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
+                                    <StackPanel>
+                                        <TextBlock Text="Database storage" FontSize="17" FontWeight="Bold" />
+                                        <TextBlock Text="{Binding DatabaseSizeText}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <TextBlock Text="Deleting rows normally creates reusable SQLite pages; the database file may not immediately become smaller." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SetupSection}" Margin="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Verified HTTP backup" FontSize="17" FontWeight="Bold" />
+                                <TextBlock Text="The Server creates a managed backup, verifies integrity and restore, audits the request, then sends the SQLite file over HTTP. This factory-LAN endpoint is not safe for Internet exposure." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,8" />
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="HTTP endpoint" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BackupHttpEndpoint, Mode=OneWay}" IsReadOnly="True" /></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Save folder on this PC" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BackupFolder, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                </UniformGrid>
+                                <Button Content="Download verified backup" Command="{Binding DownloadBackupCommand}" IsEnabled="{Binding IsEditor}" HorizontalAlignment="Left" />
+                                <TextBlock Text="Only the active Edit Mode holder can download a backup." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SetupSection}" Margin="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Delete collected diagnostic data" FontSize="17" FontWeight="Bold" />
+                                <TextBlock Text="Protected scope: only raw CNC telemetry, Machine state history, and CNC connection events can be selected. Planning data, NC releases, production events, cycle/output records, anomalies, current Machine state, and structured audit history are never deleted here." TextWrapping="Wrap" Foreground="#8A4B08" FontWeight="SemiBold" Margin="0,4,0,10" />
+                                <UniformGrid Columns="3">
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="From UTC (included)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding FromUtc, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="To UTC (excluded)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding ToUtc, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine ID (optional)" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding MachineId, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                </UniformGrid>
+                                <ItemsControl ItemsSource="{Binding DataTypes}" Margin="0,2,0,8">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsSelected}" Margin="0,2">
+                                                <StackPanel Orientation="Horizontal"><TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" /><TextBlock Text=" — " /><TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedTextBrush}" /></StackPanel>
+                                            </CheckBox>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Content="Preview matching rows" Command="{Binding PreviewCommand}" HorizontalAlignment="Left" />
+                                <TextBlock Text="{Binding PreviewSummary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,6,0,8" />
+                                <UniformGrid Columns="2">
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Required deletion reason" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Type the exact confirmation shown below" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding Confirmation, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                                </UniformGrid>
+                                <TextBlock Text="{Binding RequiredConfirmation, StringFormat=Required confirmation: {0}}" FontWeight="Bold" Margin="0,0,0,8" />
+                                <Button Content="Create verified backup and delete previewed rows" Command="{Binding DeleteCommand}" IsEnabled="{Binding IsEditor}" HorizontalAlignment="Left" Foreground="#9F1D20" />
+                                <TextBlock Text="The Server recounts the rows and refuses the deletion if anything changed after preview." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <ProgressBar IsIndeterminate="True" Height="4" Margin="0,8,0,0">
+                            <ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ProgressBar.Style>
+                        </ProgressBar>
+                        <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,7,0,0" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem ToolTip="Configure and send production reports">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ReportsButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Reports / Email" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <ScrollViewer Margin="8" VerticalScrollBarVisibility="Auto"><Border Style="{StaticResource SetupSection}" MaxWidth="760" HorizontalAlignment="Left"><StackPanel IsEnabled="{Binding IsEditor}">

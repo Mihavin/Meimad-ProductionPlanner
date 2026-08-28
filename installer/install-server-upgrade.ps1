@@ -39,10 +39,16 @@ function Get-MsiProperty {
     $database = $windowsInstaller.GetType().InvokeMember(
         'OpenDatabase', 'InvokeMethod', $null, $windowsInstaller, @($Path, 0))
     $view = $database.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$Property'")
-    $view.Execute()
+    [void]$view.Execute()
     $record = $view.Fetch()
     if ($null -eq $record) { throw "MSI property '$Property' is missing." }
-    return $record.StringData(1)
+    $value = $record.StringData(1) |
+        Where-Object { $null -ne $_ } |
+        Select-Object -Last 1
+    if ([string]::IsNullOrWhiteSpace([string]$value)) {
+        throw "MSI property '$Property' is empty."
+    }
+    return [string]$value
 }
 
 function Test-Administrator {

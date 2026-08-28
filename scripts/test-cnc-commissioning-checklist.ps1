@@ -3,8 +3,8 @@ Set-StrictMode -Version Latest
 
 $auditScript = Join-Path $PSScriptRoot 'audit-cnc-commissioning-checklist.ps1'
 $checklist = Join-Path $PSScriptRoot '..\docs\cnc-commissioning-checklist.md'
-$boundedRetest = Join-Path $PSScriptRoot '..\docs\haas-bounded-retest-after-hfo-approval.md'
-$engineeringReview = Join-Path $PSScriptRoot '..\docs\haas-hfo-review-request-2026-08-27.md'
+$boundedRetest = Join-Path $PSScriptRoot '..\docs\haas-bounded-retest-after-internal-approval.md'
+$engineeringReview = Join-Path $PSScriptRoot '..\docs\haas-internal-engineering-review-2026-08-27.md'
 $audit = ((& $auditScript -ChecklistPath $checklist) | ConvertFrom-Json)
 if ($audit.status -ne 'NOT_READY' -or $audit.declaredReady -or
     -not $audit.declarationConsistent -or $audit.checks.total -ne 14 -or

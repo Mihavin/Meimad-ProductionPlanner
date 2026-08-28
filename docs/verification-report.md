@@ -7,15 +7,15 @@ This report retains earlier milestone evidence below. The current Tasks 24-32 re
 - **Repository:** `Meimad-ProductionPlanner`
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
 - **Requirement evidence matrix:** [Tasks 24-32 completion audit](tasks-24-32-completion-audit.md)
-- **Verdict:** Fresh separately executed Debug and Release evidence is 850 tests in each configuration (609 Server and 241 Windows Client), with no failures or skips. Tasks 24-30 add the immutable schema-v59 anomaly ledger/queue, protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. The full audit additionally made OLC, verification-result, and cycle identities fail closed; binds SVS/SVF to the exact release token and nonce so delayed old results cannot resolve a newer challenge; rejects conflicting reused cycle identifiers; and classifies non-pending result replays without false expiry. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 has a blocking physical `FAIL`: the VF-3SS accepted a correct response after at least 130 seconds at M109, its `#3001` sequence is not monotonic across reboot/wrap, and quarantined macro versions 3-5 do not emit the result-correlation evidence now required by the Server. Those macros and packages v1-v3 remain forensic artifacts. The fail-closed record audit reports 4 `PASS`, 1 `FAIL`, 9 `NOT_TESTED`, five incomplete Machine/controller fields, and both sign-offs missing; protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
+- **Verdict:** Fresh separately executed Debug and Release evidence is 863 tests in each configuration (619 Server and 244 Windows Client), with no failures or skips. The added Server-maintenance slice reports database/WAL/shared-memory size without exposing the path, downloads a new restore-verified backup over the factory-LAN HTTP route with SHA-256 verification, and allows preview/recount/backup-before-delete only for the three fixed non-authoritative CNC diagnostic collections. Planning, release, workflow, cycle/output, anomaly, current-state, and audit records remain outside the deletion catalog. Tasks 24-30 add the immutable schema-v61 foundation (including the v59 anomaly ledger/queue, v60 controller mappings, and v61 persistent/alias enforcement), protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. The full audit additionally made OLC, verification-result, and cycle identities fail closed; binds SVS/SVF to the exact release token and nonce so delayed old results cannot resolve a newer challenge; rejects conflicting reused cycle identifiers; and classifies non-pending result replays without false expiry. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 has a blocking physical `FAIL`: the VF-3SS accepted a correct response after at least 130 seconds at M109, its `#3001` sequence is not monotonic across reboot/wrap, and quarantined macro versions 3-5 do not emit the result-correlation evidence now required by the Server. Those macros and packages v1-v3 remain forensic artifacts. A separate structurally tested macro-v6 no-motion candidate now uses a protected finalizer, exact result correlation, and one persistent sequence, but remains unsigned and physically uncommissioned. The fail-closed record audit reports 4 `PASS`, 1 `FAIL`, 9 `NOT_TESTED`, five incomplete Machine/controller fields, and both sign-offs missing; protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
 
 Current Tasks 24-32 repository result, reproduced separately in both Debug and Release:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 609 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 241 | 0 | 0 |
-| **Total** | **850** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 619 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 244 | 0 | 0 |
+| **Total** | **863** | **0** | **0** |
 
 Tasks 24-32 completion boundary:
 
@@ -24,11 +24,11 @@ Tasks 24-32 completion boundary:
 | 24 | Implemented: immutable typed anomaly ledger, idempotent detection, bounded read queue, deterministic messages, and tests. | Silence-only `offset_loader_interrupted` and `tablet_offline` require an approved authoritative signal/threshold before automatic detection; the Server does not fabricate them. |
 | 25 | Implemented: editor-authorized invalidation, Offset Loader revocation/replacement, tablet reassignment/credential rotation/revocation, ordinary QC retry, and attributed audit. No bypass route exists. | Physical recovery procedure rehearsal. |
 | 26 | Implemented: expected version per Machine, strict reported-version comparison, blocking anomaly/message, and tests. | Physical protected-macro report proof. |
-| 27 | Implemented: Machine-scoped transport/program/alias/variable/encrypted-secret/version/digits/timeout/enablement configuration; sensitive tablet projections are excluded. | Site-qualified CNC engineer approval of collision-free mappings and key provisioning. External HFO approval is not required. |
+| 27 | Implemented: Machine-scoped transport/three-program/alias/five-variable/encrypted-secret/version/digits/timeout/enablement configuration with M109/persistent-range validation; sensitive tablet projections are excluded. | Site-qualified CNC engineer approval of collision-free mappings and key provisioning. External HFO approval is not required. |
 | 28 | Implemented: development-only loopback TCP/ASCII simulator with strict scenarios for failure, stale/current releases, sequencing, delay, duplicates, out-of-order evidence, cycles, and next Run. | No physical claim. |
 | 29 | Implemented: existing browser simulator covers all fixed states, verification/failure/expiry, offline last-known-good, low battery, revision change, and only official scoped `SEND_TO_QC`. | Physical panel behavior remains separate. |
 | 30 | Implemented: one real-service automated scenario covers all 29 requested steps and verifies quantities, anomalies, audits, closure, and readable timeline. | No physical claim. |
-| 31 | Checklist, public-vector grader, protected-macro audit reproducer, matched no-motion NC pair, packaging, and fail-closed readiness audit implemented. Current decision is `NOT_READY`; generation and Machine-specific ZIP creation refuse by default, and explicit audit-only reproduction retains the physical-timeout quarantine. | Resolve the M109 execution-barrier and reboot/wrap sequence designs before one bounded retest; nine checks, five Machine/controller fields, two sign-offs, and the one-Machine pilot remain. |
+| 31 | Checklist, public-vector grader, protected-macro audit reproducer, matched no-motion NC pair, packaging, and fail-closed readiness audit implemented. Current decision is `NOT_READY`; generation and Machine-specific ZIP creation refuse by default, and explicit audit-only reproduction retains the physical-timeout quarantine. | Complete written internal review and collision approval of the separate v6 finalizer/persistent-counter candidate, then run one bounded no-motion retest; nine checks, five Machine/controller fields, two sign-offs, and the one-Machine pilot remain. |
 | 32 | Implemented: required documents explicitly retain `REMOVED` persistent mode and `SUPPORTED` protected temporary handshake variables, with implementation/commissioning status reconciled. | Continue same-change documentation discipline. |
 
 Focused development evidence also includes successful builds and `--validate-only`
@@ -47,17 +47,21 @@ The integrated CNC workflow test
 uses real Server services and schema rather than an unauthenticated simulator
 mutation endpoint. See [CNC commissioning checklist](cnc-commissioning-checklist.md)
 for the physical evidence still required. The
-[bounded retest](haas-bounded-retest-after-hfo-approval.md) is prewritten and
+[NGC engineering behavior tests](haas-ngc-engineering-machine-tests.md) map the
+six open controller questions to checksummed no-motion probes using the selected
+`PERSISTENT_COUNTER` contract. The
+[bounded retest](haas-bounded-retest-after-internal-approval.md) is prewritten and
 limited to 30 minutes, but remains explicitly prohibited until the internal CNC
 engineering and design desk gates are complete. External HFO approval is not a
 gate.
 
 Installer build evidence was refreshed on 2026-08-28: `installer\build-installers.ps1`
-published self-contained `win-x64` version `0.1.41` payloads and produced both MSI
-packages. The final client package is 107,563,245 bytes (SHA-256
-`9AE8B59584A3479CF29D8CA496921EF70B665B29FB9C363C9B8A1FAB30744DE1`) and the
-Server package is 43,510,076 bytes (SHA-256
-`D766BBEC852F36535E2E67DAF7EE845EDB6801FD1CBECF5DF7BB792DDBB9F806`). The final
+published self-contained `win-x64` version `0.1.44` payloads and produced both MSI
+packages.
+The final client package is 107,583,725 bytes (SHA-256
+`CDF626854C84FEAC0C7F7744FC1AD104B5C09D5B52FD7F10A0F64B56B3A172C3`) and the
+Server package is 43,530,556 bytes (SHA-256
+`2C06FEB3F53CB08D14E09B3AA1FA50E05A1C5FC23E1021CF8032709C07C464FD`). The final
 WiX builds completed with zero warnings and zero errors. MSI table inspection proves the
 advertised all-users Start Menu shortcut is owned by the executable component in the
 same feature; a source-level regression test guards that relationship. A fresh

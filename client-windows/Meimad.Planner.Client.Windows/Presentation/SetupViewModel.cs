@@ -256,6 +256,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public LegacyExcelImportViewModel LegacyImport { get; } = new();
 
+    public ServerMaintenanceViewModel ServerMaintenance { get; } = new();
+
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public IReadOnlyList<WorkingCalendar> MachineWorkingCalendars => WorkingCalendars
@@ -696,6 +698,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     {
         ServerAddress = address;
         LocalUserName = userName;
+        ServerMaintenance.UpdateConnectionContext(address, userName);
     }
 
     internal void ApplyConnectionStatus(string headline, string detail)
@@ -719,6 +722,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         var apiChanged = !ReferenceEquals(apiClient, newApiClient);
         var nextIsEditor = editStatus?.State == ClientEditState.Editor;
         var nextGeneration = editStatus?.Generation ?? 0;
+        ServerMaintenance.AttachSession(
+            newApiClient, newClientId, LocalUserName, nextGeneration, nextIsEditor, ServerAddress);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
             && isEditor == nextIsEditor

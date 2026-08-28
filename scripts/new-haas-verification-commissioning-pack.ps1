@@ -66,12 +66,17 @@ if ($machineLabel -notmatch '^[A-Z0-9-]{1,40}$') {
 $challengeProgram = Require-IntegerRange challengeProgramNumber $config.challengeProgramNumber 9000 9999
 $verifyProgram = Require-IntegerRange verifyProgramNumber $config.verifyProgramNumber 9000 9999
 if ($challengeProgram -eq $verifyProgram) { throw 'challengeProgramNumber and verifyProgramNumber must be distinct.' }
-$nonceVariable = Require-IntegerRange nonceVariable $config.nonceVariable 1 10999
+$nonceVariable = Require-IntegerRange nonceVariable $config.nonceVariable 10000 10999
 $responseVariable = Require-IntegerRange responseVariable $config.responseVariable 1 10999
-$stateVariable = Require-IntegerRange verificationStateVariable $config.verificationStateVariable 1 10999
-$releaseVariable = Require-IntegerRange releaseTokenVariable $config.releaseTokenVariable 1 10999
-$variables = @($nonceVariable, $responseVariable, $stateVariable, $releaseVariable)
-if (($variables | Select-Object -Unique).Count -ne 4) { throw 'The four configured macro variables must be distinct.' }
+$stateVariable = Require-IntegerRange verificationStateVariable $config.verificationStateVariable 10000 10999
+$releaseVariable = Require-IntegerRange releaseTokenVariable $config.releaseTokenVariable 10000 10999
+$canonicalResponseVariable = if ($responseVariable -ge 500 -and $responseVariable -le 549) {
+    $responseVariable + 10000
+} else { $responseVariable }
+$variables = @($nonceVariable, $canonicalResponseVariable, $stateVariable, $releaseVariable)
+if (($variables | Select-Object -Unique).Count -ne 4) {
+    throw 'The four configured macro variables must be distinct after Haas legacy aliases are normalized.'
+}
 if (-not (($responseVariable -ge 500 -and $responseVariable -le 549) -or
           ($responseVariable -ge 10500 -and $responseVariable -le 10549))) {
     throw 'responseVariable must be in an M109-supported range: 500-549 or 10500-10549.'

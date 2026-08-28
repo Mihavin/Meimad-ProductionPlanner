@@ -105,10 +105,13 @@ key into a production package.
         'new-haas-verification-local-config.ps1',
         'new-haas-verification-commissioning-pack.ps1',
         'new-haas-verification-v6-bench-pack.ps1',
+        'new-haas-ngc-engineering-test-pack.ps1',
         'new-haas-machine-specific-package.ps1',
         'haas-verification-commissioning.example.json',
         'test-haas-verification-commissioning-pack.ps1',
         'test-haas-verification-v6-bench-pack.ps1',
+        'test-haas-ngc-engineering-test-pack.ps1',
+        'audit-haas-ngc-engineering-results.ps1',
         'test-cnc-machine-output-simulator.ps1',
         'invoke-haas-verification-live-bench.ps1',
         'audit-cnc-commissioning-checklist.ps1',
@@ -126,8 +129,9 @@ key into a production package.
     foreach ($name in @(
         'cnc-commissioning-checklist.md',
         'cnc-verification-code-audit-2026-08-27.md',
-        'haas-bounded-retest-after-hfo-approval.md',
-        'haas-hfo-review-request-2026-08-27.md',
+        'haas-bounded-retest-after-internal-approval.md',
+        'haas-internal-engineering-review-2026-08-27.md',
+        'haas-ngc-engineering-machine-tests.md',
         'haas-verification-response-algorithm.md',
         'haas-protected-verification-spike.md')) {
         Copy-Item -LiteralPath (Join-Path $repositoryRoot "docs\$name") -Destination $docFolder
@@ -170,6 +174,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new-haas-verificatio
   -ConfigPath .\machine-v6.local.json `
   -OutputDirectory .\.diagnostics\haas-v6-review `
   -AcknowledgeBenchOnlyCandidate
+
+To generate the independent no-motion controller behavior probes after confirming
+five free O-numbers and a collision-free persistent counter:
+
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new-haas-ngc-engineering-test-pack.ps1 `
+  -MachineLabel <UPPERCASE-LABEL> `
+  -OutputDirectory .\.diagnostics\haas-ngc-engineering-tests\<MACHINE> `
+  -ResponseVariable 10500 -PersistentCounterVariable 10504 `
+  -InitialCounterValue 1 -AcknowledgeNoMotionRealMachineTests `
+  -AcknowledgeOneTimePersistentCounterInitialization
 
 Macro v6 is not production-ready. It requires written internal controls-engineering
 review, collision approval for three protected programs and five variables, and
@@ -222,12 +236,15 @@ enabled on the Server.
             'scripts/new-haas-verification-local-config.ps1',
             'scripts/new-haas-verification-commissioning-pack.ps1',
             'scripts/new-haas-verification-v6-bench-pack.ps1',
+            'scripts/new-haas-ngc-engineering-test-pack.ps1',
+            'scripts/audit-haas-ngc-engineering-results.ps1',
             'scripts/new-haas-machine-specific-package.ps1',
             'scripts/invoke-haas-verification-live-bench.ps1',
             'scripts/audit-cnc-commissioning-checklist.ps1',
             'docs/cnc-commissioning-checklist.md',
-            'docs/haas-bounded-retest-after-hfo-approval.md',
-            'docs/haas-hfo-review-request-2026-08-27.md',
+            'docs/haas-bounded-retest-after-internal-approval.md',
+            'docs/haas-internal-engineering-review-2026-08-27.md',
+            'docs/haas-ngc-engineering-machine-tests.md',
             'simulator/scenario.verification-commissioning.json')) {
             if ($toolkitNames -notcontains $required) { throw "Toolkit ZIP is missing $required." }
         }
