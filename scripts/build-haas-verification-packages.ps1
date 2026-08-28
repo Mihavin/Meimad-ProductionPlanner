@@ -1,11 +1,20 @@
 [CmdletBinding()]
 param(
     [string] $OutputDirectory,
+    [switch] $AcknowledgeQuarantinedAuditOnly,
     [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $AcknowledgeQuarantinedAuditOnly) {
+    throw @'
+Package generation is disabled by default because bench package v3 contains the
+quarantined macro-v5 design. Use -AcknowledgeQuarantinedAuditOnly only to
+reproduce audit artifacts; no generated CNC file may be loaded or enabled.
+'@
+}
 
 $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -45,7 +54,7 @@ function Write-Ascii {
 try {
     & (Join-Path $PSScriptRoot 'new-haas-verification-commissioning-pack.ps1') `
         -ConfigPath (Join-Path $PSScriptRoot 'haas-verification-commissioning.example.json') `
-        -OutputDirectory $benchRoot
+        -OutputDirectory $benchRoot -AcknowledgeQuarantinedAuditOnly
 
     $machineOutput = Join-Path $benchRoot 'MACHINE-OUTPUT-TRANSCRIPT.txt'
     & dotnet run --project (Join-Path $repositoryRoot 'tools\Meimad.Planner.CncSimulator') -- `
@@ -71,7 +80,7 @@ A reviewed input/timer execution barrier and reboot/wrap sequence design are
 required before another physical test.
 
 Required before any controller load:
-1. Haas Factory Outlet or qualified CNC engineer review.
+1. Qualified CNC controls engineer and Meimad production-owner review.
 2. Confirm O9001/O9002 and variables #10500-#10503 do not collide.
 3. Isolate the Machine with spindle/feed disabled for the no-motion bench test.
 4. Confirm Setting 23 protection and M109 behavior on the exact NGC version.
@@ -95,9 +104,11 @@ key into a production package.
     $toolkitScripts = @(
         'new-haas-verification-local-config.ps1',
         'new-haas-verification-commissioning-pack.ps1',
+        'new-haas-verification-v6-bench-pack.ps1',
         'new-haas-machine-specific-package.ps1',
         'haas-verification-commissioning.example.json',
         'test-haas-verification-commissioning-pack.ps1',
+        'test-haas-verification-v6-bench-pack.ps1',
         'test-cnc-machine-output-simulator.ps1',
         'invoke-haas-verification-live-bench.ps1',
         'audit-cnc-commissioning-checklist.ps1',
@@ -114,6 +125,9 @@ key into a production package.
     }
     foreach ($name in @(
         'cnc-commissioning-checklist.md',
+        'cnc-verification-code-audit-2026-08-27.md',
+        'haas-bounded-retest-after-hfo-approval.md',
+        'haas-hfo-review-request-2026-08-27.md',
         'haas-verification-response-algorithm.md',
         'haas-protected-verification-spike.md')) {
         Copy-Item -LiteralPath (Join-Path $repositoryRoot "docs\$name") -Destination $docFolder
@@ -140,17 +154,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new-haas-verificatio
   -MachineId <stable-server-machine-id> -MachineLabel <UPPERCASE-LABEL> `
   -SampleNcIdentity <server-issued-six-digit-nc-id> `
   -SampleOffsetReleaseToken <current-server-issued-six-digit-token> `
+  -MacroVersion 5 `
   -OutputPath .\machine.local.json
 
-Then generate the reviewed candidate macros:
+To reproduce the quarantined failed candidate for audit only:
 
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new-haas-verification-commissioning-pack.ps1 `
-  -ConfigPath .\machine.local.json -OutputDirectory .\generated
+  -ConfigPath .\machine.local.json -OutputDirectory .\generated `
+  -AcknowledgeQuarantinedAuditOnly
 
-Or build a checksummed Machine-specific ZIP directly:
+To generate the separate macro-v6 source for internal desk review only, create a
+second local configuration with -MacroVersion 6 and run:
+
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new-haas-verification-v6-bench-pack.ps1 `
+  -ConfigPath .\machine-v6.local.json `
+  -OutputDirectory .\.diagnostics\haas-v6-review `
+  -AcknowledgeBenchOnlyCandidate
+
+Macro v6 is not production-ready. It requires written internal controls-engineering
+review, collision approval for three protected programs and five variables, and
+the bounded no-motion physical retest before controller loading or Server enablement.
+
+Or reproduce a checksummed quarantined Machine-specific ZIP for audit only:
 
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new-haas-machine-specific-package.ps1 `
-  -ConfigPath .\machine.local.json -OutputZip .\MEIMAD-<MACHINE>-CANDIDATE.zip
+  -ConfigPath .\machine.local.json -OutputZip .\MEIMAD-<MACHINE>-CANDIDATE.zip `
+  -AcknowledgeQuarantinedAuditOnly
 
 The secure prompt secret is never written. The local JSON and generated O9000
 program contain the derived Machine key and are sensitive. Apply site access
@@ -192,10 +221,13 @@ enabled on the Server.
             'README-COMMISSIONING.txt',
             'scripts/new-haas-verification-local-config.ps1',
             'scripts/new-haas-verification-commissioning-pack.ps1',
+            'scripts/new-haas-verification-v6-bench-pack.ps1',
             'scripts/new-haas-machine-specific-package.ps1',
             'scripts/invoke-haas-verification-live-bench.ps1',
             'scripts/audit-cnc-commissioning-checklist.ps1',
             'docs/cnc-commissioning-checklist.md',
+            'docs/haas-bounded-retest-after-hfo-approval.md',
+            'docs/haas-hfo-review-request-2026-08-27.md',
             'simulator/scenario.verification-commissioning.json')) {
             if ($toolkitNames -notcontains $required) { throw "Toolkit ZIP is missing $required." }
         }

@@ -7,7 +7,7 @@ public sealed class HaasDprintProtocolTests
     [Fact]
     public void Offset_loader_event_parses_only_with_complete_ordered_evidence()
     {
-        const string line = "MEIMAD/V/1/EVENT/OLC/ID/VF3-1817/SEQ/1817/MACROVERSION/3/RUN/RUN-42/PROGRAM/O1234/OFFSETRELEASE/483920/NONCE/731841";
+        const string line = "MEIMAD/V/1/EVENT/OLC/ID/VF3-1817/SEQ/1817/MACROVERSION/3/RUN/RUN-42/PROGRAM/654321/OFFSETRELEASE/483920/NONCE/731841";
 
         Assert.True(HaasDprintProtocol.TryParse(line, out var value, out var error), error);
         Assert.Equal("OFFSET_LOADER_COMPLETED", value!.EventType);
@@ -15,7 +15,21 @@ public sealed class HaasDprintProtocolTests
         Assert.Equal(1817, value.Sequence);
         Assert.Equal(3, value.MacroVersion);
         Assert.Equal("RUN-42", value.ProductionRunId);
-        Assert.Equal("O1234", value.ProgramIdentity);
+        Assert.Equal("654321", value.ProgramIdentity);
+        Assert.Equal(483920, value.OffsetReleaseToken);
+        Assert.Equal(731841, value.Nonce);
+    }
+
+    [Theory]
+    [InlineData("SVS", "SETUP_VERIFICATION_SUCCEEDED")]
+    [InlineData("SVF", "SETUP_VERIFICATION_FAILED")]
+    public void Verification_result_requires_challenge_correlation_evidence(
+        string wireCode, string eventType)
+    {
+        var line = $"MEIMAD/V/1/EVENT/{wireCode}/ID/VF3-202/SEQ/202/MACROVERSION/3/PROGRAM/654321/OFFSETRELEASE/483920/NONCE/731841";
+
+        Assert.True(HaasDprintProtocol.TryParse(line, out var value, out var error), error);
+        Assert.Equal(eventType, value!.EventType);
         Assert.Equal(483920, value.OffsetReleaseToken);
         Assert.Equal(731841, value.Nonce);
     }
@@ -41,6 +55,7 @@ public sealed class HaasDprintProtocolTests
     [InlineData("MEIMAD/V/2/EVENT/CST/ID/E1/SEQ/1/MACROVERSION/3", "unsupported_protocol_version")]
     [InlineData("MEIMAD/V/1/EVENT/OLC/ID/E1/SEQ/1/MACROVERSION/3/OFFSETRELEASE/1", "missing_offset_evidence")]
     [InlineData("MEIMAD/V/1/EVENT/OLC/ID/E1/SEQ/1/MACROVERSION/3/OFFSETRELEASE/100000/NONCE/99999", "invalid_offset_evidence_range")]
+    [InlineData("MEIMAD/V/1/EVENT/SVS/ID/E1/SEQ/1/MACROVERSION/3/PROGRAM/654321", "missing_offset_evidence")]
     [InlineData("MEIMAD/V/1/EVENT/CST/ID/E1/SEQ/1/MACROVERSION/3/NONCE/1", "unexpected_offset_evidence")]
     [InlineData("MEIMAD/EVENT/CST/V/1/ID/E1/SEQ/1/MACROVERSION/3", "invalid_field_order")]
     [InlineData("MEIMAD/V/1/EVENT/CST/ID/E1/SEQ/1/MACROVERSION/3/SECRET/X", "invalid_optional_field")]

@@ -2242,7 +2242,7 @@ public sealed class PlannerApiClientTests
     public async Task Cnc_verification_configuration_is_typed_write_only_and_edit_guarded()
     {
         const string responseJson = """
-            {"machineId":"machine-1","dprintTransport":"HAAS_DPRNT_TCP","dprintPort":8080,"challengeProgramNumber":9001,"verifyProgramNumber":9002,"customGcodeAlias":605,"nonceVariable":10801,"responseVariable":10802,"verificationStateVariable":10803,"releaseTokenVariable":10804,"secretConfigured":true,"expectedMacroVersion":3,"responseCodeDigits":6,"verificationTimeoutSeconds":300,"enabled":false,"version":1,"updatedAt":"2026-08-26T12:00:00Z"}
+            {"machineId":"machine-1","dprintTransport":"HAAS_DPRNT_TCP","dprintPort":8080,"challengeProgramNumber":9001,"verifyProgramNumber":9002,"customGcodeAlias":605,"nonceVariable":10501,"responseVariable":10500,"verificationStateVariable":10502,"releaseTokenVariable":10503,"finalizeProgramNumber":9003,"eventSequenceVariable":10504,"secretConfigured":true,"expectedMacroVersion":6,"responseCodeDigits":6,"verificationTimeoutSeconds":300,"enabled":false,"version":1,"updatedAt":"2026-08-26T12:00:00Z"}
             """;
         var handler = new RecordingHandler(
             Json(HttpStatusCode.OK, responseJson),
@@ -2251,8 +2251,8 @@ public sealed class PlannerApiClientTests
 
         var current = await api.GetCncVerificationSettingsAsync("machine-1");
         var saved = await api.UpdateCncVerificationSettingsAsync("machine-1", new(
-            "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10801, 10802, 10803, 10804,
-            "a-machine-secret-value", 3, 6, 300, false, 1), "windows-1", 42);
+            "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10501, 10500, 10502, 10503,
+            9003, 10504, "a-machine-secret-value", 6, 6, 300, false, 1), "windows-1", 42);
 
         Assert.True(current.SecretConfigured);
         Assert.Equal(2, saved.Version);

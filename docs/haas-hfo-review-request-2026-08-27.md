@@ -1,11 +1,22 @@
-# Haas VF-3SS protected verification - HFO review request
+# Haas VF-3SS protected verification - internal engineering decision record
 
 ## Purpose
 
-This request is for a Haas Factory Outlet review before Meimad generates another
-protected-macro commissioning candidate. It is not an executable macro package and
-does not authorize another CNC test. The affected control is a VF-3SS running NGC
-`100.21.000.1001`.
+This worksheet is for a written review by the site's qualified CNC controls
+engineer and the Meimad production owner before the separately generated macro-v6
+bench candidate may be loaded for its bounded no-motion retest. External HFO/vendor approval is explicitly
+not required. This is not an executable macro package and does not authorize
+another CNC test. The affected control is a VF-3SS running NGC `100.21.000.1001`.
+
+Suggested review subject: `VF-3SS NGC M109 post-input timer barrier and persistent evidence counter`
+
+Suggested cover note:
+
+> Please review the timer/input and sequence decisions in this document for our
+> exact VF-3SS/NGC version. This is a no-motion setup-verification interlock. We
+> will not generate or load another candidate until the internal reviewers select
+> and document a supportable post-M109 execution barrier/input pattern and an
+> evidence-sequence design. The counter would never control Machine workflow.
 
 ## Observed failure
 
@@ -36,7 +47,7 @@ References:
 - [Haas Mill Macros](https://www.haascnc.com/service/online-operator-s-manuals/mill-operator-s-manual/mill---macros.html)
 - [Haas Mill Programming Workbook](https://www.haascnc.com/content/dam/haascnc/en/service/reference/programming-workbooks/mill---programming-workbook.pdf)
 
-## Questions requiring written HFO confirmation
+## Questions requiring a written engineering decision
 
 1. On NGC `100.21.000.1001`, what documented block pattern guarantees that a
    `#3001` expression is evaluated only after `M109` has accepted a character?
@@ -69,10 +80,10 @@ input_label:
     reject a non-digit
     consume the digit
 
-invoke the HFO-approved execution barrier/finalizer
+invoke the engineer-approved execution barrier/finalizer
 
 inside the finalizer only:
-    blank barrier blocks if required by HFO
+    blank barrier blocks if required by the approved review
     capture a fresh end timer
     fail closed if end timer is earlier than start timer
     fail closed if elapsed time exceeds the configured limit
@@ -92,7 +103,7 @@ currently treats all Haas DPRNT workflow events for one Machine as one monotonic
 source. Those domains cannot safely be mixed, and `#3001` also restarts after power
 cycling.
 
-Preferred design for review: reserve one additional protected persistent variable
+Implemented v6 candidate design for review: reserve one additional protected persistent variable
 as an increment-only event counter shared by OLC, SVS, SVF, cycle-start, and
 cycle-end emission. It is evidence only: it cannot start, stop, reorder, verify,
 or otherwise control workflow. The Server remains authoritative. Exact replay is
@@ -106,14 +117,15 @@ restarts, controller reboots, and events buffered across a disconnect must be
 distinguished without trusting network timing. It should be selected only if Haas
 does not approve the protected counter.
 
-No implementation choice is approved by this document. The HFO answer and product
-decision must be recorded before changing the generator, schema, ingestion source,
-or commissioning checklist.
+Implementation of the bench candidate is not approval. The internal engineering
+answer and product decision must be recorded before controller loading or any
+commissioning-checklist acceptance change.
 
 ## Acceptance plan after review
 
-1. Record the written HFO answer and approve one sequence design.
-2. Generate exactly one new, visibly bench-only candidate.
+1. Record the written internal engineering answer and approve one sequence design.
+2. Review the already generated, visibly bench-only macro-v6 candidate and its
+   hashes without editing it at the Machine.
 3. Add structural tests for the approved M109/barrier pattern and one sequence
    domain across every emitted event type.
 4. Run all Server, client, package, parser, and simulator tests.
@@ -121,3 +133,48 @@ or commissioning checklist.
 6. Prepare one bounded no-motion physical script with explicit pass/fail stops.
 7. Keep protected verification disabled unless every commissioning gate and both
    sign-offs pass.
+
+## Written response and decision record
+
+Review source: `scripts/new-haas-verification-v6-bench-pack.ps1`. Its manifest is
+`BENCH_ONLY_INTERNAL_REVIEW_REQUIRED`; it requires three protected programs and
+five collision-free variables, uses a separate protected G65 finalizer after the
+M109 loop, repeats NC/release/nonce correlation on SVS/SVF, and fails closed
+instead of wrapping the counter at sequence exhaustion. These statements describe
+the candidate source, not physical acceptance.
+
+Complete this section from the written internal review. A verbal answer or an
+unreferenced sample is insufficient.
+
+| Field | Recorded answer |
+|---|---|
+| Qualified CNC controls engineer / organization | |
+| Internal case or work-order reference | |
+| Response date | |
+| Exact Machine / NGC version covered | |
+| Supported post-M109 fresh-read pattern | |
+| Required G103/blank-block placement | |
+| Reset / E-stop / Single Block / Block Delete constraints | |
+| `#3001` assignment and wrap behavior | |
+| Protected persistent evidence counter supported | `YES` / `NO` / qualified answer |
+| Approved persistent variable range and collision process | |
+| Controller documentation / validated reference | |
+
+Product decision after the response:
+
+- [ ] `PERSISTENT_COUNTER`: one protected, increment-only evidence sequence shared
+  by OLC, SVS, SVF, CST, and CEN; never workflow authority.
+- [ ] `EXPLICIT_EPOCH`: Server protocol/schema change with an unambiguous epoch
+  source and buffered-event rule.
+- [ ] Neither design is approved; protected CNC verification remains abandoned
+  or deferred.
+
+Chosen decision, approver, date, and rationale:
+
+```text
+NOT RECORDED
+```
+
+Only one choice may be selected. After approval, link the answer and decision from
+the commissioning checklist and use the bounded retest document; do not reuse any
+v3-v5 candidate.

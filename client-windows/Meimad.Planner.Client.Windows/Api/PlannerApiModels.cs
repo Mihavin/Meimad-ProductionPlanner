@@ -481,7 +481,8 @@ internal sealed record CncVerificationSettings(
     string MachineId, string DprintTransport, int DprintPort,
     int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
     int NonceVariable, int ResponseVariable, int VerificationStateVariable,
-    int ReleaseTokenVariable, bool SecretConfigured, int ExpectedMacroVersion,
+    int ReleaseTokenVariable, int? FinalizeProgramNumber, int? EventSequenceVariable,
+    bool SecretConfigured, int ExpectedMacroVersion,
     int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
     int Version, DateTimeOffset UpdatedAt);
 
@@ -489,6 +490,7 @@ internal sealed record CncVerificationSettingsUpdate(
     string DprintTransport, int DprintPort, int ChallengeProgramNumber,
     int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
+    int FinalizeProgramNumber, int EventSequenceVariable,
     string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled, int Version);
 

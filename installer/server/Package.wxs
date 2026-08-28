@@ -1,8 +1,9 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package
     Name="Meimad Production Planner Server"
     Manufacturer="Meimad"
-    Version="0.1.39"
+Version="0.1.42"
     UpgradeCode="{49637DC8-BA22-4B14-90C7-AA74B249A38F}"
     Scope="perMachine">
 
@@ -38,7 +39,14 @@
           Start="auto"
           ErrorControl="normal"
           Account="LocalSystem"
-          Arguments="--Database:Path=&quot;[CommonAppDataFolder]MeimadPlanner\Server\data\meimad-planner.db&quot; --Backup:Folder=&quot;[CommonAppDataFolder]MeimadPlanner\Server\backups&quot; --EInk:PackageRoot=&quot;[CommonAppDataFolder]MeimadPlanner\Server\eink&quot;" />
+          Arguments="--Database:Path=&quot;[CommonAppDataFolder]MeimadPlanner\Server\data\meimad-planner.db&quot; --Backup:Folder=&quot;[CommonAppDataFolder]MeimadPlanner\Server\backups&quot; --EInk:PackageRoot=&quot;[CommonAppDataFolder]MeimadPlanner\Server\eink&quot;">
+          <util:ServiceConfig
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="none"
+            ResetPeriodInDays="1"
+            RestartServiceDelayInSeconds="60" />
+        </ServiceInstall>
         <ServiceControl
           Id="ControlPlannerServerService"
           Name="Meimad Planner Server"

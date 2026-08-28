@@ -212,12 +212,14 @@ Schema v52 then atomically creates an expiring one-time verification session wit
 the accepted current Offset Loader event, binding the exact Machine, Run, NC
 release, Offset Loader release, nonce, macro version, and response width. Later
 workflow handling resolves strict protected-macro `SVS`/`SVF` evidence only against
-that current pending session; macro-version, Run, and NC mismatches block resolution.
+that current pending session; the NC identity, Offset Loader release token, nonce,
+macro version, and any supplied Run must match. A delayed old result therefore
+cannot resolve a newer challenge.
 Schema v59 projects the corresponding immutable operational anomalies. These
 implemented Server decisions do not claim that generated protected macro candidates,
 operator input, cleanup, or the physical cutting interlock have passed commissioning.
 
-Task 18 connects post-QC Haas `CYCLE_START`/`CYCLE_END` evidence to this execution architecture without adding a counter model. The Server resolves one assigned active Run Program and validates any supplied Run/program identity. Only a same-source, immediately consecutive END for the open START is a completed cycle. Its immutable workflow event, schema-v47 dedupe record, every coupled output increment, aggregate statuses, and structured audit commit in one transaction. Machine part counters remain diagnostic. Task 19/schema v56 records START/START as an explicit interrupted attempt before opening the new START, and retains orphan or nonconsecutive END events with typed anomalies. Neither path mutates completed quantity.
+Task 18 connects post-QC Haas `CYCLE_START`/`CYCLE_END` evidence to this execution architecture without adding a counter model. The Server requires program identity, resolves one assigned active Run Program, and validates that identity plus any supplied Run identity before writing workflow evidence. A missing identity fails closed as `active_nc_identity_unavailable`; a reused source identifier carrying a conflicting cycle type is rejected as `duplicate_cnc_event`. Only a same-source, immediately consecutive END for the open START is a completed cycle. Its immutable workflow event, schema-v47 dedupe record, every coupled output increment, aggregate statuses, and structured audit commit in one transaction. Machine part counters remain diagnostic. Task 19/schema v56 records START/START as an explicit interrupted attempt before opening the new START, and retains orphan or nonconsecutive END events with typed anomalies. Neither path mutates completed quantity.
 
 Task 20 removes the temporary duplication between manual and CNC cycle updates. Both now invoke one shared SQLite transaction component for exact-cycle guards, every coupled output, program/run and Batch Operation/Batch/Order propagation, the schema-v47 cycle record, and structured audit. Caller-specific Edit Mode/version checks and CNC workflow/identity/sequence checks remain outside that component and are not weakened.
 

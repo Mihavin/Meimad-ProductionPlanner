@@ -33,8 +33,8 @@ public sealed class CncVerificationApiTests
             var foundation = application.Services.GetRequiredService<CncVerificationFoundationService>();
             var authority = new EditAuthority("verification-client", 1);
             await foundation.UpdateSettingsAsync("machine-verification", new(
-                "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10801, 10802, 10803, 10804,
-                "machine-secret-value", 3, 6, 300, true), 0, authority);
+                "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10501, 10500, 10502, 10503,
+                9003, 10504, "machine-secret-value", 6, 6, 300, true), 0, authority);
             var first = await foundation.CreateOffsetLoaderReleaseAsync(
                 "run-verification", new("machine-verification", "gcode-verification",
                     "tools-verification"), authority);
@@ -43,7 +43,7 @@ public sealed class CncVerificationApiTests
                     "run-verification", "machine-verification", "OFFSET_LOADER_COMPLETED",
                     "TEST", "API-OLC-1", 1, NcReleaseId: "gcode-verification",
                     OffsetLoaderReleaseId: first.OffsetLoaderReleaseId,
-                    VerificationSession: new(731841, 3, 6, 300)));
+                    VerificationSession: new(731841, 6, 6, 300)));
 
             using var client = application.GetTestClient();
             using var denied = await client.PostAsJsonAsync(

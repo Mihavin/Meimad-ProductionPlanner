@@ -5,7 +5,7 @@
       "eventType": "OFFSET_LOADER_COMPLETED",
       "eventId": "COMMISSION-OLC-101",
       "sequence": 101,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321",
       "offsetRelease": 483920,
       "nonce": 731841
@@ -14,14 +14,16 @@
       "eventType": "SETUP_VERIFICATION_FAILED",
       "eventId": "COMMISSION-SVF-102",
       "sequence": 102,
-      "macroVersion": 5,
-      "programIdentity": "654321"
+      "macroVersion": 1000,
+      "programIdentity": "654321",
+      "offsetRelease": 483920,
+      "nonce": 731841
     },
     {
       "eventType": "OFFSET_LOADER_COMPLETED",
       "eventId": "COMMISSION-OLC-103",
       "sequence": 103,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321",
       "offsetRelease": 483920,
       "nonce": 731842
@@ -30,28 +32,30 @@
       "eventType": "SETUP_VERIFICATION_SUCCEEDED",
       "eventId": "COMMISSION-SVS-104",
       "sequence": 104,
-      "macroVersion": 5,
-      "programIdentity": "654321"
+      "macroVersion": 1000,
+      "programIdentity": "654321",
+      "offsetRelease": 483920,
+      "nonce": 731842
     },
     {
       "eventType": "CYCLE_START",
       "eventId": "COMMISSION-CST-200",
       "sequence": 200,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321"
     },
     {
       "eventType": "CYCLE_END",
       "eventId": "COMMISSION-CEN-201",
       "sequence": 201,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321"
     },
     {
       "eventType": "CYCLE_END",
       "eventId": "COMMISSION-CEN-201",
       "sequence": 201,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321",
       "repeat": 2
     },
@@ -59,14 +63,14 @@
       "eventType": "CYCLE_START",
       "eventId": "COMMISSION-CST-206",
       "sequence": 206,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321"
     },
     {
       "eventType": "CYCLE_END",
       "eventId": "COMMISSION-CEN-205",
       "sequence": 205,
-      "macroVersion": 5,
+      "macroVersion": 1000,
       "programIdentity": "654321"
     }
   ]

@@ -231,7 +231,6 @@ Write-Host "Building client MSI..."
 Invoke-DotNet -Arguments @(
     "build", $clientInstaller,
     "-c", $Configuration,
-    "--no-restore",
     "-p:GeneratedPayloadFile=$clientPayloadAuthoring",
     "-p:ClientExecutableDir=$clientStage",
     "-p:InstallerOutputPath=$outputPath"
@@ -241,7 +240,6 @@ Write-Host "Building Server MSI..."
 Invoke-DotNet -Arguments @(
     "build", $serverInstaller,
     "-c", $Configuration,
-    "--no-restore",
     "-p:GeneratedPayloadFile=$serverPayloadAuthoring",
     "-p:ServerExecutableDir=$serverStage",
     "-p:InstallerOutputPath=$outputPath"
@@ -252,5 +250,16 @@ if ($packages.Count -ne 2) {
     throw "Expected exactly two MSI packages in $outputPath, found $($packages.Count)."
 }
 
+$checksumPath = Join-Path $outputPath "SHA256SUMS.txt"
+$checksumLines = @($packages | ForEach-Object {
+    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$hash *$($_.Name)"
+})
+[System.IO.File]::WriteAllLines(
+    $checksumPath,
+    $checksumLines,
+    [System.Text.UTF8Encoding]::new($false))
+
 Write-Host "Installers created:"
 $packages | ForEach-Object { Write-Host "  $($_.FullName)" }
+Write-Host "Checksums: $checksumPath"

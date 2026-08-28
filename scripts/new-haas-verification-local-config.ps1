@@ -14,11 +14,13 @@ param(
 
     [ValidateRange(9000, 9999)] [int] $ChallengeProgramNumber = 9001,
     [ValidateRange(9000, 9999)] [int] $VerifyProgramNumber = 9002,
+    [ValidateRange(9000, 9999)] [int] $FinalizeProgramNumber = 9003,
     [ValidateRange(1, 10999)] [int] $NonceVariable = 10501,
     [ValidateRange(1, 10999)] [int] $ResponseVariable = 10500,
     [ValidateRange(1, 10999)] [int] $VerificationStateVariable = 10502,
     [ValidateRange(1, 10999)] [int] $ReleaseTokenVariable = 10503,
-    [ValidateRange(1, 999999)] [int] $MacroVersion = 5,
+    [ValidateRange(10000, 10999)] [int] $EventSequenceVariable = 10504,
+    [ValidateRange(1, 999999)] [int] $MacroVersion = 6,
     [ValidateRange(4, 6)] [int] $ResponseDigits = 6,
     [ValidateRange(30, 3600)] [int] $VerificationTimeoutSeconds = 120,
     [Parameter(Mandatory = $true)]
@@ -34,10 +36,14 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if ([string]::IsNullOrWhiteSpace($MachineId)) { throw 'MachineId is required.' }
-if ($ChallengeProgramNumber -eq $VerifyProgramNumber) { throw 'Protected program numbers must be distinct.' }
+if ((@($ChallengeProgramNumber, $VerifyProgramNumber, $FinalizeProgramNumber) |
+        Select-Object -Unique).Count -ne 3) {
+    throw 'The three protected program numbers must be distinct.'
+}
 if ($TestNcProgramNumber -eq $TestOffsetLoaderProgramNumber) { throw 'Test program numbers must be distinct.' }
-$variables = @($NonceVariable, $ResponseVariable, $VerificationStateVariable, $ReleaseTokenVariable)
-if (($variables | Select-Object -Unique).Count -ne 4) { throw 'The four macro variables must be distinct.' }
+$variables = @($NonceVariable, $ResponseVariable, $VerificationStateVariable,
+    $ReleaseTokenVariable, $EventSequenceVariable)
+if (($variables | Select-Object -Unique).Count -ne 5) { throw 'The five macro variables must be distinct.' }
 if (-not (($ResponseVariable -ge 500 -and $ResponseVariable -le 549) -or
           ($ResponseVariable -ge 10500 -and $ResponseVariable -le 10549))) {
     throw 'ResponseVariable must be in the Haas M109 range 500-549 or 10500-10549.'
@@ -75,10 +81,12 @@ try {
         machineLabel = $MachineLabel
         challengeProgramNumber = $ChallengeProgramNumber
         verifyProgramNumber = $VerifyProgramNumber
+        finalizeProgramNumber = $FinalizeProgramNumber
         nonceVariable = $NonceVariable
         responseVariable = $ResponseVariable
         verificationStateVariable = $VerificationStateVariable
         releaseTokenVariable = $ReleaseTokenVariable
+        eventSequenceVariable = $EventSequenceVariable
         macroVersion = $MacroVersion
         responseDigits = $ResponseDigits
         verificationTimeoutSeconds = $VerificationTimeoutSeconds

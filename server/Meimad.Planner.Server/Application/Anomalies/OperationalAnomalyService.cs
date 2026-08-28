@@ -111,7 +111,7 @@ internal sealed class OperationalAnomalyService(IOperationalAnomalyRepository re
         "cycle_end_without_start" => "A cycle END has no valid immediately preceding START.",
         "cycle_interrupted" => "A cycle was interrupted and did not count output.",
         "cnc_event_sequence_gap" => "CNC event sequence evidence is missing or out of order.",
-        "duplicate_cnc_event" => "A duplicate CNC event was received and ignored idempotently.",
+        "duplicate_cnc_event" => "A duplicate or conflicting CNC event identifier was received and ignored.",
         "unknown_production_run" => "The reported Production Run is unknown or not current for the Machine.",
         "ambiguous_production_run" => "More than one Production Run could match the Machine evidence.",
         "tablet_offline" => "The assigned tablet is offline.",

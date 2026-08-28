@@ -11,16 +11,31 @@ try {
     & (Join-Path $PSScriptRoot 'new-haas-verification-local-config.ps1') `
         -MachineId 'machine-test-1' -MachineLabel 'BENCH-VF3' `
         -OutputPath $localConfig -VerificationSecret $testSecret `
-        -SampleNcIdentity 654321 -SampleOffsetReleaseToken 483920
+        -SampleNcIdentity 654321 -SampleOffsetReleaseToken 483920 -MacroVersion 5
     $localText = Get-Content -LiteralPath $localConfig -Raw
     if ($localText.Contains($testSecretText)) { throw 'Local config leaked the verification secret.' }
     $localValue = $localText | ConvertFrom-Json
     if ($localValue.derivedMachineKey -lt 100000 -or $localValue.derivedMachineKey -gt 999999) {
         throw 'Derived Machine key is outside the required six-digit range.'
     }
+    if ($localValue.macroVersion -ne 5) {
+        throw 'The quarantined audit fixture must remain pinned to macro version 5.'
+    }
+    $blockedByDefault = $false
+    try {
+        & (Join-Path $PSScriptRoot 'new-haas-verification-commissioning-pack.ps1') `
+            -ConfigPath $localConfig -OutputDirectory $temporary
+    }
+    catch {
+        $blockedByDefault = $_.Exception.Message -match 'disabled by default'
+    }
+    if (-not $blockedByDefault) {
+        throw 'Quarantined macro generation must fail unless audit-only reproduction is acknowledged.'
+    }
     & (Join-Path $PSScriptRoot 'new-haas-verification-commissioning-pack.ps1') `
         -ConfigPath $localConfig `
-        -OutputDirectory $temporary
+        -OutputDirectory $temporary `
+        -AcknowledgeQuarantinedAuditOnly
 
     $challenge = Get-Content -LiteralPath (Join-Path $temporary 'O09001-CHALLENGE.CNC') -Raw
     $verify = Get-Content -LiteralPath (Join-Path $temporary 'O09002-VERIFY.CNC') -Raw
@@ -90,8 +105,30 @@ try {
         $actual = (Get-FileHash -LiteralPath (Join-Path $temporary $file.file) -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $file.sha256) { throw "Hash mismatch for $($file.file)." }
     }
+    $machinePackageBlockedByDefault = $false
+    try {
+        & (Join-Path $PSScriptRoot 'new-haas-machine-specific-package.ps1') `
+            -ConfigPath $localConfig -OutputZip $machineZip
+    }
+    catch {
+        $machinePackageBlockedByDefault = $_.Exception.Message -match 'disabled by default'
+    }
+    if (-not $machinePackageBlockedByDefault) {
+        throw 'Quarantined Machine-specific ZIP creation must fail without audit-only acknowledgement.'
+    }
+    $bundleBuildBlockedByDefault = $false
+    try {
+        & (Join-Path $PSScriptRoot 'build-haas-verification-packages.ps1')
+    }
+    catch {
+        $bundleBuildBlockedByDefault = $_.Exception.Message -match 'disabled by default'
+    }
+    if (-not $bundleBuildBlockedByDefault) {
+        throw 'Quarantined bundle creation must fail without audit-only acknowledgement.'
+    }
     & (Join-Path $PSScriptRoot 'new-haas-machine-specific-package.ps1') `
-        -ConfigPath $localConfig -OutputZip $machineZip
+        -ConfigPath $localConfig -OutputZip $machineZip `
+        -AcknowledgeQuarantinedAuditOnly
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::OpenRead($machineZip)
     try {

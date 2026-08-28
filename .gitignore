@@ -6,6 +6,7 @@ Desktop.ini
 .vscode/
 *.suo
 *.user
+~$*.docx
 
 # Local configuration and secrets
 .env

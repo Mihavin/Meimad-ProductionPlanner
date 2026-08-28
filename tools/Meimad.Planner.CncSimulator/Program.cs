@@ -121,12 +121,13 @@ internal static class CncSimulator
             builder.Append("/RUN/").Append(value.ProductionRunId);
         if (value.ProgramIdentity is not null)
             builder.Append("/PROGRAM/").Append(value.ProgramIdentity);
-        if (code == "OLC")
+        var carriesVerificationEvidence = code is "OLC" or "SVS" or "SVF";
+        if (carriesVerificationEvidence)
         {
             if (value.OffsetRelease is < 100000 or > 999999
                 || value.Nonce is < 100000 or > 999999)
                 throw new InvalidOperationException(
-                    "OFFSET_LOADER_COMPLETED requires six-digit offsetRelease and nonce.");
+                    $"{value.EventType} requires six-digit offsetRelease and nonce.");
             builder.Append("/OFFSETRELEASE/").Append(
                     value.OffsetRelease.GetValueOrDefault().ToString(CultureInfo.InvariantCulture))
                 .Append("/NONCE/").Append(
@@ -135,7 +136,7 @@ internal static class CncSimulator
         else if (value.OffsetRelease.HasValue || value.Nonce.HasValue)
         {
             throw new InvalidOperationException(
-                "offsetRelease and nonce are allowed only for OFFSET_LOADER_COMPLETED.");
+                "offsetRelease and nonce are allowed only for OLC/SVS/SVF verification evidence.");
         }
         var line = builder.ToString();
         if (Encoding.ASCII.GetByteCount(line) > 512)
@@ -172,7 +173,7 @@ internal sealed record SimulatorEvent(
     string? EventType,
     string? EventId,
     long Sequence,
-    int MacroVersion = 3,
+    int MacroVersion = 1000,
     string? ProductionRunId = null,
     string? ProgramIdentity = null,
     int? OffsetRelease = null,

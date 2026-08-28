@@ -2,12 +2,14 @@
 
 const state = {
   deviceId: localStorage.getItem("meimad-eink-device-id") || "",
+  tabletId: localStorage.getItem("meimad-eink-tablet-id") || "",
   token: localStorage.getItem("meimad-eink-device-token") || "",
   versionEtag: null,
   manifest: null,
   pollTimer: null,
   imageUrl: null,
   realStatus: null,
+  liveVerificationVisible: false,
   localRevision: 1
 };
 
@@ -52,6 +54,10 @@ function devicePath(suffix) {
   return `/api/v1/eink/devices/${encodeURIComponent(state.deviceId)}${suffix}`;
 }
 
+function physicalTabletPath(suffix) {
+  return `/api/tablets/${encodeURIComponent(state.tabletId)}${suffix}`;
+}
+
 async function checkVersion(force) {
   const conditional = !force && state.versionEtag ? { "If-None-Match": state.versionEtag } : {};
   log("GET version (small change check)");
@@ -69,12 +75,14 @@ async function checkVersion(force) {
 async function loadAll(force = false) {
   clearTimeout(state.pollTimer);
   state.deviceId = byId("device-id").value.trim();
+  state.tabletId = byId("tablet-id").value.trim();
   state.token = byId("device-token").value.trim();
-  if (!state.deviceId || !state.token) {
-    setConnection("Device ID and token are required.", true);
+  if (!state.deviceId || !state.tabletId || !state.token) {
+    setConnection("Device ID, Tablet ID, and token are required.", true);
     return;
   }
   localStorage.setItem("meimad-eink-device-id", state.deviceId);
+  localStorage.setItem("meimad-eink-tablet-id", state.tabletId);
   localStorage.setItem("meimad-eink-device-token", state.token);
   setConnection("Checking version…", false);
   try {
@@ -87,10 +95,12 @@ async function loadAll(force = false) {
       renderScreen(screen.value);
       renderTime(time.value);
       await loadManifest(screen.value.package);
-      await loadPhysicalStatus();
     }
+    // Workflow verification changes independently of the package revision.
+    await loadPhysicalStatus();
     setConnection("Connected • authorized read-only device", false, true);
   } catch (error) {
+    clearLiveVerificationDisplay("SERVER CONTACT FAILED - DO NOT START");
     setConnection(error.message, true);
     log(`ERROR ${error.message}`);
   } finally {
@@ -100,15 +110,74 @@ async function loadAll(force = false) {
 
 async function loadPhysicalStatus() {
   try {
-    const result = await getJson(`/api/tablets/${encodeURIComponent(state.deviceId)}/status`);
+    const result = await getJson(physicalTabletPath("/status"));
     state.realStatus = result.value?.status || null;
     byId("send-to-qc").disabled = state.realStatus !== "IN_SETUP_RUN";
+    renderPhysicalStatus(result.value);
     log(`GET physical status - ${state.realStatus || "UNKNOWN"}`);
   } catch (error) {
     state.realStatus = null;
     byId("send-to-qc").disabled = true;
+    clearLiveVerificationDisplay("SERVER STATUS UNAVAILABLE - DO NOT START");
     log(`Physical status unavailable - ${error.message}`);
   }
+}
+
+function renderPhysicalStatus(value) {
+  const statusToken = String(value?.status || "UNKNOWN");
+  const verification = value?.verification;
+  const waiting = statusToken === "IN_SETUP"
+    && verification?.state === "WAITING_FOR_OPERATOR"
+    && /^[0-9]{4,6}$/.test(String(verification?.response_code || ""));
+  const status = byId("status-block");
+  const verificationBlock = byId("verification-block");
+
+  status.className = `status-block status-${statusToken.toLowerCase()}`;
+  status.innerHTML = `<span class="status-symbol">${statusToken === "BLOCKED" ? "!" : "#"}</span><strong>${escapeHtml(statusToken.replaceAll("_", " "))}</strong>`;
+  byId("machine-number").textContent = value?.machine?.number || "UNASSIGNED";
+  byId("machine-type").textContent = value?.machine?.name || "NO MACHINE";
+  byId("last-update").textContent = `Updated ${new Date().toLocaleString()}`;
+  byId("revision").textContent = `Workflow revision ${value?.revision ?? "-"}`;
+  byId("current-job").innerHTML = value?.part || value?.operation
+    ? `<div class="job-part">${escapeHtml(value?.part?.number || "NO PART")} - ${escapeHtml(value?.part?.name || "")}</div>
+       <div class="job-operation">OP${escapeHtml(value?.operation?.number ?? "-")} - ${escapeHtml(value?.operation?.name || "NO OPERATION")}</div>
+       <div class="job-detail">Run ${escapeHtml(value?.nc_run?.id || "-")}</div>`
+    : `<div class="empty-content">No active physical run.</div>`;
+
+  state.liveVerificationVisible = waiting;
+  verificationBlock.hidden = !verification?.required;
+  verificationBlock.className = `verification-block${verification?.state === "WAITING_FOR_OPERATOR" ? "" : " failure"}`;
+  if (waiting) {
+    verificationBlock.innerHTML = `SERVER RESPONSE CODE<div class="response-code">${escapeHtml(verification.response_code)}</div>`;
+  } else if (verification?.required) {
+    const messages = {
+      EXPIRED: "VERIFICATION EXPIRED - RUN OFFSET LOADER AGAIN",
+      INVALIDATED: "VERIFICATION INVALIDATED - DO NOT START",
+      UNAVAILABLE: "VERIFICATION UNAVAILABLE - DO NOT START"
+    };
+    verificationBlock.textContent = messages[verification.state]
+      || `VERIFICATION ${verification.state || "NOT READY"} - DO NOT START`;
+  } else {
+    verificationBlock.textContent = "";
+  }
+
+  const result = value?.diagnostics?.verification_result || "NONE";
+  const macroVersion = value?.diagnostics?.protected_macro_version || "UNKNOWN";
+  byId("verification-diagnostics").textContent = `SERVER VERIFICATION: ${result} | MACRO: ${macroVersion}`;
+  byId("scenario-state").textContent = `LIVE SERVER | TABLET ${state.tabletId} | ${statusToken}`;
+}
+
+function clearLiveVerificationDisplay(message) {
+  if (!state.liveVerificationVisible) return;
+  state.liveVerificationVisible = false;
+  const verificationBlock = byId("verification-block");
+  verificationBlock.hidden = false;
+  verificationBlock.className = "verification-block failure";
+  verificationBlock.textContent = message;
+  const status = byId("status-block");
+  status.className = "status-block status-blocked";
+  status.innerHTML = '<span class="status-symbol">!</span><strong>VERIFICATION CONTACT LOST</strong>';
+  byId("verification-diagnostics").textContent = "SERVER VERIFICATION: CONTACT LOST | LAST CODE CLEARED";
 }
 
 function renderScreen(screen) {
@@ -237,12 +306,13 @@ function applyLocalScenario() {
   const status = byId("status-block");
   const verificationBlock = byId("verification-block");
   const battery = ensureBatteryLabel();
+  state.liveVerificationVisible = false;
 
   status.className = `status-block status-${workflow.toLowerCase()}`;
   status.innerHTML = `<span class="status-symbol">${workflow === "BLOCKED" ? "!" : "■"}</span><strong>${escapeHtml(workflow.replaceAll("_", " "))}</strong>`;
   verificationBlock.hidden = verification === "none";
   verificationBlock.className = `verification-block${verification === "failed" || verification === "expired" ? " failure" : ""}`;
-  verificationBlock.textContent = verification === "code" ? "SETUP RESPONSE CODE: 042731"
+  verificationBlock.textContent = verification === "code" ? "LOCAL TEST CODE: 042731"
     : verification === "failed" ? "VERIFICATION FAILED - CNC START REMAINS BLOCKED"
     : verification === "expired" ? "VERIFICATION EXPIRED - RUN OFFSET LOADER AGAIN" : "";
   battery.textContent = lowBattery ? "LOW BATTERY - REPLACE 3 AA" : "BATTERY OK";
@@ -256,7 +326,7 @@ async function sendToQc() {
   if (state.realStatus !== "IN_SETUP_RUN") return;
   byId("send-to-qc").disabled = true;
   try {
-    const result = await postJson(`/api/tablets/${encodeURIComponent(state.deviceId)}/events`, { event_type: "SEND_TO_QC" });
+    const result = await postJson(physicalTabletPath("/events"), { event_type: "SEND_TO_QC" });
     log(`POST SEND_TO_QC accepted${result.duplicate ? " (idempotent retry)" : ""}`);
     setConnection("SEND_TO_QC accepted; refreshing authoritative status", false, true);
     await loadPhysicalStatus();
@@ -273,6 +343,7 @@ function schedulePoll() {
 }
 
 byId("device-id").value = state.deviceId;
+byId("tablet-id").value = state.tabletId;
 byId("device-token").value = state.token;
 byId("connect").addEventListener("click", () => loadAll(true));
 byId("apply-scenario").addEventListener("click", applyLocalScenario);
@@ -284,4 +355,4 @@ byId("change-revision").addEventListener("click", () => {
 });
 byId("send-to-qc").addEventListener("click", sendToQc);
 document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
-if (state.deviceId && state.token) loadAll(false);
+if (state.deviceId && state.tabletId && state.token) loadAll(false);

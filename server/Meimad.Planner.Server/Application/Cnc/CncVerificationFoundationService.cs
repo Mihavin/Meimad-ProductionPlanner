@@ -24,7 +24,8 @@ internal sealed record StoredCncVerificationSettings(
     string MachineId, string DprintTransport, int DprintPort,
     int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
     int NonceVariable, int ResponseVariable, int VerificationStateVariable,
-    int ReleaseTokenVariable, string ProtectedSecret, int ExpectedMacroVersion,
+    int ReleaseTokenVariable, int? FinalizeProgramNumber, int? EventSequenceVariable,
+    string ProtectedSecret, int ExpectedMacroVersion,
     int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
     int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
@@ -32,7 +33,8 @@ internal sealed record CncVerificationSettings(
     string MachineId, string DprintTransport, int DprintPort,
     int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
     int NonceVariable, int ResponseVariable, int VerificationStateVariable,
-    int ReleaseTokenVariable, bool SecretConfigured, int ExpectedMacroVersion,
+    int ReleaseTokenVariable, int? FinalizeProgramNumber, int? EventSequenceVariable,
+    bool SecretConfigured, int ExpectedMacroVersion,
     int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
     int Version, DateTimeOffset UpdatedAt);
 
@@ -40,6 +42,7 @@ internal sealed record UpdateCncVerificationSettings(
     string DprintTransport, int DprintPort, int ChallengeProgramNumber,
     int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
+    int FinalizeProgramNumber, int EventSequenceVariable,
     string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled);
 
@@ -51,8 +54,9 @@ internal sealed record CncDprintIngestionContext(
 internal sealed record CncPendingVerificationContext(
     string SessionId, string ProductionRunId, string MachineId,
     string OffsetLoaderReleaseId, string NcReleaseId, int NcIdentityToken,
-    int MacroVersion, int ExpectedMacroVersion, DateTimeOffset ExpiresAt,
-    string SessionState, bool WasDuplicate);
+    int VerificationReleaseToken, int Nonce, int MacroVersion,
+    int ExpectedMacroVersion, DateTimeOffset ExpiresAt, string SessionState,
+    bool WasDuplicate);
 
 internal sealed record CncRecoveryResult(
     string Action, string ProductionRunId, string MachineId,
@@ -147,13 +151,23 @@ internal sealed class CncVerificationFoundationService
         if (command.ChallengeProgramNumber == command.VerifyProgramNumber)
             throw new CncVerificationValidationException("verifyProgramNumber", "program_collision",
                 "Challenge and verification protected programs must be different.");
+        Range(command.FinalizeProgramNumber, 9000, 9999, "finalizeProgramNumber");
+        if (command.FinalizeProgramNumber == command.ChallengeProgramNumber
+            || command.FinalizeProgramNumber == command.VerifyProgramNumber)
+            throw new CncVerificationValidationException("finalizeProgramNumber", "program_collision",
+                "Challenge, verification, and finalizer protected programs must be different.");
         if (command.CustomGcodeAlias.HasValue) Range(command.CustomGcodeAlias.Value, 1, 999, "customGcodeAlias");
         var variables = new[] { command.NonceVariable, command.ResponseVariable,
-            command.VerificationStateVariable, command.ReleaseTokenVariable };
+            command.VerificationStateVariable, command.ReleaseTokenVariable,
+            command.EventSequenceVariable };
         foreach (var value in variables) Range(value, 1, 10999, "verificationVariables");
         if (variables.Distinct().Count() != variables.Length)
             throw new CncVerificationValidationException("verificationVariables", "variable_collision",
                 "Verification variables must be distinct.");
+        if (!IsM109Variable(command.ResponseVariable))
+            throw new CncVerificationValidationException("responseVariable", "unsupported_m109_variable",
+                "responseVariable must be in the Haas M109 range 500-549 or 10500-10549.");
+        Range(command.EventSequenceVariable, 10000, 10999, "eventSequenceVariable");
         if (command.ExpectedMacroVersion <= 0)
             throw new CncVerificationValidationException("expectedMacroVersion", "out_of_range",
                 "expectedMacroVersion must be positive.");
@@ -180,6 +194,7 @@ internal sealed class CncVerificationFoundationService
             command.ChallengeProgramNumber, command.VerifyProgramNumber,
             command.CustomGcodeAlias, command.NonceVariable, command.ResponseVariable,
             command.VerificationStateVariable, command.ReleaseTokenVariable,
+            command.FinalizeProgramNumber, command.EventSequenceVariable,
             protectedSecret, command.ExpectedMacroVersion, command.ResponseCodeDigits,
             command.VerificationTimeoutSeconds, command.Enabled, expectedVersion + 1,
             existing?.CreatedAt ?? now, now);
@@ -220,7 +235,8 @@ internal sealed class CncVerificationFoundationService
         value.MachineId, value.DprintTransport, value.DprintPort,
         value.ChallengeProgramNumber, value.VerifyProgramNumber, value.CustomGcodeAlias,
         value.NonceVariable, value.ResponseVariable, value.VerificationStateVariable,
-        value.ReleaseTokenVariable, true, value.ExpectedMacroVersion,
+        value.ReleaseTokenVariable, value.FinalizeProgramNumber, value.EventSequenceVariable,
+        true, value.ExpectedMacroVersion,
         value.ResponseCodeDigits, value.VerificationTimeoutSeconds, value.Enabled,
         value.Version, value.UpdatedAt);
 
@@ -249,6 +265,8 @@ internal sealed class CncVerificationFoundationService
             throw new CncVerificationValidationException(field, "out_of_range",
                 $"{field} must be between {minimum} and {maximum}.");
     }
+    private static bool IsM109Variable(int value) =>
+        value is >= 500 and <= 549 or >= 10500 and <= 10549;
     private static string RecoveryReason(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

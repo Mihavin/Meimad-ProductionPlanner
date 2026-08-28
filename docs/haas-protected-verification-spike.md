@@ -9,7 +9,7 @@ non-monotonic `#3001` sequence design. Macro candidates v3–v5 and bench packag
 v1–v3 are quarantined. See the
 [CNC verification code audit](cnc-verification-code-audit-2026-08-27.md).
 
-This spike performs no cutting motion, offset write, CNC variable write from the Server, planning mutation, or automatic macro deployment. A Haas Factory Outlet/controller specialist must approve the candidate read-only identity source and temporary variable range before the probe program is loaded.
+This spike performs no cutting motion, offset write, CNC variable write from the Server, planning mutation, or automatic macro deployment. The site's qualified CNC controls engineer must approve the candidate read-only identity source and temporary variable range before the probe program is loaded. External HFO approval is not required.
 
 The repository also contains a generator for a no-motion challenge/verify
 commissioning pack and a development Machine-output scenario. Generated files
@@ -28,7 +28,7 @@ generation, static tests, or simulator validation succeeds.
 
 Official references: [Haas 9xxx edit lock](https://www.haascnc.com/service/codes-settings.type%3Dsetting.machine%3Dmill.value%3DS23.html), [Haas mill macros](https://www.haascnc.com/service/online-operator-s-manuals/mill-operator-s-manual/mill---macros.html), [Haas G65](https://www.haascnc.com/service/codes-settings.type%3Dgcode.machine%3Dmill.value%3DG65.html), [Haas DPRNT](https://www.haascnc.com/service/troubleshooting-and-how-to/how-to/communication-with-external-devices---dprnt.html), and [Haas Machine Data Collection](https://www.haascnc.com/service/online-manuals/next-gen-control-electrical---service-manual/ngc---machine-data-collection.html).
 
-## Required HFO/controller decision before loading a probe
+## Required internal controller-engineering decision before loading a probe
 
 Record all of the following in the evidence file. Do not guess:
 
@@ -50,13 +50,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\haas-verification-
   -MdcPort 5051 `
   -DprntPort 8080 `
   -CaptureSeconds 120 `
-  -CandidateReadOnlyVariables <HFO-approved-variable> `
+  -CandidateReadOnlyVariables <engineer-approved-variable> `
   -OutputPath .\.diagnostics\haas-verification\vf3ss-identity-001.json
 ```
 
 The network address is intentionally not written to the evidence JSON. The output location is ignored operational evidence and must be reviewed before any sanitized conclusion is copied into version-controlled documentation. Never pass the secret, nonce, response, state, or release-token variables as candidates.
 
-During the capture, run only an HFO-reviewed, no-motion protected probe. Identity probes must emit a non-production line beginning `MEIMADSPIKE/`, containing the candidate variable number/value, the protected macro's own O-number, and a test-run identifier. Algorithm-vector probes use the stricter `MEIMADSPIKE/V/1/TEST/...` contract in the response-algorithm document and are graded into the evidence JSON automatically. Neither form may emit `MEIMAD/V/1`, because that prefix is reserved for validated operational ingestion. Compare the protected-macro identity value with Q500 before and after each case:
+During the capture, run only an internally reviewed, no-motion protected probe. Identity probes must emit a non-production line beginning `MEIMADSPIKE/`, containing the candidate variable number/value, the protected macro's own O-number, and a test-run identifier. Algorithm-vector probes use the stricter `MEIMADSPIKE/V/1/TEST/...` contract in the response-algorithm document and are graded into the evidence JSON automatically. Neither form may emit `MEIMAD/V/1`, because that prefix is reserved for validated operational ingestion. Compare the protected-macro identity value with Q500 before and after each case:
 
 | Case | Top-level program | Call form | Required observation |
 |---|---:|---|---|

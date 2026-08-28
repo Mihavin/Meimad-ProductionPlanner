@@ -63,7 +63,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(59L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(60L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -204,6 +204,16 @@ public sealed class MigrationTests
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 59;";
         Assert.Equal("operational_anomalies", await migrationCommand.ExecuteScalarAsync());
 
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 60;";
+        Assert.Equal("cnc_verification_bench_v6_mappings", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM pragma_table_info('cnc_verification_settings')
+            WHERE (name='finalize_program_number' AND "notnull"=0)
+               OR (name='event_sequence_variable' AND "notnull"=0);
+            """;
+        Assert.Equal(2L, (long)(await migrationCommand.ExecuteScalarAsync())!);
+
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM sqlite_master
             WHERE (type='table' AND name IN(
@@ -308,7 +318,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(59L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(60L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1521,7 +1531,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 60;";
+            command.CommandText = "PRAGMA user_version = 61;";
             await command.ExecuteNonQueryAsync();
         }
 

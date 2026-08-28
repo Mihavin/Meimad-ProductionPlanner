@@ -59,6 +59,11 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 28. A persistent CNC Setup/Production macro variable is not a workflow authority and must not be reintroduced. Server workflow is projected from immutable Production Run operational events. Protected temporary CNC variables are permitted only for the separately commissioned setup-verification handshake; their Machine-specific mapping must be configured, not embedded in business rules.
 29. Every newly approved NC release must already contain exactly one stable generic Meimad verification hook as its first executable block. The hook carries a globally unique six-digit NC identity bound immutably to that exact release. The Server validates and records it but never inserts or rewrites NC content. Historical releases are not backfilled or treated as verification-eligible until explicitly re-released with a valid hook.
 
+CNC controller-state boundary:
+
+- **Persistent CNC workflow mode variable: REMOVED.**
+- **Protected temporary setup verification variables: SUPPORTED**, only for the configured, separately commissioned challenge/response handshake. They are never planning or workflow authority.
+
 ## Engineering boundaries
 
 - Put server-owned domain rules, validation, timeline calculation, conflict detection, edit-token coordination, persistence, backup, and API behavior under `server/`.

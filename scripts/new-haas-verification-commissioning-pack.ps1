@@ -5,11 +5,24 @@ param(
 
     [string] $OutputDirectory,
 
+    [switch] $AcknowledgeQuarantinedAuditOnly,
+
     [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $AcknowledgeQuarantinedAuditOnly) {
+    throw @'
+Generation is disabled by default: this source contains the quarantined macro-v5
+design that failed the physical M109 timeout test and uses a non-monotonic #3001
+event sequence. It is not loadable CNC code. Use
+-AcknowledgeQuarantinedAuditOnly only to reproduce audit fixtures in an isolated
+development workspace; it does not authorize packaging, controller loading, or
+Server enablement.
+'@
+}
 
 function Require-IntegerRange {
     param([string] $Name, [object] $Value, [int] $Minimum, [int] $Maximum)
@@ -64,6 +77,9 @@ if (-not (($responseVariable -ge 500 -and $responseVariable -le 549) -or
     throw 'responseVariable must be in an M109-supported range: 500-549 or 10500-10549.'
 }
 $macroVersion = Require-IntegerRange macroVersion $config.macroVersion 1 999999
+if ($macroVersion -ne 5) {
+    throw 'The quarantined audit reproducer is pinned to macroVersion 5. It must never label the old design as a newer candidate.'
+}
 $responseDigits = Require-IntegerRange responseDigits $config.responseDigits 4 6
 $timeoutSeconds = Require-IntegerRange verificationTimeoutSeconds $config.verificationTimeoutSeconds 30 3600
 $machineKey = Require-IntegerRange derivedMachineKey $config.derivedMachineKey 100000 999999
@@ -121,7 +137,7 @@ $values = @{
 $challengeTemplate = @'
 %
 O0{{CHALLENGE}} (MEIMAD PROTECTED CHALLENGE V1)
-(COMMISSIONING CANDIDATE - NO MOTION - HFO APPROVAL REQUIRED)
+(COMMISSIONING CANDIDATE - NO MOTION - ENGINEERING APPROVAL REQUIRED)
 (A OFFSET RELEASE TOKEN - B EXPECTED NC IDENTITY)
 G103 P1
 #{{STATE_VAR}}=#0
@@ -184,7 +200,7 @@ $values.FOLD_BLOCKS = $foldBlocks.ToString().TrimEnd("`r", "`n")
 $verifyTemplate = @'
 %
 O0{{VERIFY}} (MEIMAD PROTECTED VERIFY V1)
-(COMMISSIONING CANDIDATE - NO MOTION - HFO APPROVAL REQUIRED)
+(COMMISSIONING CANDIDATE - NO MOTION - ENGINEERING APPROVAL REQUIRED)
 (A IMMUTABLE SIX DIGIT NC IDENTITY)
 (MACHINE KEY IS LOCAL PROTECTED DATA - NEVER DPRNT)
 G103 P1
@@ -336,7 +352,7 @@ $manifest = [ordered]@{
     inputMethod = 'M109_SINGLE_DIGIT'
     files = @($manifestFiles)
     requiredApproval = @(
-        'Haas Factory Outlet or qualified CNC engineer review',
+        'qualified CNC controls engineer and Meimad owner review',
         'collision-free protected program and variable mapping',
         'Setting 23 and operator-access validation',
         'physical seven-vector arithmetic test',

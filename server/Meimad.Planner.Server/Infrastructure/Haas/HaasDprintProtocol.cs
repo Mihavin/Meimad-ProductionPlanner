@@ -76,12 +76,14 @@ internal static partial class HaasDprintProtocol
         if (!OptionalPositiveInt(map, "OFFSETRELEASE", out var releaseToken)
             || !OptionalNonnegativeInt(map, "NONCE", out var nonce))
             return Fail("invalid_numeric_field", out error);
-        if (eventType == "OFFSET_LOADER_COMPLETED" && (!releaseToken.HasValue || !nonce.HasValue))
+        var carriesVerificationEvidence = eventType is "OFFSET_LOADER_COMPLETED"
+            or "SETUP_VERIFICATION_SUCCEEDED" or "SETUP_VERIFICATION_FAILED";
+        if (carriesVerificationEvidence && (!releaseToken.HasValue || !nonce.HasValue))
             return Fail("missing_offset_evidence", out error);
-        if (eventType == "OFFSET_LOADER_COMPLETED"
+        if (carriesVerificationEvidence
             && (releaseToken is < 100000 or > 999999 || nonce is < 100000 or > 999999))
             return Fail("invalid_offset_evidence_range", out error);
-        if (eventType != "OFFSET_LOADER_COMPLETED" && (releaseToken.HasValue || nonce.HasValue))
+        if (!carriesVerificationEvidence && (releaseToken.HasValue || nonce.HasValue))
             return Fail("unexpected_offset_evidence", out error);
         value = new(eventType, map["ID"], sequence, macroVersion,
             runId, program, releaseToken, nonce, trimmed);

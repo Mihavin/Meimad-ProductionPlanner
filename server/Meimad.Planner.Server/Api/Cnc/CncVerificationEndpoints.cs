@@ -68,6 +68,7 @@ internal static class CncVerificationEndpoints
                 request.ChallengeProgramNumber, request.VerifyProgramNumber,
                 request.CustomGcodeAlias, request.NonceVariable, request.ResponseVariable,
                 request.VerificationStateVariable, request.ReleaseTokenVariable,
+                request.FinalizeProgramNumber, request.EventSequenceVariable,
                 request.VerificationSecret, request.ExpectedMacroVersion,
                 request.ResponseCodeDigits, request.VerificationTimeoutSeconds,
                 request.Enabled), request.Version, authority!, token);
@@ -146,6 +147,7 @@ internal sealed record UpdateCncVerificationSettingsRequest(
     string? DprintTransport, int DprintPort, int ChallengeProgramNumber,
     int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
+    int FinalizeProgramNumber, int EventSequenceVariable,
     string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled, int Version);
 

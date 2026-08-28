@@ -46,6 +46,16 @@ the Server retains actual receipt time. Explicit sequence/timing values allow ga
 delay, and out-of-order delivery. Another `OFFSET_LOADER_COMPLETED` can identify
 the next Production Run.
 
+`OFFSET_LOADER_COMPLETED`, `SETUP_VERIFICATION_SUCCEEDED`, and
+`SETUP_VERIFICATION_FAILED` require six-digit `offsetRelease` and `nonce` values.
+The result events must repeat the exact challenge values; this lets development
+tests prove that delayed evidence from an older challenge cannot resolve a newer
+pending session.
+
+The bundled scenarios use synthetic macro version `1000`. It is a simulator-only
+marker, not a CNC macro candidate or commissioning claim; quarantined physical
+versions 3-5 do not satisfy this hardened result format.
+
 The scenario contains CNC encodings for QC/tablet event names so the wire parser
 can be exercised, but the production Server deliberately defers those CNC events.
 Official `SEND_TO_QC` remains tablet-authenticated and QC PASS/FAIL remains an

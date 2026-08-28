@@ -2,7 +2,7 @@
 
 ## Status
 
-Algorithm v1 is an implemented **reference and physically matched arithmetic candidate**, not commissioned production behavior. On 2026-08-26 the VF-3SS reproduced every published vector, including leading-zero response `0282`. Schema v52 retains the validated six-digit nonce in a pending one-time Server session; the authenticated assigned-tablet status projection derives the fixed-width response in memory, and strict protected-macro success/failure DPRINT events resolve that current session and drive the Server workflow. CNC-side production input, alarms, cleanup, protected-key behavior, and the physical cutting interlock remain uncommissioned.
+Algorithm v1 is an implemented **reference and physically matched arithmetic candidate**, not commissioned production behavior. On 2026-08-26 the VF-3SS reproduced every published vector, including leading-zero response `0282`. Schema v52 retains the validated six-digit nonce in a pending one-time Server session; the authenticated assigned-tablet status projection derives the fixed-width response in memory. The hardened Server accepts a protected-macro success/failure DPRINT only when it repeats the exact NC identity, Offset Loader release token, and nonce of that session. Quarantined macro versions 3-5 predate this correlation requirement and cannot resolve a current Server session. CNC-side production input, alarms, cleanup, protected-key behavior, and the physical cutting interlock remain uncommissioned.
 
 **Macro candidates v3–v5 and bench packages v1–v3 are quarantined.** On
 2026-08-27 the VF-3SS accepted a correct response after at least 130 seconds at
@@ -63,7 +63,7 @@ remainder = state - FIX[state / 90909] * 90909
 state = remainder * 11 + symbol
 ```
 
-Every state and intermediate remains between zero and `999998`. This avoids relying on large integers, but it does not eliminate Haas floating-point round-off risk. The protected implementation must apply the HFO-approved integer normalization, use `ROUND` for comparisons where required, limit look-ahead as commissioned, and match the reference vectors on the installed controller software.
+Every state and intermediate remains between zero and `999998`. This avoids relying on large integers, but it does not eliminate Haas floating-point round-off risk. The protected implementation must apply the internally approved integer normalization, use `ROUND` for comparisons where required, limit look-ahead as commissioned, and match the reference vectors on the installed controller software.
 
 The final response is:
 
@@ -113,7 +113,7 @@ The same capture tool grades the direct/nested commissioning pack into `identity
 
 ## Protected-program layout candidate
 
-The commissioning pack now includes O09012/O09013 as a no-motion, public-key vector candidate. It is not production macro code and still requires HFO review plus physical proof of program numbers, temporary variable `#10500`, DPRNT behavior, `FIX` arithmetic, Reset cleanup, and access protection on the actual control.
+The commissioning pack now includes O09012/O09013 as a no-motion, public-key vector candidate. It is not production macro code and still requires qualified internal CNC engineering review plus physical proof of program numbers, temporary variable `#10500`, DPRNT behavior, `FIX` arithmetic, Reset cleanup, and access protection on the actual control. External HFO approval is not required.
 
 - The Offset Loader calls the configured protected challenge program only after every offset write succeeds. That program first invalidates prior success, establishes a fresh six-digit nonce, retains the current six-digit Offset Loader token, and emits the strict `OLC` DPRINT.
 - The approved NC file calls the configured protected verification program as its first executable block and passes its six-digit identity through `A...`; Haas documents that `A` maps to local variable `#1`. The decimal point is mandatory in the Meimad hook so the six-digit value is not scaled as an integer macro argument.
@@ -128,6 +128,13 @@ digit. Following the physical timeout failure, every newly generated output is
 marked `QUARANTINED_PHYSICAL_TIMEOUT_FAILURE`. It must not be loaded. A reviewed
 replacement input/timer and sequence design is required before a new candidate is
 issued.
+
+Generation and Machine-specific ZIP creation now fail closed by default. The long
+`-AcknowledgeQuarantinedAuditOnly` switch is required solely to reproduce hashed
+audit fixtures in an isolated development workspace. The switch does not change
+the manifest status, approve the macro, authorize a CNC load, or permit Server
+enablement. Automated tests prove both the default refusal and the retained
+quarantine marking.
 
 The generator reads the already-derived six-digit Machine key only from a local
 JSON file, refuses the public `271828` key unless explicitly producing an isolated

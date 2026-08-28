@@ -6,11 +6,22 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $OutputZip,
 
+    [switch] $AcknowledgeQuarantinedAuditOnly,
+
     [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $AcknowledgeQuarantinedAuditOnly) {
+    throw @'
+Machine-specific packaging is disabled by default because the contained macro-v5
+design failed physical timeout and sequence acceptance. Use
+-AcknowledgeQuarantinedAuditOnly only to reproduce a quarantined audit artifact;
+it does not authorize controller loading or Server enablement.
+'@
+}
 
 $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $resolvedConfig = (Resolve-Path -LiteralPath $ConfigPath).Path
@@ -52,7 +63,8 @@ $staging = Join-Path $stagingParent ([Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($staging) | Out-Null
 try {
     & (Join-Path $PSScriptRoot 'new-haas-verification-commissioning-pack.ps1') `
-        -ConfigPath $resolvedConfig -OutputDirectory $staging
+        -ConfigPath $resolvedConfig -OutputDirectory $staging `
+        -AcknowledgeQuarantinedAuditOnly
 
     $readme = @"
 MEIMAD HAAS MACHINE-SPECIFIC VERIFICATION CANDIDATE

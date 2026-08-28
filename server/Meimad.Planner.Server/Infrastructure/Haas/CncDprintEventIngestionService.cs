@@ -32,6 +32,17 @@ internal sealed class CncDprintEventIngestionService(
             }
             if (parsed!.EventType is "CYCLE_START" or "CYCLE_END")
             {
+                if (parsed.ProgramIdentity is null)
+                {
+                    await TrackAsync(
+                        "active_nc_identity_unavailable", machineId,
+                        parsed.ProductionRunId, parsed.SourceEventId,
+                        "program_identity_missing", token);
+                    logger.LogWarning(
+                        "Rejected CNC production-cycle event without NC identity. MachineId={MachineId} EventType={EventType} EventId={EventId}",
+                        machineId, parsed.EventType, parsed.SourceEventId);
+                    continue;
+                }
                 var result = await productionRuns.ConsumeCycleEventAsync(new(
                     machineId, parsed.EventType, parsed.SourceEventId, parsed.Sequence,
                     parsed.MacroVersion, parsed.ProductionRunId, parsed.ProgramIdentity,
@@ -52,6 +63,7 @@ internal sealed class CncDprintEventIngestionService(
                         "cycle_target_unresolved" when parsed.ProgramIdentity is not null =>
                             "wrong_nc_program",
                         "cycle_target_unresolved" => "active_nc_identity_unavailable",
+                        "source_event_conflict" => "duplicate_cnc_event",
                         _ => (string?)null
                     };
                     if (anomalyType is not null)
@@ -84,6 +96,20 @@ internal sealed class CncDprintEventIngestionService(
                         machineId, parsed.SourceEventId);
                     continue;
                 }
+                if (parsed.OffsetReleaseToken != pending.VerificationReleaseToken)
+                {
+                    await TrackAsync(
+                        "stale_offset_loader", machineId, pending.ProductionRunId,
+                        parsed.SourceEventId, "verification_release_token_mismatch", token);
+                    continue;
+                }
+                if (parsed.Nonce != pending.Nonce)
+                {
+                    await TrackAsync(
+                        "offset_loader_not_executed", machineId, pending.ProductionRunId,
+                        parsed.SourceEventId, "verification_challenge_mismatch", token);
+                    continue;
+                }
                 if (pending.WasDuplicate)
                 {
                     await TrackAsync(
@@ -93,9 +119,15 @@ internal sealed class CncDprintEventIngestionService(
                 }
                 if (pending.SessionState != "PENDING")
                 {
-                    if (pending.SessionState != "EXPIRED")
+                    var anomalyType = pending.SessionState switch
+                    {
+                        "SUPERSEDED" => "stale_offset_loader",
+                        "SUCCEEDED" or "FAILED" => "duplicate_cnc_event",
+                        _ => (string?)null
+                    };
+                    if (anomalyType is not null)
                         await TrackAsync(
-                            "verification_expired", machineId, pending.ProductionRunId,
+                            anomalyType, machineId, pending.ProductionRunId,
                             parsed.SourceEventId, "verification_session_not_pending", token);
                     logger.LogWarning(
                         "Rejected CNC verification result for a non-pending session. MachineId={MachineId} EventId={EventId} SessionState={SessionState}",
@@ -119,9 +151,16 @@ internal sealed class CncDprintEventIngestionService(
                         parsed.SourceEventId, "run_identity_mismatch", token);
                     continue;
                 }
-                if (parsed.ProgramIdentity is not null
-                    && parsed.ProgramIdentity != pending.NcIdentityToken.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture))
+                if (parsed.ProgramIdentity is null)
+                {
+                    await TrackAsync(
+                        "active_nc_identity_unavailable", machineId,
+                        pending.ProductionRunId, parsed.SourceEventId,
+                        "program_identity_missing", token);
+                    continue;
+                }
+                if (parsed.ProgramIdentity != pending.NcIdentityToken.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture))
                 {
                     await TrackAsync(
                         "wrong_nc_program", machineId, pending.ProductionRunId,
@@ -138,6 +177,8 @@ internal sealed class CncDprintEventIngestionService(
                     {
                         macroVersion = parsed.MacroVersion,
                         programIdentity = parsed.ProgramIdentity,
+                        offsetReleaseToken = parsed.OffsetReleaseToken,
+                        nonce = parsed.Nonce,
                         rawLine = parsed.RawLine
                     }),
                     VerificationResolution: new(pending.SessionId, succeeded)), token);
@@ -177,6 +218,28 @@ internal sealed class CncDprintEventIngestionService(
                     "unknown_production_run", machineId, parsed.ProductionRunId,
                     parsed.SourceEventId, "run_identity_mismatch", token);
                 logger.LogWarning("Rejected mismatched Offset Loader DPRINT evidence. MachineId={MachineId} EventId={EventId}",
+                    machineId, parsed.SourceEventId);
+                continue;
+            }
+            if (parsed.ProgramIdentity is null)
+            {
+                await TrackAsync(
+                    "active_nc_identity_unavailable", machineId,
+                    context.ProductionRunId, parsed.SourceEventId,
+                    "program_identity_missing", token);
+                logger.LogWarning(
+                    "Rejected Offset Loader DPRINT evidence without NC identity. MachineId={MachineId} EventId={EventId}",
+                    machineId, parsed.SourceEventId);
+                continue;
+            }
+            if (parsed.ProgramIdentity != context.NcIdentityToken.ToString(
+                System.Globalization.CultureInfo.InvariantCulture))
+            {
+                await TrackAsync(
+                    "wrong_nc_program", machineId, context.ProductionRunId,
+                    parsed.SourceEventId, "nc_identity_mismatch", token);
+                logger.LogWarning(
+                    "Rejected Offset Loader DPRINT evidence with mismatched NC identity. MachineId={MachineId} EventId={EventId}",
                     machineId, parsed.SourceEventId);
                 continue;
             }

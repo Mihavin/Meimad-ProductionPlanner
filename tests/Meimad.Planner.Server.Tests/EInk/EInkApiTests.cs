@@ -738,6 +738,8 @@ public sealed class EInkApiTests
             var html = await page.Content.ReadAsStringAsync();
             Assert.Contains("READ-ONLY", html, StringComparison.Ordinal);
             Assert.Contains("SEND_TO_QC", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"tablet-id\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"verification-diagnostics\"", html, StringComparison.Ordinal);
             foreach (var status in new[] { "READY_FOR_SETUP", "IN_SETUP", "IN_SETUP_RUN", "IN_QC", "READY_FOR_PRODUCTION", "IN_PRODUCTION", "BLOCKED" })
             {
                 Assert.Contains(status, html, StringComparison.Ordinal);
@@ -754,6 +756,16 @@ public sealed class EInkApiTests
             Assert.Contains("method: \"POST\"", javascript, StringComparison.Ordinal);
             Assert.Contains("{ event_type: \"SEND_TO_QC\" }", javascript, StringComparison.Ordinal);
             Assert.Contains("result.duplicate", javascript, StringComparison.Ordinal);
+            Assert.Contains("physicalTabletPath(\"/status\")", javascript, StringComparison.Ordinal);
+            Assert.Contains("physicalTabletPath(\"/events\")", javascript, StringComparison.Ordinal);
+            Assert.Contains("renderPhysicalStatus(result.value)", javascript, StringComparison.Ordinal);
+            Assert.Contains("statusToken === \"IN_SETUP\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("verification?.state === \"WAITING_FOR_OPERATOR\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("value?.part?.number", javascript, StringComparison.Ordinal);
+            Assert.Contains("value?.operation?.number", javascript, StringComparison.Ordinal);
+            Assert.Contains("clearLiveVerificationDisplay", javascript, StringComparison.Ordinal);
+            Assert.Contains("LAST CODE CLEARED", javascript, StringComparison.Ordinal);
+            Assert.Contains("LOCAL TEST CODE", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("production_run_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("machine_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);

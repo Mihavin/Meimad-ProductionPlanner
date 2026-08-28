@@ -20,9 +20,10 @@
   <section class="connection-panel" aria-labelledby="connection-heading">
     <div>
       <h2 id="connection-heading">Device configuration</h2>
-      <p>Enter a registered device ID and its scoped token. These values stay in this browser.</p>
+      <p>Enter the registration Device ID, operator-facing Tablet ID, and scoped token. These values stay in this browser.</p>
     </div>
-    <label>Device ID<input id="device-id" autocomplete="off" spellcheck="false"></label>
+    <label>Device ID<input id="device-id" autocomplete="off" spellcheck="false" placeholder="Registration device ID"></label>
+    <label>Tablet ID<input id="tablet-id" autocomplete="off" spellcheck="false" placeholder="For example 8672"></label>
     <label>Device token<input id="device-token" type="password" autocomplete="off" spellcheck="false"></label>
     <button id="connect" type="button">Connect / Refresh</button>
     <div id="connection-state" class="connection-state" role="status">Not connected</div>
@@ -73,6 +74,7 @@
         <section id="machine-page" class="screen-page active-page">
           <div id="status-block" class="status-block status-idle"><span class="status-symbol">■</span><strong>NO DATA</strong></div>
           <div id="verification-block" class="verification-block" hidden></div>
+          <div id="verification-diagnostics" class="verification-diagnostics">SERVER VERIFICATION: NOT CONNECTED</div>
           <div class="machine-layout">
             <article class="current-card">
               <div class="label">CURRENT JOB</div>

@@ -92,12 +92,14 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string verificationChallengeProgram = "9001";
     private string verificationVerifyProgram = "9002";
     private string verificationCustomGcodeAlias = string.Empty;
-    private string verificationNonceVariable = "10801";
-    private string verificationResponseVariable = "10802";
-    private string verificationStateVariable = "10803";
-    private string verificationReleaseTokenVariable = "10804";
+    private string verificationNonceVariable = "10501";
+    private string verificationResponseVariable = "10500";
+    private string verificationStateVariable = "10502";
+    private string verificationReleaseTokenVariable = "10503";
+    private string verificationFinalizeProgram = "9003";
+    private string verificationEventSequenceVariable = "10504";
     private string verificationSecret = string.Empty;
-    private string verificationMacroVersion = "3";
+    private string verificationMacroVersion = "6";
     private string verificationCodeDigits = "6";
     private string verificationTimeoutSeconds = "300";
     private bool verificationEnabled;
@@ -526,6 +528,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string VerificationResponseVariable { get => verificationResponseVariable; set => SetField(ref verificationResponseVariable, value); }
     public string VerificationStateVariable { get => verificationStateVariable; set => SetField(ref verificationStateVariable, value); }
     public string VerificationReleaseTokenVariable { get => verificationReleaseTokenVariable; set => SetField(ref verificationReleaseTokenVariable, value); }
+    public string VerificationFinalizeProgram { get => verificationFinalizeProgram; set => SetField(ref verificationFinalizeProgram, value); }
+    public string VerificationEventSequenceVariable { get => verificationEventSequenceVariable; set => SetField(ref verificationEventSequenceVariable, value); }
     public string VerificationSecret { get => verificationSecret; set => SetField(ref verificationSecret, value); }
     public string VerificationMacroVersion { get => verificationMacroVersion; set => SetField(ref verificationMacroVersion, value); }
     public string VerificationCodeDigits { get => verificationCodeDigits; set => SetField(ref verificationCodeDigits, value); }
@@ -1162,6 +1166,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             || !int.TryParse(VerificationResponseVariable, out var responseVariable)
             || !int.TryParse(VerificationStateVariable, out var stateVariable)
             || !int.TryParse(VerificationReleaseTokenVariable, out var releaseTokenVariable)
+            || !int.TryParse(VerificationFinalizeProgram, out var finalizeProgram)
+            || !int.TryParse(VerificationEventSequenceVariable, out var eventSequenceVariable)
             || !int.TryParse(VerificationMacroVersion, out var macroVersion)
             || !int.TryParse(VerificationCodeDigits, out var digits)
             || !int.TryParse(VerificationTimeoutSeconds, out var timeout))
@@ -1174,7 +1180,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var value = await apiClient!.UpdateCncVerificationSettingsAsync(
                 SelectedMachine!.MachineId, new("HAAS_DPRNT_TCP", dprintPort,
                     challengeProgram, verifyProgram, alias, nonceVariable, responseVariable,
-                    stateVariable, releaseTokenVariable, NullIfBlank(VerificationSecret),
+                    stateVariable, releaseTokenVariable, finalizeProgram, eventSequenceVariable,
+                    NullIfBlank(VerificationSecret),
                     macroVersion, digits, timeout, VerificationEnabled,
                     verificationSettingsVersion), clientId, editGeneration);
             PopulateVerificationConfiguration(value);
@@ -1192,6 +1199,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         VerificationResponseVariable = value.ResponseVariable.ToString(CultureInfo.InvariantCulture);
         VerificationStateVariable = value.VerificationStateVariable.ToString(CultureInfo.InvariantCulture);
         VerificationReleaseTokenVariable = value.ReleaseTokenVariable.ToString(CultureInfo.InvariantCulture);
+        VerificationFinalizeProgram = value.FinalizeProgramNumber?.ToString(CultureInfo.InvariantCulture) ?? "9003";
+        VerificationEventSequenceVariable = value.EventSequenceVariable?.ToString(CultureInfo.InvariantCulture) ?? "10504";
         VerificationMacroVersion = value.ExpectedMacroVersion.ToString(CultureInfo.InvariantCulture);
         VerificationCodeDigits = value.ResponseCodeDigits.ToString(CultureInfo.InvariantCulture);
         VerificationTimeoutSeconds = value.VerificationTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
