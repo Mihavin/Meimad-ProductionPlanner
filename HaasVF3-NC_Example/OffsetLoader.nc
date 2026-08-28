@@ -17,3 +17,4 @@ O0001
  ( N35 T23  DIAM. 5.   BALL 5 L=20 )
  ( N37 T25  DIAM. 12.   VARIMILL 12 )
  ( N39 T19  DIAM. 12.   FIN 12 )
+ %
