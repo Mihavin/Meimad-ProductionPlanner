@@ -369,11 +369,16 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
+        command.CommandText = resolution.Succeeded ? """
             UPDATE cnc_setup_verification_sessions
             SET state=$state,resolved_at=$at,resolution_workflow_event_id=$eventId
             WHERE id=$sessionId AND machine_id=$machineId AND production_run_id=$runId
               AND state='PENDING' AND expires_at>$at;
+            """ : """
+            UPDATE cnc_setup_verification_sessions
+            SET state=$state,resolved_at=$at,resolution_workflow_event_id=$eventId
+            WHERE id=$sessionId AND machine_id=$machineId AND production_run_id=$runId
+              AND state IN ('PENDING','EXPIRED');
             """;
         command.Parameters.AddWithValue("$state", resolution.Succeeded ? "SUCCEEDED" : "FAILED");
         command.Parameters.AddWithValue("$at", Format(workflowEvent.ServerReceivedAt));

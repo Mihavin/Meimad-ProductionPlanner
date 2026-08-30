@@ -117,7 +117,9 @@ internal sealed class CncDprintEventIngestionService(
                         parsed.SourceEventId, "duplicate", token);
                     continue;
                 }
-                if (pending.SessionState != "PENDING")
+                var lateFailure = pending.SessionState == "EXPIRED"
+                    && parsed.EventType == "SETUP_VERIFICATION_FAILED";
+                if (pending.SessionState != "PENDING" && !lateFailure)
                 {
                     var anomalyType = pending.SessionState switch
                     {
@@ -179,6 +181,7 @@ internal sealed class CncDprintEventIngestionService(
                         programIdentity = parsed.ProgramIdentity,
                         offsetReleaseToken = parsed.OffsetReleaseToken,
                         nonce = parsed.Nonce,
+                        lateAfterExpiry = lateFailure,
                         rawLine = parsed.RawLine
                     }),
                     VerificationResolution: new(pending.SessionId, succeeded)), token);
