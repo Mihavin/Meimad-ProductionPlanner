@@ -152,17 +152,18 @@ unreferenced sample is insufficient.
 
 | Field | Recorded answer |
 |---|---|
-| Qualified CNC controls engineer / organization | |
-| Internal case or work-order reference | |
-| Response date | |
-| Exact Machine / NGC version covered | |
-| Supported post-M109 fresh-read pattern | |
-| Required G103/blank-block placement | |
-| Reset / E-stop / Single Block / Block Delete constraints | |
-| `#3001` assignment and wrap behavior | |
-| Protected persistent evidence counter supported | `YES` / `NO` / qualified answer |
-| Approved persistent variable range and collision process | |
-| Controller documentation / validated reference | |
+| Qualified CNC controls engineer / organization | Michael Vinetsky, Meimad |
+| Meimad production owner | Michael Vinetsky |
+| Internal case or work-order reference | `VF3SS-V6-2026-08-30` |
+| Response date | 2026-08-30 |
+| Exact Machine / NGC version covered | HAAS-VF3SS / NGC `100.21.000.1001` |
+| Supported post-M109 fresh-read pattern | M109 nonzero-input loop followed by a separate protected G65 finalizer context; the fresh timer read occurs inside that finalizer. Approved from the physical G65 runs and engineering matrix. |
+| Required G103/blank-block placement | `G103 P1` before the timed M109 section, three blank barrier blocks after accepted input and before G65, with the finalizer owning the fresh timer read; `G103 P0` only on terminal return/alarm paths. |
+| Reset / E-stop / Single Block / Block Delete constraints | Reset and E-stop stop without finalizer/return evidence; Single Block and Block Delete produce exactly one finalizer and one return. Physical matrix recorded PASS. |
+| `#3001` assignment and wrap behavior | Assignment/wrap was not forced. V6 does not use `#3001` for event sequence, rejects a backward timer, and uses the persistent counter for monotonic evidence. |
+| Protected persistent evidence counter supported | `YES`, `PERSISTENT_COUNTER` |
+| Approved persistent variable range and collision process | `#10504`, confirmed free, initialized once to positive value 1, physically checked across Reset/E-stop/reboot, never wrapped or silently reseeded. |
+| Controller documentation / validated reference | Haas M109, G103, and Mill Macro documentation plus `.diagnostics/haas-ngc-engineering-tests/HAAS-VF3SS/RESULTS-TEMPLATE.md`. |
 
 Product sequence-design decision:
 
@@ -176,14 +177,23 @@ Product sequence-design decision:
 Chosen decision, approver, date, and rationale:
 
 ```text
-PERSISTENT_COUNTER selected by explicit Meimad owner direction on 2026-08-28.
+PERSISTENT_COUNTER selected by explicit Meimad owner direction on 2026-08-28
+and approved for the VF-3SS v6 bounded retest by Michael Vinetsky on 2026-08-30
+under `VF3SS-V6-2026-08-30`.
 Use one configured protected persistent variable, initialize it once to the
 recorded positive value 1, increment it for every OLC/SVS/SVF/CST/CEN event, and
 fail closed when unset, invalid, decreased, or exhausted. Never wrap or silently
-reseed it. This is a product design selection, not evidence that #10504 is
-collision-free or persistent on the VF-3SS; those facts remain subject to the
-real-Machine tests and named sign-off.
+reseed it. The 2026-08-30 real-Machine engineering matrix and operator
+attestation record `#10504` collision/persistence behavior as PASS. This
+approval authorizes only the bounded no-motion v6 retest; it does not enable
+production verification.
 ```
+
+Approvals:
+
+- Qualified CNC controls engineer: **APPROVED — Michael Vinetsky — 2026-08-30**
+- Meimad production owner: **APPROVED — Michael Vinetsky — 2026-08-30**
+- Internal reference: **`VF3SS-V6-2026-08-30`**
 
 Only one choice may be selected. After approval, link the answer and decision from
 the commissioning checklist and use the bounded retest document; do not reuse any

@@ -83,10 +83,23 @@ each must satisfy the threshold and appear only after the operator input.
 
 ## Test B - separate G65 finalizer freshness
 
-1. Start a separate stopwatch.
-2. Run O1981, which calls O1982 after M109 and three blank barrier blocks.
-3. Wait at least 20 seconds at the prompt, then enter digit `7` once.
-4. Save both DPRNT records.
+1. Start the dedicated passive recorder before running the NC program:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass `
+     -File .\scripts\capture-haas-ngc-test-b.ps1 `
+     -HostName 192.168.0.56 `
+     -DprntPort 8080 `
+     -MachineLabel HAAS-VF3SS `
+     -OutputPath .\.diagnostics\haas-ngc-engineering-tests\HAAS-VF3SS\evidence\Test-B-run1.txt
+   ```
+
+2. Wait for `CONNECTED AND PING VERIFIED`, then start a separate stopwatch.
+3. Run O1981, which calls O1982 after M109 and three blank barrier blocks.
+4. Wait at least 20 seconds at the prompt, then enter digit `7` once.
+5. The recorder saves `G65FINALIZER` followed by `FINALIZERRETURNED`, validates
+   the Machine label, ASCII input code `55`, minimum elapsed time, and record
+   order, then exits automatically. Use a new output filename for every run.
 
 Pass only when one `G65FINALIZER` record reports `ELAPSEDMS >= 15000`, it is
 followed by exactly one `FINALIZERRETURNED`, O1981 reaches M30, and `#10500` is
@@ -98,6 +111,26 @@ Run this test three times before proceeding.
 ## Test C - interruption and control-mode matrix
 
 Use a fresh O1981 start for every row. Do not continue an interrupted instance.
+
+Start one dedicated passive recorder for each row. It pings the Haas first,
+saves every observed DPRNT line, and applies the evidence rule for the selected
+scenario. It never writes to or controls the CNC.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\capture-haas-ngc-test-c.ps1 `
+  -HostName 192.168.0.56 `
+  -DprntPort 8080 `
+  -MachineLabel HAAS-VF3SS `
+  -Scenario Reset `
+  -OutputPath .\.diagnostics\haas-ngc-engineering-tests\HAAS-VF3SS\evidence\Test-C-Reset-run1.txt
+```
+
+For `Reset`, `EStop`, or `ModeChange`, the recorder passes only after its
+45-second observation window has no DPRNT record. For `SingleBlock` or
+`BlockDelete`, it requires exactly one valid `G65FINALIZER` record followed by
+one `FINALIZERRETURNED` record. Change both `Scenario` and the output filename
+for every matrix row.
 
 | Condition | Action at M109 | Required observation |
 |---|---|---|
@@ -148,6 +181,26 @@ Record the O1980/O1982 `STARTMS` and `ENDMS` values before and after the approve
 controller reboot. This establishes the exact reboot behavior on this controller.
 The selected `PERSISTENT_COUNTER` design does not depend on `#3001` continuity.
 The v6 finalizer treats a negative elapsed value as failure.
+
+Use the dedicated passive recorder four times: O1980 and O1982 before reboot,
+then the same two records after reboot. It validates each individual no-motion
+timer run but deliberately makes no claim that the numeric values must reset,
+continue, or use a particular wrap value.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\capture-haas-ngc-test-f.ps1 `
+  -HostName 192.168.0.56 `
+  -DprntPort 8080 `
+  -MachineLabel HAAS-VF3SS `
+  -Phase BeforeReboot `
+  -RecordType DirectO1980 `
+  -OutputPath .\.diagnostics\haas-ngc-engineering-tests\HAAS-VF3SS\evidence\Test-F-BeforeReboot-O1980.txt
+```
+
+For O1982 use `-RecordType FinalizerO1982`; the recorder instructs you to run
+O1981 because that is the approved caller. After the approved controller reboot,
+repeat both commands with `-Phase AfterReboot` and new evidence filenames.
 
 The generated pack deliberately never assigns `#3001` and never forces a guessed
 wrap boundary. If the internal CNC engineer requires an assignment test, perform

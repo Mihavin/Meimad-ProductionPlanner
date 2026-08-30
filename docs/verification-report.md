@@ -8,6 +8,7 @@ This report retains earlier milestone evidence below. The current Tasks 24-32 re
 - **Baseline runtime tested:** .NET SDK 10.0.303, Release
 - **Requirement evidence matrix:** [Tasks 24-32 completion audit](tasks-24-32-completion-audit.md)
 - **Verdict:** Fresh separately executed Debug and Release evidence is 863 tests in each configuration (619 Server and 244 Windows Client), with no failures or skips. The added Server-maintenance slice reports database/WAL/shared-memory size without exposing the path, downloads a new restore-verified backup over the factory-LAN HTTP route with SHA-256 verification, and allows preview/recount/backup-before-delete only for the three fixed non-authoritative CNC diagnostic collections. Planning, release, workflow, cycle/output, anomaly, current-state, and audit records remain outside the deletion catalog. Tasks 24-30 add the immutable schema-v61 foundation (including the v59 anomaly ledger/queue, v60 controller mappings, and v61 persistent/alias enforcement), protected success/failure resolution and macro-version blocking, audited Windows recovery, development-only CNC and expanded E-Ink simulators, and one integrated 29-step development workflow test through retroactive session closure and readable diagnostics. The full audit additionally made OLC, verification-result, and cycle identities fail closed; binds SVS/SVF to the exact release token and nonce so delayed old results cannot resolve a newer challenge; rejects conflicting reused cycle identifiers; and classifies non-pending result replays without false expiry. HTTP coverage proves recovery route activation, Edit Mode rejection, replacement release preservation, and revocation. Task 32 documentation is reconciled. Task 31 has a blocking physical `FAIL`: the VF-3SS accepted a correct response after at least 130 seconds at M109, its `#3001` sequence is not monotonic across reboot/wrap, and quarantined macro versions 3-5 do not emit the result-correlation evidence now required by the Server. Those macros and packages v1-v3 remain forensic artifacts. A separate structurally tested macro-v6 no-motion candidate now uses a protected finalizer, exact result correlation, and one persistent sequence, but remains unsigned and physically uncommissioned. The fail-closed record audit reports 4 `PASS`, 1 `FAIL`, 9 `NOT_TESTED`, five incomplete Machine/controller fields, and both sign-offs missing; protected CNC execution, physical tablet behavior, and factory acceptance are not production-approved.
+- **2026-08-30 commissioning update:** The bounded R2 physical attempt quarantined macro v6 after alarm 903 left the sixth M109 ASCII value in `#10500`. A distinct macro-v7 desk candidate adds per-digit cleanup and an immediate four-variable finalizer cleanup barrier; its generator/manifest tests pass, but it is unreviewed, physically untested, and not approved for loading or enablement.
 
 Current Tasks 24-32 repository result, reproduced separately in both Debug and Release:
 
@@ -51,22 +52,24 @@ for the physical evidence still required. The
 six open controller questions to checksummed no-motion probes using the selected
 `PERSISTENT_COUNTER` contract. The
 [bounded retest](haas-bounded-retest-after-internal-approval.md) is prewritten and
-limited to 30 minutes, but remains explicitly prohibited until the internal CNC
-engineering and design desk gates are complete. External HFO approval is not a
-gate.
+limited to 30 minutes. The internal CNC/design approval is recorded, but the
+retest remains prohibited until the disabled Server configuration is updated
+from the v5 mapping to the reviewed v6 mapping. External HFO approval is not a gate.
 
-Installer build evidence was refreshed on 2026-08-28: `installer\build-installers.ps1`
-published self-contained `win-x64` version `0.1.46` payloads and produced both MSI
+Installer build evidence was refreshed on 2026-08-30: `installer\build-installers.ps1`
+published self-contained `win-x64` version `0.1.47` payloads and produced both MSI
 packages.
-The final client package is 107,620,589 bytes (SHA-256
-`F35A7730F1BD0E6F4923DCE769DB2AC7649C7B4457CD5F18089F7930D73D8E54`) and the
-Server package is 43,522,364 bytes (SHA-256
-`8CE8377439DA21ED532895D6FCA16E2A1A126470D0327A7644C74D3098D39807`). The final
+The final client package is 107,583,725 bytes (SHA-256
+`D1726D270E471873EA5A3718DF3E58EC4B21FCFF2CB5BB4462824E50265EC30D`) and the
+Server package is 43,530,556 bytes (SHA-256
+`BD0A37F6DD8429852E4F1A0977B01A372B9BC72941B45932661EA4AD4411B34F`). The final
 WiX builds completed with zero warnings and zero errors. MSI table inspection proves the
 advertised all-users Start Menu shortcut is owned by the executable component in the
 same feature; a source-level regression test guards that relationship. A fresh
 non-installing administrative extraction verified 641 client files, including the
 client executable and `runtimes\win-x64\native\TKernel.dll`, plus 400 Server files.
+The extracted Client assembly was also checked for the visible O9003 finalizer
+and persistent event-sequence configuration fields.
 The extracted Server payload also contains the updated 800×480 monochrome E-Ink
 simulator with all 475 classic TFT bitmap glyph bytes, D1/D2/D4 short/hold
 controls, Service/Debug screen, physical tablet status/event routes,
@@ -77,7 +80,7 @@ ServiceInstall entry, install-start/stop/remove ServiceControl entry, and compil
 `SHA256SUMS.txt`. Source and package verification enforce the bounded
 policy: restart after 60 seconds for the first and second failures, no third
 automatic action, reset after one day. A non-elevated quiet upgrade was correctly
-refused with error 1730, leaving the installed 0.1.40 service and ProgramData state
+refused with error 1730, leaving the installed 0.1.46 service and ProgramData state
 unchanged; therefore this proves package construction and payload shape, not an
 elevated upgrade, applied recovery policy, code signing, or production-host acceptance.
 The non-mutating Server-upgrade preflight additionally passed against the running

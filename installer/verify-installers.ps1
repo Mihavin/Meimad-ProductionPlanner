@@ -134,6 +134,7 @@ try {
     }
 
     $clientExecutables = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -Filter "Meimad.Planner.Client.Windows.exe")
+    $clientAssemblies = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -Filter "Meimad.Planner.Client.Windows.dll")
     $nestedOcctKernels = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -Filter "TKernel.dll" |
         Where-Object { $_.FullName -match "runtimes\\win-x64\\native" })
     $serverExecutables = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "Meimad.Planner.Server.exe")
@@ -147,6 +148,9 @@ try {
     if ($clientExecutables.Count -ne 1) {
         throw "Expected one packaged client executable; found $($clientExecutables.Count)."
     }
+    if ($clientAssemblies.Count -ne 1) {
+        throw "Expected one packaged client assembly; found $($clientAssemblies.Count)."
+    }
     if ($nestedOcctKernels.Count -ne 1) {
         throw "Expected one nested runtimes\win-x64\native\TKernel.dll; found $($nestedOcctKernels.Count)."
     }
@@ -157,6 +161,18 @@ try {
         $serverSimulatorScript.Count -ne 1 -or
         $serverSimulatorStyles.Count -ne 1) {
         throw "Expected one complete packaged E-Ink simulator; found HTML $($serverSimulatorHtml.Count), script $($serverSimulatorScript.Count), styles $($serverSimulatorStyles.Count)."
+    }
+
+    $clientAssemblyText = [Text.Encoding]::UTF8.GetString(
+        [IO.File]::ReadAllBytes($clientAssemblies[0].FullName))
+    foreach ($marker in @(
+        'Finalizer program (O9xxx)',
+        'Persistent event-sequence variable',
+        'VerificationFinalizeProgram',
+        'VerificationEventSequenceVariable')) {
+        if ($clientAssemblyText.IndexOf($marker, [StringComparison]::Ordinal) -lt 0) {
+            throw "Packaged Windows Client is missing protected-verification UI marker: $marker"
+        }
     }
 
     $simulatorHtml = Get-Content -LiteralPath $serverSimulatorHtml[0].FullName -Raw
@@ -208,6 +224,7 @@ try {
         ProductVersion = $ExpectedVersion
         ClientExtractedFiles = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -File).Count
         NestedOcctKernel = $nestedOcctKernels[0].FullName.Substring($clientTarget.Length).TrimStart("\")
+        ClientVerificationUi = 'O9003 finalizer + persistent sequence fields present'
         ServerExtractedFiles = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -File).Count
         EInkSimulatorProfile = '800x480 TFT bitmap (475 bytes); D1/D2/D4/reset; guarded SEND_TO_QC'
         ServiceRecoveryPolicy = 'restart 60s; restart 60s; none; reset 1d'

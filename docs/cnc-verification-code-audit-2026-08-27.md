@@ -141,6 +141,23 @@ switch exists only to reproduce test fixtures and does not change the manifest,
 warning text, commissioning decision, or disabled Server setting. Automated tests
 exercise the default refusal and the acknowledged artifact's quarantine status.
 
+### M5 — Macro-v6 retained the sixth M109 ASCII value (critical, v6 quarantined)
+
+The bounded VF-3SS R2 attempt on 2026-08-30 reproduced alarm 903 while
+`#10500` still contained ASCII value `55`; `#10501-#10503` were empty. Source
+review found that O9002 accumulated digit six into its local result but did not
+clear the configured M109 response variable before calling O9003. The operator
+also reported an M30 return after several attempts, but Server evidence retained
+multiple OLC/SVF attempts and no SVS, so that observation is ambiguous rather
+than accepted interlock evidence. Retained temporary authority independently
+fails the hard stop. Macro v6 and both physical ZIPs are quarantined.
+
+A distinct macro-v7 desk candidate clears the response variable after every
+accepted digit and clears all four temporary handshake variables immediately on
+finalizer entry, before any result branch. It bumps the reported macro version
+to 7 and has dedicated structural regression coverage. This is code/test
+evidence only; v7 is not approved for controller loading or Server enablement.
+
 ## Confirmed safe Server behavior
 
 - Server-created verification sessions expire by Server UTC time.
