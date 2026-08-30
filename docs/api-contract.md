@@ -1901,6 +1901,11 @@ Machine secret/key, bearer credential, protected-variable mapping, or algorithm
 internals; the response code remains confined to the `IN_SETUP` projection above.
 
 `response_code` is present only for the credential's assigned Machine and Run when the unique session is `PENDING`, unexpired, still tied to the current Offset Loader and approved NC hook, and its enabled Machine configuration still matches. The Server decrypts the Machine secret and derives the fixed-width response in memory; the session and response JSON contain no raw nonce, Machine key/secret, protected-variable number, or algorithm internals. Expired, invalidated, superseded, missing, or undecryptable contexts return `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE` without `response_code`. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
+An expired session can never accept a late `SVS` or expose its response again.
+An exactly correlated `SVF` may be retained after expiry as fail-safe audit
+evidence; it changes the session from `EXPIRED` to `FAILED`, records
+`lateAfterExpiry: true` in workflow metadata, and grants no authority or workflow
+advance. The immutable expiry anomaly remains retained alongside the failure.
 `machine.number` is the explicit operator-facing Machine Number used by the
 physical header; `machine.id` remains the stable identity and must not be
 presented as a Machine Number. The current firmware accepts a missing
@@ -1925,8 +1930,10 @@ output. Extending the physical payload to represent all atomic outputs remains
 an open compatibility decision.
 
 The first firmware state machine consumes this status without owning or
-deriving business state. `READY_FOR_SETUP`, `IN_SETUP`, and `IN_QC` select a
-120-second timer wake (also allowing physical wake). `IN_SETUP_RUN`,
+deriving business state. `READY_FOR_SETUP` and `IN_SETUP` select a 15-second
+development timer wake so at least one poll occurs inside the minimum supported
+30-second verification window. `IN_QC` selects a 120-second timer wake. All
+three also allow physical wake. `IN_SETUP_RUN`,
 `READY_FOR_PRODUCTION`, and `IN_PRODUCTION` select physical-button-only wake;
 the E-Ink page remains visible and CNC/Server integrations own production-cycle
 events. `BLOCKED`, `UNKNOWN`, and an unavailable status currently select a

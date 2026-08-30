@@ -7,6 +7,7 @@
 namespace meimad::tablet_state_machine {
 
 constexpr uint32_t kInitialPollIntervalSeconds = 120;
+constexpr uint32_t kSetupVerificationPollIntervalSeconds = 15;
 
 enum class WakeMode {
   PollServer,

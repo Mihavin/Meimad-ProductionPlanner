@@ -25,7 +25,7 @@ EPaper epaper;
 #endif
 
 #ifndef MEIMAD_FIRMWARE_VERSION
-#define MEIMAD_FIRMWARE_VERSION "0.1.0-mvp"
+#define MEIMAD_FIRMWARE_VERSION "0.1.1-mvp"
 #endif
 
 #ifndef MEIMAD_HARDWARE_PROFILE
@@ -34,6 +34,10 @@ EPaper epaper;
 
 #ifndef MEIMAD_DEMO_MODE
 #define MEIMAD_DEMO_MODE 0
+#endif
+
+#ifndef MEIMAD_PROVISIONING_BUILD
+#define MEIMAD_PROVISIONING_BUILD 0
 #endif
 
 namespace {
@@ -111,7 +115,10 @@ DeviceConfiguration loadDeviceConfiguration() {
     preferences.putString("wifi_ssid", meimad::config::kDefaultWifiSsid);
   if (!preferences.isKey("wifi_pass") && strlen(meimad::config::kDefaultWifiPassword) > 0)
     preferences.putString("wifi_pass", meimad::config::kDefaultWifiPassword);
-  if (!preferences.isKey("server_url"))
+  if (MEIMAD_PROVISIONING_BUILD
+      && preferences.getString("server_url", "") != meimad::config::kServerBaseUrl)
+    preferences.putString("server_url", meimad::config::kServerBaseUrl);
+  else if (!preferences.isKey("server_url"))
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
   if (!preferences.isKey("tablet_id") && strlen(meimad::config::kDefaultTabletId) > 0)
     preferences.putString("tablet_id", meimad::config::kDefaultTabletId);

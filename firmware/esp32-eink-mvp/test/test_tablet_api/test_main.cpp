@@ -335,7 +335,7 @@ void testRevisionGateSkipsOnlyMatchingTabletAndRevision() {
 void testTabletStateMachineUsesOnlyPollingOrButtonWake() {
   const StatePolicy readyForSetup = policyFor(TabletStatus::ReadyForSetup);
   CHECK(readyForSetup.wakeMode == WakeMode::PollServer);
-  CHECK(readyForSetup.pollIntervalSeconds == 120);
+  CHECK(readyForSetup.pollIntervalSeconds == 15);
   CHECK(!readyForSetup.fallbackPolicy);
 
   const StatePolicy inSetup = policyFor(TabletStatus::InSetupRun);
@@ -344,7 +344,7 @@ void testTabletStateMachineUsesOnlyPollingOrButtonWake() {
 
   const StatePolicy awaitingVerification = policyFor(TabletStatus::InSetup);
   CHECK(awaitingVerification.wakeMode == WakeMode::PollServer);
-  CHECK(awaitingVerification.pollIntervalSeconds == 120);
+  CHECK(awaitingVerification.pollIntervalSeconds == 15);
   CHECK(!awaitingVerification.fallbackPolicy);
 
   const StatePolicy inQc = policyFor(TabletStatus::InQc);

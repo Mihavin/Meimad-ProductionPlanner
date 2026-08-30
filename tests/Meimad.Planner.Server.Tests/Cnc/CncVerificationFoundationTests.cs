@@ -728,6 +728,50 @@ $"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSE
     }
 
     [Fact]
+    public async Task Matching_failure_after_expiry_is_retained_but_cannot_restore_authority()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
+        var service = new CncVerificationFoundationService(repository,
+            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+        var authority = new EditAuthority("verification-client", 1);
+        await service.UpdateSettingsAsync(
+            "machine-verification", Settings("machine-secret-value", true), 0, authority);
+        var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
+            "machine-verification", "gcode-verification", "tools-verification"), authority);
+        await VerificationIngestion(fixture.Database, repository).ConsumeAsync(
+            "machine-verification", [new RawCncTelemetry(
+                "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/OLC/ID/LATE-FAIL-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+
+        var lateTime = new FixedTimeProvider(Now.AddSeconds(301));
+        var late = new CncDprintEventIngestionService(
+            repository,
+            new ProductionRunWorkflowEventService(
+                new SqliteProductionRunWorkflowEventRepository(fixture.Database), lateTime),
+            new SqliteProductionRunCncObservationRepository(fixture.Database, lateTime),
+            new OperationalAnomalyService(
+                new SqliteOperationalAnomalyRepository(fixture.Database)),
+            lateTime, NullLogger<CncDprintEventIngestionService>.Instance);
+        await late.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now.AddSeconds(301),
+            "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT state FROM cnc_setup_verification_sessions WHERE source_workflow_event_id=(SELECT id FROM production_run_workflow_events WHERE source_event_id='LATE-FAIL-OLC');";
+        Assert.Equal("FAILED", await command.ExecuteScalarAsync());
+        command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE source_event_id='LATE-FAIL-SVF' AND event_type='SETUP_VERIFICATION_FAILED';";
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT metadata_json FROM production_run_workflow_events WHERE source_event_id='LATE-FAIL-SVF';";
+        Assert.Contains("\"lateAfterExpiry\":true", (string)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT COUNT(*) FROM operational_anomalies WHERE production_run_id='run-verification' AND anomaly_type IN ('verification_expired','verification_failed');";
+        Assert.Equal(2L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
     public async Task Cycle_start_and_matching_end_after_QC_PASS_complete_exactly_one_cycle()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();

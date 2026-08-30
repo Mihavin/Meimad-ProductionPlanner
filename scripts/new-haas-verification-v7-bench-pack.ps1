@@ -2,6 +2,8 @@
 param(
     [Parameter(Mandatory = $true)] [string] $ConfigPath,
     [string] $OutputDirectory,
+    [ValidateSet(7, 8, 9)] [int] $CandidateMacroVersion = 7,
+    [ValidateSet(0, 1)] [int] $FailureDprntDwellSeconds = 0,
     [switch] $AcknowledgeBenchOnlyCandidate,
     [switch] $Force
 )
@@ -10,13 +12,18 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if (-not $AcknowledgeBenchOnlyCandidate) {
-    throw @'
-Generation is disabled by default. Macro v7 is an internally reviewable,
+    throw @"
+Generation is disabled by default. Macro v$CandidateMacroVersion is an internally reviewable,
 no-motion bench candidate. It has not passed the required physical CNC retest.
 Use -AcknowledgeBenchOnlyCandidate only to generate review artifacts below
 .diagnostics. This does not authorize controller loading, Server enablement, or
 production use.
-'@
+"@
+}
+
+if (($CandidateMacroVersion -eq 7 -and $FailureDprntDwellSeconds -ne 0) -or
+    ($CandidateMacroVersion -in @(8, 9) -and $FailureDprntDwellSeconds -ne 1)) {
+    throw 'Macro v7 requires zero failure dwell; macro v8/v9 requires the reviewed one-second failure DPRNT dwell.'
 }
 
 function Require-IntegerRange {
@@ -80,7 +87,7 @@ if (-not (($responseVariable -ge 500 -and $responseVariable -le 549) -or
           ($responseVariable -ge 10500 -and $responseVariable -le 10549))) {
     throw 'responseVariable must be in an M109-supported range: 500-549 or 10500-10549.'
 }
-$macroVersion = Require-IntegerRange macroVersion $config.macroVersion 7 7
+$macroVersion = Require-IntegerRange macroVersion $config.macroVersion $CandidateMacroVersion $CandidateMacroVersion
 $responseDigits = Require-IntegerRange responseDigits $config.responseDigits 4 6
 $timeoutSeconds = Require-IntegerRange verificationTimeoutSeconds $config.verificationTimeoutSeconds 30 3600
 $machineKey = Require-IntegerRange derivedMachineKey $config.derivedMachineKey 100000 999999
@@ -95,7 +102,7 @@ if ($machineKey -eq 271828 -and -not [bool]$config.allowPublicTestKey) {
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $repositoryRoot = Split-Path -Parent $PSScriptRoot
-    $OutputDirectory = Join-Path $repositoryRoot ".diagnostics\haas-v7-bench\$machineLabel"
+    $OutputDirectory = Join-Path $repositoryRoot ".diagnostics\haas-v$CandidateMacroVersion-bench\$machineLabel"
 }
 $outputFullPath = [IO.Path]::GetFullPath($OutputDirectory)
 $repositoryFullPath = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -123,11 +130,14 @@ $values = @{
     TEST_NC = ('{0:D4}' -f $testNcProgram)
     TEST_OFFSET = ('{0:D4}' -f $testOffsetProgram)
     MACHINE_LABEL = $machineLabel
+    FAILURE_DWELL = if ($FailureDprntDwellSeconds -eq 1) {
+        "`r`nG04 P1. (ALLOW SVF DPRNT TRANSMISSION BEFORE FAIL-CLOSED ALARM)"
+    } else { '' }
 }
 
 $challengeTemplate = @'
 %
-O0{{CHALLENGE}} (MEIMAD PROTECTED CHALLENGE V7)
+O0{{CHALLENGE}} (MEIMAD PROTECTED CHALLENGE V{{MACRO_VERSION}})
 (NO MOTION BENCH CANDIDATE - INTERNAL REVIEW AND PHYSICAL RETEST REQUIRED)
 (A OFFSET RELEASE TOKEN - B EXPECTED NC IDENTITY)
 G103 P1
@@ -205,7 +215,7 @@ $values.DIGIT_ENTRY = $digitEntry.ToString().TrimEnd("`r", "`n")
 
 $verifyTemplate = @'
 %
-O0{{VERIFY}} (MEIMAD PROTECTED VERIFY INPUT V7)
+O0{{VERIFY}} (MEIMAD PROTECTED VERIFY INPUT V{{MACRO_VERSION}})
 (NO MOTION BENCH CANDIDATE - INTERNAL REVIEW AND PHYSICAL RETEST REQUIRED)
 (A IMMUTABLE SIX DIGIT NC IDENTITY)
 (MACHINE KEY IS LOCAL PROTECTED DATA - NEVER DPRNT)
@@ -263,7 +273,7 @@ M99
 
 $finalizeTemplate = @'
 %
-O0{{FINALIZE}} (MEIMAD PROTECTED VERIFY FINALIZER V7)
+O0{{FINALIZE}} (MEIMAD PROTECTED VERIFY FINALIZER V{{MACRO_VERSION}})
 (A NC ID - B NONCE - C RELEASE - D START MS - E EXPECTED - F ENTERED)
 (NO MOTION BENCH CANDIDATE - INTERNAL REVIEW AND PHYSICAL RETEST REQUIRED)
 G103 P1
@@ -318,7 +328,7 @@ IF [#30 GE 899999.] GOTO921
 ;
 #30=ROUND[#{{SEQUENCE_VAR}}]
 DPRNT[MEIMAD/V/1/EVENT/SVF/ID/SVF-{{MACHINE_LABEL}}-#30[60]/SEQ/#30[60]/MACROVERSION/{{MACRO_VERSION}}/PROGRAM/#21[60]/OFFSETRELEASE/#23[60]/NONCE/#22[60]]
-G103 P0
+G103 P0{{FAILURE_DWELL}}
 #3000=903 (MEIMAD VERIFY FAILED)
 M99
 N900 G103 P0
@@ -385,7 +395,7 @@ N907 (CONTINUE DIRECTLY TO M30)
 
 $testOffsetTemplate = @'
 %
-O0{{TEST_OFFSET}} (MEIMAD V7 NO-MOTION TEST OFFSET LOADER)
+O0{{TEST_OFFSET}} (MEIMAD V{{MACRO_VERSION}} NO-MOTION TEST OFFSET LOADER)
 (NO OFFSET WRITES - BENCH ONLY)
 G65 P{{CHALLENGE}} A{{OFFSET_TOKEN}}. B{{NC_ID}}.
 M30
@@ -394,7 +404,7 @@ M30
 
 $testNcTemplate = @'
 %
-O0{{TEST_NC}} (MEIMAD V7 NO-MOTION TEST NC PROGRAM)
+O0{{TEST_NC}} (MEIMAD V{{MACRO_VERSION}} NO-MOTION TEST NC PROGRAM)
 (THE NEXT LINE IS THE FIRST EXECUTABLE BLOCK AND APPEARS EXACTLY ONCE)
 G65 P{{VERIFY}} A{{NC_ID}}. (MEIMAD VERIFY V1)
 DPRNT[MEIMADSPIKE/NC/{{NC_ID}}/VERIFICATION/RETURNED]
@@ -403,9 +413,9 @@ M30
 '@
 
 $files = [ordered]@{
-    ('O0{0:D4}-CHALLENGE-V7.CNC' -f $challengeProgram) = Render-Template $challengeTemplate $values
-    ('O0{0:D4}-VERIFY-INPUT-V7.CNC' -f $verifyProgram) = Render-Template $verifyTemplate $values
-    ('O0{0:D4}-VERIFY-FINALIZER-V7.CNC' -f $finalizeProgram) = Render-Template $finalizeTemplate $values
+    ('O0{0:D4}-CHALLENGE-V{1}.CNC' -f $challengeProgram, $macroVersion) = Render-Template $challengeTemplate $values
+    ('O0{0:D4}-VERIFY-INPUT-V{1}.CNC' -f $verifyProgram, $macroVersion) = Render-Template $verifyTemplate $values
+    ('O0{0:D4}-VERIFY-FINALIZER-V{1}.CNC' -f $finalizeProgram, $macroVersion) = Render-Template $finalizeTemplate $values
     'NC-FIRST-BLOCK-HOOK.CNC.txt' = Render-Template $hookTemplate $values
     'OFFSET-LOADER-FINAL-CALL.CNC.txt' = Render-Template $offsetTemplate $values
     'CYCLE-EVENT-BLOCKS.CNC.txt' = Render-Template $cycleTemplate $values
@@ -458,5 +468,5 @@ $manifest = [ordered]@{
 $manifestPath = Join-Path $outputFullPath 'manifest.json'
 Write-NewAsciiFile $manifestPath (($manifest | ConvertTo-Json -Depth 7) + "`r`n") ([bool]$Force)
 
-Write-Host "Generated internally reviewable v7 bench pack: $outputFullPath"
+Write-Host "Generated internally reviewable v$macroVersion bench pack: $outputFullPath"
 Write-Warning 'BENCH ONLY. Do not load, enable, or use for production until internal review and physical commissioning are complete.'

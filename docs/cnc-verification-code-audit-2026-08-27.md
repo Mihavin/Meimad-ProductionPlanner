@@ -6,6 +6,40 @@
 install a production key, or use bench packages v1, v2, or v3 as a production
 interlock. No further physical CNC work is requested by this audit.
 
+## Follow-up evidence - 2026-08-30
+
+The separately reviewed v7 R3 no-motion attempt corrected the v6 retained-input
+defect: after a deliberately late response, alarm 903 stopped O01990 before M30
+and `#10500`-`#10503` were empty. End-to-end commissioning still failed. The
+physical tablet's first recorded Server contact occurred after the 120-second
+session expired, and the Server received OLC sequence 21 but no SVF sequence 22.
+The persistent counter remains 22 and must not be reset to hide that gap.
+
+Source-only corrective work is now macro v8. It preserves v7 cleanup and adds
+exactly one `G04 P1.` no-motion transmission dwell after the SVF DPRNT/G103 block
+and before alarm 903. Server ingestion now rejects every late success but retains
+an exactly correlated late failure without restoring response or workflow
+authority. Development firmware polls `READY_FOR_SETUP` and `IN_SETUP` every 15
+seconds instead of racing a 120-second challenge with a 120-second wake. Static,
+Server, and firmware build tests pass; none of these source results prove physical
+DPRNT delivery, battery life, or production interlock behavior.
+
+The subsequent bounded V8 attempt proved failure-DPRNT delivery and cleanup but
+quarantined the generated Machine package. For OLC sequence 29 / SVF sequence
+30, the authenticated replacement tablet displayed `720047` while the exact V8
+controller artifact calculated `812524`. Entry completed in about 30 seconds and
+`#10500`-`#10503` were empty after alarm 903. The displayed value matched none of
+the package calculations for OLC sequences 23-29, establishing a Server-secret /
+generated-Machine-key mismatch rather than operator timing or retained input.
+The replacement tablet also failed to operate from the uncommissioned AA power
+path and contacted the Server only on external power. V8 is quarantined,
+`#10504 = 30` is preserved, and verification is disabled.
+
+V9 is source-only recovery scaffolding. It preserves V8 behavior but must be
+generated from the exact same newly rotated secret saved on the Server. No V9
+Machine package may be loaded or enabled until that alignment is independently
+verified without CNC execution.
+
 The real VF-3SS on NGC `100.21.000.1001` established useful partial evidence:
 Setting 23 protected O9001/O9002 from ordinary access; the generic G65 hook and
 public response arithmetic worked; correct and incorrect six-digit entry,

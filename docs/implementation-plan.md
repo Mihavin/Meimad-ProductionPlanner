@@ -28,7 +28,18 @@ fail-closed alarm path with all four temporary variables empty, but failed the
 end-to-end gate: the physical tablet polled only after challenge expiry, the
 Server retained a pre-existing sequence gap, and no failure DPRNT reached the
 Server before alarm 903. Further controller execution is stopped pending the
-timer/poll and DPRNT-delivery decisions below. Verification stays disabled.
+timer/poll and DPRNT-delivery decisions below. Source correction now retains an
+exactly correlated late SVF without permitting a late SVS, polls
+`READY_FOR_SETUP`/`IN_SETUP` every 15 seconds in development firmware, and adds
+the separately numbered v8 bench candidate with a one-second no-motion dwell
+between failure DPRNT and alarm 903. A bounded V8 attempt then delivered SVF and
+cleared all temporary variables, but proved that the generated controller key
+did not match the Server secret: OLC 29 produced tablet response `720047` while
+the exact package expected `812524`, followed by SVF 30/alarm 903. The
+replacement tablet also failed on the uncommissioned AA path and worked only on
+external power. V8 is quarantined, `#10504 = 30` must be preserved, and V9 may
+be generated only from one newly rotated secret shared by Server configuration
+and local package generation. Verification stays disabled.
 Schema v61 closes the controller-alias gap: cross-call values must use persistent
 globals, `#500`/`#10500`-style aliases collide, invalid upgraded candidates are
 disabled, and macro versions 1-5 cannot be enabled.
@@ -660,7 +671,7 @@ and persistent-sequence mappings. OD-034 remains open for site collision review,
 the Haas alias/profile mismatch, exact hook syntax tightening, and the uncommissioned
 first-article/QC operating strategy.
 
-- **OD-035 - Verification timeout, tablet wake, and failure-event delivery:**
+- **OD-035 - Verification timeout, tablet wake, and failure-event delivery (source correction implemented; physical proof open):**
   The 2026-08-30 R3 physical attempt exposed two incompatible timing assumptions.
   The Server challenge lifetime, CNC late-response boundary, and firmware IN_SETUP
   automatic wake are each 120 seconds, so a sleeping tablet can first poll only
@@ -669,8 +680,17 @@ first-article/QC operating strategy.
   after the SVF DPRNT block but the Server received no SVF, so source order alone
   does not prove TCP delivery before `#3000`. Decide and document separate Server
   expiry/CNC-entry/poll margins and a physically proven pre-alarm DPRNT delivery
-  barrier or alternate failure-evidence design. Preserve sequence gaps as anomalies;
-  never reset or reseed `#10504` to repair history. Verification remains disabled.
+  barrier or alternate failure-evidence design. The reversible source decision is
+  now: 15-second development polling in `READY_FOR_SETUP`/`IN_SETUP`; response
+  exposure still ends at session expiry; a late SVS remains rejected; an exactly
+  correlated late SVF is retained as failure evidence; and v8 inserts a one-second
+  no-motion dwell after SVF/G103 and before alarm 903. The later V8 attempt proved
+  SVF delivery but exposed a blocking Server-secret/controller-key mismatch and
+  failed battery operation on the replacement tablet. V8 is quarantined; V9
+  recovery requires one newly rotated secret to generate both sides. Physical
+  proof of battery power and the aligned response remains required. Preserve sequence
+  gaps as anomalies; never reset or reseed `#10504` to repair history.
+  Verification remains disabled.
 
 ### TV Dashboard
 

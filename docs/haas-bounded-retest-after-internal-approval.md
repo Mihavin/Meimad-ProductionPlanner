@@ -136,7 +136,9 @@ Pass only if all are true:
 
 - the verification macro raises the reviewed blocking alarm before returning to
   the test NC;
-- one SVF and zero SVS records are accepted for this attempt;
+- one SVF and zero SVS records are accepted for this attempt; when the Server
+  session has already expired, both the immutable expiry anomaly and the exactly
+  correlated late-failure evidence remain retained;
 - the response and all temporary challenge variables are empty afterward;
 - no marker after the verification hook and no machining/cycle event executes.
 

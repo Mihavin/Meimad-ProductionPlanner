@@ -85,13 +85,17 @@ Server status only to choose wake behavior:
 
 | Server status | Firmware sleep/wake behavior |
 |---|---|
-| `READY_FOR_SETUP` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
-| `IN_SETUP` | Deep sleep; timer poll after 120 seconds or physical-button wake so time-limited verification state is refreshed. |
+| `READY_FOR_SETUP` | Deep sleep; development timer poll after 15 seconds or physical-button wake so a new verification challenge is detected inside its minimum supported window. |
+| `IN_SETUP` | Deep sleep; development timer poll after 15 seconds or physical-button wake so time-limited verification state is refreshed. |
 | `IN_SETUP_RUN` | Deep sleep; physical-button wake only. |
 | `IN_QC` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
 | `READY_FOR_PRODUCTION` | Deep sleep; physical-button wake only while the explicit status text remains visible. |
 | `IN_PRODUCTION` | Deep sleep; physical-button wake only. CNC/Server generates cycle events. |
 | `BLOCKED`, `UNKNOWN`, or no valid response | Conservative 120-second retry plus physical wake; final policy is TBD. |
+
+The 15-second setup-verification cadence corrects the physically observed race
+between a 120-second poll and a 120-second challenge. Production acceptance still
+requires configured work-window enforcement and measured battery impact.
 
 GPIO2/GPIO3/GPIO5 are configured as active-low ESP32-S3 EXT1 wake sources.
 Internal RTC pull-ups are kept powered; physical wake and its current cost still

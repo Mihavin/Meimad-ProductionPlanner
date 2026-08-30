@@ -2,7 +2,7 @@
 
 const HOLD_MILLISECONDS = 1200;
 const TOOLS_PER_PAGE = 3;
-const FIRMWARE_VERSION = "0.1.0-mvp";
+const FIRMWARE_VERSION = "0.1.1-mvp";
 
 // Exact classic 5x7 GLCD glyphs used by TFT_eSPI font 1. Each character is
 // five vertical columns plus the firmware renderer's one-column spacing cell.

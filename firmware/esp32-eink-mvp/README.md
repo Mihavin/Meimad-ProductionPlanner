@@ -148,8 +148,8 @@ screen/revision decision:
 
 | Server status | Tablet wake policy |
 |---|---|
-| `READY_FOR_SETUP` | Deep sleep with a 120-second timer and physical-button wake. |
-| `IN_SETUP` | Deep sleep with a 120-second timer and physical-button wake so the time-limited verification projection is refreshed. |
+| `READY_FOR_SETUP` | Deep sleep with a 15-second development timer and physical-button wake so a new challenge is detected inside its minimum supported window. |
+| `IN_SETUP` | Deep sleep with a 15-second development timer and physical-button wake so the time-limited verification projection is refreshed. |
 | `IN_SETUP_RUN` | Deep sleep with physical-button wake only. |
 | `IN_QC` | Deep sleep with a 120-second timer and physical-button wake. |
 | `READY_FOR_PRODUCTION` | Deep sleep with physical-button wake only. |
@@ -162,8 +162,10 @@ resulting deep-sleep current must be measured on the real board. If button-wake
 configuration fails in a button-only state, firmware enables a 120-second safety
 timer rather than creating an unreachable tablet.
 
-The 120-second timer is the initial development cadence requested for this
-state machine. Production automatic wakes must additionally be restricted to
+The 15-second setup-verification cadence corrects the physically observed
+120-second poll versus 120-second challenge race. The 120-second timer remains
+the development cadence for `IN_QC` and conservative fallback states.
+Production automatic wakes must additionally be restricted to
 the Server-configured workdays and shift windows. The firmware does not yet
 consume the existing time-config/clock contract, so this scheduling gate remains
 required before production acceptance; manual physical wake remains allowed at
