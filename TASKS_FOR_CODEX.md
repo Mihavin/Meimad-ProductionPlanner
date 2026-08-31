@@ -229,6 +229,129 @@ When complete, report:
 
 ---
 
+## 5. Implement tablet power / deep-sleep / Wi-Fi behavior by workflow status
+
+Implement the agreed ESP32 e-ink tablet power model as an explicit state-driven policy. The tablet must not use one generic sleep rule for all workflow states.
+
+### Product goal
+Maximize battery life while keeping the tablet responsive during active setup work. Wi-Fi is expensive and must remain OFF unless it is actually needed. Deep sleep is allowed only in workflow states where the user does not need immediate local interaction.
+
+### Required behavior by status
+
+#### 1. Ready for Production — idle/pre-setup state
+- Enter **deep sleep**.
+- Wi-Fi OFF while sleeping.
+- Wake only by physical button.
+- No periodic server polling.
+
+#### 2. Ready for Setup
+- **Do not enter deep sleep.** The tablet remains awake so the setup operator can browse tool tables and other local pages without wake latency.
+- Wi-Fi is **OFF by default**.
+- Physical button starts a Wi-Fi/server refresh session.
+- After button press:
+  - connect Wi-Fi;
+  - contact the server and refresh the tablet projection;
+  - keep Wi-Fi ON while waiting for the expected setup-related server state/result;
+  - turn Wi-Fi OFF when either:
+    - the expected `In Setup` / `Setup In Progress` state is observed, or
+    - the configured timeout expires.
+- Do **not** poll every 15 seconds in the background.
+- If no button is pressed, the tablet may remain awake for hours with Wi-Fi OFF.
+
+#### 3. In Setup / Setup In Progress
+- **Do not enter deep sleep.**
+- Wi-Fi OFF by default.
+- User can browse the local tool-table/setup UI continuously.
+- Physical button may enable Wi-Fi for an explicit server refresh/check.
+- After the explicit refresh completes or times out, Wi-Fi returns OFF.
+- No background periodic polling is required.
+
+#### 4. In QA
+- Enter **deep sleep**.
+- Wi-Fi OFF while sleeping.
+- Wake by physical button only.
+- No periodic polling unless an existing QA requirement explicitly proves otherwise.
+
+#### 5. Ready for Production — post-QA / waiting-for-production state
+There are currently two workflow positions that appear to use the same visible name `Ready for Production`, but they have different tablet behavior. Do not silently collapse them.
+
+For the post-QA waiting state:
+- Enter **deep sleep**.
+- Support timer wake / auto-refresh every **60 seconds**.
+- Also support physical-button wake at any time.
+- On timer wake:
+  - enable Wi-Fi;
+  - perform one server refresh;
+  - update the e-ink display only if the relevant projection changed;
+  - disable Wi-Fi;
+  - return to deep sleep.
+- On button wake, perform the normal interactive refresh behavior and return to the correct state policy afterward.
+
+If the domain model already has a distinct canonical name for this post-QA state, use it. If it does not, introduce a clear internal distinction so the firmware/policy can distinguish the two states even if the visible UI wording remains temporarily identical.
+
+#### 8. In Production
+- Enter **deep sleep**.
+- Wi-Fi OFF while sleeping.
+- Wake only by physical button.
+- No 60-second auto-refresh and no background polling.
+
+### Important design rules
+- Treat **screen/UI awake state** and **Wi-Fi connectivity** as separate concerns.
+- `Ready for Setup` and `In Setup` are awake states with Wi-Fi normally OFF.
+- Do not keep Wi-Fi continuously connected just because the tablet itself is awake.
+- Do not reintroduce the old 15-second polling concept.
+- Button-triggered Wi-Fi is the primary mechanism for setup-time synchronization.
+- Preserve deep-sleep GPIO/button wake behavior already proven by the current hardware implementation.
+- Do not break e-ink page navigation while Wi-Fi is OFF.
+- Avoid unnecessary e-ink full refreshes; update only when projection/content actually changes where practical.
+
+### Implementation guidance
+Inspect the current tablet firmware/client implementation and define one explicit policy mapping from server workflow status to at least:
+- `sleep_mode`
+- `wifi_default`
+- `wake_sources`
+- `periodic_refresh_interval`
+- `button_refresh_behavior`
+- `wifi_session_timeout`
+
+Prefer one centralized state-policy table/state machine over scattered conditional logic.
+
+The firmware must safely handle status changes observed during a refresh. Example:
+- tablet is in `Ready for Setup`;
+- user presses button;
+- Wi-Fi connects;
+- server now reports `In Setup`;
+- firmware applies the `In Setup` policy and turns Wi-Fi OFF after completing the refresh.
+
+### Configuration
+- Keep the **60-second post-QA refresh interval** configurable if the current firmware has a suitable configuration mechanism, with 60 seconds as the default.
+- Keep the button-initiated Wi-Fi session timeout configurable, with a sensible default based on the current networking implementation.
+- Do not add a recurring 15-second setup refresh setting.
+
+### Acceptance tests / simulator scenarios
+Add automated tests or firmware/simulator scenarios proving at least:
+- Ready for Production idle state enters deep sleep and only button wake is active.
+- Ready for Setup stays awake indefinitely while Wi-Fi remains OFF when no button is pressed.
+- Ready for Setup button press connects Wi-Fi and turns it OFF after timeout if no status change arrives.
+- Ready for Setup button press followed by server transition to In Setup applies the new state and turns Wi-Fi OFF.
+- In Setup remains awake with Wi-Fi OFF and supports button-triggered refresh.
+- In QA enters deep sleep and wakes by button.
+- Post-QA Ready for Production wakes every 60 seconds, refreshes once, and returns to deep sleep.
+- In Production does not wake every 60 seconds and only wakes by button.
+- No background 15-second polling remains in Ready for Setup or In Setup.
+- Local tool-table/page navigation works while Wi-Fi is OFF.
+
+### Completion report
+When complete, report:
+- the exact workflow-status-to-power-policy mapping implemented;
+- how the two `Ready for Production` contexts are distinguished;
+- default/configurable timeout and refresh values;
+- files changed;
+- firmware/client tests and simulator results;
+- any physical-device tests still required, especially battery-only wake/deep-sleep verification.
+
+---
+
 ## General instructions
 
 - First inspect the current implementation and existing tests before changing architecture.
