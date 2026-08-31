@@ -1423,7 +1423,7 @@ After caller-specific validation, both this CNC completion path and the existing
 
 A valid current `OLC` for a different assigned Run is also the authoritative next-setup boundary. In the same transaction, schema v57 closes the most recent prior Run on that Machine that has START evidence and no prior closure. The Server appends `PRODUCTION_SESSION_CLOSED` and stores `observed_end_at`, `effective_end_at`, and `end_time_inferred` separately. A last valid completed END is measured; a final open START is inferable only as START plus the minimum duration of an earlier valid pair. The inference basis names its source events and clock. Missing evidence remains null. The `OLC` retry is idempotent and does not create another closure. There is no tablet `FINISH PRODUCTION` event or endpoint.
 
-Schema v58 adds no new Machine or tablet command. Internally, each retained sequenced START creates immutable raw attempt evidence, and a validated cycle completion or the existing interruption event creates its separate immutable outcome. Both boundaries preserve Server receipt time, optional Machine time, source identity, and sequence. Reports may later derive idle as `next START - previous END` and apply selectable statistical methods; this ingestion contract stores neither calculated duration nor a permanent analytics formula.
+Schema v58 adds no new Machine or tablet command. Internally, each retained sequenced START creates immutable raw attempt evidence, and a validated cycle completion or the existing interruption event creates its separate immutable outcome. Both boundaries preserve Server receipt time, optional Machine time, source identity, and sequence. The live TV/Timeline projection exposes authoritative completed/target quantity. After one completed attempt, Timeline uses the arithmetic mean of every completed duration in the current Production Run Program to forecast its remaining cycles; each new completion recalculates that mean. Machine timestamps are preferred when both valid boundaries exist, otherwise Server receipt timestamps are used. Interrupted, open, orphaned, duplicate, and unmatched events are excluded. No calculated average is persisted.
 
 Schema v63 implements secretless setup verification. Machine recognition uses only configured MachineID/fixed IP/MAC and is separate from NC and Offset Loader authorization. Exact `OLC` creates an untimed `ARMED` session; the assigned tablet may display the public consistency response while ARMED. The first exact `SVR` NC start records the pending start, changes state to `PENDING`, and begins the timeout. Exact `SVS` establishes reusable `SUCCEEDED` authority for that binding; a new Offset Loader supersedes it. No Machine Secret, derived key, HMAC, or replacement credential is stored or accepted. Physical controller behavior remains a commissioning requirement.
 
@@ -1930,15 +1930,16 @@ with `409 tablet_projection_ambiguous`; it does not silently select one coupled
 output. Extending the physical payload to represent all atomic outputs remains
 an open compatibility decision.
 
-The first firmware state machine consumes this status without owning or
-deriving business state. `READY_FOR_SETUP` and `IN_SETUP` select a 15-second
-development timer wake so at least one poll occurs inside the minimum supported
-30-second verification window. `IN_QC` selects a 120-second timer wake. All
-three also allow physical wake. `IN_SETUP_RUN`,
-`READY_FOR_PRODUCTION`, and `IN_PRODUCTION` select physical-button-only wake;
-the E-Ink page remains visible and CNC/Server integrations own production-cycle
-events. `BLOCKED`, `UNKNOWN`, and an unavailable status currently select a
-conservative 120-second retry because their final sleep policy is not approved.
+The firmware state machine consumes this status without owning or deriving
+business state. `READY_FOR_SETUP`, `IN_SETUP`, and `IN_SETUP_RUN` remain awake
+with Wi-Fi off and no background poll so setup pages remain locally responsive.
+D1 starts an explicit bounded refresh; from `READY_FOR_SETUP` the radio remains
+on only until `IN_SETUP`/`IN_SETUP_RUN` is observed or the configurable
+30-second default expires. `IN_QC` and `IN_PRODUCTION` deep-sleep with
+physical-button wake only. `READY_FOR_PRODUCTION` is the distinct canonical
+post-`QC_PASS` wait and deep-sleeps with button wake plus one configurable
+60-second timer refresh. `BLOCKED`, `UNKNOWN`, and unavailable status retain a
+conservative 120-second retry because their final policy is not approved.
 This initial cadence does not replace `/time-config`: production automatic
 checks must still be gated to configured workdays/shift windows once firmware
 clock/window integration is implemented.

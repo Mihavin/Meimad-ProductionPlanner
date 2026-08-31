@@ -91,6 +91,12 @@ the assigned planned Run Program and atomically changes the Run, Program, and
 Outputs to `IN_PROGRESS`, `ACTIVE`, and `IN_PRODUCTION` before retaining the
 open START. It does not credit quantity. Manual Start remains the path for
 Machines without a configured CNC connection and non-CNC work.
+The TV and Timeline now read the same Production Run output/cycle authority.
+TV projects `IN PRODUCTION`, produced/target parts, and the completed-attempt
+average. Timeline keeps configured cycle time until the first validated pair,
+then derives the arithmetic mean of the current Program's completed attempt
+series and applies it only to remaining cycles. Interrupted/open/anomalous
+attempts do not enter that average; no calculated average is persisted.
 
 Task 21 is implemented in schema v57 without a tablet command. A valid current
 Offset Loader event for the next assigned Run atomically closes the most recent
@@ -522,14 +528,15 @@ visible setup-verification code is cleared once to a persisted unavailable
 fail-safe that forces repaint after the next valid response. The adapter and
 renderer require the `IN_SETUP` verification projection, preserve leading-zero
 codes, and show explicit expired/invalidated/unavailable blocking states.
-Model/status/pagination and revision-decision assertions compile in the separate
-contract-test image. The first state policy maps `READY_FOR_SETUP`/`IN_SETUP`/`IN_QC` to 120-second timer polls
-and maps `IN_SETUP_RUN`/`READY_FOR_PRODUCTION`/`IN_PRODUCTION` to physical-button
-wake; all paths enter deep sleep and retain the E-Ink page. ESP32-S3 EXT1 wake
-is configured for the three active-low buttons, with a safety timer if setup
-fails. `BLOCKED`/`UNKNOWN`/unavailable use a documented conservative 120-second
-fallback pending approval. Physical execution/upload/readability/current
-validation and configured workday/shift enforcement have not been completed.
+Model/status/pagination, revision-decision, and power-policy assertions compile
+in the separate contract-test image. The centralized state policy keeps
+`READY_FOR_SETUP`/`IN_SETUP`/`IN_SETUP_RUN` awake with Wi-Fi off and no recurring
+poll; D1 starts a bounded refresh session. `IN_QC`/`IN_PRODUCTION` deep-sleep
+with button wake only, while canonical post-QA `READY_FOR_PRODUCTION` adds a
+configurable 60-second one-shot timer refresh. ESP32-S3 EXT1 remains configured
+for the three active-low buttons in sleeping states. `BLOCKED`/`UNKNOWN` retain
+the conservative 120-second fallback. Physical upload/readability/current,
+battery-only wake, and configured workday/shift enforcement remain open.
 The first input abstraction now compiles a 40-ms debounce, release validation,
 wake logging, short-D1 Refresh, 1.2-second D1 Service/Debug, D2 Previous Tool
 Page, short-D4 Next Tool Page, and
@@ -663,8 +670,8 @@ first-article/QC operating strategy.
   does not prove TCP delivery before `#3000`. Decide and document separate Server
   expiry/CNC-entry/poll margins and a physically proven pre-alarm DPRNT delivery
   barrier or alternate failure-evidence design. The reversible source decision is
-  now: 15-second development polling in `READY_FOR_SETUP`/`IN_SETUP`; response
-  exposure still ends at session expiry; a late SVS remains rejected; an exactly
+  now: setup-time background polling is removed in favor of an operator-triggered
+  bounded Wi-Fi session; response exposure still ends at session expiry; a late SVS remains rejected; an exactly
   correlated late SVF is retained as failure evidence; and v8 inserts a one-second
   no-motion dwell after SVF/G103 and before alarm 903. The later V8 attempt proved
   SVF delivery but exposed a blocking Server-secret/controller-key mismatch and
@@ -686,7 +693,8 @@ first-article/QC operating strategy.
 - **OD-034 - Color product name versus commissioned monochrome profile:** The integrated product baseline still names a unified Color E-Ink tablet, while `firmware/esp32-eink-mvp/include/hardware_config.h` selects the real TRMNL 7.5-inch OG 800×480 monochrome UC8179 panel. The firmware simulator now follows the real monochrome profile. Decide before multi-device purchase whether monochrome becomes the product baseline or a later color panel replaces it; keep rendering profile-driven and preserve text/symbol status cues in either case.
 - **OD-025 - Telemetry and tablet-originated events:** Partially resolved: schema v49 supplies the shared append-only workflow-event storage and event-driven tablet projection, including migration of prior tablet event rows. `SEND_TO_QC` remains the only tablet-originated operational command. The implemented schema-v54 POST route requires an enabled path-matched TabletID, takes no target/time fields, resolves the bound Machine and current `IN_SETUP_RUN` Production Run on the Server, uses Server UTC, changes only the tablet workflow projection to `IN_QC`, and returns the original event on sequential or concurrent retries. Firmware physical-button binding, fresh-state eligibility, single-wake submission guard, follow-up refresh, and temporary confirmation rendering are compiled; physical verification is pending. Define ingestion policy for the other event sources, history retention/read access, hardware-range validation, and battery percentage calibration.
 - **OD-026 - Device lifecycle:** Resolved for MVP: an active editor can register a spare or Machine-bound tablet, allocate its TabletID, map an optional MAC, permit one enabled E-Ink binding per Machine, and rebind/enable/disable it. Schema v62 clears legacy E-Ink credential hashes. Tablet authentication is deliberately excluded; define physical reassignment and lost-device/cached-data procedures without inventing a hidden credential.
-- **OD-027 - Time/sync:** Partially resolved for Server configuration: time-zone ID, workdays, one shift window, poll interval, retry attempts/backoff, and revision are configurable/readable. Firmware now logs a UTC wake timestamp only when the system clock is already valid and reports unavailable otherwise; it does not fabricate time. The first state machine has a fixed requested 120-second development cadence for `READY_FOR_SETUP`, `IN_SETUP`, and `IN_QC`, but does not yet synchronize the clock, consume Server time configuration, or enforce the mandatory automatic-wake workday/shift gate. Define and implement clock/NTP/RTC, zone portability/DST/holidays/exceptions, multiple windows, manual force-refresh behavior, jitter, stale thresholds, and clock-loss behavior before production automatic polling.
+- **OD-027 - Time/sync:** Partially resolved for Server configuration: time-zone ID, workdays, one shift window, poll interval, retry attempts/backoff, and revision are configurable/readable. Setup states no longer perform automatic polling. Canonical post-QA `READY_FOR_PRODUCTION` requests a configurable 60-second timer wake, while `BLOCKED`/`UNKNOWN` retain a 120-second fallback. Firmware logs UTC only when already valid and does not yet consume Server time configuration or enforce the mandatory workday/shift gate. Clock/NTP/RTC, zone portability/DST/holidays/exceptions, multiple windows, jitter, stale thresholds, and clock-loss behavior remain required before production automatic polling.
+- **OD-036 - Readiness wording versus tablet workflow:** Resolved for the current implementation by retaining distinct canonical tokens. Tablet `READY_FOR_SETUP` is the awake pre-setup/setup-operator state. Tablet `READY_FOR_PRODUCTION` is emitted only after `QC_PASS` and selects the post-QA 60-second policy. The separate planning-readiness label “Ready for Production” must not be used as an ambiguous firmware policy key. If product wording later makes both screens visually identical, the canonical tokens must remain distinct.
 
 ### E-Ink hardware and interaction
 

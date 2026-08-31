@@ -1005,9 +1005,29 @@ public partial class TimelineView : UserControl
 
         var operationLabel =
             $"{type} • {interval.PartNumber}/{interval.BatchNumber} OP{interval.OperationNumber} {interval.OperationName}".TrimEnd();
+        operationLabel += TimelineProductionSummary(interval);
         return ownsAssignment
             ? $"{operationLabel} • {interval.PlanningModeLabel}"
             : operationLabel;
+    }
+
+    private static string TimelineProductionSummary(TimelineInterval interval)
+    {
+        var count = interval.TargetQuantity is > 0
+            ? $" | PARTS {interval.CompletedQuantity}/{interval.TargetQuantity}"
+            : string.Empty;
+        if (interval.MeasuredCycleSampleCount < 1
+            || interval.MeasuredAverageCycleSeconds is not > 0)
+        {
+            return count;
+        }
+
+        var duration = TimeSpan.FromSeconds(
+            Math.Max(0, Math.Round(interval.MeasuredAverageCycleSeconds.Value)));
+        var average = duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{duration.Minutes}:{duration.Seconds:00}";
+        return $"{count} | AVG {average} ({interval.MeasuredCycleSampleCount})";
     }
 
     internal static string TimelineBlockLabel(TimelineInterval interval) =>

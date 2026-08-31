@@ -120,6 +120,27 @@ public sealed class TimelineViewModelTests
     }
 
     [Fact]
+    public void Production_interval_label_shows_authoritative_part_count_and_measured_cycle_average()
+    {
+        var start = DateTimeOffset.Parse("2026-08-31T08:00:00Z");
+        var operation = new TimelineInterval(
+            "operation", "machine-1", "op-1", "batch-1", "B-1", "PN-1", 10,
+            "Mill", start, start.AddMinutes(5), null,
+            OperationStatus: "in_progress",
+            MachineAssignmentId: "assignment-1",
+            CompletedQuantity: 23,
+            TargetQuantity: 1000,
+            MeasuredAverageCycleSeconds: 150,
+            MeasuredCycleSampleCount: 4,
+            PlanningCycleTimeSource: "cnc_series_average");
+
+        var label = TimelineView.IntervalLabel(operation);
+
+        Assert.Contains("PARTS 23/1000", label, StringComparison.Ordinal);
+        Assert.Contains("AVG 2:30 (4)", label, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Assignment_and_capacity_intervals_use_separate_non_overlapping_vertical_lanes()
     {
         var start = DateTimeOffset.Parse("2026-08-18T08:00:00Z");

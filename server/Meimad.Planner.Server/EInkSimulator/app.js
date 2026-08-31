@@ -2,7 +2,8 @@
 
 const HOLD_MILLISECONDS = 1200;
 const TOOLS_PER_PAGE = 3;
-const FIRMWARE_VERSION = "0.1.1-mvp";
+const FIRMWARE_VERSION = "0.1.3-mvp";
+const powerPolicies = window.MeimadTabletPowerPolicy;
 
 // Exact classic 5x7 GLCD glyphs used by TFT_eSPI font 1. Each character is
 // five vertical columns plus the firmware renderer's one-column spacing cell.
@@ -154,6 +155,17 @@ function setConnection(message, error = false) {
   element.className = `connection-state${error ? " error" : ""}`;
 }
 
+function applyPowerPolicy(status, wifiOn = false) {
+  const policy = powerPolicies.forStatus(status);
+  const periodic = policy.periodicRefreshSeconds > 0
+    ? `${policy.periodicRefreshSeconds}s`
+    : "NONE";
+  byId("power-state").textContent =
+    `POWER: ${policy.sleepMode} | WIFI: ${wifiOn ? "ON (EXPLICIT SESSION)" : policy.wifiDefault}`
+    + ` | WAKE: ${policy.wakeSources} | PERIODIC: ${periodic}`
+    + ` | BUTTON: ${policy.buttonRefresh} | TIMEOUT: ${policy.wifiSessionTimeoutSeconds}s`;
+}
+
 function batteryVoltage() {
   const value = Number.parseFloat(byId("battery-voltage").value);
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -222,6 +234,7 @@ async function bootOrRefresh(reason = "external-reset") {
   state.localFixture = false;
   byId("scenario-state").textContent = "Live Server mode";
   try {
+    applyPowerPolicy(state.screenModel?.status || "UNKNOWN", true);
     readBenchConfiguration();
     setConnection("Connecting...");
     await registrationPing();
@@ -387,6 +400,7 @@ function drawServiceCanvas(leftFields, rightFields) {
 function renderProduction(value) {
   const model = normalizeModel(value);
   state.screenModel = model;
+  applyPowerPolicy(model.status, false);
   state.showingService = false;
   state.toolPage = Math.min(state.toolPage, Math.max(0, Math.ceil(model.tools.length / TOOLS_PER_PAGE) - 1));
   byId("production-screen").hidden = false;
@@ -454,6 +468,8 @@ function changeToolPage(direction) {
     drawProductionCanvas(state.screenModel);
     setAction(`${direction < 0 ? "D2 PREVIOUS" : "D4 NEXT"}: tool page ${state.toolPage + 1} / ${pages}.`);
   }
+  applyPowerPolicy(state.screenModel?.status || "UNKNOWN", false);
+  log("LOCAL TOOL PAGE navigation completed with Wi-Fi OFF");
 }
 
 function serviceField(label, value) {

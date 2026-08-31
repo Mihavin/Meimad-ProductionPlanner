@@ -26,32 +26,10 @@ bool waitForRelease(int pin) {
   }
   return !isPressed(pin);
 }
-}  // namespace
 
-ButtonAction actionForWakeMask(uint64_t wakeMask, bool longPress) {
-  const uint64_t buttons = wakeMask & kKnownButtonMask;
-  if (buttons == kRefreshMask) {
-    return longPress ? ButtonAction::ServiceScreen : ButtonAction::Refresh;
-  }
-  if (buttons == kPreviousMask) return ButtonAction::PreviousToolPage;
-  if (buttons == kActionMask) {
-    return longPress ? ButtonAction::SendToQc : ButtonAction::NextToolPage;
-  }
-  return ButtonAction::None;
-}
-
-bool requiresServerContact(bool physicalButtonWake, ButtonAction action) {
-  if (!physicalButtonWake) return true;
-  return action == ButtonAction::Refresh
-      || action == ButtonAction::ServiceScreen
-      || action == ButtonAction::SendToQc;
-}
-
-ButtonEvent captureWakeButtonEvent() {
+ButtonEvent captureButtonMask(uint64_t buttonMask) {
   ButtonEvent event;
-  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT1) return event;
-
-  event.wakeMask = esp_sleep_get_ext1_wakeup_status() & kKnownButtonMask;
+  event.wakeMask = buttonMask & kKnownButtonMask;
   const bool exactlyOneButton = event.wakeMask != 0
       && (event.wakeMask & (event.wakeMask - 1)) == 0;
   if (!exactlyOneButton) {
@@ -74,10 +52,7 @@ ButtonEvent captureWakeButtonEvent() {
     const uint32_t threshold = event.wakeMask == kRefreshMask
         ? kServiceScreenLongPressMilliseconds
         : kSendToQcLongPressMilliseconds;
-    while (isPressed(pin)
-        && millis() - holdStartedAt < threshold) {
-      delay(10);
-    }
+    while (isPressed(pin) && millis() - holdStartedAt < threshold) delay(10);
     longPress = isPressed(pin);
   }
   event.heldMilliseconds = millis() - holdStartedAt + kDebounceMilliseconds;
@@ -85,6 +60,39 @@ ButtonEvent captureWakeButtonEvent() {
   event.released = waitForRelease(pin);
   if (!event.released) event.action = ButtonAction::None;
   return event;
+}
+}  // namespace
+
+ButtonAction actionForWakeMask(uint64_t wakeMask, bool longPress) {
+  const uint64_t buttons = wakeMask & kKnownButtonMask;
+  if (buttons == kRefreshMask) {
+    return longPress ? ButtonAction::ServiceScreen : ButtonAction::Refresh;
+  }
+  if (buttons == kPreviousMask) return ButtonAction::PreviousToolPage;
+  if (buttons == kActionMask) {
+    return longPress ? ButtonAction::SendToQc : ButtonAction::NextToolPage;
+  }
+  return ButtonAction::None;
+}
+
+bool requiresServerContact(bool physicalButtonWake, ButtonAction action) {
+  if (!physicalButtonWake) return true;
+  return action == ButtonAction::Refresh
+      || action == ButtonAction::ServiceScreen
+      || action == ButtonAction::SendToQc;
+}
+
+ButtonEvent captureWakeButtonEvent() {
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT1) return {};
+  return captureButtonMask(esp_sleep_get_ext1_wakeup_status());
+}
+
+ButtonEvent captureRuntimeButtonEvent() {
+  uint64_t pressedMask = 0;
+  if (isPressed(hardware::kRefreshButtonGpio)) pressedMask |= kRefreshMask;
+  if (isPressed(hardware::kPageButtonGpio)) pressedMask |= kPreviousMask;
+  if (isPressed(hardware::kActionButtonGpio)) pressedMask |= kActionMask;
+  return captureButtonMask(pressedMask);
 }
 
 bool EventSubmissionGuard::tryBegin() {

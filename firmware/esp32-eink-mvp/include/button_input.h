@@ -38,6 +38,7 @@ class EventSubmissionGuard {
 ButtonAction actionForWakeMask(uint64_t wakeMask, bool longPress);
 bool requiresServerContact(bool physicalButtonWake, ButtonAction action);
 ButtonEvent captureWakeButtonEvent();
+ButtonEvent captureRuntimeButtonEvent();
 const char* toText(ButtonAction action);
 
 }  // namespace meimad::button_input

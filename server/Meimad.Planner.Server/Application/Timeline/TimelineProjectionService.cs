@@ -1476,7 +1476,12 @@ internal sealed class TimelineProjectionService
                 "actual", operation.Status, null, null,
                 operation.ActualStart, operation.ActualEnd,
                 operation.MachineAssignmentId, operation.PlanningMode,
-                operation.PriorityWorkFinishDate);
+                operation.PriorityWorkFinishDate,
+                CompletedQuantity: operation.CompletedQuantity,
+                TargetQuantity: operation.TargetQuantity,
+                MeasuredAverageCycleSeconds: operation.MeasuredAverageCycleSeconds,
+                MeasuredCycleSampleCount: operation.MeasuredCycleSampleCount,
+                PlanningCycleTimeSource: operation.PlanningCycleTimeSource);
         })
         .Where(interval => interval.EndsAt > interval.StartsAt)
         .ToArray();
@@ -1511,7 +1516,12 @@ internal sealed class TimelineProjectionService
                 $"Operation paused by {operation.PausedBy}: {operation.ActivePauseReason}",
                 MachineAssignmentId: operation.MachineAssignmentId,
                 PlanningMode: operation.PlanningMode,
-                WorkFinishDate: operation.PriorityWorkFinishDate);
+                WorkFinishDate: operation.PriorityWorkFinishDate,
+                CompletedQuantity: operation.CompletedQuantity,
+                TargetQuantity: operation.TargetQuantity,
+                MeasuredAverageCycleSeconds: operation.MeasuredAverageCycleSeconds,
+                MeasuredCycleSampleCount: operation.MeasuredCycleSampleCount,
+                PlanningCycleTimeSource: operation.PlanningCycleTimeSource);
         })
         .Where(interval => interval.EndsAt > interval.StartsAt)
         .ToArray();
@@ -1563,7 +1573,12 @@ internal sealed class TimelineProjectionService
                 OperationStatus: operation.Status,
                 MachineAssignmentId: operation.MachineAssignmentId,
                 PlanningMode: operation.PlanningMode,
-                WorkFinishDate: operation.PriorityWorkFinishDate);
+                WorkFinishDate: operation.PriorityWorkFinishDate,
+                CompletedQuantity: operation.CompletedQuantity,
+                TargetQuantity: operation.TargetQuantity,
+                MeasuredAverageCycleSeconds: operation.MeasuredAverageCycleSeconds,
+                MeasuredCycleSampleCount: operation.MeasuredCycleSampleCount,
+                PlanningCycleTimeSource: operation.PlanningCycleTimeSource);
         })
         .ToArray();
 

@@ -142,6 +142,8 @@ try {
         Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\index\.html$" })
     $serverSimulatorScript = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "app.js" |
         Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\app\.js$" })
+    $serverSimulatorPowerPolicy = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "power-policy.js" |
+        Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\power-policy\.js$" })
     $serverSimulatorStyles = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "styles.css" |
         Where-Object { $_.FullName -match "wwwroot\\eink-simulator\\styles\.css$" })
 
@@ -159,8 +161,9 @@ try {
     }
     if ($serverSimulatorHtml.Count -ne 1 -or
         $serverSimulatorScript.Count -ne 1 -or
+        $serverSimulatorPowerPolicy.Count -ne 1 -or
         $serverSimulatorStyles.Count -ne 1) {
-        throw "Expected one complete packaged E-Ink simulator; found HTML $($serverSimulatorHtml.Count), script $($serverSimulatorScript.Count), styles $($serverSimulatorStyles.Count)."
+        throw "Expected one complete packaged E-Ink simulator; found HTML $($serverSimulatorHtml.Count), script $($serverSimulatorScript.Count), power policy $($serverSimulatorPowerPolicy.Count), styles $($serverSimulatorStyles.Count)."
     }
 
     $clientAssemblyText = [Text.Encoding]::UTF8.GetString(
@@ -213,6 +216,21 @@ try {
         throw "Packaged E-Ink simulator must contain 475 classic GLCD glyph bytes; found $glyphByteCount."
     }
 
+    $simulatorPowerPolicy = Get-Content -LiteralPath $serverSimulatorPowerPolicy[0].FullName -Raw
+    foreach ($marker in @(
+        'READY_FOR_SETUP: Object.freeze({ sleepMode: "STAY_AWAKE"',
+        'buttonRefresh: "WAIT_FOR_IN_SETUP_OR_TIMEOUT"',
+        'READY_FOR_PRODUCTION: Object.freeze({ sleepMode: "DEEP_SLEEP"',
+        'periodicRefreshSeconds: 60',
+        'IN_PRODUCTION: Object.freeze({ sleepMode: "DEEP_SLEEP"')) {
+        if ($simulatorPowerPolicy.IndexOf($marker, [StringComparison]::Ordinal) -lt 0) {
+            throw "Packaged E-Ink simulator power policy is missing marker: $marker"
+        }
+    }
+    if ($simulatorPowerPolicy.IndexOf('periodicRefreshSeconds: 15', [StringComparison]::Ordinal) -ge 0) {
+        throw 'Packaged E-Ink simulator must not retain recurring 15-second setup polling.'
+    }
+
     $simulatorStyles = Get-Content -LiteralPath $serverSimulatorStyles[0].FullName -Raw
     if ($simulatorStyles.IndexOf('filter: grayscale(1)', [StringComparison]::Ordinal) -lt 0 -or
         $simulatorStyles.IndexOf('aspect-ratio: 5 / 3', [StringComparison]::Ordinal) -lt 0 -or
@@ -226,7 +244,7 @@ try {
         NestedOcctKernel = $nestedOcctKernels[0].FullName.Substring($clientTarget.Length).TrimStart("\")
         ClientVerificationUi = 'O9003 finalizer + persistent sequence fields present'
         ServerExtractedFiles = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -File).Count
-        EInkSimulatorProfile = '800x480 TFT bitmap (475 bytes); D1/D2/D4/reset; guarded SEND_TO_QC'
+        EInkSimulatorProfile = '800x480 TFT bitmap; explicit status power policy; D1/D2/D4/reset; guarded SEND_TO_QC'
         ServiceRecoveryPolicy = 'restart 60s; restart 60s; none; reset 1d'
         ChecksumsVerified = $expectedHashes.Count
     } | Format-List

@@ -40,7 +40,8 @@ internal sealed record TvSourceOperation(
     DateTimeOffset? ActivePauseStartedAt,
     int? ProducedQuantity = null,
     double? MeasuredAverageCycleSeconds = null,
-    int MeasuredCycleSampleCount = 0);
+    int MeasuredCycleSampleCount = 0,
+    bool CncProductionStarted = false);
 
 internal sealed record TvSourceDowntime(
     string DowntimeId,

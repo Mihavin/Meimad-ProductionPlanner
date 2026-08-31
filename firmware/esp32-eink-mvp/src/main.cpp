@@ -25,7 +25,7 @@ EPaper epaper;
 #endif
 
 #ifndef MEIMAD_FIRMWARE_VERSION
-#define MEIMAD_FIRMWARE_VERSION "0.1.1-mvp"
+#define MEIMAD_FIRMWARE_VERSION "0.1.3-mvp"
 #endif
 
 #ifndef MEIMAD_HARDWARE_PROFILE
@@ -61,6 +61,7 @@ constexpr char kConfirmationPendingKey[] = "confirm_clear";
 constexpr char kBatteryLowKey[] = "battery_low";
 constexpr char kDemoScenarioKey[] = "demo_scene";
 constexpr uint32_t kRetainedSleepStateMagic = 0x4D534C50;
+constexpr uint32_t kPendingAwakeActionMagic = 0x4D414354;
 constexpr time_t kMinimumValidWakeTime = 1704067200;  // 2024-01-01T00:00:00Z
 constexpr float kLowBatteryThresholdVolts = 3.30f;
 
@@ -70,6 +71,9 @@ RTC_DATA_ATTR uint8_t gRetainedServerStateAvailable;
 RTC_DATA_ATTR uint8_t gRetainedButtonWakeEnabled;
 RTC_DATA_ATTR uint8_t gRetainedTimerWakeEnabled;
 RTC_DATA_ATTR uint32_t gRetainedTimerSeconds;
+RTC_DATA_ATTR uint32_t gPendingAwakeActionMarker;
+RTC_DATA_ATTR int32_t gPendingAwakeAction;
+RTC_DATA_ATTR int32_t gPendingAwakeOriginStatus;
 
 struct DeviceConfiguration {
   String hardwareId;
@@ -88,6 +92,27 @@ struct PreviousSleepState {
   bool timerWakeEnabled = false;
   uint32_t timerSeconds = 0;
 };
+
+struct PendingAwakeAction {
+  bool available = false;
+  meimad::button_input::ButtonAction action =
+      meimad::button_input::ButtonAction::None;
+  meimad::tablet_api::TabletStatus originStatus =
+      meimad::tablet_api::TabletStatus::Unknown;
+};
+
+struct AwakeRuntime {
+  bool active = false;
+  bool serviceScreenActive = false;
+  meimad::tablet_api::TabletStatus status =
+      meimad::tablet_api::TabletStatus::Unknown;
+  meimad::production_ui::ProductionScreenModel screen;
+  uint8_t toolPage = 0;
+  bool developmentFixture = false;
+  uint32_t revision = 0;
+};
+
+AwakeRuntime gAwakeRuntime;
 
 String readHardwareId() {
   uint8_t mac[6]{};
@@ -546,6 +571,40 @@ PreviousSleepState loadPreviousSleepState() {
   return state;
 }
 
+PendingAwakeAction consumePendingAwakeAction() {
+  PendingAwakeAction pending;
+  const int32_t minimumAction = static_cast<int32_t>(
+      meimad::button_input::ButtonAction::None);
+  const int32_t maximumAction = static_cast<int32_t>(
+      meimad::button_input::ButtonAction::SendToQc);
+  const int32_t minimumStatus = static_cast<int32_t>(
+      meimad::tablet_api::TabletStatus::ReadyForSetup);
+  const int32_t maximumStatus = static_cast<int32_t>(
+      meimad::tablet_api::TabletStatus::Unknown);
+  if (gPendingAwakeActionMarker == kPendingAwakeActionMagic
+      && gPendingAwakeAction >= minimumAction
+      && gPendingAwakeAction <= maximumAction
+      && gPendingAwakeOriginStatus >= minimumStatus
+      && gPendingAwakeOriginStatus <= maximumStatus) {
+    pending.available = true;
+    pending.action = static_cast<meimad::button_input::ButtonAction>(
+        gPendingAwakeAction);
+    pending.originStatus = static_cast<meimad::tablet_api::TabletStatus>(
+        gPendingAwakeOriginStatus);
+  }
+  gPendingAwakeActionMarker = 0;
+  return pending;
+}
+
+void retainAwakeActionForRestart(
+    meimad::button_input::ButtonAction action,
+    meimad::tablet_api::TabletStatus originStatus) {
+  gPendingAwakeActionMarker = 0;
+  gPendingAwakeAction = static_cast<int32_t>(action);
+  gPendingAwakeOriginStatus = static_cast<int32_t>(originStatus);
+  gPendingAwakeActionMarker = kPendingAwakeActionMagic;
+}
+
 void printPreviousSleepState(const PreviousSleepState& state) {
   if (!state.available) {
     Serial.println("State before sleep: unavailable; this is not a retained deep-sleep wake.");
@@ -668,14 +727,30 @@ void enterStateSleep(
     const meimad::tablet_state_machine::StatePolicy& policy,
     meimad::tablet_api::TabletStatus status,
     bool serverStateAvailable) {
+  if (policy.sleepMode == meimad::tablet_state_machine::SleepMode::StayAwake) {
+    disableWifiForIdle("awake workflow idle");
+    Serial.printf(
+        "Tablet state policy: status=%s source=%s sleep=%s wifi_default=%s "
+        "button_refresh=%s wifi_timeout_seconds=%lu periodic_refresh_seconds=0 "
+        "reason=%s\n",
+        meimad::tablet_api::toToken(status),
+        serverStateAvailable ? "server" : "fallback",
+        meimad::tablet_state_machine::toText(policy.sleepMode),
+        meimad::tablet_state_machine::toText(policy.wifiDefault),
+        meimad::tablet_state_machine::toText(policy.buttonRefreshBehavior),
+        static_cast<unsigned long>(policy.wifiSessionTimeoutSeconds),
+        policy.reason);
+    MEIMAD_LOG("SLEEP", "entering deep_sleep=false awake_local_ui=true");
+    return;
+  }
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-  const bool buttonWakeEnabled = enablePhysicalButtonWake();
-  bool timerWakeEnabled =
-      policy.wakeMode == meimad::tablet_state_machine::WakeMode::PollServer;
-  uint32_t timerSeconds = policy.pollIntervalSeconds;
+  const bool buttonWakeEnabled = policy.buttonWakeEnabled
+      && enablePhysicalButtonWake();
+  bool timerWakeEnabled = policy.periodicRefreshIntervalSeconds > 0;
+  uint32_t timerSeconds = policy.periodicRefreshIntervalSeconds;
   if (!buttonWakeEnabled && !timerWakeEnabled) {
     timerWakeEnabled = true;
-    timerSeconds = meimad::tablet_state_machine::kInitialPollIntervalSeconds;
+    timerSeconds = meimad::tablet_state_machine::kFallbackRefreshIntervalSeconds;
     Serial.println(
         "Button-only wake unavailable; enabling 120-second safety wake.");
   }
@@ -697,12 +772,17 @@ void enterStateSleep(
   }
 
   Serial.printf(
-      "Tablet state policy: status=%s source=%s wake=%s button_wake=%s poll_seconds=%lu%s reason=%s\n",
+      "Tablet state policy: status=%s source=%s sleep=%s wifi_default=%s "
+      "button_wake=%s periodic_refresh_seconds=%lu button_refresh=%s "
+      "wifi_timeout_seconds=%lu%s reason=%s\n",
       meimad::tablet_api::toToken(status),
       serverStateAvailable ? "server" : "fallback",
-      meimad::tablet_state_machine::toText(policy.wakeMode),
+      meimad::tablet_state_machine::toText(policy.sleepMode),
+      meimad::tablet_state_machine::toText(policy.wifiDefault),
       buttonWakeEnabled ? "enabled" : "unavailable",
       static_cast<unsigned long>(timerWakeEnabled ? timerSeconds : 0),
+      meimad::tablet_state_machine::toText(policy.buttonRefreshBehavior),
+      static_cast<unsigned long>(policy.wifiSessionTimeoutSeconds),
       policy.fallbackPolicy ? " fallback=true" : "",
       policy.reason);
   Serial.printf(
@@ -805,16 +885,31 @@ void runCompileTimeDemo(
   saveBatteryLowWarning(screen.lowBattery);
   disableWifiForIdle("compile-time demo");
   const auto policy = meimad::tablet_state_machine::policyFor(screen.status);
+  gAwakeRuntime.active =
+      policy.sleepMode == meimad::tablet_state_machine::SleepMode::StayAwake;
+  if (gAwakeRuntime.active) {
+    gAwakeRuntime.status = screen.status;
+    gAwakeRuntime.screen = screen;
+    gAwakeRuntime.toolPage = toolPage;
+    gAwakeRuntime.developmentFixture = true;
+    gAwakeRuntime.revision = scenarioIndex;
+  }
   enterStateSleep(policy, screen.status, false);
 }
 #endif
 } // namespace
 
 void setup() {
-  const auto wakeButton = meimad::button_input::captureWakeButtonEvent();
+  auto wakeButton = meimad::button_input::captureWakeButtonEvent();
+  const auto pendingAwakeAction = consumePendingAwakeAction();
+  if (pendingAwakeAction.available) {
+    wakeButton.action = pendingAwakeAction.action;
+    wakeButton.released = true;
+  }
   const auto previousSleepState = loadPreviousSleepState();
   const auto wakeCause = esp_sleep_get_wakeup_cause();
-  const bool physicalButtonWake = wakeCause == ESP_SLEEP_WAKEUP_EXT1;
+  const bool physicalButtonWake = wakeCause == ESP_SLEEP_WAKEUP_EXT1
+      || pendingAwakeAction.available;
   const bool serviceScreenRequested =
       wakeButton.action == meimad::button_input::ButtonAction::ServiceScreen;
   const bool serverContactRequired =
@@ -1005,6 +1100,7 @@ void setup() {
         batteryTelemetry);
     meimad::tablet_api::TabletStatusResponse tabletStatus;
     meimad::tablet_api::ApiResult statusApiResult;
+    const uint32_t wifiSessionStartedAt = millis();
     const char* statusReason =
         wakeButton.action == meimad::button_input::ButtonAction::Refresh
             ? "physical-refresh-button"
@@ -1015,6 +1111,40 @@ void setup() {
             statusReason,
             tabletStatus,
             &statusApiResult)) {
+      const auto refreshOriginStatus = pendingAwakeAction.available
+          ? pendingAwakeAction.originStatus
+          : (previousSleepState.available
+              ? previousSleepState.status
+              : tabletStatus.status);
+      if (wakeButton.action == meimad::button_input::ButtonAction::Refresh) {
+        const auto refreshPolicy =
+            meimad::tablet_state_machine::policyFor(refreshOriginStatus);
+        while (meimad::tablet_state_machine::shouldContinueButtonWifiSession(
+            refreshOriginStatus,
+            tabletStatus.status,
+            (millis() - wifiSessionStartedAt) / 1000UL,
+            refreshPolicy.wifiSessionTimeoutSeconds)) {
+          delay(1000);
+          meimad::tablet_api::TabletStatusResponse refreshedStatus;
+          meimad::tablet_api::ApiResult refreshedResult;
+          if (requestTabletStatus(
+                  tabletApi,
+                  activeConfiguration.tabletId,
+                  "button-wifi-session",
+                  refreshedStatus,
+                  &refreshedResult)) {
+            tabletStatus = refreshedStatus;
+            statusApiResult = refreshedResult;
+          }
+        }
+        MEIMAD_LOG(
+            "WIFI",
+            "button_session complete origin=%s observed=%s elapsed_seconds=%lu timeout_seconds=%lu",
+            meimad::tablet_api::toToken(refreshOriginStatus),
+            meimad::tablet_api::toToken(tabletStatus.status),
+            static_cast<unsigned long>((millis() - wifiSessionStartedAt) / 1000UL),
+            static_cast<unsigned long>(refreshPolicy.wifiSessionTimeoutSeconds));
+      }
       lastHttpResult = apiDiagnosticText("STATUS", statusApiResult);
       lastSuccessfulContact = currentUtcContactText();
       productionScreen = meimad::production_ui::makeProductionScreen(tabletStatus);
@@ -1294,10 +1424,66 @@ void setup() {
     }
   }
   const auto statePolicy = meimad::tablet_state_machine::policyFor(serverStatus);
+  gAwakeRuntime.active =
+      statePolicy.sleepMode == meimad::tablet_state_machine::SleepMode::StayAwake;
+  if (gAwakeRuntime.active) {
+    gAwakeRuntime.serviceScreenActive = serviceScreenRequested;
+    gAwakeRuntime.status = serverStatus;
+    gAwakeRuntime.screen = productionScreen;
+    gAwakeRuntime.toolPage = toolPage;
+    gAwakeRuntime.developmentFixture = developmentFixture;
+    gAwakeRuntime.revision = serverRevision;
+  }
   enterStateSleep(statePolicy, serverStatus, statePolicyFromServer);
 }
 
 void loop() {
+  if (gAwakeRuntime.active) {
+    const bool anyPressed =
+        digitalRead(meimad::hardware::kRefreshButtonGpio) == LOW
+        || digitalRead(meimad::hardware::kPageButtonGpio) == LOW
+        || digitalRead(meimad::hardware::kActionButtonGpio) == LOW;
+    if (anyPressed) {
+      const auto event = meimad::button_input::captureRuntimeButtonEvent();
+      if (event.action == meimad::button_input::ButtonAction::PreviousToolPage
+          || event.action == meimad::button_input::ButtonAction::NextToolPage) {
+        if (gAwakeRuntime.serviceScreenActive) {
+          MEIMAD_LOG("BUTTON", "local_page ignored reason=service_screen");
+        } else {
+          const uint8_t requestedPage = event.action
+                  == meimad::button_input::ButtonAction::PreviousToolPage
+              ? meimad::production_ui::previousToolPage(
+                    gAwakeRuntime.toolPage, gAwakeRuntime.screen.toolCount)
+              : meimad::production_ui::nextToolPage(
+                    gAwakeRuntime.toolPage, gAwakeRuntime.screen.toolCount);
+          if (requestedPage != gAwakeRuntime.toolPage) {
+            gAwakeRuntime.toolPage = requestedPage;
+            saveLastRefreshDuration(drawProductionLayout(
+                gAwakeRuntime.screen,
+                gAwakeRuntime.developmentFixture,
+                "awake-local-tool-page",
+                gAwakeRuntime.revision,
+                gAwakeRuntime.toolPage));
+            saveToolPage(gAwakeRuntime.toolPage);
+            MEIMAD_LOG(
+                "BUTTON", "local_page changed page=%u wifi=off",
+                static_cast<unsigned>(gAwakeRuntime.toolPage + 1));
+          }
+        }
+      } else if (event.action != meimad::button_input::ButtonAction::None) {
+        retainAwakeActionForRestart(event.action, gAwakeRuntime.status);
+        MEIMAD_LOG(
+            "BUTTON", "awake_action=%s network_session=%s restarting=true",
+            meimad::button_input::toText(event.action),
+            meimad::button_input::requiresServerContact(true, event.action)
+                ? "required"
+                : "skipped");
+        meimad::logging::flush();
+        delay(50);
+        ESP.restart();
+      }
+    }
+  }
   static uint32_t lastLog = 0;
   if (millis() - lastLog >= 10000) {
     lastLog = millis();

@@ -6,8 +6,8 @@ this firmware never reads them or treats them as workflow authority.
 
 This is the buildable firmware/development environment for the E-Ink tablet.
 It includes observable boot diagnostics, bounded Wi-Fi and tablet-status API
-calls, a first production screen layout, revision-gated refresh, and the first
-status-driven deep-sleep state machine with wake-button actions. It also parses
+calls, a production screen layout, revision-gated refresh, and a centralized
+status-driven awake/deep-sleep/Wi-Fi state machine with button actions. It also parses
 and renders the Server-projected setup-verification response. Package
 activation and the broader checklist/comment input state machine remain future
 work.
@@ -149,11 +149,11 @@ screen/revision decision:
 
 | Server status | Tablet wake policy |
 |---|---|
-| `READY_FOR_SETUP` | Deep sleep with a 15-second development timer and physical-button wake so a new challenge is detected inside its minimum supported window. |
-| `IN_SETUP` | Deep sleep with a 15-second development timer and physical-button wake so the time-limited verification projection is refreshed. |
-| `IN_SETUP_RUN` | Deep sleep with physical-button wake only. |
-| `IN_QC` | Deep sleep with a 120-second timer and physical-button wake. |
-| `READY_FOR_PRODUCTION` | Deep sleep with physical-button wake only. |
+| `READY_FOR_SETUP` | Stay awake indefinitely with Wi-Fi off. D1 opens a bounded Wi-Fi session and waits for `IN_SETUP` or the configured timeout. No periodic poll. |
+| `IN_SETUP` | Stay awake with Wi-Fi off; D1 performs an explicit bounded refresh. No periodic poll. |
+| `IN_SETUP_RUN` | Stay awake with Wi-Fi off so local setup/tool pages remain responsive; D1 performs an explicit bounded refresh. |
+| `IN_QC` | Deep sleep with physical-button wake only. |
+| `READY_FOR_PRODUCTION` | Post-QA waiting state: deep sleep with physical-button wake and one configurable 60-second timer refresh. |
 | `IN_PRODUCTION` | Deep sleep with physical-button wake only; CNC/Server owns cycle events. |
 | `BLOCKED`, `UNKNOWN`, or unavailable response | Conservative 120-second retry plus physical-button wake. This fallback remains a product-policy decision. |
 
@@ -163,9 +163,13 @@ resulting deep-sleep current must be measured on the real board. If button-wake
 configuration fails in a button-only state, firmware enables a 120-second safety
 timer rather than creating an unreachable tablet.
 
-The 15-second setup-verification cadence corrects the physically observed
-120-second poll versus 120-second challenge race. The 120-second timer remains
-the development cadence for `IN_QC` and conservative fallback states.
+The old recurring 15-second setup poll is removed. `READY_FOR_SETUP` and both
+setup states keep the UI awake but the radio off; setup synchronization is
+operator-triggered. The D1 session timeout defaults to 30 seconds. The post-QA
+timer defaults to 60 seconds. Both values can be overridden at build time with
+`MEIMAD_BUTTON_WIFI_SESSION_TIMEOUT_SECONDS` and
+`MEIMAD_POST_QA_REFRESH_SECONDS`. The 120-second timer remains only for
+conservative `BLOCKED`/`UNKNOWN` fallback states.
 Production automatic wakes must additionally be restricted to
 the Server-configured workdays and shift windows. The firmware does not yet
 consume the existing time-config/clock contract, so this scheduling gate remains
@@ -183,20 +187,19 @@ state is reported as unavailable rather than fabricated.
 The runtime follows this bounded power sequence:
 
 ```text
-wake -> capture/debounce button -> decide whether network is required
+wake/awake button -> capture/debounce button -> decide whether network is required
      -> connect and perform bounded HTTP work when required
      -> apply revision/button display decision
-     -> disable Wi-Fi -> configure timer/button wake -> retain sleep state
-     -> deep sleep
+     -> disable Wi-Fi -> either stay awake for setup-local UI
+                       or configure timer/button wake and enter deep sleep
 ```
 
-Timer wakes, cold boots, Refresh, and `SEND_TO_QC` require Server contact.
+Post-QA timer wakes, cold boots, Refresh, and `SEND_TO_QC` require Server contact.
 Previous/Next and ignored physical-button wakes are local-only and do not start
-Wi-Fi. The prior authoritative/fallback status is retained in RTC memory for
-those local wakes so the next sleep policy does not silently change. Until the
-official package/tool model is cached, a local page press against a retained
-live screen cannot reconstruct another page and therefore preserves the current
-panel; the development fixture can page locally.
+Wi-Fi. During awake setup states the runtime handles Previous/Next directly
+from the in-memory screen model, refreshes only the changed tool page, and leaves
+Wi-Fi off. The prior authoritative/fallback status is retained in RTC memory for
+deep-sleep local wakes so the next sleep policy does not silently change.
 
 After all required HTTP calls finish, Wi-Fi is disconnected and placed in
 `WIFI_OFF` before any panel refresh. Sleep entry verifies shutdown again. If no

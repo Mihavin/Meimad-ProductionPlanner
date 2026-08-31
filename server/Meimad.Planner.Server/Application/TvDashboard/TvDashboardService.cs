@@ -222,6 +222,19 @@ internal sealed class TvDashboardService
                 operation.MeasuredCycleSampleCount);
         }
 
+        // A Server-owned Production Run output is authoritative. Once the connected
+        // CNC has entered production, never infer that it is still in setup from wall time.
+        if (quantity > 0 && operation.CncProductionStarted
+            && operation.ProducedQuantity.HasValue)
+        {
+            var produced = Math.Clamp(operation.ProducedQuantity.Value, 0, quantity);
+            var percent = Math.Clamp((int)Math.Round((double)produced / quantity * 100), 0, 99);
+            return new TvOperationProgress(statusCode, statusLabel, "production",
+                $"Part {produced}/{quantity} | {percent}% of Batch",
+                percent, null, produced, quantity, operation.MeasuredAverageCycleSeconds,
+                operation.MeasuredCycleSampleCount);
+        }
+
         var setupSeconds = Math.Max(0, operation.SetupSeconds ?? 0);
         var effectiveEnd = statusCode == "paused"
             ? operation.ActivePauseStartedAt ?? now
@@ -237,16 +250,6 @@ internal sealed class TvDashboardService
             return new TvOperationProgress(
                 statusCode, statusLabel, "setup", $"Setup {percent}%",
                 percent, percent, null, quantity);
-        }
-
-        if (quantity > 0 && operation.ProducedQuantity.HasValue)
-        {
-            var produced = Math.Clamp(operation.ProducedQuantity.Value, 0, quantity);
-            var percent = Math.Clamp((int)Math.Round((double)produced / quantity * 100), 0, 99);
-            return new TvOperationProgress(statusCode, statusLabel, "production",
-                $"Part {produced}/{quantity} | {percent}% of Batch",
-                percent, null, produced, quantity, operation.MeasuredAverageCycleSeconds,
-                operation.MeasuredCycleSampleCount);
         }
 
         if (quantity > 0 && operation.CycleSeconds is > 0)

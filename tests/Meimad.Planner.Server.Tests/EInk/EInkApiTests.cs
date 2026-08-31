@@ -722,6 +722,8 @@ public sealed class EInkApiTests
             Assert.Contains("id=\"button-d2\"", html, StringComparison.Ordinal);
             Assert.Contains("id=\"button-d4\"", html, StringComparison.Ordinal);
             Assert.Contains("id=\"button-reset\"", html, StringComparison.Ordinal);
+            Assert.Contains("id=\"power-state\"", html, StringComparison.Ordinal);
+            Assert.Contains("power-policy.js", html, StringComparison.Ordinal);
             Assert.Contains("PREVIOUS TOOL PAGE", html, StringComparison.Ordinal);
             Assert.Contains("NEXT TOOL PAGE", html, StringComparison.Ordinal);
             Assert.Contains("HOLD: SERVICE / DEBUG", html, StringComparison.Ordinal);
@@ -773,6 +775,17 @@ public sealed class EInkApiTests
             Assert.DoesNotContain("production_run_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("machine_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
+
+            using var powerPolicy = await client.GetAsync("/eink-simulator/power-policy.js");
+            var powerJavascript = await powerPolicy.Content.ReadAsStringAsync();
+            Assert.Contains("READY_FOR_SETUP", powerJavascript, StringComparison.Ordinal);
+            Assert.Contains("STAY_AWAKE", powerJavascript, StringComparison.Ordinal);
+            Assert.Contains("WAIT_FOR_IN_SETUP_OR_TIMEOUT", powerJavascript, StringComparison.Ordinal);
+            Assert.Contains("READY_FOR_PRODUCTION", powerJavascript, StringComparison.Ordinal);
+            Assert.Contains("periodicRefreshSeconds: 60", powerJavascript, StringComparison.Ordinal);
+            Assert.Contains("IN_QC", powerJavascript, StringComparison.Ordinal);
+            Assert.Contains("IN_PRODUCTION", powerJavascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("periodicRefreshSeconds: 15", powerJavascript, StringComparison.Ordinal);
 
             using var usb = await client.SendAsync(Get(
                 $"/api/v1/eink/tablets/{TabletId}/usb-mass-storage"));

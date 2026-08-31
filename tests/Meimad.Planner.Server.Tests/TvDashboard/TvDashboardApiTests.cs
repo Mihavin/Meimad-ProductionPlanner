@@ -128,6 +128,153 @@ public sealed class TvDashboardApiTests
         });
     }
 
+    [Fact]
+    public async Task Validated_CNC_series_projects_authoritative_count_and_average_to_TV_and_Timeline()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            var previewPath = await SeedAsync(application.Services);
+            await SeedCompletedCncCycleAsync(application.Services, TimeSpan.FromSeconds(120));
+
+            using var response = await client.GetAsync("/api/v1/tv-dashboard");
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var progress = Assert.Single(document.RootElement.GetProperty("machines").EnumerateArray())
+                .GetProperty("current").GetProperty("progress");
+            Assert.Equal("started", progress.GetProperty("statusCode").GetString());
+            Assert.Equal("In production", progress.GetProperty("statusLabel").GetString());
+            Assert.Equal(2, progress.GetProperty("currentPart").GetInt32());
+            Assert.Equal(4, progress.GetProperty("plannedParts").GetInt32());
+            Assert.Equal(2, progress.GetProperty("averageCycleSampleCount").GetInt32());
+            Assert.InRange(progress.GetProperty("averageCycleSeconds").GetDouble(), 149.9, 150.1);
+
+            var from = DateTimeOffset.UtcNow.AddHours(-1).ToString("O");
+            var to = DateTimeOffset.UtcNow.AddDays(2).ToString("O");
+            using var timelineResponse = await client.GetAsync(
+                $"/api/v1/timeline?from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}");
+            using var timeline = JsonDocument.Parse(await timelineResponse.Content.ReadAsStringAsync());
+            var intervals = timeline.RootElement.GetProperty("machines").EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(value => value.TryGetProperty("operationId", out var id)
+                    && id.GetString() == "op-current").ToArray();
+            Assert.True(intervals.Length > 0, timeline.RootElement.GetRawText());
+            var interval = intervals.FirstOrDefault(value =>
+                value.GetProperty("planningCycleTimeSource").GetString() == "cnc_series_average");
+            Assert.NotEqual(JsonValueKind.Undefined, interval.ValueKind);
+            Assert.Equal(2, interval.GetProperty("completedQuantity").GetInt32());
+            Assert.Equal(4, interval.GetProperty("targetQuantity").GetInt32());
+            Assert.Equal("cnc_series_average", interval.GetProperty("planningCycleTimeSource").GetString());
+            Assert.Equal(2, interval.GetProperty("measuredCycleSampleCount").GetInt32());
+            Assert.InRange(interval.GetProperty("measuredAverageCycleSeconds").GetDouble(), 149.9, 150.1);
+            var forecastStart = interval.GetProperty("forecastStart").GetDateTimeOffset();
+            var forecastEnd = interval.GetProperty("forecastEnd").GetDateTimeOffset();
+            Assert.InRange((forecastEnd - forecastStart).TotalSeconds, 299.9, 300.1);
+
+            Directory.Delete(Path.GetDirectoryName(previewPath)!, recursive: true);
+        });
+    }
+
+    private static async Task SeedCompletedCncCycleAsync(
+        IServiceProvider services,
+        TimeSpan duration)
+    {
+        var database = services.GetRequiredService<SqliteDatabase>();
+        await using var connection = await database.OpenConnectionAsync();
+        string runId;
+        string programId;
+        await using (var read = connection.CreateCommand())
+        {
+            read.CommandText = """
+                SELECT assignment.production_run_id,program.id
+                FROM machine_assignments assignment
+                JOIN production_run_programs program
+                  ON program.production_run_id=assignment.production_run_id
+                WHERE assignment.id='assignment-current';
+                """;
+            await using var reader = await read.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            runId = reader.GetString(0);
+            programId = reader.GetString(1);
+        }
+
+        var endedAt = DateTimeOffset.UtcNow;
+        var secondStartedAt = endedAt.AddSeconds(-180);
+        var firstEndedAt = secondStartedAt;
+        var firstStartedAt = firstEndedAt.Subtract(duration);
+        var interruptedStartedAt = firstStartedAt.AddMinutes(-10);
+        var interruptedAt = firstStartedAt.AddMinutes(-1);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE batch_operations SET status='started' WHERE id='op-current';
+            UPDATE production_run_programs
+            SET completed_cycle_count=2
+            WHERE id=$program;
+            UPDATE production_run_outputs
+            SET status='IN_PRODUCTION',produced_quantity=2
+            WHERE production_run_program_id=$program AND batch_operation_id='op-current';
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                source_sequence,server_received_at,metadata_json)
+            VALUES('tv-interrupted-start',$run,'machine-tv','CYCLE_START','HAAS_DPRINT:MACHINE-TV',
+                   'TV-INTERRUPTED-START',98,$interruptedStart,$metadata);
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                source_sequence,server_received_at,metadata_json)
+            VALUES('tv-interrupted',$run,'machine-tv','CYCLE_INTERRUPTED','SERVER_CYCLE',
+                   'TV-INTERRUPTED',NULL,$interruptedAt,$interruptedMetadata);
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                source_sequence,server_received_at,metadata_json)
+            VALUES('tv-cycle-start-1',$run,'machine-tv','CYCLE_START','HAAS_DPRINT:MACHINE-TV',
+                   'TV-CYCLE-START-1',1,$start1,$metadata);
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                source_sequence,server_received_at,metadata_json)
+            VALUES('tv-cycle-end-1',$run,'machine-tv','CYCLE_END','HAAS_DPRINT:MACHINE-TV',
+                   'TV-CYCLE-END-1',2,$end1,$metadata);
+            INSERT INTO production_run_cycle_events(
+                id,production_run_id,production_run_program_id,source,source_event_id,
+                observed_at,completed_cycle_count,created_at,updated_at)
+            VALUES('tv-cycle-1',$run,$program,'HAAS_DPRINT:MACHINE-TV','TV-CYCLE-END-1',
+                   $end1,1,$end1,$end1);
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                source_sequence,server_received_at,metadata_json)
+            VALUES('tv-cycle-start-2',$run,'machine-tv','CYCLE_START','HAAS_DPRINT:MACHINE-TV',
+                   'TV-CYCLE-START-2',3,$start2,$metadata);
+            INSERT INTO production_run_workflow_events(
+                id,production_run_id,machine_id,event_type,source,source_event_id,
+                source_sequence,server_received_at,metadata_json)
+            VALUES('tv-cycle-end-2',$run,'machine-tv','CYCLE_END','HAAS_DPRINT:MACHINE-TV',
+                   'TV-CYCLE-END-2',4,$end2,$metadata);
+            INSERT INTO production_run_cycle_events(
+                id,production_run_id,production_run_program_id,source,source_event_id,
+                observed_at,completed_cycle_count,created_at,updated_at)
+            VALUES('tv-cycle-2',$run,$program,'HAAS_DPRINT:MACHINE-TV','TV-CYCLE-END-2',
+                   $end2,2,$end2,$end2);
+            """;
+        command.Parameters.AddWithValue("$run", runId);
+        command.Parameters.AddWithValue("$program", programId);
+        command.Parameters.AddWithValue("$interruptedStart", interruptedStartedAt.ToString("O"));
+        command.Parameters.AddWithValue("$interruptedAt", interruptedAt.ToString("O"));
+        command.Parameters.AddWithValue("$start1", firstStartedAt.ToString("O"));
+        command.Parameters.AddWithValue("$end1", firstEndedAt.ToString("O"));
+        command.Parameters.AddWithValue("$start2", secondStartedAt.ToString("O"));
+        command.Parameters.AddWithValue("$end2", endedAt.ToString("O"));
+        command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(new
+        {
+            productionRunProgramId = programId
+        }));
+        command.Parameters.AddWithValue("$interruptedMetadata", JsonSerializer.Serialize(new
+        {
+            productionRunProgramId = programId,
+            interruptedWorkflowEventId = "tv-interrupted-start",
+            interruptedSourceEventId = "TV-INTERRUPTED-START",
+            interruptedBySourceEventId = "TV-CYCLE-START-1",
+            interruptedBySequence = 1
+        }));
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task<string> SeedAsync(IServiceProvider services)
     {
         var now = DateTimeOffset.UtcNow;
@@ -176,13 +323,13 @@ public sealed class TvDashboardApiTests
             VALUES ('case-tv', 'PN-TV', 'TV Part', 'preview.png', $workingFolder);
             INSERT INTO orders (
                 id, case_id, order_reference, quantity, work_finish_date, status)
-            VALUES ('order-tv', 'case-tv', 'ORDER-TV', 2, $due, 'active');
+            VALUES ('order-tv', 'case-tv', 'ORDER-TV', 4, $due, 'active');
             INSERT INTO production_batches (
                 id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-tv', 'case-tv', 'B-TV', 'waiting', 2);
+            VALUES ('batch-tv', 'case-tv', 'B-TV', 'waiting', 4);
             INSERT INTO batch_allocations (
                 id, production_batch_id, allocation_type, order_id, quantity)
-            VALUES ('allocation-tv', 'batch-tv', 'order', 'order-tv', 2);
+            VALUES ('allocation-tv', 'batch-tv', 'order', 'order-tv', 4);
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name,
                 required_machine_type, setup_seconds, cycle_seconds)

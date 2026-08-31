@@ -85,17 +85,24 @@ Server status only to choose wake behavior:
 
 | Server status | Firmware sleep/wake behavior |
 |---|---|
-| `READY_FOR_SETUP` | Deep sleep; development timer poll after 15 seconds or physical-button wake so a new verification challenge is detected inside its minimum supported window. |
-| `IN_SETUP` | Deep sleep; development timer poll after 15 seconds or physical-button wake so time-limited verification state is refreshed. |
-| `IN_SETUP_RUN` | Deep sleep; physical-button wake only. |
-| `IN_QC` | Deep sleep; timer poll after 120 seconds or physical-button wake. |
-| `READY_FOR_PRODUCTION` | Deep sleep; physical-button wake only while the explicit status text remains visible. |
+| `READY_FOR_SETUP` | Remain awake with Wi-Fi off and no periodic polling. D1 starts a bounded Wi-Fi session that ends on `IN_SETUP`/`IN_SETUP_RUN` or timeout. |
+| `IN_SETUP` | Remain awake with Wi-Fi off; D1 performs one explicit bounded refresh. |
+| `IN_SETUP_RUN` | Remain awake with Wi-Fi off for local setup/tool browsing; D1 performs one explicit bounded refresh. |
+| `IN_QC` | Deep sleep; physical-button wake only. |
+| `READY_FOR_PRODUCTION` | Canonical post-QA wait (`QC_PASS`): deep sleep; physical-button wake plus one refresh every configurable 60 seconds. |
 | `IN_PRODUCTION` | Deep sleep; physical-button wake only. CNC/Server generates cycle events. |
 | `BLOCKED`, `UNKNOWN`, or no valid response | Conservative 120-second retry plus physical wake; final policy is TBD. |
 
-The 15-second setup-verification cadence corrects the physically observed race
-between a 120-second poll and a 120-second challenge. Production acceptance still
-requires configured work-window enforcement and measured battery impact.
+The old recurring 15-second setup poll is removed. The explicit D1 Wi-Fi session
+defaults to 30 seconds; post-QA refresh defaults to 60 seconds. Both are build-time
+configurable. Production acceptance still requires configured work-window
+enforcement and measured battery impact.
+
+The implemented tablet workflow does not collapse the two readiness concepts.
+`READY_FOR_SETUP` is the pre-setup/setup-operator state and stays awake.
+`READY_FOR_PRODUCTION` is emitted only after `QC_PASS` and is the 60-second
+post-QA wait. The planning-readiness phrase “Ready for Production” is a separate
+planning concept and is not used as an ambiguous tablet power-policy key.
 
 GPIO2/GPIO3/GPIO5 are configured as active-low ESP32-S3 EXT1 wake sources.
 Internal RTC pull-ups are kept powered; physical wake and its current cost still

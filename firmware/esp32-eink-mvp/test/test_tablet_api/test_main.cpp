@@ -347,44 +347,71 @@ void testRevisionGateSkipsOnlyMatchingTabletAndRevision() {
   CHECK(shouldRefresh(stored, "3041", 0));
 }
 
-void testTabletStateMachineUsesOnlyPollingOrButtonWake() {
+void testTabletStateMachineSeparatesAwakeUiWifiAndDeepSleep() {
   const StatePolicy readyForSetup = policyFor(TabletStatus::ReadyForSetup);
-  CHECK(readyForSetup.wakeMode == WakeMode::PollServer);
-  CHECK(readyForSetup.pollIntervalSeconds == 15);
+  CHECK(readyForSetup.sleepMode == SleepMode::StayAwake);
+  CHECK(readyForSetup.wifiDefault == WifiDefault::Off);
+  CHECK(readyForSetup.periodicRefreshIntervalSeconds == 0);
+  CHECK(readyForSetup.buttonRefreshBehavior
+        == ButtonRefreshBehavior::WaitForInSetupOrTimeout);
+  CHECK(readyForSetup.wifiSessionTimeoutSeconds == 30);
   CHECK(!readyForSetup.fallbackPolicy);
 
-  const StatePolicy inSetup = policyFor(TabletStatus::InSetupRun);
-  CHECK(inSetup.wakeMode == WakeMode::PhysicalButton);
-  CHECK(inSetup.pollIntervalSeconds == 0);
-
   const StatePolicy awaitingVerification = policyFor(TabletStatus::InSetup);
-  CHECK(awaitingVerification.wakeMode == WakeMode::PollServer);
-  CHECK(awaitingVerification.pollIntervalSeconds == 15);
+  CHECK(awaitingVerification.sleepMode == SleepMode::StayAwake);
+  CHECK(awaitingVerification.wifiDefault == WifiDefault::Off);
+  CHECK(awaitingVerification.periodicRefreshIntervalSeconds == 0);
   CHECK(!awaitingVerification.fallbackPolicy);
 
+  const StatePolicy inSetup = policyFor(TabletStatus::InSetupRun);
+  CHECK(inSetup.sleepMode == SleepMode::StayAwake);
+  CHECK(inSetup.wifiDefault == WifiDefault::Off);
+  CHECK(inSetup.periodicRefreshIntervalSeconds == 0);
+
   const StatePolicy inQc = policyFor(TabletStatus::InQc);
-  CHECK(inQc.wakeMode == WakeMode::PollServer);
-  CHECK(inQc.pollIntervalSeconds == 120);
+  CHECK(inQc.sleepMode == SleepMode::DeepSleep);
+  CHECK(inQc.wifiDefault == WifiDefault::Off);
+  CHECK(inQc.buttonWakeEnabled);
+  CHECK(inQc.periodicRefreshIntervalSeconds == 0);
 
   const StatePolicy readyForProduction =
       policyFor(TabletStatus::ReadyForProduction);
-  CHECK(readyForProduction.wakeMode == WakeMode::PhysicalButton);
-  CHECK(readyForProduction.pollIntervalSeconds == 0);
+  CHECK(readyForProduction.sleepMode == SleepMode::DeepSleep);
+  CHECK(readyForProduction.wifiDefault == WifiDefault::Off);
+  CHECK(readyForProduction.buttonWakeEnabled);
+  CHECK(readyForProduction.periodicRefreshIntervalSeconds == 60);
 
   const StatePolicy inProduction = policyFor(TabletStatus::InProduction);
-  CHECK(inProduction.wakeMode == WakeMode::PhysicalButton);
-  CHECK(inProduction.pollIntervalSeconds == 0);
+  CHECK(inProduction.sleepMode == SleepMode::DeepSleep);
+  CHECK(inProduction.wifiDefault == WifiDefault::Off);
+  CHECK(inProduction.buttonWakeEnabled);
+  CHECK(inProduction.periodicRefreshIntervalSeconds == 0);
+}
+
+void testReadyForSetupButtonWifiSessionStopsOnTransitionOrTimeout() {
+  CHECK(shouldContinueButtonWifiSession(
+      TabletStatus::ReadyForSetup, TabletStatus::ReadyForSetup, 0, 30));
+  CHECK(shouldContinueButtonWifiSession(
+      TabletStatus::ReadyForSetup, TabletStatus::ReadyForSetup, 29, 30));
+  CHECK(!shouldContinueButtonWifiSession(
+      TabletStatus::ReadyForSetup, TabletStatus::ReadyForSetup, 30, 30));
+  CHECK(!shouldContinueButtonWifiSession(
+      TabletStatus::ReadyForSetup, TabletStatus::InSetup, 1, 30));
+  CHECK(!shouldContinueButtonWifiSession(
+      TabletStatus::ReadyForSetup, TabletStatus::InSetupRun, 1, 30));
+  CHECK(!shouldContinueButtonWifiSession(
+      TabletStatus::InSetup, TabletStatus::InSetup, 1, 30));
 }
 
 void testUndefinedStatePoliciesPollConservatively() {
   const StatePolicy blocked = policyFor(TabletStatus::Blocked);
-  CHECK(blocked.wakeMode == WakeMode::PollServer);
-  CHECK(blocked.pollIntervalSeconds == 120);
+  CHECK(blocked.sleepMode == SleepMode::DeepSleep);
+  CHECK(blocked.periodicRefreshIntervalSeconds == 120);
   CHECK(blocked.fallbackPolicy);
 
   const StatePolicy unknown = policyFor(TabletStatus::Unknown);
-  CHECK(unknown.wakeMode == WakeMode::PollServer);
-  CHECK(unknown.pollIntervalSeconds == 120);
+  CHECK(unknown.sleepMode == SleepMode::DeepSleep);
+  CHECK(unknown.periodicRefreshIntervalSeconds == 120);
   CHECK(unknown.fallbackPolicy);
 }
 
@@ -509,7 +536,8 @@ void setup() {
   testProductionScreenDoesNotPresentOpaqueIdAsMachineNumber();
   testDevelopmentFixtureIsPagedAndClearlyIdentifiedByCaller();
   testRevisionGateSkipsOnlyMatchingTabletAndRevision();
-  testTabletStateMachineUsesOnlyPollingOrButtonWake();
+  testTabletStateMachineSeparatesAwakeUiWifiAndDeepSleep();
+  testReadyForSetupButtonWifiSessionStopsOnTransitionOrTimeout();
   testUndefinedStatePoliciesPollConservatively();
   testWakeButtonMappingUsesLongPressOnlyForSendToQc();
   testSendToQcIsAvailableOnlyDuringSetupRun();

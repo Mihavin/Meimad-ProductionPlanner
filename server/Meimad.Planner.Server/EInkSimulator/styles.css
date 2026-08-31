@@ -86,6 +86,7 @@ main { padding: 18px 24px 32px; }
 .protocol-panel { display: grid; grid-template-columns: minmax(230px, .7fr) 1.6fr; gap: 14px; padding: 12px 14px; }
 .protocol-panel h2 { margin: 0 0 4px; font-size: 16px; }
 .protocol-panel p { margin: 0; font-size: 13px; font-weight: 700; }
+.protocol-panel .power-state { margin-top: 8px; font-family: Consolas, monospace; font-size: 11px; }
 #protocol-log { max-height: 150px; margin: 0; overflow: auto; white-space: pre-wrap; font: 11px/1.4 Consolas, monospace; }
 @media (max-width: 760px) {
   .app-header { display: block; }

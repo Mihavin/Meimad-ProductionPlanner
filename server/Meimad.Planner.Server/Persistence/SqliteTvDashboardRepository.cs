@@ -137,7 +137,11 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                       AND julianday(timing.end_server_received_at)>julianday(timing.start_server_received_at)
                       AND EXISTS(SELECT 1 FROM production_run_outputs output
                           WHERE output.production_run_program_id=timing.production_run_program_id
-                            AND output.batch_operation_id=batch_operations.id))
+                            AND output.batch_operation_id=batch_operations.id)),
+                   EXISTS(SELECT 1 FROM production_run_workflow_events event
+                       WHERE event.production_run_id=machine_assignments.production_run_id
+                         AND event.machine_id=machine_assignments.machine_id
+                         AND event.event_type='CYCLE_START')
             FROM machine_assignments
             JOIN machines ON machines.id = machine_assignments.machine_id
             JOIN batch_operations
@@ -168,7 +172,8 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                     reader.IsDBNull(18) ? null : ParseInstant(reader.GetString(18)),
                     reader.IsDBNull(19) ? null : reader.GetInt32(19),
                     reader.IsDBNull(20) ? null : reader.GetDouble(20),
-                    reader.GetInt32(21))));
+                    reader.GetInt32(21),
+                    reader.GetInt32(22) == 1)));
         }
 
         return values;

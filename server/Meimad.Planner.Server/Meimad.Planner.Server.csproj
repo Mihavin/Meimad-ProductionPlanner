@@ -8,7 +8,7 @@
     <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
     <RootNamespace>Meimad.Planner.Server</RootNamespace>
     <AssemblyName>Meimad.Planner.Server</AssemblyName>
-    <Version>0.1.51</Version>
+    <Version>0.1.53</Version>
     <!-- Keep disposable local publish intermediates out of the SDK source glob. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);.publish-temp\**</DefaultItemExcludes>
   </PropertyGroup>
@@ -61,6 +61,10 @@
              CopyToPublishDirectory="PreserveNewest" />
     <Content Include="EInkSimulator\app.js"
              Link="wwwroot\eink-simulator\app.js"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="EInkSimulator\power-policy.js"
+             Link="wwwroot\eink-simulator\power-policy.js"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

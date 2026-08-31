@@ -339,7 +339,9 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             var requiredToolCount = NullableInt(reader, 47);
             var completedQuantity = NullableInt(reader, 48) ?? 0;
             var targetQuantity = NullableInt(reader, 49) ?? plannedQuantity;
-            var measuredAverageCycleSeconds = reader.IsDBNull(50) ? null : reader.GetDouble(50);
+            var measuredAverageCycleSeconds = reader.IsDBNull(50)
+                ? (double?)null
+                : reader.GetDouble(50);
             var measuredCycleSampleCount = reader.GetInt32(51);
             var remainingCycleCount = NullableInt(reader, 52);
             var useMeasuredSeries = measuredCycleSampleCount > 0
