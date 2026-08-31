@@ -325,6 +325,142 @@ Report:
 
 ---
 
+## 6. Implement role-based preparation queues as the Production Package workflow foundation
+
+Build the preparation-stage views that will become the operator-facing foundation for Production Package creation and release. Reuse the existing QA queue/view UX pattern instead of inventing a separate navigation model.
+
+This task **clarifies and tightens the queue semantics in Task 3**. Where this task conflicts with a looser interpretation of Task 3, use the rules below.
+
+### Product principle
+Queue membership is a **derived projection of current facts**, not a manually pushed status.
+
+The preparation chain is sequential:
+
+`Planner machine assignment -> NC Creator -> Tool Room Manager -> Setup -> QA / later workflow`
+
+An Operation must not appear in both Tool Room and Setup preparation queues at the same time. Completion of the gate for one role automatically removes it from that role's queue and makes it eligible for the next role.
+
+Do not add "send to next department" buttons when the next queue can be derived from authoritative facts.
+
+### A. Machine assignment remains Planner authority
+The Production Planner owns Machine assignment.
+
+- NC Creator, Tool Room Manager, and Setup users must not choose or change the Machine as part of this preparation workflow.
+- If an Operation has **no concrete Machine assignment**, it does **not** appear in the NC Creator queue yet.
+- Do not infer a Machine group or let NC Creator select a Machine just to make the Operation visible.
+
+### B. NC Creator view / Programming Pending
+Create a dedicated **NC Creator** role/view using the same general list/queue interaction pattern as QA.
+
+An Operation appears in the NC Creator queue only when:
+1. the Operation is assigned by Planning to a concrete Machine; and
+2. there is no current released NC for that Operation that is valid for the assigned Machine under the existing release/post rules.
+
+This is effectively **Programming Pending** for assigned work.
+
+Rules:
+- Unassigned Operations are excluded from this queue.
+- The queue is independent of where the Operation sits chronologically in the Production Plan; if it is assigned and lacks the required released NC, it belongs in NC Creator's backlog.
+- NC Creator may perform the existing NC creation/release workflow, but may not reassign the Machine.
+- When a valid/current NC release for the assigned Machine exists, the Operation automatically leaves NC Creator's queue.
+
+### C. Tool Room Manager view / Tool Preparation Pending
+Create a dedicated **Tool Room Manager** view.
+
+An Operation becomes visible here automatically when:
+1. it has a concrete Machine assignment; and
+2. it has the required current/released NC for that assigned Machine; and
+3. Tool Room preparation is not yet complete according to the existing tool/readiness model, including the current Tool Offset Table requirement.
+
+This is the Tool Room preparation gate.
+
+Rules:
+- The Operation must no longer appear in NC Creator once the NC gate is satisfied.
+- Tool Room remains responsible while the required tool preparation / Tool Offset Table is missing or not current.
+- Do not show the Operation in Setup yet.
+- When Tool Room completes its work and the required **Tool Offset Table is uploaded/released/current**, the Operation automatically leaves Tool Room Manager's queue.
+
+### D. Setup view / Setup Pending
+Create a dedicated **Setup** view for setupists / setup responsibility.
+
+An Operation becomes visible in Setup automatically only after the Tool Room gate is complete, meaning at minimum:
+1. a concrete Machine assignment exists;
+2. the required current/released NC for that assigned Machine exists; and
+3. the required current Tool Offset Table / Tool Room preparation is complete.
+
+This is **Setup Pending / Queue for Setup**.
+
+Strict gate rule:
+- Before Tool Room completion, Setup must not see the Operation as available for setup.
+- Once Tool Room completion is established, Tool Room no longer needs the Operation in its pending queue and Setup becomes the active preparation owner.
+
+Preserve the already agreed handoff/start semantics from Task 3:
+- physical Tool Room -> setupist handover is the deliberate manual, permissioned event;
+- the Machine is already known and is not reselected;
+- setupist assignment is filtered by Machine skills;
+- handover moves the operation to `Ready for Setup`;
+- actual current Offset Loader execution on the CNC starts `Setup In Progress` automatically.
+
+### E. Shared queue UX
+Use one reusable queue/view pattern for role-specific preparation work, visually and behaviorally aligned with the existing QA view.
+
+At minimum provide role-specific projections/views for:
+- NC Creator / Programming Pending
+- Tool Room Manager / Tool Preparation Pending
+- Setup / Setup Pending
+- existing QA queue
+
+Prefer shared components, filtering infrastructure, row layout, status presentation, search/filter conventions, and detail-opening behavior rather than four unrelated screens.
+
+Each role sees only the actions relevant to that stage.
+
+### F. Production Package foundation
+These views are the workflow surface from which the Production Package will be assembled/reviewed. Do **not** invent new package contents or a parallel package-state machine in this task if the existing release model does not already define them.
+
+Instead:
+- expose the current readiness facts/release references needed to understand why an Operation is in its current queue;
+- make missing prerequisites explicit;
+- preserve immutable/current release semantics;
+- structure the UI/domain projection so a dedicated Production Package creation/release action can be added cleanly on top of these queues.
+
+### G. Derived state, not duplicated mutable status
+Where practical, do not persist `PROGRAMMING_PENDING`, `TOOL_ROOM_PENDING`, or `SETUP_PENDING` as independently editable flags.
+
+Derive queue membership from authoritative facts such as:
+- Machine assignment;
+- current/released NC availability for that Machine;
+- current tool data / Tool Offset Table readiness;
+- handover events;
+- current Offset Loader execution;
+- later QA/workflow events.
+
+If a persisted projection/cache is required for performance, it must be reconstructible from authoritative state/events and must not become a competing source of truth.
+
+### Acceptance tests
+Add tests proving at least:
+- unassigned Operation appears in none of these preparation queues;
+- assigning a Machine to an Operation with no valid released NC makes it appear in NC Creator;
+- NC Creator cannot change the Machine through this workflow;
+- releasing the required NC automatically removes it from NC Creator and makes it eligible for Tool Room Manager;
+- while Tool Room preparation / Tool Offset Table is incomplete, the Operation is visible in Tool Room Manager and not in Setup;
+- releasing/currentizing the required Tool Offset Table automatically removes it from Tool Room Manager and makes it visible in Setup;
+- an Operation is never simultaneously pending in Tool Room and Setup;
+- handover and Offset Loader execution preserve the transitions already specified in Task 3;
+- queue membership is recomputable from authoritative facts after restart/migration;
+- existing QA behavior remains intact.
+
+### Completion report
+Report:
+- the exact predicates used for each role queue;
+- which existing QA components/patterns were reused;
+- server/API projection changes;
+- client views/components added or changed;
+- any schema/migration changes;
+- tests executed and results;
+- any unresolved Product Package composition questions that should be decided before implementing the actual package creation action.
+
+---
+
 ## General instructions
 
 - First inspect the current implementation and existing tests before changing architecture.
