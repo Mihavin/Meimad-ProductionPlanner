@@ -27,24 +27,14 @@ The six-digit values are test release identities supplied through `A...`; they a
 1. Confirm the Macro option is available.
 2. Confirm the approved protected program numbers are O09010 and O09011.
 3. Set Haas DPRNT TCP settings 261/263 to the commissioning receiver.
-4. Start the passive capture script before running a caller.
+4. Use the Server's configured passive DPRNT listener before running a caller.
 5. Temporarily turn Setting 23 off only to load/inspect O09010 and O09011; then turn it on.
 6. Verify ordinary operator access cannot view, edit, delete, or copy the protected programs.
 7. Use Memory mode and run only one caller at a time.
 
-Example capture command:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\haas-verification-spike.ps1 `
-  -MachineLabel VF3SS-COMMISSIONING `
-  -HostName <machine-ip> `
-  -MdcPort 5051 `
-  -DprntPort 8080 `
-  -CaptureSeconds 120 `
-  -OutputPath .\.diagnostics\haas-verification\vf3ss-generic-hook-001.json
-```
-
-Do not pass any secret, response, nonce, state, or release-token variable to the script.
+For the current secretless lifecycle and V10 generator, follow
+`docs/haas-protected-verification-spike.md`. These older sample callers are not
+V10 commissioning artifacts.
 
 ## Expected lines
 

@@ -189,7 +189,6 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             SELECT session.id,session.state,session.nonce,
                    release.verification_release_token,hook.nc_identity_token,
                    session.macro_version,session.response_code_digits,session.expires_at,
-                   settings.protected_secret,
                    CASE WHEN settings.enabled=1
                               AND settings.expected_macro_version=session.macro_version
                               AND settings.response_code_digits=session.response_code_digits
@@ -224,8 +223,8 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             ? new TabletVerificationSessionSource(
                 reader.GetString(0), reader.GetString(1), reader.GetInt32(2),
                 reader.GetInt32(3), reader.GetInt32(4), reader.GetInt32(5),
-                reader.GetInt32(6), Parse(reader.GetString(7)), reader.GetString(8),
-                reader.GetInt32(9) == 1)
+                reader.GetInt32(6), reader.IsDBNull(7) ? null : Parse(reader.GetString(7)),
+                reader.GetInt32(8) == 1)
             : null;
     }
 

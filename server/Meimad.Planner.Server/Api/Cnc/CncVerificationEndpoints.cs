@@ -69,7 +69,7 @@ internal static class CncVerificationEndpoints
                 request.CustomGcodeAlias, request.NonceVariable, request.ResponseVariable,
                 request.VerificationStateVariable, request.ReleaseTokenVariable,
                 request.FinalizeProgramNumber, request.EventSequenceVariable,
-                request.VerificationSecret, request.ExpectedMacroVersion,
+                request.ExpectedMacroVersion,
                 request.ResponseCodeDigits, request.VerificationTimeoutSeconds,
                 request.Enabled), request.Version, authority!, token);
             return Results.Ok(value);
@@ -148,7 +148,7 @@ internal sealed record UpdateCncVerificationSettingsRequest(
     int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
     int FinalizeProgramNumber, int EventSequenceVariable,
-    string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
+    int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled, int Version);
 
 internal sealed record CncRecoveryRequest(string? MachineId, string? Reason);

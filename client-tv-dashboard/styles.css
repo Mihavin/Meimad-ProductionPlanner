@@ -225,6 +225,156 @@ html[dir="rtl"] .batch { margin-right: 12px; margin-left: 0; }
   text-align: center;
 }
 
+/* Compact factory-board layout. One horizontal band per Machine, matching the
+   reference screen while keeping every state readable without color. */
+.machine-grid {
+  gap: 0;
+  padding: 0 clamp(10px, 1.25vw, 24px) 2px;
+  background: #09131c;
+}
+
+.machine-row {
+  --row-height: calc((100vh - clamp(42px, 5.5vh, 68px)) / var(--machine-count));
+  grid-template-columns: minmax(145px, 19%) minmax(260px, 1fr) minmax(260px, 38%);
+  align-items: stretch;
+  padding: 0;
+  background: #14232e;
+  border: 0;
+  border-bottom: 3px solid #071019;
+  border-radius: 0;
+}
+
+.machine-identity,
+.operation,
+.execution {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.machine-identity {
+  padding: 3px clamp(8px, 1vw, 18px);
+  border-right: 1px solid #2a3b47;
+  text-align: left;
+}
+
+.machine-number {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, .55vw, 11px);
+  font-size: clamp(14px, min(1.45vw, calc(var(--row-height) * .34)), 28px);
+  line-height: 1.05;
+}
+
+.machine-name {
+  margin: 3px 0 0;
+  color: #9eb1bf;
+  font-size: clamp(10px, min(.92vw, calc(var(--row-height) * .22)), 18px);
+  font-weight: 500;
+  line-height: 1.05;
+}
+
+.machine-connection {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.machine-connection > span {
+  width: clamp(7px, .55vw, 11px);
+  height: clamp(7px, .55vw, 11px);
+  box-shadow: none;
+}
+
+.operation {
+  padding: 3px clamp(10px, 1.25vw, 24px);
+}
+
+.operation-title {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  font-size: clamp(14px, min(1.5vw, calc(var(--row-height) * .36)), 29px);
+  line-height: 1.05;
+}
+
+.operation-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch {
+  margin-left: clamp(12px, 1.25vw, 24px);
+  color: #f4f6f8;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.job-op {
+  margin-left: .35em;
+  color: #8dccff;
+  white-space: nowrap;
+}
+
+.operation-name {
+  margin-top: 4px;
+  color: #b9cad5;
+  font-size: clamp(10px, min(.9vw, calc(var(--row-height) * .22)), 18px);
+  line-height: 1.05;
+}
+
+.operation.empty {
+  grid-column: 2 / 4;
+  padding-left: clamp(10px, 1.25vw, 24px);
+  color: #8fa5b4;
+  font-size: clamp(13px, min(1.25vw, calc(var(--row-height) * .3)), 24px);
+}
+
+.execution {
+  padding: 3px clamp(12px, 1.5vw, 28px);
+  border-left: 1px solid #2a3b47;
+}
+
+.execution-line {
+  gap: clamp(8px, 1vw, 18px);
+}
+
+.status-label {
+  color: #e9edf0;
+  font-size: clamp(15px, min(1.65vw, calc(var(--row-height) * .4)), 31px);
+  line-height: 1;
+}
+
+.completion-label {
+  color: #c0ccd4;
+  font-size: clamp(10px, min(.9vw, calc(var(--row-height) * .22)), 18px);
+  font-weight: 650;
+}
+
+.cycle-average {
+  margin-top: 3px;
+  color: #8dccff;
+  font-size: clamp(9px, min(.78vw, calc(var(--row-height) * .19)), 16px);
+  font-weight: 750;
+  line-height: 1;
+  text-align: right;
+}
+
+.status-waiting .status-label { color: #e9edf0; }
+.progress-track {
+  height: clamp(5px, .65vh, 10px);
+  margin-top: clamp(5px, .7vh, 10px);
+  border-radius: 999px;
+  background: #304653;
+}
+
+html[dir="rtl"] .machine-identity { text-align: right; border-right: 0; border-left: 1px solid #2a3b47; }
+html[dir="rtl"] .machine-number { justify-content: flex-end; }
+html[dir="rtl"] .batch { margin-right: clamp(12px, 1.25vw, 24px); margin-left: 0; }
+html[dir="rtl"] .job-op { margin-right: .35em; margin-left: 0; }
+
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }

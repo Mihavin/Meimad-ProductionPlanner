@@ -17,6 +17,7 @@ enum class TabletStatus {
 
 enum class VerificationState {
   None,
+  Armed,
   WaitingForOperator,
   Expired,
   Invalidated,

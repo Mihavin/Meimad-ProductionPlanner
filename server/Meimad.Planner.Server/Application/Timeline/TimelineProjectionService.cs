@@ -751,11 +751,15 @@ internal sealed class TimelineProjectionService
             var setupSeconds = setupStart is not null && setupEnd is not null && setupEnd.Timestamp > setupStart.Timestamp
                 ? (setupEnd.Timestamp - setupStart.Timestamp).TotalSeconds
                 : (double?)null;
+            var useManualPartTimes = operation.MeasuredCycleSampleCount == 0
+                && partTimes.Length > 0;
             return operation with
             {
-                CycleSeconds = partTimes.Length == 0 ? operation.CycleSeconds : partTimes.Average(),
+                CycleSeconds = useManualPartTimes ? partTimes.Average() : operation.CycleSeconds,
                 SetupSeconds = setupSeconds is > 0 ? setupSeconds : operation.SetupSeconds,
-                PlanningCycleTimeSource = partTimes.Length == 0 ? operation.PlanningCycleTimeSource : "real_average"
+                PlanningCycleTimeSource = useManualPartTimes
+                    ? "real_average"
+                    : operation.PlanningCycleTimeSource
             };
         }).ToArray();
         return source with { Operations = changed };
@@ -1301,7 +1305,12 @@ internal sealed class TimelineProjectionService
             operation?.ActualEnd,
             operation?.MachineAssignmentId,
             operation?.PlanningMode,
-            operation?.PriorityWorkFinishDate);
+            operation?.PriorityWorkFinishDate,
+            CompletedQuantity: operation?.CompletedQuantity ?? 0,
+            TargetQuantity: operation?.TargetQuantity,
+            MeasuredAverageCycleSeconds: operation?.MeasuredAverageCycleSeconds,
+            MeasuredCycleSampleCount: operation?.MeasuredCycleSampleCount ?? 0,
+            PlanningCycleTimeSource: operation?.PlanningCycleTimeSource ?? "manual");
     }
 
     private DateTimeOffset BackwardFinishCutoff(
@@ -1406,7 +1415,10 @@ internal sealed class TimelineProjectionService
             && operation.MachineId is not null
             && !string.Equals(
                 operation.ActualMachineId, operation.MachineId, StringComparison.Ordinal);
-        var earliest = operation.Status == "in_progress" && operation.ActualStart.HasValue
+        var earliest = operation.Status == "in_progress"
+            && operation.PlanningCycleTimeSource == "cnc_series_average"
+                ? forecastCursor
+            : operation.Status == "in_progress" && operation.ActualStart.HasValue
             ? movedAfterStarting
                 ? operation.MovePauseEndedAt ?? forecastCursor
                 : operation.ActualStart.Value

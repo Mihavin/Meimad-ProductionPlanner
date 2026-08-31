@@ -62,7 +62,12 @@ internal sealed record TimelineProjectionInterval(
     IReadOnlyList<TimelineProjectionPhase>? Phases = null,
     string OverallReadinessState = "NOT_MANAGED",
     bool IsReadyForProduction = true,
-    string? ReadinessSummary = null);
+    string? ReadinessSummary = null,
+    int CompletedQuantity = 0,
+    int? TargetQuantity = null,
+    double? MeasuredAverageCycleSeconds = null,
+    int MeasuredCycleSampleCount = 0,
+    string PlanningCycleTimeSource = "manual");
 
 internal sealed record TimelineProjectionPhase(
     string Type,

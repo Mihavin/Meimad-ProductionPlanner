@@ -2,7 +2,7 @@
 
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
 verification variables: SUPPORTED** on the CNC only; the tablet receives only a
-Server-derived fixed-width response for a valid session.
+Server-derived fixed-width response for an exact ARMED or PENDING session.
 
 - **Concept baseline:** v0.1
 - **Source date:** 11 August 2026
@@ -16,7 +16,7 @@ The Color E-Ink Work Tablet is a low-cost, low-power operational display and loc
 
 It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative planning data source. Its one Server write is the scoped `SEND_TO_QC` operational event.
 
-The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside the setup-verification handshake. The TabletID-identified status API supplies a derived fixed-width response only for a valid pending session. The firmware renders that bounded projection as a prominent code or an explicit expired/invalidated/unavailable setup block. It never receives the raw nonce, Machine secret/key, protected-variable mapping, or algorithm internals and never becomes workflow authority.
+The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside setup verification. The TabletID status API supplies a fixed-width consistency response for an exact ARMED or unexpired PENDING session. The tablet receives no raw nonce or variable mapping and never becomes workflow authority. CNC Machine identity and response calculation use no credential.
 
 Primary goals are:
 
@@ -340,9 +340,10 @@ instead of example rows. The development-only seven-tool fixture is visibly
 marked `LAYOUT DEMO`.
 
 For `IN_SETUP`, the ordinary status/tool region becomes a setup-verification
-panel. `WAITING_FOR_OPERATOR` displays the 4–6 digit Server-projected response
-as text, preserving leading zeroes. `EXPIRED`, `INVALIDATED`, and `UNAVAILABLE`
-display `SETUP BLOCKED` plus a refresh/do-not-start instruction and no code. The
+panel. Both `ARMED` and `WAITING_FOR_OPERATOR` display the fixed-width response
+code and use the same enter-at-CNC operator instruction. `EXPIRED`,
+`INVALIDATED`, and `UNAVAILABLE` display `SETUP BLOCKED` plus a
+refresh/do-not-start instruction and no code. The
 adapter rejects missing verification data, numeric or malformed codes, codes on
 blocking states, and verification data outside `IN_SETUP`.
 

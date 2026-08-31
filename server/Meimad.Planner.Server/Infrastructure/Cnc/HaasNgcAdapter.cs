@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Application.Haas;
@@ -491,7 +493,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
 
     private static HaasConnectionSettings ToLegacySettings(
         MachineConnection connection, HaasNgcConnectionConfiguration config, DateTimeOffset now) => new(
-            connection.MachineId, config.Host, config.Mdc.Port, config.MtConnect?.Port ?? 8082,
+            connection.MachineId, config.Host, config.MacAddress!, config.Mdc.Port, config.MtConnect?.Port ?? 8082,
             config.MtConnect?.DprntPort ?? 8080,
             config.ProgramAccess.Enabled, config.ProgramAccess.SharePath,
             config.ProgramAccess.UsernameSecretId, config.Production.PartCounterSource,
@@ -504,7 +506,15 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
 
     private static void Validate(HaasNgcConnectionConfiguration value)
     {
-        if (string.IsNullOrWhiteSpace(value.Host)) throw new CncValidationException("host", "Host is required.");
+        if (!IPAddress.TryParse(value.Host, out var address)
+            || IPAddress.IsLoopback(address)
+            || address.Equals(IPAddress.Any)
+            || address.Equals(IPAddress.IPv6Any))
+            throw new CncValidationException("host", "A fixed, non-loopback CNC IP address is required.");
+        if (string.IsNullOrWhiteSpace(value.MacAddress)
+            || !Regex.IsMatch(value.MacAddress.Replace('-', ':').ToUpperInvariant(),
+                "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", RegexOptions.CultureInvariant))
+            throw new CncValidationException("macAddress", "A six-octet CNC MAC address is required.");
         if (value.Mdc.Port is < 1 or > 65535) throw new CncValidationException("mdc.port", "MDC port is invalid.");
         if (value.MtConnect is { Port: < 1 or > 65535 })
             throw new CncValidationException("mtConnect.port", "MTConnect port is invalid.");

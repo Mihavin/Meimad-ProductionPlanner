@@ -73,6 +73,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string machineToolChangeTimeSeconds = string.Empty;
     private string machineTimeFactor = "1";
     private string haasHost = string.Empty;
+    private string haasMacAddress = string.Empty;
     private CncAdapterDefinition? selectedCncAdapter;
     private string haasMdcPort = "5051";
     private string haasMtConnectPort = "8082";
@@ -98,12 +99,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string verificationReleaseTokenVariable = "10503";
     private string verificationFinalizeProgram = "9003";
     private string verificationEventSequenceVariable = "10504";
-    private string verificationSecret = string.Empty;
-    private string verificationMacroVersion = "6";
+    private string verificationMacroVersion = "10";
     private string verificationCodeDigits = "6";
     private string verificationTimeoutSeconds = "300";
     private bool verificationEnabled;
-    private bool verificationSecretConfigured;
     private int verificationSettingsVersion;
     private string verificationRecoveryRunId = string.Empty;
     private string verificationRecoveryNcReleaseId = string.Empty;
@@ -507,6 +506,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             ? $"{SelectedCncAdapter.DisplayName} is implemented."
             : $"{SelectedCncAdapter.DisplayName} is registered but unsupported.";
     public string HaasHost { get => haasHost; set => SetField(ref haasHost, value); }
+    public string HaasMacAddress { get => haasMacAddress; set => SetField(ref haasMacAddress, value); }
     public string HaasMdcPort { get => haasMdcPort; set => SetField(ref haasMdcPort, value); }
     public string HaasMtConnectPort { get => haasMtConnectPort; set => SetField(ref haasMtConnectPort, value); }
     public string HaasDprntPort { get => haasDprntPort; set => SetField(ref haasDprntPort, value); }
@@ -532,7 +532,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string VerificationReleaseTokenVariable { get => verificationReleaseTokenVariable; set => SetField(ref verificationReleaseTokenVariable, value); }
     public string VerificationFinalizeProgram { get => verificationFinalizeProgram; set => SetField(ref verificationFinalizeProgram, value); }
     public string VerificationEventSequenceVariable { get => verificationEventSequenceVariable; set => SetField(ref verificationEventSequenceVariable, value); }
-    public string VerificationSecret { get => verificationSecret; set => SetField(ref verificationSecret, value); }
     public string VerificationMacroVersion { get => verificationMacroVersion; set => SetField(ref verificationMacroVersion, value); }
     public string VerificationCodeDigits { get => verificationCodeDigits; set => SetField(ref verificationCodeDigits, value); }
     public string VerificationTimeoutSeconds { get => verificationTimeoutSeconds; set => SetField(ref verificationTimeoutSeconds, value); }
@@ -541,9 +540,6 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string VerificationRecoveryNcReleaseId { get => verificationRecoveryNcReleaseId; set => SetField(ref verificationRecoveryNcReleaseId, value); }
     public string VerificationRecoveryToolTableReleaseId { get => verificationRecoveryToolTableReleaseId; set => SetField(ref verificationRecoveryToolTableReleaseId, value); }
     public string VerificationRecoveryReason { get => verificationRecoveryReason; set => SetField(ref verificationRecoveryReason, value); }
-    public string VerificationSecretStatus => verificationSecretConfigured
-        ? "Secret configured; leave blank to preserve it." : "A new 16+ character secret is required.";
-
     public MachineDowntime? SelectedDowntime
     {
         get => selectedDowntime;
@@ -1128,7 +1124,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         await RunHaasReadAsync(async () =>
         {
             var value = await apiClient!.UpdateHaasConnectionAsync(SelectedMachine!.MachineId,
-                new HaasConnectionUpdate(HaasHost, mdcPort, mtPort, dprntPort, HaasLocalNetShareEnabled,
+                new HaasConnectionUpdate(HaasHost, HaasMacAddress, mdcPort, mtPort, dprntPort, HaasLocalNetShareEnabled,
                     NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
                     HaasPartCounterSource, polling, timeout, 2, 50, 32768,
                     [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion,
@@ -1148,14 +1144,12 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             {
                 var value = await apiClient!.GetCncVerificationSettingsAsync(SelectedMachine!.MachineId);
                 PopulateVerificationConfiguration(value);
-                HaasDiagnostics = "Protected verification configuration loaded. The secret is never returned.";
+                HaasDiagnostics = "Verification configuration loaded.";
             }
             catch (PlannerApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 verificationSettingsVersion = 0;
-                verificationSecretConfigured = false;
-                OnPropertyChanged(nameof(VerificationSecretStatus));
-                HaasDiagnostics = "Verification is not configured. Enter a Machine secret and review all controller-specific values before saving.";
+                HaasDiagnostics = "Verification is not configured. Review all controller-specific values before saving.";
             }
         });
     }
@@ -1186,11 +1180,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
                 SelectedMachine!.MachineId, new("HAAS_DPRNT_TCP", dprintPort,
                     challengeProgram, verifyProgram, alias, nonceVariable, responseVariable,
                     stateVariable, releaseTokenVariable, finalizeProgram, eventSequenceVariable,
-                    NullIfBlank(VerificationSecret),
                     macroVersion, digits, timeout, VerificationEnabled,
                     verificationSettingsVersion), clientId, editGeneration);
             PopulateVerificationConfiguration(value);
-            HaasDiagnostics = "Protected verification configuration saved. Enable only after Machine commissioning.";
+            HaasDiagnostics = "Verification configuration saved. Enable only after Machine commissioning.";
         });
     }
 
@@ -1210,10 +1203,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         VerificationCodeDigits = value.ResponseCodeDigits.ToString(CultureInfo.InvariantCulture);
         VerificationTimeoutSeconds = value.VerificationTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         VerificationEnabled = value.Enabled;
-        VerificationSecret = string.Empty;
-        verificationSecretConfigured = value.SecretConfigured;
         verificationSettingsVersion = value.Version;
-        OnPropertyChanged(nameof(VerificationSecretStatus));
     }
 
     internal async Task GenerateOffsetLoaderReleaseAsync()
@@ -2020,6 +2010,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private void PopulateHaasConfiguration(HaasConnectionSettings value)
     {
         HaasHost = value.Host;
+        HaasMacAddress = value.MacAddress;
         HaasMdcPort = value.MdcPort.ToString(CultureInfo.InvariantCulture);
         HaasMtConnectPort = value.MtConnectPort.ToString(CultureInfo.InvariantCulture);
         HaasDprntPort = value.DprntPort.ToString(CultureInfo.InvariantCulture);
@@ -2037,6 +2028,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private void ResetHaasForm()
     {
         HaasHost = string.Empty;
+        HaasMacAddress = string.Empty;
         HaasMdcPort = "5051";
         HaasMtConnectPort = "8082";
         HaasDprntPort = "8080";

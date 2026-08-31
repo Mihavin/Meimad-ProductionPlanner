@@ -12,37 +12,14 @@ Implemented without a schema migration: Windows Setup reads database/WAL/shared-
 verification variables: SUPPORTED** only for the configured, separately commissioned
 handshake; they never persist or determine Server workflow state.
 
-Schema v60 and the forensic `scripts/new-haas-verification-v6-bench-pack.ps1`
-implemented a separately numbered no-motion design candidate. It uses a third protected G65
-finalizer for the post-M109 timer read and one configured persistent counter for
-OLC, SVS/SVF, CST, and CEN. The counter fails closed at exhaustion and cannot
-wrap or become workflow authority. `PERSISTENT_COUNTER` is the selected design;
-it is initialized once to a recorded positive value of 1, never silently reseeded,
-and is now covered by a checksummed no-motion physical engineering-test pack.
-The 2026-08-30 R2 physical attempt quarantined v6 because the sixth M109 ASCII
-value remained in the response variable after alarm 903. A distinct
-`scripts/new-haas-verification-v7-bench-pack.ps1` desk candidate adds per-digit
-cleanup plus a four-variable finalizer-entry cleanup barrier and reports macro
-version 7. Its R3 bounded physical attempt proved the controller cleanup and
-fail-closed alarm path with all four temporary variables empty, but failed the
-end-to-end gate: the physical tablet polled only after challenge expiry, the
-Server retained a pre-existing sequence gap, and no failure DPRNT reached the
-Server before alarm 903. Further controller execution is stopped pending the
-timer/poll and DPRNT-delivery decisions below. Source correction now retains an
-exactly correlated late SVF without permitting a late SVS, polls
-`READY_FOR_SETUP`/`IN_SETUP` every 15 seconds in development firmware, and adds
-the separately numbered v8 bench candidate with a one-second no-motion dwell
-between failure DPRNT and alarm 903. A bounded V8 attempt then delivered SVF and
-cleared all temporary variables, but proved that the generated controller key
-did not match the Server secret: OLC 29 produced tablet response `720047` while
-the exact package expected `812524`, followed by SVF 30/alarm 903. The
-replacement tablet also failed on the uncommissioned AA path and worked only on
-external power. V8 is quarantined, `#10504 = 30` must be preserved, and V9 may
-be generated only from one newly rotated secret shared by Server configuration
-and local package generation. Verification stays disabled.
-Schema v61 closes the controller-alias gap: cross-call values must use persistent
-globals, `#500`/`#10500`-style aliases collide, invalid upgraded candidates are
-disabled, and macro versions 1-5 cannot be enabled.
+Schema v63 is the current redesign. CNC Machine identity is only Planner
+`MachineID`, configured fixed IP, and controller MAC; Machine Secret/key concepts
+are removed. Exact Offset Loader completion creates untimed `ARMED`, the first
+matching NC-start `SVR` creates timed `PENDING`, and matching success creates
+reusable `SUCCEEDED` authority until a new Offset Loader supersedes it. Event
+sequence is evidence only and automatically tolerates reset/wrap/gap without
+becoming identity, verification, or workflow authority. V10 is a new no-motion
+bench candidate and must still pass bounded physical commissioning before enablement.
 
 Milestone A is implemented in schema v49: the persistent CNC Setup/Production variable, its settings/snapshot projections, public read/reset routes, write permission, Windows controls, and macro-write audit table are removed. Immutable `production_run_workflow_events` retain Server receipt time, separate Machine time, source/idempotency identity, optional sequence/release/device/user evidence, and JSON metadata. Tablet status is projected from those events rather than run counters or CNC mode.
 
@@ -50,7 +27,7 @@ Milestone B is implemented in schema v50. It adds immutable Offset Loader releas
 
 The Milestone C fallback decision is resolved: every newly approved NC release uses one generic verification hook as its first executable block. Schema v51 validates the hook without modifying the upload and immutably binds its unique six-digit NC identity to the exact release. Migrated historical releases remain readable but receive no inferred identity; using one for protected verification requires an explicit new release. Algorithm v1 has a disconnected Server reference implementation, independent PowerShell calculator, public vectors, and protected-program layout in `docs/haas-verification-response-algorithm.md`. On 2026-08-26 the VF-3SS physically proved direct/nested supplied-identity transport and reproduced all seven public arithmetic vectors. On 2026-08-27 the correct response was accepted after at least 130 seconds at M109 and the `#3001` sequence was found non-monotonic. Macro candidates v3–v5 and packages v1–v3 remain quarantined. On 2026-08-30 the bounded R2 test then retained the sixth M109 ASCII value after alarm 903, quarantining macro v6 as well. The separately reviewed macro-v7 R3 attempt cleared the temporary variables and stopped before M30, but the physical tablet missed the response window and the failure DPRNT was not retained by the Server. This evidence does not establish a production interlock; verification stays disabled.
 
-Milestone D Server behavior is implemented through schema v61. A valid current six-digit-nonce `OFFSET_LOADER_COMPLETED` event and its pending setup-verification session commit atomically. The one-time session immutably binds Machine, Production Run, exact approved NC release, current Offset Loader release, nonce, macro version, response width, source event, and Server creation/expiration; it stores no response or secret. A newer Offset Loader supersedes any live session. The existing TabletID-identified tablet status endpoint derives the fixed-width response in memory only for its assigned, enabled, unexpired, context-valid `PENDING` session and includes verification state in the content revision. Expired, disabled/mismatched, superseded, missing, and wrong-path cases expose no code; nonce, secret/key, variable numbers, and algorithm details never enter tablet JSON. The ESP32 firmware now fail-closed parses that projection, preserves leading zeroes, renders a prominent response-code screen or explicit expired/invalidated/unavailable setup block, and timer-polls while `IN_SETUP`. Task 14 adds a bounded status `diagnostics` projection plus a two-column Service/Debug screen and `[SERVICE]` log opened by a provisional 1.2-second D1 hold; it exposes operational health and Server-known verification result/macro version but no credential, password, nonce, response code, secret, variable mapping, or algorithm data. Production, demo, and contract-test targets compile. Protected CNC success/failure ingestion and the event-derived transition to `IN_SETUP_RUN` are implemented. Physical panel/gesture/readability and CNC execution blocking remain commissioning gates. Milestones E-G are implemented in repository slices; physical commissioning in Milestone H remains open.
+Milestone D Server behavior is implemented through schema v63. `OLC` and untimed `ARMED` commit atomically with the exact Run/Machine/NC/Offset Loader/nonce binding. The assigned tablet derives the fixed-width response for ARMED or unexpired PENDING. `SVR` starts PENDING and its timeout; exact `SVS` establishes success. No Machine credential or response is stored. Sequence discontinuity is retained only as evidence. Physical panel/readability and CNC execution blocking remain commissioning gates.
 
 Task 15 is implemented in schema v53 and the existing Windows client. The **User
 Terminals** page provides View-Mode monitoring for identity, binding, access state,
@@ -109,6 +86,11 @@ coupled outputs, completes programs/runs, propagates Batch Operation, Batch, and
 Order status, appends the idempotent cycle row, and writes the structured audit
 fact. Windows retains Edit Mode/version checks; CNC retains post-QC START/END,
 Machine/Run/program resolution, sequence, anomaly, and source-event checks.
+For a connected CNC, the first exact `CYCLE_START` after `QC_PASS` now resolves
+the assigned planned Run Program and atomically changes the Run, Program, and
+Outputs to `IN_PROGRESS`, `ACTIVE`, and `IN_PRODUCTION` before retaining the
+open START. It does not credit quantity. Manual Start remains the path for
+Machines without a configured CNC connection and non-CNC work.
 
 Task 21 is implemented in schema v57 without a tablet command. A valid current
 Offset Loader event for the next assigned Run atomically closes the most recent
@@ -474,12 +456,12 @@ Implemented deterministic tests use fixed UTC timestamps and cover same- and dif
 
 ## 13. Phase 10 - TV Dashboard
 
-**Implementation status:** Core LAN-served dashboard implemented. The dependency-free fullscreen UI has one large row per display-enabled Machine and shows only its current Operation, part picture, Started/Paused/Waiting/Completed state, and setup or calculated part/Batch completion. Conflicts and queued Operations are intentionally hidden. It conditionally auto-refreshes, visibly retains the last snapshot while offline, and has no edit controls. The GET-only projection supports ETags. Authentication, display groups, offline-device telemetry, target-TV visual acceptance, and managed kiosk deployment remain pending.
+**Implementation status:** Core LAN-served dashboard implemented. The dependency-free fullscreen UI uses one compact dark band per display-enabled Machine and shows Machine identity/connection, current Part, Batch/Operation, Operation name, large Started/Paused/Waiting/Completed text, calculated completion, and a thin progress bar. Idle bands explicitly report no current Operation. Part pictures, conflicts, and queued Operations are intentionally hidden. It conditionally auto-refreshes, visibly retains the last snapshot while offline, and has no edit controls. The GET-only projection supports ETags. Authentication, display groups, offline-device telemetry, target-TV visual acceptance, and managed kiosk deployment remain pending.
 
 ### Scope
 
 - Create a read-only web/kiosk dashboard under `client-tv-dashboard/`.
-- Show the current Operation per Machine with its picture, execution state, and setup or calculated part/Batch completion.
+- Show the current Operation per Machine in the compact factory-board band with textual execution state and setup or calculated part/Batch completion.
 - Implement approved automatic refresh, offline detection, reconnect, and kiosk deployment.
 
 ### Tests and exit gate

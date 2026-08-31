@@ -121,7 +121,8 @@ internal sealed record HaasNgcConnectionConfiguration(
     HaasProductionConfiguration Production,
     HaasMonitoringConfiguration Monitoring,
     HaasMtConnectConfiguration? MtConnect = null,
-    string TelemetryProvider = "MDC");
+    string TelemetryProvider = "MDC",
+    string? MacAddress = null);
 
 internal sealed record CncFreshValue<T>(T? Value, DateTimeOffset? ReadAt, bool Stale);
 internal sealed record CncProgramSnapshot(

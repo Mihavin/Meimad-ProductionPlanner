@@ -48,6 +48,5 @@ internal sealed record TabletVerificationSessionSource(
     int NcIdentityToken,
     int MacroVersion,
     int ResponseCodeDigits,
-    DateTimeOffset ExpiresAt,
-    string ProtectedSecret,
+    DateTimeOffset? ExpiresAt,
     bool ContextIsValid);

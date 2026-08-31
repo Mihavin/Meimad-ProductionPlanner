@@ -67,7 +67,8 @@ internal sealed class DatabaseMigrator
         new SchemaV59OperationalAnomaliesMigration(),
         new SchemaV60CncVerificationBenchV6Migration(),
         new SchemaV61CncVerificationVariableMappingMigration(),
-        new SchemaV62TabletAuthenticationRemovalMigration()
+        new SchemaV62TabletAuthenticationRemovalMigration(),
+        new SchemaV63SecretlessArmedCncVerificationMigration()
     ];
 
     private readonly SqliteDatabase database;

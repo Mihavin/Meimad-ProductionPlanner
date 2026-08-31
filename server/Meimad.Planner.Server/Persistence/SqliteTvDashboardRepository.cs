@@ -109,7 +109,35 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                     WHERE batch_operation_id = batch_operations.id
                       AND status = 'active'
                     ORDER BY pause_started_at DESC, id DESC
-                    LIMIT 1)
+                    LIMIT 1),
+                   (SELECT SUM(output.produced_quantity)
+                    FROM production_run_outputs output
+                    JOIN production_run_programs program
+                      ON program.id=output.production_run_program_id
+                    WHERE output.batch_operation_id=batch_operations.id
+                      AND program.production_run_id=machine_assignments.production_run_id),
+                   (SELECT AVG(CASE
+                       WHEN timing.start_machine_timestamp IS NOT NULL
+                        AND timing.end_machine_timestamp IS NOT NULL
+                        AND julianday(timing.end_machine_timestamp)>julianday(timing.start_machine_timestamp)
+                       THEN (julianday(timing.end_machine_timestamp)-julianday(timing.start_machine_timestamp))*86400.0
+                       ELSE (julianday(timing.end_server_received_at)-julianday(timing.start_server_received_at))*86400.0
+                       END)
+                    FROM production_run_cycle_attempt_timing timing
+                    WHERE timing.production_run_id=machine_assignments.production_run_id
+                      AND timing.completion_state='COMPLETED'
+                      AND julianday(timing.end_server_received_at)>julianday(timing.start_server_received_at)
+                      AND EXISTS(SELECT 1 FROM production_run_outputs output
+                          WHERE output.production_run_program_id=timing.production_run_program_id
+                            AND output.batch_operation_id=batch_operations.id)),
+                   (SELECT COUNT(*)
+                    FROM production_run_cycle_attempt_timing timing
+                    WHERE timing.production_run_id=machine_assignments.production_run_id
+                      AND timing.completion_state='COMPLETED'
+                      AND julianday(timing.end_server_received_at)>julianday(timing.start_server_received_at)
+                      AND EXISTS(SELECT 1 FROM production_run_outputs output
+                          WHERE output.production_run_program_id=timing.production_run_program_id
+                            AND output.batch_operation_id=batch_operations.id))
             FROM machine_assignments
             JOIN machines ON machines.id = machine_assignments.machine_id
             JOIN batch_operations
@@ -137,7 +165,10 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                     reader.IsDBNull(15) ? null : ParseInstant(reader.GetString(15)),
                     reader.IsDBNull(16) ? null : ParseInstant(reader.GetString(16)),
                     reader.GetDouble(17),
-                    reader.IsDBNull(18) ? null : ParseInstant(reader.GetString(18)))));
+                    reader.IsDBNull(18) ? null : ParseInstant(reader.GetString(18)),
+                    reader.IsDBNull(19) ? null : reader.GetInt32(19),
+                    reader.IsDBNull(20) ? null : reader.GetDouble(20),
+                    reader.GetInt32(21))));
         }
 
         return values;

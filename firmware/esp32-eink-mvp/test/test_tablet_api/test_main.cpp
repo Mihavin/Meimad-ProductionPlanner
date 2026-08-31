@@ -112,6 +112,21 @@ void testParsesSetupVerificationWithoutLosingLeadingZeroes() {
   CHECK_STRING("WAITING_FOR_OPERATOR", toToken(response.verification.state));
 }
 
+void testParsesArmedVerificationAndDisplaysItsCode() {
+  String payload = validStatusPayload("IN_SETUP");
+  payload.replace("WAITING_FOR_OPERATOR", "ARMED");
+  payload.replace("NOT_REPORTED", "ARMED");
+  TabletStatusResponse response;
+  String error;
+  CHECK(parseStatusPayload(payload, "3041", response, error));
+  CHECK(response.verification.state == VerificationState::Armed);
+  CHECK_STRING("0388", response.verification.responseCode);
+  CHECK_STRING("ARMED", toToken(response.verification.state));
+  CHECK_STRING("ARMED", response.diagnostics.verificationResult);
+  CHECK_STRING("ENTER RESPONSE CODE", verificationStateText(response.verification.state));
+  CHECK_STRING("TYPE THIS CODE AT THE CNC", verificationInstructionText(response.verification.state));
+}
+
 void testAcceptsBlockingVerificationStatesWithoutAResponseCode() {
   const char* states[] = {"EXPIRED", "INVALIDATED", "UNAVAILABLE"};
   const VerificationState expected[] = {
@@ -479,6 +494,7 @@ void setup() {
   testAcceptsEveryInitialStatus();
   testParsesSafeServiceDiagnostics();
   testParsesSetupVerificationWithoutLosingLeadingZeroes();
+  testParsesArmedVerificationAndDisplaysItsCode();
   testAcceptsBlockingVerificationStatesWithoutAResponseCode();
   testRejectsUnsafeVerificationPayloads();
   testRejectsMalformedJsonWithoutChangingPreviousResponse();

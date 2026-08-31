@@ -2,8 +2,9 @@
 
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
 verification variables: SUPPORTED** only inside the configured, separately
-commissioned handshake. No tablet or ordinary planning contract exposes their
-mapping, nonce, Machine secret/key, or algorithm internals.
+commissioned handshake. CNC Machine identity is `MachineID` plus configured fixed
+IP and controller MAC, with no Machine credential. No tablet or ordinary planning
+contract exposes temporary mappings, nonce, or algorithm internals.
 
 NC cycle estimates returned with G-code releases are estimates for one complete NC program
 execution cycle. The `estimateBasis` value is `NC_PROGRAM_EXECUTION_CYCLE`; for migrated
@@ -15,7 +16,7 @@ Case/Batch Operation representations include external-delay fields. Planning Boa
 
 `GET|PUT|DELETE /api/v1/master-calendar` reads, selects, or clears the global Israel Master Calendar; mutations require Edit Mode. Machine and employee-resource representations accept/return `respectMasterCalendar`. Working-day external delay requires a whole-number duration and selected active Working Calendar; Timeline dependency calculations count that calendar's working dates and intersect it with the master when enabled.
 
-- **Status:** Draft target contract; implemented slices are identified through schema v61, including the CNC event workflow, setup verification, QC/cycle processing, anomaly/debug reads and safe recovery, alongside the earlier planning, TV, E-Ink, and Windows administration surfaces
+- **Status:** Draft target contract; implemented slices are identified through schema v63, including the secretless CNC identity and ARMED/PENDING verification lifecycle
 - **Transport:** Factory LAN/Wi-Fi only
 - **Authority:** Meimad Planner Server
 
@@ -1344,7 +1345,7 @@ The following Machine-scoped endpoints are implemented. Connection mutation requ
 | Method | Route | Behavior |
 |---|---|---|
 | `GET` | `/api/v1/machines/{machineId}/haas/connection` | Read settings; an unconfigured Machine returns defaults with `version: 0`. |
-| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update host, explicit `telemetryProvider` (`MDC` or `MTCONNECT`), MDC/MTConnect/DPRNT ports, read-only share reference, configurable macro/legacy alias, counter source, poll/timeout/debounce/header limits and patterns. |
+| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update the fixed controller IP and MAC identity mapping, explicit `telemetryProvider` (`MDC` or `MTCONNECT`), ports, read-only share reference, counter source, poll/timeout/debounce/header limits and patterns. No Machine credential is accepted. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-mtconnect` | Fetch unfiltered `/probe` and `/current`, validate MTConnect XML/device availability, and return typed program/state/counter diagnostics without changing planning state. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-mdc` | Read typed Q500 status without changing planning state. |
 | `POST` | `/api/v1/machines/{machineId}/haas/test-net-share` | Read the active machine-side bounded header and parse Part identity. |
@@ -1377,15 +1378,15 @@ WebSocket is Server-to-client monitoring transport only. It exposes no CNC comma
 |---|---|---|
 | `GET` | `/api/v1/production-runs/{runId}/offset-loader-releases` | Lists immutable Offset Loader history and the derived `isCurrent` flag. |
 | `POST` | `/api/v1/production-runs/{runId}/offset-loader-releases` | Active editor creates a new release and atomically makes it current for that Run/Machine. Body: `machineId`, approved `ncReleaseId`, exact `toolTableReleaseId`, optional 64-hex `artifactHash`, and optional JSON-object `metadataJson`. |
-| `GET` | `/api/v1/machines/{machineId}/verification-configuration` | Windows planning read. Returns controller mapping plus `secretConfigured`; never returns the secret or its ciphertext. Unconfigured returns `404 verification_settings_not_found`. |
-| `PUT` | `/api/v1/machines/{machineId}/verification-configuration` | Edit-Mode optimistic create/update. Accepts `dprintTransport`, port, distinct challenge/verify/finalizer protected program numbers, optional custom alias, nonce/response/state/release-token variables plus one persistent event-sequence variable, optional replacement `verificationSecret`, expected macro version, 4–6 response digits, 30–3600 second timeout, enabled, and version. Blank secret preserves an existing secret. |
+| `GET` | `/api/v1/machines/{machineId}/verification-configuration` | Windows planning read. Returns controller mappings and lifecycle configuration. Unconfigured returns `404 verification_settings_not_found`. No Machine credential field exists. |
+| `PUT` | `/api/v1/machines/{machineId}/verification-configuration` | Edit-Mode optimistic create/update. Accepts transport, port, protected program numbers, temporary-variable mappings, evidence-only event-sequence mapping, expected macro version, response width, timeout, enabled, and version. It accepts no credential. |
 
 Offset Loader creation validates that the Machine is assigned to the Production Run, that the supplied approved NC/tool-table pair belongs to the selected Run program, and that the NC release has schema-v51 hook identity. The Server generates the decimal release token. Releases are immutable; a later release changes only the separate current pointer. Old tokens therefore fail current DPRINT resolution even when their NC program remains approved. No date comparison determines validity.
 
 Schema v60 extends the verification-configuration PUT body with required
 `finalizeProgramNumber` and `eventSequenceVariable` fields. Challenge, verify,
 and finalizer must be three distinct O9xxx programs. The response variable must
-be in Haas M109 range `#500-#549` or `#10500-#10549`; the increment-only sequence
+be in Haas M109 range `#500-#549` or `#10500-#10549`; the evidence-only sequence
 variable must be distinct and in persistent range `#10000-#10999`. Upgraded
 settings return null finalizer/sequence mappings until explicitly reviewed and
 saved. These mappings are configuration, not evidence of physical commissioning.
@@ -1412,9 +1413,9 @@ MEIMAD/V/1/EVENT/<CODE>/ID/<SOURCE_EVENT_ID>/SEQ/<NONNEGATIVE_INTEGER>/MACROVERS
 
 The v1 event codes are `OLC`, `SVR`, `SVS`, `SVF`, `STQ`, `QCP`, `QCF`, `CST`, `CEN`, `CIN`, `PSO`, and `PSC`, mapping in order to the workflow event types defined above. This representation deliberately avoids `|`, `=`, `_`, and other punctuation outside Haas's documented DPRNT literal-text set. The complete line accepts only uppercase letters, digits, `/`, and `-`; IDs use the same set without `/`.
 
-Optional fields may be omitted at the generic parser boundary but, when present, remain in the displayed order. Unknown, duplicate, reordered, empty, malformed, unsupported, lowercase, or whitespace-containing fields fail parsing. `OLC` requires `PROGRAM`, `OFFSETRELEASE`, and `NONCE`; its latter two fields are six-digit integers and `PROGRAM` must equal the schema-v51 hook's six-digit NC identity. `SVS` and `SVF` require the same three fields: `PROGRAM` must match the immutable NC identity, while `OFFSETRELEASE` and `NONCE` must repeat the exact pending challenge. A delayed result from an older challenge therefore cannot resolve a newer session for the same Machine and NC. Other currently defined event codes reject the two Offset Loader evidence fields. Only an enabled Machine configuration, matching expected macro version, optional matching Run, exact NC identity, current release token, and schema-v51 NC hook allow `OLC` to enter `production_run_workflow_events`. Missing identity creates `active_nc_identity_unavailable`; an identity mismatch creates `wrong_nc_program`; a stale release token creates `stale_offset_loader`; and a nonce mismatch creates `offset_loader_not_executed`. None creates or incorrectly resolves a verification session. `(source, sourceEventId)` is idempotent. A reused identifier carrying a different cycle event type is rejected as `duplicate_cnc_event`. Sequence gaps/out-of-order values produce immutable anomaly rows for retained events and never cause synthetic events.
+Optional fields may be omitted at the generic parser boundary but, when present, remain in the displayed order. Unknown, duplicate, reordered, malformed, or unsupported fields fail parsing. `OLC`, `SVR`, `SVS`, and `SVF` require `PROGRAM`, `OFFSETRELEASE`, and `NONCE`; all must match the exact current approved binding. `OLC` creates untimed `ARMED`; the first exact `SVR` changes it to `PENDING` and starts the Server timeout. A delayed old result cannot resolve a newer challenge. `(source, sourceEventId)` is idempotent. Sequence gaps, resets, wraps, duplicates, and out-of-order values produce anomaly evidence but never establish or invalidate Machine identity or verification by themselves.
 
-`CST` and `CEN` are implemented production observations. The Server requires `PROGRAM` and resolves exactly one assigned `IN_PROGRESS` Run and `ACTIVE` Run Program; optional `RUN`, when supplied, and required `PROGRAM` must match it. `PROGRAM` may carry the Run Program ID, pinned release filename, or preferably the pinned release's stable six-digit NC identity. A missing identity is rejected as `active_nc_identity_unavailable` before any workflow or quantity write. A START requires the latest Run workflow event to be `QC_PASS` or a valid preceding `CYCLE_END`. An END must immediately follow the same-source START for the same resolved program and use `start.sequence + 1`. Only that valid END appends a `production_run_cycle_events` row and advances all program outputs atomically. Duplicate END delivery returns the original observation without a second increment. Controller counters and all other parsed event types remain raw/monitoring diagnostics until a later milestone owns them.
+`CST` and `CEN` are implemented production observations. The Server requires exact program identity. After `QC_PASS`, the first valid matching `CST` may resolve the assigned `PLANNED` Run Program and atomically change the Run to `IN_PROGRESS`, the Program to `ACTIVE`, and its Outputs to `IN_PRODUCTION` while retaining that START as the open attempt. Later observations resolve the assigned active Run Program. Manual Start is not required for this connected-CNC path. A matching END completes the open START even when its sequence is nonconsecutive; the gap is retained as evidence and cannot block the otherwise exact event pair. Duplicate END delivery remains idempotent.
 
 If a new `CST` arrives while the prior START remains open, the Server appends a derived `CYCLE_INTERRUPTED` workflow event linked to the prior and triggering source-event IDs, then retains the new START. No cycle row or output increment is created for the interrupted attempt. A `CEN` without a matching START is still retained and receives `CYCLE_END_WITHOUT_START`; a CEN following a START with a nonconsecutive sequence receives `CYCLE_END_SEQUENCE_MISMATCH` (as well as the ordinary sequence-gap evidence). These schema-v56 anomaly rows allow nullable previous/expected sequence when no START exists. Retrying the same Machine source-event ID does not duplicate workflow, interruption, anomaly, or quantity effects.
 
@@ -1424,7 +1425,7 @@ A valid current `OLC` for a different assigned Run is also the authoritative nex
 
 Schema v58 adds no new Machine or tablet command. Internally, each retained sequenced START creates immutable raw attempt evidence, and a validated cycle completion or the existing interruption event creates its separate immutable outcome. Both boundaries preserve Server receipt time, optional Machine time, source identity, and sequence. Reports may later derive idle as `next START - previous END` and apply selectable statistical methods; this ingestion contract stores neither calculated duration nor a permanent analytics formula.
 
-This contract includes implemented Server-side setup-verification result ingestion and remains physically uncommissioned. Schema v51 selects the generic-hook fallback: the protected call's stored six-digit identity is the intended exact NC release input, while `PROGRAM` is untrusted Machine evidence that must nevertheless be present and agree with that immutable identity. It is corroborating fail-closed evidence, not authentication by itself. Schema v52 atomically creates one `PENDING` session with the retained `OLC` event. The immutable session context contains Machine, Run, exact NC/Offset Loader releases, six-digit nonce, macro version, response width, creation, expiration, and source event; it stores no secret or response. A newer Offset Loader supersedes a live session. The existing assigned-tablet status route uses the physically matched algorithm under the fail-closed contract in section 8.9; there is no separate response-code endpoint. Success/failure DPRINT ingestion requires exact NC/release/nonce correlation before current-session resolution. The quarantined v3-v5 macros do not emit the result correlation fields and are intentionally incompatible with this hardened Server contract; they remain forensic audit artifacts, not candidates to edit or run. A future reviewed macro must use a new version. CNC-side operator input, alarm/interlock behavior, and execution blocking remain uncommissioned physical behavior.
+Schema v63 implements secretless setup verification. Machine recognition uses only configured MachineID/fixed IP/MAC and is separate from NC and Offset Loader authorization. Exact `OLC` creates an untimed `ARMED` session; the assigned tablet may display the public consistency response while ARMED. The first exact `SVR` NC start records the pending start, changes state to `PENDING`, and begins the timeout. Exact `SVS` establishes reusable `SUCCEEDED` authority for that binding; a new Offset Loader supersedes it. No Machine Secret, derived key, HMAC, or replacement credential is stored or accepted. Physical controller behavior remains a commissioning requirement.
 
 The implemented recovery routes require active Edit Mode and a body containing
 the related `machineId` and a non-empty bounded `reason`:
@@ -1897,10 +1898,10 @@ projection:
 resolved Machine/Run, or `NOT_REPORTED` when no session evidence exists.
 `protected_macro_version` is omitted when the Server has no reported version.
 These fields participate in `revision`. They expose no nonce, response code,
-Machine secret/key, protected-variable mapping, or algorithm
+protected-variable mapping, or algorithm
 internals; the response code remains confined to the `IN_SETUP` projection above.
 
-`response_code` is present only for the TabletID's assigned Machine and Run when the unique session is `PENDING`, unexpired, still tied to the current Offset Loader and approved NC hook, and its enabled Machine configuration still matches. The Server decrypts the Machine secret and derives the fixed-width response in memory; the session and response JSON contain no raw nonce, Machine key/secret, protected-variable number, or algorithm internals. Expired, invalidated, superseded, missing, or undecryptable contexts return `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE` without `response_code`. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
+`response_code` is present for the TabletID's assigned Machine and Run while the exact enabled session is `ARMED` or unexpired `PENDING` and still tied to the current Offset Loader and approved NC hook. The Server derives it from the binding values without a credential. Expired, invalidated, superseded, or missing contexts omit the code. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
 An expired session can never accept a late `SVS` or expose its response again.
 An exactly correlated `SVF` may be retained after expiry as fail-safe audit
 evidence; it changes the session from `EXPIRED` to `FAILED`, records

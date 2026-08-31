@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Cnc;
@@ -94,8 +96,16 @@ internal sealed class CncConnectionService(
         {
             throw new CncValidationException("configuration", "Haas NGC configuration is invalid.");
         }
-        if (string.IsNullOrWhiteSpace(value.Host) || value.Host.Length > 255)
-            throw new CncValidationException("configuration.host", "Haas host is required.");
+        if (!IPAddress.TryParse(value.Host, out var address)
+            || IPAddress.IsLoopback(address)
+            || address.Equals(IPAddress.Any)
+            || address.Equals(IPAddress.IPv6Any))
+            throw new CncValidationException("configuration.host", "A fixed, non-loopback CNC IP address is required.");
+        if (string.IsNullOrWhiteSpace(value.MacAddress)
+            || !Regex.IsMatch(value.MacAddress.Replace('-', ':').ToUpperInvariant(),
+                "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", RegexOptions.CultureInvariant))
+            throw new CncValidationException("configuration.macAddress",
+                "A six-octet CNC MAC address is required.");
         Range(value.Mdc.Port, 1, 65535, "configuration.mdc.port");
         if (value.Mdc.TimeoutMs != update.ConnectionTimeoutMs)
             throw new CncValidationException("configuration.mdc.timeoutMs", "MDC timeout must match the connection timeout.");

@@ -50,7 +50,8 @@ internal sealed class SqliteProductionRunCncObservationRepository(
             query.CommandText = """
                 SELECT run.id,program.id,
                        COALESCE(program.production_gcode_release_id,program.selected_gcode_release_id),
-                       hook.nc_identity_token,release.original_file_name
+                       hook.nc_identity_token,release.original_file_name,
+                       run.status,program.status,assignment.batch_operation_id
                 FROM machine_assignments assignment
                 JOIN production_runs run ON run.id=assignment.production_run_id
                 JOIN production_run_programs program ON program.production_run_id=run.id
@@ -59,7 +60,9 @@ internal sealed class SqliteProductionRunCncObservationRepository(
                 LEFT JOIN gcode_release_verification_hooks hook
                     ON hook.gcode_release_id=release.id
                 WHERE assignment.machine_id=$machineId
-                  AND run.status='IN_PROGRESS' AND program.status='ACTIVE'
+                  AND ((run.status='IN_PROGRESS' AND program.status='ACTIVE')
+                       OR ($isCycleStart=1 AND run.status='PLANNED'
+                           AND program.status='PLANNED'))
                   AND ($runIdentity IS NULL OR upper(run.id)=upper($runIdentity))
                   AND ($programIdentity IS NULL
                        OR upper(program.id)=upper($programIdentity)
@@ -67,12 +70,15 @@ internal sealed class SqliteProductionRunCncObservationRepository(
                        OR upper(COALESCE(release.original_file_name,''))=upper($programIdentity));
                 """;
             query.Parameters.AddWithValue("$machineId", observation.MachineId);
+            query.Parameters.AddWithValue("$isCycleStart",
+                observation.EventType == "CYCLE_START" ? 1 : 0);
             query.Parameters.AddWithValue("$runIdentity", Db(observation.ProductionRunIdentity));
             query.Parameters.AddWithValue("$programIdentity", Db(observation.ProgramIdentity));
             await using var reader = await query.ExecuteReaderAsync(token);
             while (await reader.ReadAsync(token))
                 candidates.Add(new(reader.GetString(0), reader.GetString(1),
-                    reader.IsDBNull(2) ? null : reader.GetString(2)));
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.GetString(5), reader.GetString(6), reader.GetString(7)));
         }
         if (candidates.Count != 1)
         {
@@ -111,15 +117,16 @@ internal sealed class SqliteProductionRunCncObservationRepository(
         var validEnd = observation.EventType == "CYCLE_END"
             && latest is { EventType: "CYCLE_START" }
             && latest.Source == source
-            && latest.ProgramId == target.ProgramId
-            && latest.Sequence.HasValue
-            && observation.Sequence == latest.Sequence.Value + 1;
+            && latest.ProgramId == target.ProgramId;
         if (observation.EventType == "CYCLE_START" && !validStart)
         {
             await transaction.RollbackAsync(token);
             return new(false, false, false, "cycle_start_requires_qc_pass_or_completed_cycle",
                 target.RunId, target.ProgramId);
         }
+        if (validStart && target.RunStatus == "PLANNED")
+            await StartConnectedProductionAsync(connection, transaction, target,
+                observation.MachineId, timeProvider.GetUtcNow().ToUniversalTime(), token);
         var unmatchedEnd = observation.EventType == "CYCLE_END" && !validEnd;
 
         var now = timeProvider.GetUtcNow().ToUniversalTime();
@@ -274,6 +281,62 @@ internal sealed class SqliteProductionRunCncObservationRepository(
         return result.CompletedCycleCount;
     }
 
+    private static async Task StartConnectedProductionAsync(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        Microsoft.Data.Sqlite.SqliteTransaction transaction,
+        CycleTarget target,
+        string machineId,
+        DateTimeOffset startedAt,
+        CancellationToken token)
+    {
+        var at = Format(startedAt);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE production_runs
+            SET status='IN_PROGRESS',structure_locked_at=COALESCE(structure_locked_at,$at),
+                version=version+1,updated_at=$at
+            WHERE id=$runId AND status='PLANNED';
+
+            UPDATE production_run_programs
+            SET status='ACTIVE',version=version+1,updated_at=$at
+            WHERE id=$programId AND production_run_id=$runId AND status='PLANNED';
+
+            UPDATE production_run_outputs
+            SET status='IN_PRODUCTION',version=version+1,updated_at=$at
+            WHERE production_run_program_id=$programId AND status='ALLOCATED';
+
+            UPDATE batch_operations
+            SET status=CASE WHEN status='not_started' THEN 'in_progress' ELSE status END,
+                actual_start=COALESCE(actual_start,$at),
+                actual_machine_id=COALESCE(actual_machine_id,$machineId),
+                version=version+1,updated_at=$at
+            WHERE id=$operationId;
+
+            UPDATE production_batches
+            SET status='in_production',version=version+1,updated_at=$at
+            WHERE id=(SELECT production_batch_id FROM batch_operations WHERE id=$operationId)
+              AND status<>'completed';
+            """;
+        command.Parameters.AddWithValue("$runId", target.RunId);
+        command.Parameters.AddWithValue("$programId", target.ProgramId);
+        command.Parameters.AddWithValue("$operationId", target.BatchOperationId);
+        command.Parameters.AddWithValue("$machineId", machineId);
+        command.Parameters.AddWithValue("$at", at);
+        await command.ExecuteNonQueryAsync(token);
+
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
+            new("production_run_started_by_cnc_cycle", startedAt, "cnc-system",
+                new Dictionary<string, string>
+                {
+                    ["productionRunId"] = target.RunId,
+                    ["productionRunProgramId"] = target.ProgramId,
+                    ["machineId"] = machineId
+                },
+                "CNC_OBSERVATION", null, null,
+                new { trigger = "CYCLE_START", target.BatchOperationId }), token);
+    }
+
     private static async Task InsertCycleAnomalyAsync(
         Microsoft.Data.Sqlite.SqliteConnection connection,
         Microsoft.Data.Sqlite.SqliteTransaction transaction,
@@ -323,7 +386,13 @@ internal sealed class SqliteProductionRunCncObservationRepository(
     private static object Db(object? value) => value ?? DBNull.Value;
     private static string Format(DateTimeOffset value)=>value.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture);
 
-    private sealed record CycleTarget(string RunId, string ProgramId, string? NcReleaseId);
+    private sealed record CycleTarget(
+        string RunId,
+        string ProgramId,
+        string? NcReleaseId,
+        string RunStatus,
+        string ProgramStatus,
+        string BatchOperationId);
     private sealed record LatestCycleWorkflow(
         string EventId, string EventType, string Source, string? SourceEventId,
         long? Sequence, DateTimeOffset ReceivedAt, string? ProgramId);

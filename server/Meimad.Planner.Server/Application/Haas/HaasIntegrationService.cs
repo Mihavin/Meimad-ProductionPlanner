@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.RegularExpressions;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Haas;
 
@@ -21,6 +23,15 @@ internal sealed class HaasIntegrationService(
     {
         machineId = Required(machineId, "machineId");
         var host = Required(update.Host, "host");
+        if (!IPAddress.TryParse(host, out var fixedAddress)
+            || IPAddress.IsLoopback(fixedAddress)
+            || fixedAddress.Equals(IPAddress.Any)
+            || fixedAddress.Equals(IPAddress.IPv6Any))
+            throw new HaasValidationException("host", "A fixed, non-loopback CNC IP address is required.");
+        var macAddress = Required(update.MacAddress, "macAddress").ToUpperInvariant().Replace('-', ':');
+        if (!Regex.IsMatch(macAddress, "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+                RegexOptions.CultureInvariant))
+            throw new HaasValidationException("macAddress", "MAC address must use six hexadecimal octets.");
         Port(update.MdcPort, "mdcPort");
         Port(update.MtConnectPort, "mtConnectPort");
         Port(update.DprntPort, "dprntPort");
@@ -46,7 +57,8 @@ internal sealed class HaasIntegrationService(
         // Compile/validate configurable expressions through the exact shared parser.
         headerParser.Parse(["O1", "(PART: validation)"], patterns);
         var now = timeProvider.GetUtcNow();
-        var value = new HaasConnectionSettings(machineId, host, update.MdcPort, update.MtConnectPort, update.DprntPort,
+        var value = new HaasConnectionSettings(machineId, host, macAddress,
+            update.MdcPort, update.MtConnectPort, update.DprntPort,
             update.LocalNetShareEnabled, Optional(update.LocalNetSharePath), Optional(update.CredentialsReference),
             counterSource,
             update.PollingIntervalMs, update.ConnectionTimeoutMs, update.StableProgramPolls,

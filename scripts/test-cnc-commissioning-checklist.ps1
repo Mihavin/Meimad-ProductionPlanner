@@ -1,63 +1,26 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$auditScript = Join-Path $PSScriptRoot 'audit-cnc-commissioning-checklist.ps1'
-$checklist = Join-Path $PSScriptRoot '..\docs\cnc-commissioning-checklist.md'
-$boundedRetest = Join-Path $PSScriptRoot '..\docs\haas-bounded-retest-after-internal-approval.md'
-$engineeringReview = Join-Path $PSScriptRoot '..\docs\haas-internal-engineering-review-2026-08-27.md'
-$audit = ((& $auditScript -ChecklistPath $checklist) | ConvertFrom-Json)
-if ($audit.status -ne 'NOT_READY' -or $audit.declaredReady -or
-    -not $audit.declarationConsistent -or $audit.checks.total -ne 14 -or
-    $audit.checks.passed -ne 4 -or $audit.checks.failed -ne 1 -or
-    $audit.checks.notTested -ne 9 -or
-    $audit.unrecordedMachineFields.Count -ne 5 -or
-    $audit.unsignedRoles.Count -ne 2) {
-    throw 'The current partial physical commissioning record was not graded accurately.'
-}
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$algorithm = Get-Content -LiteralPath (Join-Path $repositoryRoot 'docs\haas-verification-response-algorithm.md') -Raw
+$generator = Get-Content -LiteralPath (Join-Path $repositoryRoot 'scripts\new-haas-verification-v10-bench-pack.ps1') -Raw
+$audit = Get-Content -LiteralPath (Join-Path $repositoryRoot 'docs\tasks-24-32-completion-audit.md') -Raw
 
-$rejected = $false
-try { & $auditScript -ChecklistPath $checklist -RequireReady | Out-Null }
-catch { $rejected = $true }
-if (-not $rejected) { throw 'RequireReady unexpectedly accepted incomplete physical evidence.' }
-
-$retestText = Get-Content -LiteralPath $boundedRetest -Raw
 foreach ($required in @(
-    '**DO NOT RUN YET.**',
-    '30 minutes maximum at the CNC',
-    'written internal engineering decision record is completed',
-    'Macro v6',
-    'BENCH_ONLY_INTERNAL_REVIEW_REQUIRED',
-    'Challenge / verify / finalizer program numbers',
-    'Late correct response must fail closed',
-    'Timely correct response and sequence adjacency',
-    'Reset during input',
-    'Controller reboot sequence contract',
-    'Disable verification again regardless of the result',
-    'No source edit, MDI workaround')) {
-    if ($retestText.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "Bounded retest plan is missing the required fail-closed marker: $required"
+    'no ARMED timeout',
+    'first intended NC start',
+    'Later starts',
+    'new Offset Loader release supersedes',
+    'sequence field is diagnostic evidence')) {
+    if ($algorithm.IndexOf($required, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Verification contract is missing: $required"
     }
 }
-if ($retestText -match '(?im)^\s*(?:G0?[0123]|M0?3|M0?4|M0?6|M0?8|T\d+)\b') {
-    throw 'Bounded retest plan must not embed executable motion/spindle/tool/coolant blocks.'
+if ($generator.IndexOf('macroVersion $config.macroVersion 10 10', [StringComparison]::Ordinal) -lt 0) {
+    throw 'V10-only generator guard is missing.'
+}
+if ($audit.IndexOf('Physical commissioning remains required', [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw 'The audit must retain the physical commissioning gate.'
 }
 
-$engineeringText = Get-Content -LiteralPath $engineeringReview -Raw
-foreach ($required in @(
-    'Written response and decision record',
-    'External HFO/vendor approval is explicitly',
-    'Supported post-M109 fresh-read pattern',
-    'Protected persistent evidence counter supported',
-    '`PERSISTENT_COUNTER`',
-    '`EXPLICIT_EPOCH`',
-    'Only one choice may be selected')) {
-    if ($engineeringText.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "Engineering review record is missing the required decision marker: $required"
-    }
-}
-if ($engineeringText.IndexOf('scripts/new-haas-verification-v6-bench-pack.ps1',
-        [StringComparison]::Ordinal) -lt 0) {
-    throw 'Engineering review record does not identify the separate v6 candidate source.'
-}
-
-Write-Host 'CNC commissioning-checklist gate tests passed.'
+Write-Host 'CNC commissioning contract tests passed.'

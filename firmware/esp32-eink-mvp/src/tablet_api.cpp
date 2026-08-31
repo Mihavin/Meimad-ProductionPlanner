@@ -109,7 +109,9 @@ bool parseStatusToken(const String& value, TabletStatus& status) {
 bool parseVerificationStateToken(
     const String& value,
     VerificationState& state) {
-  if (value == "WAITING_FOR_OPERATOR") {
+  if (value == "ARMED") {
+    state = VerificationState::Armed;
+  } else if (value == "WAITING_FOR_OPERATOR") {
     state = VerificationState::WaitingForOperator;
   } else if (value == "EXPIRED") {
     state = VerificationState::Expired;
@@ -166,7 +168,8 @@ bool parseVerification(
   parsed.required = true;
 
   JsonVariantConst responseCode = verification["response_code"];
-  if (parsed.state == VerificationState::WaitingForOperator) {
+  if (parsed.state == VerificationState::Armed
+      || parsed.state == VerificationState::WaitingForOperator) {
     if (!responseCode.is<const char*>()) {
       error = "verification.response_code must be a string while waiting";
       return false;
@@ -203,6 +206,7 @@ bool parseDiagnostics(
   }
   const bool supportedResult =
       parsed.verificationResult == "NOT_REPORTED"
+      || parsed.verificationResult == "ARMED"
       || parsed.verificationResult == "WAITING_FOR_OPERATOR"
       || parsed.verificationResult == "PENDING"
       || parsed.verificationResult == "SUCCEEDED"
@@ -529,6 +533,7 @@ const char* toToken(TabletStatus status) {
 const char* toToken(VerificationState state) {
   switch (state) {
     case VerificationState::None: return "NONE";
+    case VerificationState::Armed: return "ARMED";
     case VerificationState::WaitingForOperator: return "WAITING_FOR_OPERATOR";
     case VerificationState::Expired: return "EXPIRED";
     case VerificationState::Invalidated: return "INVALIDATED";

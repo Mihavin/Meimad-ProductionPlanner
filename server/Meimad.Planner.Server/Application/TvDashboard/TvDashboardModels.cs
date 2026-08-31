@@ -68,7 +68,9 @@ internal sealed record TvOperationProgress(
     int? CompletionPercent,
     int? SetupPercent,
     int? CurrentPart,
-    int PlannedParts);
+    int PlannedParts,
+    double? AverageCycleSeconds = null,
+    int AverageCycleSampleCount = 0);
 
 internal sealed record TvDowntime(
     string DowntimeId,

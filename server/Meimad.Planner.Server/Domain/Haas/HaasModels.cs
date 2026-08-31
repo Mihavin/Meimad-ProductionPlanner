@@ -36,6 +36,7 @@ internal static class HaasTelemetryProviders
 internal sealed record HaasConnectionSettings(
     string MachineId,
     string Host,
+    string MacAddress,
     int MdcPort,
     int MtConnectPort,
     int DprntPort,

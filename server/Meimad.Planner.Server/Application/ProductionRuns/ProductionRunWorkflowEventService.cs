@@ -27,10 +27,14 @@ internal sealed record AppendProductionRunWorkflowEvent(
     string? OffsetLoaderReleaseId = null, string? TabletDeviceId = null,
     string? UserId = null, string MetadataJson = "{}",
     SetupVerificationSessionSeed? VerificationSession = null,
+    SetupVerificationActivationSeed? VerificationActivation = null,
     SetupVerificationResolutionSeed? VerificationResolution = null);
 
 internal sealed record SetupVerificationSessionSeed(
     int Nonce, int MacroVersion, int ResponseCodeDigits, int TimeoutSeconds);
+
+internal sealed record SetupVerificationActivationSeed(
+    string SessionId, int TimeoutSeconds);
 
 internal sealed record SetupVerificationResolutionSeed(
     string SessionId, bool Succeeded);
@@ -93,6 +97,18 @@ internal sealed class ProductionRunWorkflowEventService(
                     "verificationResolution", "invalid_resolution_event",
                     "A verification resolution requires a setup-verification success or failure event.");
             Required(resolution.SessionId, "verificationSessionId");
+        }
+        if (command.VerificationActivation is { } activation)
+        {
+            if (command.EventType != "SETUP_VERIFICATION_REQUESTED")
+                throw new ProductionRunWorkflowEventValidationException(
+                    "verificationActivation", "invalid_activation_event",
+                    "Verification can become pending only at the intended NC start.");
+            Required(activation.SessionId, "verificationSessionId");
+            if (activation.TimeoutSeconds is < 30 or > 3600)
+                throw new ProductionRunWorkflowEventValidationException(
+                    "verificationActivation", "invalid_session_configuration",
+                    "Verification timeout is outside the supported range.");
         }
         try
         {

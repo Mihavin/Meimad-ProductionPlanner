@@ -28,7 +28,9 @@ public sealed class HaasSetupViewTests
         Assert.Contains("RevokeCurrentOffsetLoaderCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("no verification bypass", xaml, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Recovery reason (required)", xaml, StringComparison.Ordinal);
-        Assert.Contains("PasswordBox PasswordChanged=\"VerificationSecret_PasswordChanged\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Controller MAC address", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Machine secret", xaml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("VerificationSecret", xaml, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Keep verification disabled until", xaml, StringComparison.Ordinal);
     }
 

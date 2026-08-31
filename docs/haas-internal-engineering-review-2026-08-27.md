@@ -140,12 +140,11 @@ commissioning-checklist acceptance change.
 
 ## Written response and decision record
 
-Review source: `scripts/new-haas-verification-v6-bench-pack.ps1`. Its manifest is
-`BENCH_ONLY_INTERNAL_REVIEW_REQUIRED`; it requires three protected programs and
-five collision-free variables, uses a separate protected G65 finalizer after the
-M109 loop, repeats NC/release/nonce correlation on SVS/SVF, and fails closed
-instead of wrapping the counter at sequence exhaustion. These statements describe
-the candidate source, not physical acceptance.
+Historical review source: macro v6, now removed and superseded by
+`scripts/new-haas-verification-v10-bench-pack.ps1`. The signatures below are
+retained as historical evidence and do not approve V10. V10 keeps three protected
+programs, exact NC/release/nonce correlation, and the separate post-M109 finalizer,
+but uses no Machine credential and treats sequence discontinuity as evidence only.
 
 Complete this section from the written internal review. A verbal answer or an
 unreferenced sample is insufficient.

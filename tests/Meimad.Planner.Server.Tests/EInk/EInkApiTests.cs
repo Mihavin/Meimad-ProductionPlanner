@@ -515,7 +515,7 @@ public sealed class EInkApiTests
             var verification = root.GetProperty("verification");
             Assert.True(verification.GetProperty("required").GetBoolean());
             Assert.Equal("WAITING_FOR_OPERATOR", verification.GetProperty("state").GetString());
-            Assert.Equal("0388", verification.GetProperty("response_code").GetString());
+            Assert.Equal("1795", verification.GetProperty("response_code").GetString());
             var diagnostics = root.GetProperty("diagnostics");
             Assert.Equal(
                 "WAITING_FOR_OPERATOR",
@@ -568,6 +568,25 @@ public sealed class EInkApiTests
                 "SUPERSEDED",
                 superseded.RootElement.GetProperty("diagnostics")
                     .GetProperty("verification_result").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task Tablet_status_exposes_the_response_while_armed_without_an_expiry()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            var now = application.Services.GetRequiredService<TimeProvider>().GetUtcNow();
+            await SeedVerificationSessionAsync(application.Services, now.AddDays(-1), now, armed: true);
+
+            using var response = await client.SendAsync(Get("/api/tablets/3041/status"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var verification = document.RootElement.GetProperty("verification");
+            Assert.Equal("ARMED", verification.GetProperty("state").GetString());
+            Assert.Equal("1795", verification.GetProperty("response_code").GetString());
+            Assert.False(verification.TryGetProperty("expires_at", out _));
         });
     }
 
@@ -1043,16 +1062,11 @@ public sealed class EInkApiTests
     }
 
     private static async Task SeedVerificationSessionAsync(
-        IServiceProvider services, DateTimeOffset createdAt, DateTimeOffset expiresAt)
+        IServiceProvider services, DateTimeOffset createdAt, DateTimeOffset expiresAt,
+        bool armed = false)
     {
-        const string secret = "tablet-verification-secret-1";
-        var protector = services.GetRequiredService<IDataProtectionProvider>().CreateProtector(
-            CncVerificationSecretProtection.Purpose);
-        var protectedSecret = protector.Protect(secret);
-        var machineKey = CncVerificationResponseAlgorithm.DeriveMachineKey("machine-eink-1", secret);
-        Assert.Equal(699624, machineKey);
-        Assert.Equal("0388", CncVerificationResponseAlgorithm.Calculate(
-            100000, 100000, 100000, machineKey, 4));
+        Assert.Equal("1795", CncVerificationResponseAlgorithm.Calculate(
+            100000, 100000, 100000, 4));
 
         var database = services.GetRequiredService<SqliteDatabase>();
         await using var connection = await database.OpenConnectionAsync();
@@ -1100,11 +1114,11 @@ public sealed class EInkApiTests
             INSERT INTO cnc_verification_settings(
                 machine_id,dprint_transport,dprint_port,challenge_program_number,
                 verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
-                verification_state_variable,release_token_variable,protected_secret,
+                verification_state_variable,release_token_variable,
                 expected_macro_version,response_code_digits,verification_timeout_seconds,
                 enabled,version,created_at,updated_at)
             VALUES('machine-eink-1','HAAS_DPRNT_TCP',8080,9001,9002,NULL,
-                   10801,10802,10803,10804,$protectedSecret,3,4,300,1,1,$createdAt,$createdAt);
+                   10801,10802,10803,10804,3,4,300,1,1,$createdAt,$createdAt);
             INSERT INTO production_run_workflow_events(
                 id,production_run_id,machine_id,event_type,source,source_event_id,
                 server_received_at,nc_release_id,offset_loader_release_id,metadata_json)
@@ -1113,16 +1127,19 @@ public sealed class EInkApiTests
                    $createdAt,'gcode-eink-verification','offset-eink-verification','{}');
             INSERT INTO cnc_setup_verification_sessions(
                 id,production_run_id,machine_id,nc_release_id,offset_loader_release_id,
-                nonce,macro_version,response_code_digits,state,created_at,expires_at,
-                source_workflow_event_id)
+                nonce,macro_version,response_code_digits,state,created_at,pending_started_at,
+                expires_at,source_workflow_event_id)
             VALUES('session-eink-verification','run:batch-operation:operation-eink-1',
                    'machine-eink-1','gcode-eink-verification','offset-eink-verification',
-                   100000,3,4,'PENDING',$createdAt,$expiresAt,'workflow-offset-eink-verification');
+                   100000,3,4,$state,$createdAt,$pendingAt,$expiresAt,'workflow-offset-eink-verification');
             """;
         command.Parameters.AddWithValue("$hash", new string('d', 64));
         command.Parameters.AddWithValue("$createdAt", createdAt.ToUniversalTime().ToString("O"));
-        command.Parameters.AddWithValue("$expiresAt", expiresAt.ToUniversalTime().ToString("O"));
-        command.Parameters.AddWithValue("$protectedSecret", protectedSecret);
+        command.Parameters.AddWithValue("$state", armed ? "ARMED" : "PENDING");
+        command.Parameters.AddWithValue("$pendingAt",
+            armed ? DBNull.Value : createdAt.ToUniversalTime().ToString("O"));
+        command.Parameters.AddWithValue("$expiresAt",
+            armed ? DBNull.Value : expiresAt.ToUniversalTime().ToString("O"));
         await command.ExecuteNonQueryAsync();
     }
 

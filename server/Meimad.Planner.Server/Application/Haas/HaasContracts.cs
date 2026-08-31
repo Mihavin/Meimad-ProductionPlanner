@@ -71,6 +71,7 @@ internal sealed record HaasObservationResult(
 
 internal sealed record HaasSettingsUpdate(
     string? Host,
+    string? MacAddress,
     int MdcPort,
     int MtConnectPort,
     int DprntPort,

@@ -37,7 +37,10 @@ internal sealed record TvSourceOperation(
     DateTimeOffset? ActualStart,
     DateTimeOffset? ActualEnd,
     double ClosedPauseSeconds,
-    DateTimeOffset? ActivePauseStartedAt);
+    DateTimeOffset? ActivePauseStartedAt,
+    int? ProducedQuantity = null,
+    double? MeasuredAverageCycleSeconds = null,
+    int MeasuredCycleSampleCount = 0);
 
 internal sealed record TvSourceDowntime(
     string DowntimeId,

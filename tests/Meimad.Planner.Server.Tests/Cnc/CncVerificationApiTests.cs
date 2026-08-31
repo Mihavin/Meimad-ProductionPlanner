@@ -34,7 +34,7 @@ public sealed class CncVerificationApiTests
             var authority = new EditAuthority("verification-client", 1);
             await foundation.UpdateSettingsAsync("machine-verification", new(
                 "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10501, 10500, 10502, 10503,
-                9003, 10504, "machine-secret-value", 6, 6, 300, true), 0, authority);
+                9003, 10504, 6, 6, 300, true), 0, authority);
             var first = await foundation.CreateOffsetLoaderReleaseAsync(
                 "run-verification", new("machine-verification", "gcode-verification",
                     "tools-verification"), authority);

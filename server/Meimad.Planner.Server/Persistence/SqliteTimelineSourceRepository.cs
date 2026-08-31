@@ -256,7 +256,47 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    nc_estimate.confidence,
                    nc_estimate.warnings_json,
                    active_process.id,
-                   active_tools.required_tool_count
+                   active_tools.required_tool_count,
+                   (SELECT SUM(output.produced_quantity)
+                    FROM production_run_outputs output
+                    JOIN production_run_programs program
+                      ON program.id=output.production_run_program_id
+                    WHERE output.batch_operation_id=batch_operations.id
+                      AND program.production_run_id=machine_assignments.production_run_id),
+                   (SELECT SUM(output.target_quantity)
+                    FROM production_run_outputs output
+                    JOIN production_run_programs program
+                      ON program.id=output.production_run_program_id
+                    WHERE output.batch_operation_id=batch_operations.id
+                      AND program.production_run_id=machine_assignments.production_run_id),
+                   (SELECT AVG(CASE
+                       WHEN timing.start_machine_timestamp IS NOT NULL
+                        AND timing.end_machine_timestamp IS NOT NULL
+                        AND julianday(timing.end_machine_timestamp)>julianday(timing.start_machine_timestamp)
+                       THEN (julianday(timing.end_machine_timestamp)-julianday(timing.start_machine_timestamp))*86400.0
+                       ELSE (julianday(timing.end_server_received_at)-julianday(timing.start_server_received_at))*86400.0
+                       END)
+                    FROM production_run_cycle_attempt_timing timing
+                    WHERE timing.production_run_id=machine_assignments.production_run_id
+                      AND timing.completion_state='COMPLETED'
+                      AND julianday(timing.end_server_received_at)>julianday(timing.start_server_received_at)
+                      AND EXISTS(SELECT 1 FROM production_run_outputs output
+                          WHERE output.production_run_program_id=timing.production_run_program_id
+                            AND output.batch_operation_id=batch_operations.id)),
+                   (SELECT COUNT(*)
+                    FROM production_run_cycle_attempt_timing timing
+                    WHERE timing.production_run_id=machine_assignments.production_run_id
+                      AND timing.completion_state='COMPLETED'
+                      AND julianday(timing.end_server_received_at)>julianday(timing.start_server_received_at)
+                      AND EXISTS(SELECT 1 FROM production_run_outputs output
+                          WHERE output.production_run_program_id=timing.production_run_program_id
+                            AND output.batch_operation_id=batch_operations.id)),
+                   (SELECT SUM(program.target_cycle_count-program.completed_cycle_count)
+                    FROM production_run_programs program
+                    WHERE program.production_run_id=machine_assignments.production_run_id
+                      AND EXISTS(SELECT 1 FROM production_run_outputs output
+                          WHERE output.production_run_program_id=program.id
+                            AND output.batch_operation_id=batch_operations.id))
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -291,12 +331,20 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             var priorityOrder = (JsonSerializer.Deserialize<string[]>(reader.GetString(26)) ?? [])
                 .OrderBy(value => value, Comparer<string>.Create(TimelinePriorityComparer.CompareOrderNumbers))
                 .FirstOrDefault();
-            var status = reader.GetString(7);
+            var status = reader.GetString(7) == "started" ? "in_progress" : reader.GetString(7);
             var plannedQuantity = reader.GetInt32(8);
             var fixtureSetupSeconds = NullableInt(reader, 9);
             var manualCycleSeconds = NullableInt(reader, 10);
             var hasManagedProcess = !reader.IsDBNull(46);
             var requiredToolCount = NullableInt(reader, 47);
+            var completedQuantity = NullableInt(reader, 48) ?? 0;
+            var targetQuantity = NullableInt(reader, 49) ?? plannedQuantity;
+            var measuredAverageCycleSeconds = reader.IsDBNull(50) ? null : reader.GetDouble(50);
+            var measuredCycleSampleCount = reader.GetInt32(51);
+            var remainingCycleCount = NullableInt(reader, 52);
+            var useMeasuredSeries = measuredCycleSampleCount > 0
+                && measuredAverageCycleSeconds is > 0
+                && double.IsFinite(measuredAverageCycleSeconds.Value);
             var ncCycleSeconds = status == "not_started" && !reader.IsDBNull(43)
                 ? reader.GetDouble(43) : (double?)null;
             var assignedMachineId = NullableString(reader, 16);
@@ -314,10 +362,16 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                     setupWorker?.ToolLoadSecondsPerTool ?? setupEstimation.DefaultToolLoadTimePerToolSeconds,
                     setupWorker is null ? setupEstimation.DefaultFirstPieceFactor : 100d / setupWorker.FirstPartRunningSpeedPercent))
                 : null;
-            var scheduledSetupSeconds = occupancy?.TotalSetupSeconds ?? fixtureSetupSeconds;
-            var scheduledCycleSeconds = occupancy?.SelectedCycleSeconds
+            var scheduledSetupSeconds = useMeasuredSeries && status == "in_progress"
+                ? 0
+                : occupancy?.TotalSetupSeconds ?? fixtureSetupSeconds;
+            var scheduledCycleSeconds = useMeasuredSeries
+                ? measuredAverageCycleSeconds
+                : occupancy?.SelectedCycleSeconds
                 ?? (plannedQuantity == 0 && occupancy is not null ? 0 : manualCycleSeconds);
-            var productionCycleQuantity = occupancy?.RemainingProductionQuantity ?? plannedQuantity;
+            var productionCycleQuantity = useMeasuredSeries
+                ? Math.Max(0, remainingCycleCount ?? targetQuantity - completedQuantity)
+                : occupancy?.RemainingProductionQuantity ?? plannedQuantity;
             values.Add(new TimelineSourceOperation(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetString(4), reader.GetInt32(5), reader.GetString(6), status,
@@ -326,7 +380,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 NullableString(reader, 14), NullableString(reader, 15), assignedMachineId, NullableInt(reader, 17),
                 NullableString(reader, 18),
                 NullableString(reader, 34) is { } machineMovedAt ? Parse(machineMovedAt) : null,
-                reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21) == 1,
+                useMeasuredSeries && status == "in_progress" ? 0 : reader.GetInt32(19),
+                reader.GetInt32(20), reader.GetInt32(21) == 1,
                 reader.GetInt32(22) == 1, NullableInt(reader, 23), reader.GetInt32(24) == 1,
                 priorityDate, priorityOrder,
                 reader.IsDBNull(27) ? null : $"{reader.GetString(27).Replace('_', ' ')}: {reader.GetString(30)}",
@@ -344,7 +399,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetInt32(41) == 1,
                 manualCycleSeconds,
                 ncCycleSeconds,
-                occupancy?.PlanningCycleSource
+                useMeasuredSeries ? "cnc_series_average" : occupancy?.PlanningCycleSource
                     ?? (manualCycleSeconds.HasValue ? "manual" : "unavailable"),
                 NullableString(reader, 44),
                 reader.IsDBNull(45) ? [] : JsonSerializer.Deserialize<string[]>(reader.GetString(45)) ?? [],
@@ -358,7 +413,11 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 RemainingProductionSeconds: occupancy?.RemainingProductionSeconds,
                 TotalPlannedMachineSeconds: occupancy?.TotalPlannedMachineSeconds,
                 SetupEstimateWarnings: occupancy?.Warnings ?? [],
-                UsesSetupOccupancyEstimate: occupancy is not null));
+                UsesSetupOccupancyEstimate: occupancy is not null,
+                CompletedQuantity: completedQuantity,
+                TargetQuantity: targetQuantity,
+                MeasuredAverageCycleSeconds: useMeasuredSeries ? measuredAverageCycleSeconds : null,
+                MeasuredCycleSampleCount: useMeasuredSeries ? measuredCycleSampleCount : 0));
         }
 
         return values;

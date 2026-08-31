@@ -85,11 +85,11 @@ Releasing a new manufacturing-process revision makes other postprocessor release
 
 Use the CNC connection panel in Setup for the Haas machine. Prefer **MTConnect** for read-only monitoring when the machine agent exposes `/current`. MDC remains a separate read-only monitoring/test channel; the application exposes no generic variable read, reset, or write control.
 
-Configure the machine’s IP/hostname, MDC port, MTConnect port, DPRNT PartName port, part-counter source, polling interval, timeout, local NC share, and credential reference. Save the configuration, then use **Test Connection**, **Test MTConnect**, **Test MDC**, **Test Net Share**, **Refresh monitoring**, and **Reconnect** as appropriate.
+Configure the Planner MachineID mapping with the controller’s fixed IP and MAC, then configure the ports, telemetry, polling, timeout, and optional read-only NC share. Save the configuration and use the connection tests as appropriate. This recognizes the configured controller but does not prove its NC or Offset Loader valid.
 
 The active NC program’s machine-side header/DPRNT `PartName` is the authoritative part identity for monitoring. Do not infer the part from the program number when a valid PartName is present. The persistent CNC Setup/Production variable was removed and changing a CNC variable cannot change Meimad workflow state.
 
-The **Protected setup verification** expander stores commissioning configuration only. Keep it disabled until the real Machine passes [the protected-verification technical spike](haas-protected-verification-spike.md). The Machine secret is write-only: leaving the field blank preserves an existing secret, and neither the client nor tablet can read it back.
+The **Protected setup verification** expander stores commissioning configuration only. Keep it disabled until the real Machine passes the bounded V10 no-motion commissioning test. There is no Machine credential field. Offset Loader completion arms the exact binding without a timeout; the timeout begins only when that NC first starts.
 
 The same expander contains **Audited recovery — no verification bypass** for the
 active editor. Enter the Production Run and a reason to invalidate the current
@@ -115,7 +115,7 @@ Use the Windows **User Terminals** page to monitor tablet identity, Machine bind
 last contact, reported firmware/battery/Wi-Fi, current Production Run, workflow state,
 and package revision. Monitoring works in View Mode. Request Edit Mode before creating
 a tablet, changing its Machine, marking it spare, enabling/revoking it, or rotating its
-credential. Copy a new or rotated credential immediately; it cannot be retrieved later.
+registration. TabletID is an identifier, and the MVP has no tablet credential to rotate.
 
 Use the Windows **QC Queue** to monitor Production Runs whose latest workflow
 state is `IN_QC`. The queue shows the Machine, part and Operation outputs,
@@ -126,6 +126,18 @@ the queue row, optionally enter a reason/comment, and choose **PASS** or
 the workflow projection to `READY_FOR_PRODUCTION`. FAIL records the same audit
 details, returns it to `IN_SETUP_RUN`, and allows the setupist to correct the
 setup and send it to QC again. Neither button writes a CNC variable.
+
+After QC PASS on a connected CNC, do not press **Start** in the Machine Planning
+Board. The first valid, matching Haas DPRINT `CYCLE_START` automatically and
+atomically changes the assigned Production Run to `IN_PROGRESS`, activates its
+Program, projects `IN_PRODUCTION`, and opens the first cycle. The following matching
+`CYCLE_END` credits exactly one cycle. The manual **Start** action is retained for
+Machines without a configured CNC connection and non-CNC work. The controller parts
+counter remains diagnostic. For the first physical validation, run the generated
+no-motion `O01992` once while
+`scripts/watch-haas-cycle-count-test.ps1` is recording. The recorder passes only when
+one START/END pair increments the Program by exactly one cycle and each output by its
+declared quantity per cycle.
 
 ## 7. Languages and responsiveness
 

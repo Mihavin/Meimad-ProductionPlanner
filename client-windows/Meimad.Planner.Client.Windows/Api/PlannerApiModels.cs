@@ -458,7 +458,7 @@ internal sealed record MachineCreate(
     double MachineTimeFactor = 1.0);
 
 internal sealed record HaasConnectionSettings(
-    string MachineId, string Host, int MdcPort, int MtConnectPort, int DprntPort,
+    string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
     string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
@@ -466,7 +466,7 @@ internal sealed record HaasConnectionSettings(
     bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC");
 
 internal sealed record HaasConnectionUpdate(
-    string Host, int MdcPort, int MtConnectPort, int DprntPort,
+    string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
     string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
@@ -482,7 +482,7 @@ internal sealed record CncVerificationSettings(
     int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
     int NonceVariable, int ResponseVariable, int VerificationStateVariable,
     int ReleaseTokenVariable, int? FinalizeProgramNumber, int? EventSequenceVariable,
-    bool SecretConfigured, int ExpectedMacroVersion,
+    int ExpectedMacroVersion,
     int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
     int Version, DateTimeOffset UpdatedAt);
 
@@ -491,7 +491,7 @@ internal sealed record CncVerificationSettingsUpdate(
     int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
     int FinalizeProgramNumber, int EventSequenceVariable,
-    string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
+    int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled, int Version);
 
 internal sealed record OffsetLoaderRelease(
@@ -1567,7 +1567,12 @@ internal sealed record TimelineInterval(
     IReadOnlyList<TimelinePhase>? Phases = null,
     string OverallReadinessState = "NOT_MANAGED",
     bool IsReadyForProduction = true,
-    string? ReadinessSummary = null)
+    string? ReadinessSummary = null,
+    int CompletedQuantity = 0,
+    int? TargetQuantity = null,
+    double? MeasuredAverageCycleSeconds = null,
+    int MeasuredCycleSampleCount = 0,
+    string PlanningCycleTimeSource = "manual")
 {
     /// <summary>
     /// The server calculation is authoritative. These optional fields let newer

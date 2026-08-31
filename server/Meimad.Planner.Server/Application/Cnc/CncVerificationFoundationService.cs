@@ -1,14 +1,8 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
-using Microsoft.AspNetCore.DataProtection;
 
 namespace Meimad.Planner.Server.Application.Cnc;
-
-internal static class CncVerificationSecretProtection
-{
-    internal const string Purpose = "Meimad.Planner.CncVerification.MachineSecret.v1";
-}
 
 internal sealed record OffsetLoaderRelease(
     string OffsetLoaderReleaseId, string ProductionRunId, string MachineId,
@@ -25,7 +19,7 @@ internal sealed record StoredCncVerificationSettings(
     int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
     int NonceVariable, int ResponseVariable, int VerificationStateVariable,
     int ReleaseTokenVariable, int? FinalizeProgramNumber, int? EventSequenceVariable,
-    string ProtectedSecret, int ExpectedMacroVersion,
+    int ExpectedMacroVersion,
     int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
     int Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
@@ -34,7 +28,7 @@ internal sealed record CncVerificationSettings(
     int ChallengeProgramNumber, int VerifyProgramNumber, int? CustomGcodeAlias,
     int NonceVariable, int ResponseVariable, int VerificationStateVariable,
     int ReleaseTokenVariable, int? FinalizeProgramNumber, int? EventSequenceVariable,
-    bool SecretConfigured, int ExpectedMacroVersion,
+    int ExpectedMacroVersion,
     int ResponseCodeDigits, int VerificationTimeoutSeconds, bool Enabled,
     int Version, DateTimeOffset UpdatedAt);
 
@@ -43,7 +37,7 @@ internal sealed record UpdateCncVerificationSettings(
     int VerifyProgramNumber, int? CustomGcodeAlias, int NonceVariable,
     int ResponseVariable, int VerificationStateVariable, int ReleaseTokenVariable,
     int FinalizeProgramNumber, int EventSequenceVariable,
-    string? VerificationSecret, int ExpectedMacroVersion, int ResponseCodeDigits,
+    int ExpectedMacroVersion, int ResponseCodeDigits,
     int VerificationTimeoutSeconds, bool Enabled);
 
 internal sealed record CncDprintIngestionContext(
@@ -51,11 +45,12 @@ internal sealed record CncDprintIngestionContext(
     string NcReleaseId, int NcIdentityToken, int VerificationReleaseToken,
     int ExpectedMacroVersion, int ResponseCodeDigits, int VerificationTimeoutSeconds);
 
-internal sealed record CncPendingVerificationContext(
+internal sealed record CncVerificationSessionContext(
     string SessionId, string ProductionRunId, string MachineId,
     string OffsetLoaderReleaseId, string NcReleaseId, int NcIdentityToken,
     int VerificationReleaseToken, int Nonce, int MacroVersion,
-    int ExpectedMacroVersion, DateTimeOffset ExpiresAt, string SessionState,
+    int ExpectedMacroVersion, int VerificationTimeoutSeconds,
+    DateTimeOffset? ExpiresAt, string SessionState,
     bool WasDuplicate);
 
 internal sealed record CncRecoveryResult(
@@ -76,7 +71,7 @@ internal interface ICncVerificationFoundationRepository
         EditAuthority authority, CancellationToken token);
     Task<CncDprintIngestionContext?> ResolveCurrentOffsetLoaderAsync(
         string machineId, int verificationReleaseToken, CancellationToken token);
-    Task<CncPendingVerificationContext?> ResolvePendingVerificationAsync(
+    Task<CncVerificationSessionContext?> ResolveVerificationSessionAsync(
         string machineId, string sourceEventId, DateTimeOffset detectedAt,
         CancellationToken token);
     Task<CncRecoveryResult> InvalidateVerificationAsync(
@@ -91,17 +86,12 @@ internal sealed class CncVerificationFoundationService
 {
     private readonly ICncVerificationFoundationRepository repository;
     private readonly TimeProvider timeProvider;
-    private readonly IDataProtector secretProtector;
-
     public CncVerificationFoundationService(
         ICncVerificationFoundationRepository repository,
-        TimeProvider timeProvider,
-        IDataProtectionProvider dataProtectionProvider)
+        TimeProvider timeProvider)
     {
         this.repository = repository;
         this.timeProvider = timeProvider;
-        secretProtector = dataProtectionProvider.CreateProtector(
-            CncVerificationSecretProtection.Purpose);
     }
 
     internal async Task<OffsetLoaderRelease> CreateOffsetLoaderReleaseAsync(
@@ -180,18 +170,6 @@ internal sealed class CncVerificationFoundationService
         Range(command.VerificationTimeoutSeconds, 30, 3600, "verificationTimeoutSeconds");
 
         var existing = await repository.GetSettingsAsync(machineId.Trim(), token);
-        string protectedSecret;
-        if (!string.IsNullOrWhiteSpace(command.VerificationSecret))
-        {
-            var secret = command.VerificationSecret.Trim();
-            if (secret.Length is < 16 or > 256)
-                throw new CncVerificationValidationException("verificationSecret", "invalid_length",
-                    "verificationSecret must contain 16 to 256 characters.");
-            protectedSecret = secretProtector.Protect(secret);
-        }
-        else if (existing is not null) protectedSecret = existing.ProtectedSecret;
-        else throw new CncVerificationValidationException("verificationSecret", "required",
-            "verificationSecret is required when creating Machine verification settings.");
 
         var now = timeProvider.GetUtcNow();
         var stored = new StoredCncVerificationSettings(
@@ -200,7 +178,7 @@ internal sealed class CncVerificationFoundationService
             command.CustomGcodeAlias, command.NonceVariable, command.ResponseVariable,
             command.VerificationStateVariable, command.ReleaseTokenVariable,
             command.FinalizeProgramNumber, command.EventSequenceVariable,
-            protectedSecret, command.ExpectedMacroVersion, command.ResponseCodeDigits,
+            command.ExpectedMacroVersion, command.ResponseCodeDigits,
             command.VerificationTimeoutSeconds, command.Enabled, expectedVersion + 1,
             existing?.CreatedAt ?? now, now);
         return Public(await repository.UpsertSettingsAsync(stored, expectedVersion, authority, token));
@@ -241,7 +219,7 @@ internal sealed class CncVerificationFoundationService
         value.ChallengeProgramNumber, value.VerifyProgramNumber, value.CustomGcodeAlias,
         value.NonceVariable, value.ResponseVariable, value.VerificationStateVariable,
         value.ReleaseTokenVariable, value.FinalizeProgramNumber, value.EventSequenceVariable,
-        true, value.ExpectedMacroVersion,
+        value.ExpectedMacroVersion,
         value.ResponseCodeDigits, value.VerificationTimeoutSeconds, value.Enabled,
         value.Version, value.UpdatedAt);
 

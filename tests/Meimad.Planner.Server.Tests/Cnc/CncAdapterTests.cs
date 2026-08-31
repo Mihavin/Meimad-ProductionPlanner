@@ -160,7 +160,8 @@ public sealed class CncAdapterTests
     {
         var oldJson = """
             {
-              "host":"127.0.0.1",
+              "host":"192.0.2.1",
+              "macAddress":"44:B1:76:B0:26:68",
               "mdc":{"port":5051,"timeoutMs":3000},
               "programAccess":{"provider":"NONE","enabled":false,"sharePath":null,
                 "usernameSecretId":null,"passwordSecretId":null,"headerLineLimit":50,
@@ -190,12 +191,12 @@ public sealed class CncAdapterTests
     {
         var now = DateTimeOffset.UtcNow;
         var configuration = new HaasNgcConnectionConfiguration(
-            "127.0.0.1", new(5051, 3000),
+            "192.0.2.1", new(5051, 3000),
             new(programAccess ? "HAAS_LOCAL_NET_SHARE" : "NONE", programAccess,
                 programAccess ? @"\\haas\User Data" : null, null, null,
                 50, 32768, NcHeaderParser.DefaultPartPatterns),
             new("Q500"), new(500, 2, 30000, 14),
-            new(8082, 3000), telemetryProvider);
+            new(8082, 3000), telemetryProvider, "44:B1:76:B0:26:68");
         return new("cnc-machine-a", "machine-a", CncAdapterType.HaasNgc, true,
             CncConnectionStates.Offline, null, null, null, null, 500, 3000, 30000,
             true, false, JsonSerializer.Serialize(configuration, CncJson.Options),

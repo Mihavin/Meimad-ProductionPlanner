@@ -47,11 +47,11 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         {
             command.CommandText = """
                 INSERT INTO haas_connection_settings (
-                    machine_id, host, mdc_port, mtconnect_port, dprnt_port, local_net_share_enabled,
+                    machine_id, host, mac_address, mdc_port, mtconnect_port, dprnt_port, local_net_share_enabled,
                     local_net_share_path, credentials_reference, part_counter_source, polling_interval_ms,
                     connection_timeout_ms, stable_program_polls, header_line_limit,
                     header_byte_limit, header_part_patterns_json, enabled, version, created_at, updated_at)
-                VALUES ($machineId, $host, $mdcPort, $mtConnectPort, $dprntPort, $shareEnabled,
+                VALUES ($machineId, $host, $macAddress, $mdcPort, $mtConnectPort, $dprntPort, $shareEnabled,
                     $sharePath, $credentials, $counterSource, $polling,
                     $timeout, $stable, $lineLimit, $byteLimit, $patterns, $enabled, 1, $createdAt, $updatedAt)
                 ON CONFLICT(machine_id) DO NOTHING;
@@ -61,7 +61,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         {
             command.CommandText = """
                 UPDATE haas_connection_settings SET
-                    host = $host, mdc_port = $mdcPort, mtconnect_port = $mtConnectPort, dprnt_port = $dprntPort,
+                    host = $host, mac_address=$macAddress, mdc_port = $mdcPort,
+                    mtconnect_port = $mtConnectPort, dprnt_port = $dprntPort,
                     local_net_share_enabled = $shareEnabled, local_net_share_path = $sharePath,
                     credentials_reference = $credentials, part_counter_source = $counterSource,
                     polling_interval_ms = $polling, connection_timeout_ms = $timeout,
@@ -478,6 +479,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
     {
         command.Parameters.AddWithValue("$machineId", value.MachineId);
         command.Parameters.AddWithValue("$host", value.Host);
+        command.Parameters.AddWithValue("$macAddress", value.MacAddress);
         command.Parameters.AddWithValue("$mdcPort", value.MdcPort);
         command.Parameters.AddWithValue("$mtConnectPort", value.MtConnectPort);
         command.Parameters.AddWithValue("$dprntPort", value.DprntPort);
@@ -521,7 +523,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 30000,
                 14),
             new HaasMtConnectConfiguration(value.MtConnectPort, value.ConnectionTimeoutMs, value.DprntPort),
-            value.TelemetryProvider);
+            value.TelemetryProvider,
+            value.MacAddress);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -564,14 +567,16 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
     }
 
     private static HaasConnectionSettings ReadSettings(SqliteDataReader reader) => new(
-        reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetInt32(4), reader.GetBoolean(5),
-        NullableString(reader, 6), NullableString(reader, 7), reader.GetString(8),
-        reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13),
-        JsonSerializer.Deserialize<string[]>(reader.GetString(14), JsonOptions) ?? [], reader.GetBoolean(15),
-        reader.GetInt32(16), Parse(reader.GetString(17)), Parse(reader.GetString(18)), reader.GetString(19));
+        reader.GetString(0), reader.GetString(1), reader.GetString(2),
+        reader.GetInt32(3), reader.GetInt32(4), reader.GetInt32(5), reader.GetBoolean(6),
+        NullableString(reader, 7), NullableString(reader, 8), reader.GetString(9),
+        reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14),
+        JsonSerializer.Deserialize<string[]>(reader.GetString(15), JsonOptions) ?? [], reader.GetBoolean(16),
+        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)), reader.GetString(20));
 
     private const string SettingsSelect = """
-        SELECT h.machine_id, h.host, h.mdc_port, h.mtconnect_port, h.dprnt_port, h.local_net_share_enabled,
+        SELECT h.machine_id, h.host, COALESCE(h.mac_address,''),
+               h.mdc_port, h.mtconnect_port, h.dprnt_port, h.local_net_share_enabled,
                h.local_net_share_path, h.credentials_reference, h.part_counter_source, h.polling_interval_ms,
                h.connection_timeout_ms, h.stable_program_polls, h.header_line_limit,
                h.header_byte_limit, h.header_part_patterns_json, h.enabled, h.version,

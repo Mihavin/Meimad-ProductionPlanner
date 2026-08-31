@@ -168,7 +168,7 @@ The Case Operation G-code API remains a façade over that Case Operation's deter
 stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> PLANNED: valid composition saved
-    PLANNED --> IN_PROGRESS: Start revalidates READY; structure pins
+    PLANNED --> IN_PROGRESS: connected CNC first valid CST after QC PASS; manual Start otherwise
     IN_PROGRESS --> SUSPENDED: explicit pause
     SUSPENDED --> IN_PROGRESS: resume
     IN_PROGRESS --> COMPLETED: all programs complete
@@ -181,7 +181,7 @@ stateDiagram-v2
     ABORTED --> [*]
 ```
 
-Persisted Production Run statuses are `DRAFT`, `PLANNED`, `IN_PROGRESS`, `SUSPENDED`, `COMPLETED`, `CANCELLED`, and `ABORTED`. `READY` is a current derived readiness result, never a persisted lifecycle state: Start re-evaluates it transactionally. Production Run Programs transition `PLANNED -> ACTIVE <-> SUSPENDED -> COMPLETED`; a not-started program follows its parent to `CANCELLED`, and an incomplete started program follows an abort to `ABORTED`. A program completes only at exact target cycles. Production Run Outputs have `ALLOCATED`, `IN_PRODUCTION`, `COMPLETED`, `RELEASED`, or `ABORTED_REMAINDER_RELEASED`; their quantities advance only with parent program cycles.
+Persisted Production Run statuses are `DRAFT`, `PLANNED`, `IN_PROGRESS`, `SUSPENDED`, `COMPLETED`, `CANCELLED`, and `ABORTED`. `READY` is a current derived readiness result, never a persisted lifecycle state. For a connected CNC, the first valid matching `CST` after the Server-recorded `QC_PASS` atomically starts the Run, activates the resolved Program, changes its Outputs to `IN_PRODUCTION`, locks structure, and retains the START as the open attempt. Manual Start remains the entry path for Machines without a configured CNC connection and non-CNC work. Production Run Programs transition `PLANNED -> ACTIVE <-> SUSPENDED -> COMPLETED`; a not-started program follows its parent to `CANCELLED`, and an incomplete started program follows an abort to `ABORTED`. A program completes only at exact target cycles. Production Run Outputs have `ALLOCATED`, `IN_PRODUCTION`, `COMPLETED`, `RELEASED`, or `ABORTED_REMAINDER_RELEASED`; their quantities advance only with parent program cycles.
 
 A Batch Operation is `not_started` while produced quantity is zero, `in_progress` after its first credited output quantity, `suspended` only when every active allocating stream is suspended and unfinished, and `completed` exactly when produced quantity reaches required quantity. Partial allocation alone does not change execution status. Production Batch and Order statuses remain Server-derived from their concrete Batch Operations/Batches; a partial run cannot complete a parent early.
 

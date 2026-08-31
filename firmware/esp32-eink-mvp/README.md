@@ -76,9 +76,10 @@ Operation, a framed status band, and a fixed three-row tool table. Tool rows are
 paginated rather than scrolled, and the footer reports `TOOLS n / total`.
 Status tokens are converted to operator-readable text and never rely on color.
 For `IN_SETUP`, the ordinary status/tool region is replaced by a prominent
-setup-verification panel. `WAITING_FOR_OPERATOR` centers the fixed-width 4–6
-digit response code and tells the operator to enter it at the CNC. `EXPIRED`,
-`INVALIDATED`, and `UNAVAILABLE` show a text-only `SETUP BLOCKED` reason and
+setup-verification panel. Both `ARMED` and `WAITING_FOR_OPERATOR` display the
+fixed-width response code and use the same enter-at-CNC operator instruction.
+`EXPIRED`, `INVALIDATED`, and `UNAVAILABLE` show a text-only `SETUP BLOCKED`
+reason and
 `PRESS REFRESH - DO NOT START`, with no response code.
 
 The initial `/api/tablet/ping?hardwareId=<mac>` call uses the normalized physical
@@ -312,9 +313,10 @@ unsupported tokens, and invalid JSON are rejected as malformed without
 replacing a previously valid response.
 
 `IN_SETUP` additionally requires a `verification` object with `required: true`
-and one of `WAITING_FOR_OPERATOR`, `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE`.
-Only the waiting state may carry `response_code`; it must be a JSON string of
-4–6 decimal digits so leading zeroes survive. A missing verification object,
+and one of `ARMED`, `WAITING_FOR_OPERATOR`, `EXPIRED`, `INVALIDATED`, or
+`UNAVAILABLE`. `ARMED` and `WAITING_FOR_OPERATOR` may carry `response_code`;
+it must be a JSON string of
+4-6 decimal digits so leading zeroes survive. A missing verification object,
 a numeric/malformed code, a code attached to a blocking state, or verification
 data outside `IN_SETUP` is rejected rather than rendered.
 

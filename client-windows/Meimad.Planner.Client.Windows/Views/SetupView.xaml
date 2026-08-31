@@ -299,7 +299,8 @@
                                         <TextBlock Text="Machine-side identity comes from a direct DPRNT PartName or the active NC program header. File name and O-number remain separate and never identify the Part."
                                                    Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <UniformGrid Columns="2">
-                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="IP / Hostname" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasHost}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Fixed controller IP" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasHost}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Controller MAC address" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMacAddress}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MDC Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMdcPort}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MTConnect Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMtConnectPort}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT PartName Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasDprntPort}"/></StackPanel>
@@ -344,12 +345,10 @@
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Release-token variable" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationReleaseTokenVariable}"/></StackPanel>
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Finalizer program (O9xxx)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationFinalizeProgram}"/></StackPanel>
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Persistent event-sequence variable" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationEventSequenceVariable}"/></StackPanel>
-                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine secret (blank preserves)" Style="{StaticResource SetupFieldLabel}"/><PasswordBox PasswordChanged="VerificationSecret_PasswordChanged"/></StackPanel>
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Expected macro version" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationMacroVersion}"/></StackPanel>
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Response digits (4–6)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationCodeDigits}"/></StackPanel>
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Verification timeout (seconds)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationTimeoutSeconds}"/></StackPanel>
                                                 </UniformGrid>
-                                                <TextBlock Text="{Binding VerificationSecretStatus}" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8"/>
                                                 <CheckBox Content="Enable protected verification after commissioning" IsChecked="{Binding VerificationEnabled}" Margin="0,0,0,8"/>
                                                 <WrapPanel>
                                                     <Button Content="Load verification configuration" Command="{Binding LoadVerificationConfigurationCommand}"/>

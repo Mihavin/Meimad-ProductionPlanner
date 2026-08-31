@@ -26,7 +26,7 @@ public sealed class HaasApiTests
             using var saved = await client.PutAsJsonAsync(
                 "/api/v1/machines/machine-haas/haas/connection", new
                 {
-                    host = address.Host, mdcPort = 5051, mtConnectPort = address.Port,
+                    host = address.Host, macAddress = "44:B1:76:B0:26:68", mdcPort = 5051, mtConnectPort = address.Port,
                     telemetryProvider = "MTCONNECT", localNetShareEnabled = false,
                     partCounterSource = "M30_COUNTER_1", pollingIntervalMs = 2000,
                     connectionTimeoutMs = 5000, stableProgramPolls = 2,
@@ -68,7 +68,7 @@ public sealed class HaasApiTests
             using var saved = await client.PutAsJsonAsync(
                 "/api/v1/machines/machine-haas/haas/connection", new
                 {
-                    host = "192.168.1.50", mdcPort = 5051, mtConnectPort = 8082,
+                    host = "192.168.1.50", macAddress = "44:B1:76:B0:26:68", mdcPort = 5051, mtConnectPort = 8082,
                     localNetShareEnabled = true, localNetSharePath = @"\\HAAS-VF3\User Data",
                     credentialsReference = "windows-service-account", partCounterSource = "M30_COUNTER_1",
                     pollingIntervalMs = 2500, connectionTimeoutMs = 4000, stableProgramPolls = 2,
@@ -90,7 +90,7 @@ public sealed class HaasApiTests
             using var legacySaved = await client.PutAsJsonAsync(
                 "/api/v1/machines/machine-haas/haas/connection", new
                 {
-                    host = "192.168.1.50", mdcPort = 5051, mtConnectPort = 8082,
+                    host = "192.168.1.50", macAddress = "44:B1:76:B0:26:68", mdcPort = 5051, mtConnectPort = 8082,
                     localNetShareEnabled = true, localNetSharePath = @"\\HAAS-VF3\User Data",
                     credentialsReference = "windows-service-account", partCounterSource = "M30_COUNTER_1",
                     pollingIntervalMs = 2500, connectionTimeoutMs = 4000, stableProgramPolls = 2,
@@ -141,7 +141,7 @@ public sealed class HaasApiTests
                     usernameSecretId = "username-ref", passwordSecretId = "password-ref", version = 2,
                     configuration = new
                     {
-                        host = "192.168.1.51", mdc = new { port = 5051, timeoutMs = 4500 },
+                        host = "192.168.1.51", macAddress = "44:B1:76:B0:26:68", mdc = new { port = 5051, timeoutMs = 4500 },
                         mtConnect = new { port = 8083, timeoutMs = 4500 },
                         telemetryProvider = "MDC",
                         programAccess = new
@@ -194,7 +194,7 @@ public sealed class HaasApiTests
                     rawTelemetryRetentionDays = 14, version = 0,
                     configuration = new
                     {
-                        host = "192.168.0.56", mdc = new { port = 5051, timeoutMs = 3000 },
+                        host = "192.168.0.56", macAddress = "44:B1:76:B0:26:68", mdc = new { port = 5051, timeoutMs = 3000 },
                         mtConnect = new { port = 8082, timeoutMs = 3000 },
                         telemetryProvider = "MDC",
                         programAccess = new
@@ -219,7 +219,7 @@ public sealed class HaasApiTests
             using var legacySaved = await client.PutAsJsonAsync(
                 "/api/v1/machines/machine-haas/haas/connection", new
                 {
-                    host = "192.168.0.56", mdcPort = 5051, mtConnectPort = 8082,
+                    host = "192.168.0.56", macAddress = "44:B1:76:B0:26:68", mdcPort = 5051, mtConnectPort = 8082,
                     localNetShareEnabled = false, partCounterSource = "Q500",
                     pollingIntervalMs = 2000, connectionTimeoutMs = 3000,
                     stableProgramPolls = 2, headerLineLimit = 50, headerByteLimit = 32768,

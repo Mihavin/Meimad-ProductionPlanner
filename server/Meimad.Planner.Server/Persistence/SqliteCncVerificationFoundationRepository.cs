@@ -70,8 +70,8 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             invalidate.Transaction = transaction;
             invalidate.CommandText = """
                 UPDATE cnc_setup_verification_sessions
-                SET state='SUPERSEDED', resolved_at=$at
-                WHERE machine_id=$machineId AND state IN ('PENDING','SUCCEEDED');
+                SET state='SUPERSEDED', resolved_at=$at,resolution_workflow_event_id=NULL
+                WHERE machine_id=$machineId AND state IN ('ARMED','PENDING','SUCCEEDED');
                 """;
             invalidate.Parameters.AddWithValue("$at", Format(createdAt));
             invalidate.Parameters.AddWithValue("$machineId", command.MachineId.Trim());
@@ -146,11 +146,11 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                     machine_id,dprint_transport,dprint_port,challenge_program_number,
                     verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
                     verification_state_variable,release_token_variable,finalize_program_number,
-                    event_sequence_variable,protected_secret,
+                    event_sequence_variable,
                     expected_macro_version,response_code_digits,verification_timeout_seconds,
                     enabled,version,created_at,updated_at)
                 SELECT $machineId,$transport,$port,$challenge,$verify,$alias,$nonce,$response,
-                       $state,$releaseToken,$finalizeProgram,$eventSequence,$secret,
+                       $state,$releaseToken,$finalizeProgram,$eventSequence,
                        $macroVersion,$digits,$timeout,$enabled,
                        1,$createdAt,$updatedAt
                 WHERE EXISTS(SELECT 1 FROM machines WHERE id=$machineId);
@@ -166,7 +166,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                     verification_state_variable=$state,release_token_variable=$releaseToken,
                     finalize_program_number=$finalizeProgram,
                     event_sequence_variable=$eventSequence,
-                    protected_secret=$secret,expected_macro_version=$macroVersion,
+                    expected_macro_version=$macroVersion,
                     response_code_digits=$digits,verification_timeout_seconds=$timeout,
                     enabled=$enabled,version=version+1,updated_at=$updatedAt
                 WHERE machine_id=$machineId AND version=$expectedVersion;
@@ -202,8 +202,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                     value.ExpectedMacroVersion,
                     value.ResponseCodeDigits,
                     value.VerificationTimeoutSeconds,
-                    value.Enabled,
-                    secretConfigured = true
+                    value.Enabled
                 }), token);
         await transaction.CommitAsync(token);
         return value with { Version = expectedVersion + 1 };
@@ -243,7 +242,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             : null;
     }
 
-    public async Task<CncPendingVerificationContext?> ResolvePendingVerificationAsync(
+    public async Task<CncVerificationSessionContext?> ResolveVerificationSessionAsync(
         string machineId,
         string sourceEventId,
         DateTimeOffset detectedAt,
@@ -251,40 +250,19 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
     {
         await using var connection = await database.OpenConnectionAsync(token);
         await using var transaction = connection.BeginTransaction(deferred: false);
+        var wasDuplicate = false;
         await using (var duplicate = connection.CreateCommand())
         {
             duplicate.Transaction = transaction;
             duplicate.CommandText = """
-                SELECT session.id,session.production_run_id,session.machine_id,
-                       session.offset_loader_release_id,session.nc_release_id,
-                       hook.nc_identity_token,release.verification_release_token,
-                       session.nonce,session.macro_version,
-                       settings.expected_macro_version,session.expires_at,session.state
-                FROM production_run_workflow_events event
-                JOIN cnc_setup_verification_sessions session
-                  ON session.resolution_workflow_event_id=event.id
-                JOIN cnc_verification_settings settings
-                  ON settings.machine_id=session.machine_id
-                JOIN gcode_release_verification_hooks hook
-                  ON hook.gcode_release_id=session.nc_release_id
-                JOIN offset_loader_releases release
-                  ON release.id=session.offset_loader_release_id
-                WHERE event.source=$source AND event.source_event_id=$sourceEventId;
+                SELECT EXISTS(
+                    SELECT 1 FROM production_run_workflow_events
+                    WHERE source=$source AND source_event_id=$sourceEventId);
                 """;
             duplicate.Parameters.AddWithValue("$source", $"HAAS_DPRINT:{machineId}".ToUpperInvariant());
             duplicate.Parameters.AddWithValue("$sourceEventId", sourceEventId);
-            await using var reader = await duplicate.ExecuteReaderAsync(token);
-            if (await reader.ReadAsync(token))
-            {
-                var existing = new CncPendingVerificationContext(
-                    reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                    reader.GetString(3), reader.GetString(4), reader.GetInt32(5),
-                    reader.GetInt32(6), reader.GetInt32(7), reader.GetInt32(8),
-                    reader.GetInt32(9), Parse(reader.GetString(10)),
-                    reader.GetString(11), true);
-                await transaction.CommitAsync(token);
-                return existing;
-            }
+            wasDuplicate = Convert.ToInt32(await duplicate.ExecuteScalarAsync(token),
+                CultureInfo.InvariantCulture) == 1;
         }
         await using (var expire = connection.CreateCommand())
         {
@@ -299,7 +277,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             await expire.ExecuteNonQueryAsync(token);
         }
 
-        CncPendingVerificationContext? result = null;
+        CncVerificationSessionContext? result = null;
         await using (var query = connection.CreateCommand())
         {
             query.Transaction = transaction;
@@ -308,7 +286,9 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                        session.offset_loader_release_id,session.nc_release_id,
                        hook.nc_identity_token,release.verification_release_token,
                        session.nonce,session.macro_version,
-                       settings.expected_macro_version,session.expires_at
+                       settings.expected_macro_version,
+                       settings.verification_timeout_seconds,
+                       session.expires_at,session.state
                 FROM cnc_setup_verification_sessions session
                 JOIN cnc_verification_settings settings
                   ON settings.machine_id=session.machine_id
@@ -316,13 +296,19 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                   ON hook.gcode_release_id=session.nc_release_id
                 JOIN offset_loader_releases release
                   ON release.id=session.offset_loader_release_id
-                JOIN production_run_current_offset_loaders current
+                LEFT JOIN production_run_current_offset_loaders current
                   ON current.production_run_id=session.production_run_id
                  AND current.machine_id=session.machine_id
                  AND current.offset_loader_release_id=session.offset_loader_release_id
-                WHERE session.machine_id=$machineId AND session.state='PENDING'
-                  AND settings.enabled=1
-                ORDER BY session.created_at DESC,session.id DESC LIMIT 1;
+                WHERE session.machine_id=$machineId
+                  AND (session.state NOT IN('ARMED','PENDING','SUCCEEDED')
+                       OR (settings.enabled=1 AND current.offset_loader_release_id IS NOT NULL))
+                ORDER BY CASE
+                    WHEN settings.enabled=1
+                     AND current.offset_loader_release_id IS NOT NULL
+                     AND session.state IN('ARMED','PENDING','SUCCEEDED') THEN 0
+                    ELSE 1 END,
+                    session.created_at DESC,session.id DESC LIMIT 1;
                 """;
             query.Parameters.AddWithValue("$machineId", machineId);
             await using var reader = await query.ExecuteReaderAsync(token);
@@ -331,37 +317,9 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                     reader.GetString(0), reader.GetString(1), reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetInt32(5),
                     reader.GetInt32(6), reader.GetInt32(7), reader.GetInt32(8),
-                    reader.GetInt32(9), Parse(reader.GetString(10)), "PENDING", false);
-        }
-        if (result is null)
-        {
-            await using var latest = connection.CreateCommand();
-            latest.Transaction = transaction;
-            latest.CommandText = """
-                SELECT session.id,session.production_run_id,session.machine_id,
-                       session.offset_loader_release_id,session.nc_release_id,
-                       hook.nc_identity_token,release.verification_release_token,
-                       session.nonce,session.macro_version,
-                       settings.expected_macro_version,session.expires_at,session.state
-                FROM cnc_setup_verification_sessions session
-                JOIN cnc_verification_settings settings
-                  ON settings.machine_id=session.machine_id
-                JOIN gcode_release_verification_hooks hook
-                  ON hook.gcode_release_id=session.nc_release_id
-                JOIN offset_loader_releases release
-                  ON release.id=session.offset_loader_release_id
-                WHERE session.machine_id=$machineId AND session.state<>'PENDING'
-                ORDER BY session.created_at DESC,session.id DESC LIMIT 1;
-                """;
-            latest.Parameters.AddWithValue("$machineId", machineId);
-            await using var reader = await latest.ExecuteReaderAsync(token);
-            if (await reader.ReadAsync(token))
-                result = new(
-                    reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                    reader.GetString(3), reader.GetString(4), reader.GetInt32(5),
-                    reader.GetInt32(6), reader.GetInt32(7), reader.GetInt32(8),
-                    reader.GetInt32(9), Parse(reader.GetString(10)),
-                    reader.GetString(11), false);
+                    reader.GetInt32(9), reader.GetInt32(10),
+                    reader.IsDBNull(11) ? null : Parse(reader.GetString(11)),
+                    reader.GetString(12), wasDuplicate);
         }
         await transaction.CommitAsync(token);
         return result;
@@ -385,7 +343,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             query.CommandText = """
                 SELECT id FROM cnc_setup_verification_sessions
                 WHERE production_run_id=$runId AND machine_id=$machineId
-                  AND state IN('PENDING','SUCCEEDED')
+                  AND state IN('ARMED','PENDING','SUCCEEDED')
                 ORDER BY created_at DESC,id DESC LIMIT 1;
                 """;
             query.Parameters.AddWithValue("$runId", productionRunId);
@@ -402,8 +360,8 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             update.Transaction = transaction;
             update.CommandText = """
                 UPDATE cnc_setup_verification_sessions
-                SET state='SUPERSEDED',resolved_at=$at
-                WHERE id=$id AND state IN('PENDING','SUCCEEDED');
+                SET state='SUPERSEDED',resolved_at=$at,resolution_workflow_event_id=NULL
+                WHERE id=$id AND state IN('ARMED','PENDING','SUCCEEDED');
                 """;
             update.Parameters.AddWithValue("$at", Format(performedAt));
             update.Parameters.AddWithValue("$id", sessionId);
@@ -464,9 +422,9 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
                 WHERE production_run_id=$runId AND machine_id=$machineId
                   AND offset_loader_release_id=$releaseId;
                 UPDATE cnc_setup_verification_sessions
-                SET state='SUPERSEDED',resolved_at=$at
+                SET state='SUPERSEDED',resolved_at=$at,resolution_workflow_event_id=NULL
                 WHERE production_run_id=$runId AND machine_id=$machineId
-                  AND state IN('PENDING','SUCCEEDED');
+                  AND state IN('ARMED','PENDING','SUCCEEDED');
                 """;
             revoke.Parameters.AddWithValue("$runId", productionRunId);
             revoke.Parameters.AddWithValue("$machineId", machineId);
@@ -577,8 +535,8 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         SELECT machine_id,dprint_transport,dprint_port,challenge_program_number,
                verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
                verification_state_variable,release_token_variable,finalize_program_number,
-               event_sequence_variable,protected_secret,
-               expected_macro_version,response_code_digits,verification_timeout_seconds,
+               event_sequence_variable,expected_macro_version,
+               response_code_digits,verification_timeout_seconds,
                enabled,version,created_at,updated_at FROM cnc_verification_settings
         """;
 
@@ -587,9 +545,9 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         reader.GetInt32(4), reader.IsDBNull(5) ? null : reader.GetInt32(5), reader.GetInt32(6),
         reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(9),
         reader.IsDBNull(10) ? null : reader.GetInt32(10),
-        reader.IsDBNull(11) ? null : reader.GetInt32(11), reader.GetString(12),
-        reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16) == 1,
-        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)));
+        reader.IsDBNull(11) ? null : reader.GetInt32(11),
+        reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15) == 1,
+        reader.GetInt32(16), Parse(reader.GetString(17)), Parse(reader.GetString(18)));
 
     private static void AddSettings(SqliteCommand command, StoredCncVerificationSettings value, int expectedVersion)
     {
@@ -605,7 +563,6 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         command.Parameters.AddWithValue("$releaseToken", value.ReleaseTokenVariable);
         command.Parameters.AddWithValue("$finalizeProgram", Db(value.FinalizeProgramNumber));
         command.Parameters.AddWithValue("$eventSequence", Db(value.EventSequenceVariable));
-        command.Parameters.AddWithValue("$secret", value.ProtectedSecret);
         command.Parameters.AddWithValue("$macroVersion", value.ExpectedMacroVersion);
         command.Parameters.AddWithValue("$digits", value.ResponseCodeDigits);
         command.Parameters.AddWithValue("$timeout", value.VerificationTimeoutSeconds);

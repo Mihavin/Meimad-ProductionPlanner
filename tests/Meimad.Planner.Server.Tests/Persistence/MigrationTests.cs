@@ -63,7 +63,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(62L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(63L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -209,6 +209,24 @@ public sealed class MigrationTests
 
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 61;";
         Assert.Equal("cnc_verification_persistent_variable_mappings", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 63;";
+        Assert.Equal("secretless_armed_cnc_verification", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM pragma_table_info('cnc_verification_settings')
+            WHERE lower(name) LIKE '%secret%';
+            """;
+        Assert.Equal(0L, (long)(await migrationCommand.ExecuteScalarAsync())!);
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM pragma_table_info('cnc_setup_verification_sessions')
+            WHERE name IN('pending_started_at','pending_workflow_event_id');
+            """;
+        Assert.Equal(2L, (long)(await migrationCommand.ExecuteScalarAsync())!);
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM pragma_table_info('haas_connection_settings')
+            WHERE name='mac_address';
+            """;
+        Assert.Equal(1L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('cnc_verification_settings')
@@ -321,7 +339,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(62L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(63L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1534,7 +1552,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 63;";
+            command.CommandText = "PRAGMA user_version = 64;";
             await command.ExecuteNonQueryAsync();
         }
 

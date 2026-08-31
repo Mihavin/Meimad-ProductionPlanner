@@ -23,7 +23,7 @@ public sealed class TvDashboardApiTests
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
             Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-            Assert.Equal("0.1.33", root.GetProperty("dashboardBuild").GetString());
+            Assert.Equal("0.1.35", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -103,13 +103,13 @@ public sealed class TvDashboardApiTests
             Assert.Contains("progress-track", css, StringComparison.Ordinal);
             Assert.Contains(".machine-connection", css, StringComparison.Ordinal);
             Assert.Contains(".machine-telemetry", css, StringComparison.Ordinal);
-            Assert.Contains("minmax(240px, 17vw)", css, StringComparison.Ordinal);
-            Assert.Contains("renderPreview(machine.current)", javascript, StringComparison.Ordinal);
-            Assert.Contains("loading=\"eager\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("grid-template-columns: minmax(145px, 19%)", css, StringComparison.Ordinal);
+            Assert.DoesNotContain("renderPreview(machine.current)", javascript, StringComparison.Ordinal);
+            Assert.Contains("const identity = `<div class=\"machine-identity\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain(">${escapeHtml(connectionState)}</div>", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.machineStatus", javascript, StringComparison.Ordinal);
-            Assert.Contains("DASHBOARD_BUILD = \"0.1.33\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.35\"", javascript, StringComparison.Ordinal);
             Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"מצב מכונות\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"Состояние станков\"", javascript, StringComparison.Ordinal);

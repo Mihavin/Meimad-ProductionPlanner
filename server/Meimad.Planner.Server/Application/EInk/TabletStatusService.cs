@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Meimad.Planner.Server.Application.Cnc;
-using Microsoft.AspNetCore.DataProtection;
 
 namespace Meimad.Planner.Server.Application.EInk;
 
@@ -12,20 +11,13 @@ internal sealed class TabletStatusService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ITabletStatusRepository repository;
     private readonly IEInkDeviceRegistrationRepository registrations;
-    private readonly IDataProtector verificationSecretProtector;
-    private readonly ILogger<TabletStatusService> logger;
 
     public TabletStatusService(
         ITabletStatusRepository repository,
-        IEInkDeviceRegistrationRepository registrations,
-        IDataProtectionProvider dataProtectionProvider,
-        ILogger<TabletStatusService> logger)
+        IEInkDeviceRegistrationRepository registrations)
     {
         this.repository = repository;
         this.registrations = registrations;
-        verificationSecretProtector = dataProtectionProvider.CreateProtector(
-            CncVerificationSecretProtection.Purpose);
-        this.logger = logger;
     }
 
     internal async Task<TabletStatusResponse> ReadAsync(
@@ -112,6 +104,7 @@ internal sealed class TabletStatusService
 
         var result = session.State switch
         {
+            "ARMED" => "ARMED",
             "PENDING" => verification?.State ?? "PENDING",
             "SUCCEEDED" => "SUCCEEDED",
             "FAILED" => "FAILED",
@@ -131,28 +124,16 @@ internal sealed class TabletStatusService
             return new(true, "UNAVAILABLE", null);
         if (session.State == "SUPERSEDED")
             return new(true, "UNAVAILABLE", null);
-        if (session.State != "PENDING" || !session.ContextIsValid)
+        if (session.State is not ("ARMED" or "PENDING") || !session.ContextIsValid)
             return new(true, "INVALIDATED", null);
-        if (now >= session.ExpiresAt)
+        if (session.State == "PENDING" && session.ExpiresAt.HasValue
+            && now >= session.ExpiresAt.Value)
             return new(true, "EXPIRED", null);
 
-        try
-        {
-            var secret = verificationSecretProtector.Unprotect(session.ProtectedSecret);
-            var machineKey = CncVerificationResponseAlgorithm.DeriveMachineKey(
-                source.Machine!.MachineId, secret);
-            var response = CncVerificationResponseAlgorithm.Calculate(
-                session.Nonce, session.OffsetLoaderReleaseToken,
-                session.NcIdentityToken, machineKey, session.ResponseCodeDigits);
-            return new(true, "WAITING_FOR_OPERATOR", response);
-        }
-        catch (CryptographicException exception)
-        {
-            logger.LogError(exception,
-                "Unable to decrypt CNC verification configuration. MachineId={MachineId} SessionId={SessionId}",
-                source.Machine!.MachineId, session.SessionId);
-            return new(true, "UNAVAILABLE", null);
-        }
+        var response = CncVerificationResponseAlgorithm.Calculate(
+            session.Nonce, session.OffsetLoaderReleaseToken,
+            session.NcIdentityToken, session.ResponseCodeDigits);
+        return new(true, session.State == "ARMED" ? "ARMED" : "WAITING_FOR_OPERATOR", response);
     }
 
     private static string Status(

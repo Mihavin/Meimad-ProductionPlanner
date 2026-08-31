@@ -180,6 +180,7 @@ internal static class CncEndpoints
         return new
         {
             value.Host,
+            value.MacAddress,
             value.Mdc,
             value.MtConnect,
             value.TelemetryProvider,

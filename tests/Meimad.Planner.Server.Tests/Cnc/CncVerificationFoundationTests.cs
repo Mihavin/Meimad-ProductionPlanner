@@ -50,31 +50,27 @@ public sealed class CncVerificationFoundationTests
     }
 
     [Fact]
-    public async Task Verification_secret_is_encrypted_preserved_on_update_and_never_returned()
+    public async Task Verification_settings_contain_no_machine_credential()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
         var service = Service(fixture.Database);
         var authority = new EditAuthority("verification-client", 1);
-        var create = Settings("machine-secret-value", enabled: false);
+        var create = Settings(null, enabled: false);
 
         var first = await service.UpdateSettingsAsync("machine-verification", create, 0, authority);
         var second = await service.UpdateSettingsAsync("machine-verification",
-            create with { VerificationSecret = null, Enabled = true }, 1, authority);
+            create with { Enabled = true }, 1, authority);
 
-        Assert.True(first.SecretConfigured);
-        Assert.True(second.SecretConfigured);
+        Assert.False(first.Enabled);
         Assert.True(second.Enabled);
         Assert.Equal(2, second.Version);
         var responseJson = System.Text.Json.JsonSerializer.Serialize(second);
-        Assert.DoesNotContain("machine-secret-value", responseJson, StringComparison.Ordinal);
-        Assert.DoesNotContain("protectedSecret", responseJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", responseJson, StringComparison.OrdinalIgnoreCase);
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT protected_secret FROM cnc_verification_settings WHERE machine_id='machine-verification';";
-        var stored = Assert.IsType<string>(await command.ExecuteScalarAsync());
-        Assert.NotEqual("machine-secret-value", stored);
-        Assert.DoesNotContain("machine-secret-value", stored, StringComparison.Ordinal);
+        command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('cnc_verification_settings') WHERE lower(name) LIKE '%secret%';";
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Theory]
@@ -187,11 +183,11 @@ public sealed class CncVerificationFoundationTests
                 INSERT INTO cnc_verification_settings(
                     machine_id,dprint_transport,dprint_port,challenge_program_number,
                     verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
-                    verification_state_variable,release_token_variable,protected_secret,
+                    verification_state_variable,release_token_variable,
                     expected_macro_version,response_code_digits,verification_timeout_seconds,
                     enabled,version,created_at,updated_at)
                 VALUES('machine-verification','HAAS_DPRNT_TCP',8080,9001,9002,NULL,
-                    10501,10500,10502,10503,'legacy-protected-value',5,6,300,0,1,$at,$at);
+                    10501,10500,10502,10503,5,6,300,0,1,$at,$at);
                 """;
             command.Parameters.AddWithValue("$at", Now.ToString("O"));
             await command.ExecuteNonQueryAsync();
@@ -225,12 +221,12 @@ public sealed class CncVerificationFoundationTests
                 INSERT INTO cnc_verification_settings(
                     machine_id,dprint_transport,dprint_port,challenge_program_number,
                     verify_program_number,custom_gcode_alias,nonce_variable,response_variable,
-                    verification_state_variable,release_token_variable,protected_secret,
+                    verification_state_variable,release_token_variable,
                     expected_macro_version,response_code_digits,verification_timeout_seconds,
                     enabled,version,created_at,updated_at,finalize_program_number,
                     event_sequence_variable)
                 VALUES('machine-verification','HAAS_DPRNT_TCP',8080,9001,9002,NULL,
-                    10500,500,10502,10503,'v60-protected-value',6,6,300,1,1,$at,$at,
+                    10500,500,10502,10503,6,6,300,1,1,$at,$at,
                     9003,10504);
                 """;
             prepare.Parameters.AddWithValue("$at", Now.ToString("O"));
@@ -299,7 +295,7 @@ public sealed class CncVerificationFoundationTests
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync("machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -352,9 +348,9 @@ public sealed class CncVerificationFoundationTests
         Assert.Equal(731841, session.GetInt32(5));
         Assert.Equal(6, session.GetInt32(6));
         Assert.Equal(6, session.GetInt32(7));
-        Assert.Equal("PENDING", session.GetString(8));
+        Assert.Equal("ARMED", session.GetString(8));
         Assert.Equal(Now, DateTimeOffset.Parse(session.GetString(9)));
-        Assert.Equal(Now.AddSeconds(300), DateTimeOffset.Parse(session.GetString(10)));
+        Assert.True(session.IsDBNull(10));
         await session.DisposeAsync();
         command.CommandText = """
             SELECT COUNT(*) FROM operational_anomalies
@@ -377,7 +373,7 @@ public sealed class CncVerificationFoundationTests
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync("machine-verification", Settings("machine-secret-value", true), 0, authority);
         var first = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -412,7 +408,7 @@ $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-OLD/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSE
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -425,6 +421,9 @@ $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-NO-LOADER/SEQ/100/MACROVERSION/6/PROGRAM/654321
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/OLC/ID/VERIFY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVR/ID/VERIFY-START/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         var wrongVersion = new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
             $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OLD/SEQ/102/MACROVERSION/2/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
@@ -447,18 +446,15 @@ $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OK/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSET
         Assert.False(session.IsDBNull(1));
         await session.DisposeAsync();
         command.CommandText = """
-            SELECT anomaly_type,COUNT(*) FROM operational_anomalies
-            WHERE source_event_id IN('VERIFY-OLD','VERIFY-OK')
-            GROUP BY anomaly_type ORDER BY anomaly_type;
+            SELECT COUNT(*) FROM operational_anomalies
+            WHERE anomaly_type='duplicate_cnc_event' AND source_event_id='VERIFY-OK';
             """;
-        await using var anomalies = await command.ExecuteReaderAsync();
-        Assert.True(await anomalies.ReadAsync());
-        Assert.Equal("duplicate_cnc_event", anomalies.GetString(0));
-        Assert.Equal(1, anomalies.GetInt32(1));
-        Assert.True(await anomalies.ReadAsync());
-        Assert.Equal("verification_macro_version_mismatch", anomalies.GetString(0));
-        Assert.Equal(1, anomalies.GetInt32(1));
-        await anomalies.DisposeAsync();
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = """
+            SELECT COUNT(*) FROM operational_anomalies
+            WHERE anomaly_type='verification_macro_version_mismatch' AND source_event_id='VERIFY-OLD';
+            """;
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = """
             SELECT COUNT(*) FROM operational_anomalies
             WHERE anomaly_type='offset_loader_not_executed'
@@ -474,7 +470,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OK/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSET
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -491,6 +487,9 @@ $"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-WRONG-OLC/SEQ/102/MACROVERSION/6/PROGRAM/1234
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/OLC/ID/IDENTITY-VALID-OLC/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVR/ID/IDENTITY-VALID-SVR/SEQ/104/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-MISSING-SVS/SEQ/104/MACROVERSION/6/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731843")], default);
@@ -540,7 +539,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-VALID-SVS/SEQ/106/MACROVERSION/6/PROGRAM/6543
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -550,6 +549,9 @@ $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-VALID-SVS/SEQ/106/MACROVERSION/6/PROGRAM/6543
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/OLC/ID/REPLAY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVR/ID/REPLAY-START/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-SUCCESS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
@@ -586,7 +588,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-AFTER-SUPERSEDE/SEQ/104/MACROVERSION/6/PROGRAM/
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -602,6 +604,9 @@ $"MEIMAD/V/1/EVENT/OLC/ID/CORRELATE-OLC-1/SEQ/101/MACROVERSION/6/PROGRAM/654321/
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/OLC/ID/CORRELATE-OLC-2/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731842")], default);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVR/ID/CORRELATE-START/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{second.VerificationReleaseToken}/NONCE/731842")], default);
         await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
             "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-OLD-RESULT/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{first.VerificationReleaseToken}/NONCE/731841")], default);
@@ -645,7 +650,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-CURRENT/SEQ/105/MACROVERSION/6/PROGRAM/65432
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -688,7 +693,7 @@ $"MEIMAD/V/1/EVENT/OLC/ID/RECOVERY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFF
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -698,6 +703,10 @@ $"MEIMAD/V/1/EVENT/OLC/ID/RECOVERY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFF
             "machine-verification", [new RawCncTelemetry(
                 "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/OLC/ID/EXPIRE-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+        await VerificationIngestion(fixture.Database, repository).ConsumeAsync(
+            "machine-verification", [new RawCncTelemetry(
+                "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVR/ID/EXPIRE-START/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
 
         var lateTime = new FixedTimeProvider(Now.AddSeconds(301));
         var late = new CncDprintEventIngestionService(
@@ -734,7 +743,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSE
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
-            new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+            new FixedTimeProvider(Now));
         var authority = new EditAuthority("verification-client", 1);
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
@@ -744,6 +753,10 @@ $"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSE
             "machine-verification", [new RawCncTelemetry(
                 "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
 $"MEIMAD/V/1/EVENT/OLC/ID/LATE-FAIL-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+        await VerificationIngestion(fixture.Database, repository).ConsumeAsync(
+            "machine-verification", [new RawCncTelemetry(
+                "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+$"MEIMAD/V/1/EVENT/SVR/ID/LATE-FAIL-START/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
 
         var lateTime = new FixedTimeProvider(Now.AddSeconds(301));
         var late = new CncDprintEventIngestionService(
@@ -859,6 +872,63 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         var immutableError = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(
             () => command.ExecuteNonQueryAsync());
         Assert.Contains("immutable", immutableError.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task First_connected_cycle_start_after_QC_PASS_starts_planned_run_and_opens_counting()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        await PrepareProductionApprovalAsync(fixture.Database);
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE production_runs
+                SET status='PLANNED',structure_locked_at=NULL
+                WHERE id='run-verification';
+                UPDATE production_run_programs
+                SET status='PLANNED'
+                WHERE id='run-program-verification';
+                UPDATE production_run_outputs
+                SET status='ALLOCATED'
+                WHERE id='output-verification';
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var ingestion = CycleIngestion(fixture.Database);
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+            "MEIMAD/V/1/EVENT/CST/ID/AUTO-START-301/SEQ/301/MACROVERSION/10/PROGRAM/654321")], default);
+
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT status FROM production_runs WHERE id='run-verification';";
+            Assert.Equal("IN_PROGRESS", await command.ExecuteScalarAsync());
+            command.CommandText = "SELECT status FROM production_run_programs WHERE id='run-program-verification';";
+            Assert.Equal("ACTIVE", await command.ExecuteScalarAsync());
+            command.CommandText = "SELECT status FROM production_run_outputs WHERE id='output-verification';";
+            Assert.Equal("IN_PRODUCTION", await command.ExecuteScalarAsync());
+            command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
+            Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+            command.CommandText = "SELECT COUNT(*) FROM structured_event_log WHERE event_type='production_run_started_by_cnc_cycle';";
+            Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        }
+
+        await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+            "MEIMAD/V/1/EVENT/CEN/ID/AUTO-END-302/SEQ/302/MACROVERSION/10/PROGRAM/654321")], default);
+
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
+            Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+            command.CommandText = "SELECT produced_quantity FROM production_run_outputs WHERE id='output-verification';";
+            Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        }
     }
 
     [Fact]
@@ -1047,9 +1117,8 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
         var clock = new AdvancingTimeProvider(Now);
-        var protection = new EphemeralDataProtectionProvider();
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
-        var verification = new CncVerificationFoundationService(repository, clock, protection);
+        var verification = new CncVerificationFoundationService(repository, clock);
         var workflow = new ProductionRunWorkflowEventService(
             new SqliteProductionRunWorkflowEventRepository(fixture.Database), clock);
         var ingestion = new CncDprintEventIngestionService(
@@ -1074,8 +1143,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         }
         var tabletStatus = new TabletStatusService(
             new SqliteTabletStatusRepository(fixture.Database),
-            new SqliteEInkDeviceRegistrationRepository(fixture.Database), protection,
-            NullLogger<TabletStatusService>.Instance);
+            new SqliteEInkDeviceRegistrationRepository(fixture.Database));
         Task<TabletStatusResponse> Status() => tabletStatus.ReadAsync(
             "E2E-TABLET", clock.GetUtcNow(), 4.5m, 90,
             "simulator", "127.0.0.1", -35);
@@ -1100,10 +1168,12 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         Assert.Equal("IN_SETUP", setup.Status);
         Assert.Matches("^[0-9]{6}$", Assert.IsType<string>(setup.Verification?.ResponseCode));
 
-        await Dprint($"MEIMAD/V/1/EVENT/SVF/ID/E2E-VERIFY-FAIL/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
+        await Dprint($"MEIMAD/V/1/EVENT/SVR/ID/E2E-VERIFY-START-1/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
+        await Dprint($"MEIMAD/V/1/EVENT/SVF/ID/E2E-VERIFY-FAIL/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841");
         Assert.Equal("IN_SETUP", (await Status()).Status);
-        await Dprint($"MEIMAD/V/1/EVENT/OLC/ID/E2E-OLC-2/SEQ/103/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
-        await Dprint($"MEIMAD/V/1/EVENT/SVS/ID/E2E-VERIFY-OK/SEQ/104/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
+        await Dprint($"MEIMAD/V/1/EVENT/OLC/ID/E2E-OLC-2/SEQ/104/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
+        await Dprint($"MEIMAD/V/1/EVENT/SVR/ID/E2E-VERIFY-START-2/SEQ/105/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
+        await Dprint($"MEIMAD/V/1/EVENT/SVS/ID/E2E-VERIFY-OK/SEQ/106/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731842");
         Assert.Equal("IN_SETUP_RUN", (await Status()).Status);
 
         var tabletEvents = new TabletEventService(
@@ -1167,7 +1237,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
     }
 
     [Fact]
-    public async Task Cycle_end_with_nonconsecutive_sequence_is_not_a_valid_completion()
+    public async Task Cycle_end_with_nonconsecutive_sequence_completes_while_gap_is_retained_as_evidence()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
@@ -1183,13 +1253,13 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT completed_cycle_count FROM production_run_programs WHERE id='run-program-verification';";
-        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE source_event_id='GAP-203';";
         Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = """
-            SELECT COUNT(*) FROM production_run_workflow_anomalies
+            SELECT COUNT(*) FROM operational_anomalies
             WHERE source_event_id='GAP-203'
-              AND anomaly_type='CYCLE_END_SEQUENCE_MISMATCH';
+              AND anomaly_type='cnc_event_sequence_gap';
             """;
         Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
     }
@@ -1304,13 +1374,90 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         await command.ExecuteNonQueryAsync();
     }
 
-    private static UpdateCncVerificationSettings Settings(string? secret, bool enabled) => new(
+    [Fact]
+    public async Task Armed_session_has_no_timeout_and_first_late_NC_start_begins_pending_window()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
+        var service = new CncVerificationFoundationService(repository, new FixedTimeProvider(Now));
+        var authority = new EditAuthority("verification-client", 1);
+        await service.UpdateSettingsAsync("machine-verification", Settings(null, true), 0, authority);
+        var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
+            "machine-verification", "gcode-verification", "tools-verification"), authority);
+        await VerificationIngestion(fixture.Database, repository).ConsumeAsync(
+            "machine-verification", [new RawCncTelemetry(
+                "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+                $"MEIMAD/V/1/EVENT/OLC/ID/ARMED-LONG/SEQ/100/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+
+        var lateAt = Now.AddMinutes(10);
+        var stillArmed = Assert.IsType<CncVerificationSessionContext>(
+            await repository.ResolveVerificationSessionAsync(
+                "machine-verification", "ARMED-INSPECTION", lateAt, default));
+        Assert.Equal("ARMED", stillArmed.SessionState);
+        Assert.Null(stillArmed.ExpiresAt);
+
+        var lateClock = new FixedTimeProvider(lateAt);
+        var lateIngestion = new CncDprintEventIngestionService(
+            repository,
+            new ProductionRunWorkflowEventService(
+                new SqliteProductionRunWorkflowEventRepository(fixture.Database), lateClock),
+            new SqliteProductionRunCncObservationRepository(fixture.Database, lateClock),
+            new OperationalAnomalyService(new SqliteOperationalAnomalyRepository(fixture.Database)),
+            lateClock, NullLogger<CncDprintEventIngestionService>.Instance);
+        await lateIngestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+            "machine-verification", "connection", "HAAS_NGC", lateAt, "DPRINT_EVENT",
+            $"MEIMAD/V/1/EVENT/SVR/ID/ARMED-LATE-START/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT state,pending_started_at,expires_at FROM cnc_setup_verification_sessions;";
+        await using var row = await command.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal("PENDING", row.GetString(0));
+        Assert.Equal(lateAt, DateTimeOffset.Parse(row.GetString(1)));
+        Assert.Equal(lateAt.AddSeconds(300), DateTimeOffset.Parse(row.GetString(2)));
+    }
+
+    [Fact]
+    public async Task Sequence_reset_is_evidence_only_and_successful_binding_ignores_repeat_start()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await SeedAsync(fixture.Database);
+        var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
+        var service = new CncVerificationFoundationService(repository, new FixedTimeProvider(Now));
+        var authority = new EditAuthority("verification-client", 1);
+        await service.UpdateSettingsAsync("machine-verification", Settings(null, true), 0, authority);
+        var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
+            "machine-verification", "gcode-verification", "tools-verification"), authority);
+        var ingestion = VerificationIngestion(fixture.Database, repository);
+        async Task Send(string code, string id, long sequence) =>
+            await ingestion.ConsumeAsync("machine-verification", [new RawCncTelemetry(
+                "machine-verification", "connection", "HAAS_NGC", Now, "DPRINT_EVENT",
+                $"MEIMAD/V/1/EVENT/{code}/ID/{id}/SEQ/{sequence}/MACROVERSION/6/PROGRAM/654321/OFFSETRELEASE/{release.VerificationReleaseToken}/NONCE/731841")], default);
+
+        await Send("OLC", "RESET-OLC", 100);
+        await Send("SVR", "RESET-SVR", 0);
+        await Send("SVS", "RESET-SVS", 0);
+        await Send("SVR", "RESET-REPEAT-START", 1);
+
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT state FROM cnc_setup_verification_sessions;";
+        Assert.Equal("SUCCEEDED", await command.ExecuteScalarAsync());
+        command.CommandText = "SELECT COUNT(*) FROM production_run_workflow_events WHERE event_type='SETUP_VERIFICATION_REQUESTED';";
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT COUNT(*) FROM operational_anomalies WHERE anomaly_type IN('cnc_event_sequence_gap','cnc_event_out_of_order');";
+        Assert.True((long)(await command.ExecuteScalarAsync())! >= 1);
+    }
+
+    private static UpdateCncVerificationSettings Settings(string? _, bool enabled) => new(
         "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10501, 10500, 10502, 10503,
-        9003, 10504, secret, 6, 6, 300, enabled);
+        9003, 10504, 6, 6, 300, enabled);
 
     private static CncVerificationFoundationService Service(SqliteDatabase database) => new(
         new SqliteCncVerificationFoundationRepository(database),
-        new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
+        new FixedTimeProvider(Now));
 
     private static async Task SeedEndToEndDeviceAndNextRunAsync(
         SqliteDatabase database)

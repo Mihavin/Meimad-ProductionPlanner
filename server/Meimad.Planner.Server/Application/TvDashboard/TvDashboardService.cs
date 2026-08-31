@@ -79,7 +79,7 @@ internal sealed class TvDashboardService
         var criticalConflictCount = 0;
         var projection = new TvDashboardProjection(
             2,
-            "0.1.33",
+            "0.1.35",
             now,
             "current",
             options.RefreshAfterSeconds,
@@ -104,7 +104,7 @@ internal sealed class TvDashboardService
             .Where(operation => operation.Status is not "completed" and not "complete" and not "cancelled")
             .OrderBy(operation => operation.BacklogPosition)
             .ToArray();
-        var currentSource = unfinished.FirstOrDefault(operation => operation.Status is "in_progress" or "suspended")
+        var currentSource = unfinished.FirstOrDefault(operation => operation.Status is "in_progress" or "started" or "suspended")
             ?? unfinished.FirstOrDefault()
             ?? machine.Backlog.Where(operation => operation.Status is "completed" or "complete")
                 .OrderByDescending(operation => operation.BacklogPosition)
@@ -201,14 +201,14 @@ internal sealed class TvDashboardService
     {
         var statusCode = operation.Status switch
         {
-            "in_progress" => "started",
+            "in_progress" or "started" => "started",
             "suspended" => "paused",
             "completed" or "complete" => "completed",
             _ => "waiting"
         };
         var statusLabel = statusCode switch
         {
-            "started" => "Started",
+            "started" => "In production",
             "paused" => "Paused",
             "completed" => "Completed",
             _ => "Waiting"
@@ -218,7 +218,8 @@ internal sealed class TvDashboardService
         {
             return new TvOperationProgress(
                 statusCode, statusLabel, "completed", $"Part {quantity}/{quantity} | 100% of Batch",
-                100, null, quantity, quantity);
+                100, null, quantity, quantity, operation.MeasuredAverageCycleSeconds,
+                operation.MeasuredCycleSampleCount);
         }
 
         var setupSeconds = Math.Max(0, operation.SetupSeconds ?? 0);
@@ -236,6 +237,16 @@ internal sealed class TvDashboardService
             return new TvOperationProgress(
                 statusCode, statusLabel, "setup", $"Setup {percent}%",
                 percent, percent, null, quantity);
+        }
+
+        if (quantity > 0 && operation.ProducedQuantity.HasValue)
+        {
+            var produced = Math.Clamp(operation.ProducedQuantity.Value, 0, quantity);
+            var percent = Math.Clamp((int)Math.Round((double)produced / quantity * 100), 0, 99);
+            return new TvOperationProgress(statusCode, statusLabel, "production",
+                $"Part {produced}/{quantity} | {percent}% of Batch",
+                percent, null, produced, quantity, operation.MeasuredAverageCycleSeconds,
+                operation.MeasuredCycleSampleCount);
         }
 
         if (quantity > 0 && operation.CycleSeconds is > 0)

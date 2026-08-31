@@ -113,6 +113,9 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
         if (command.VerificationSession is not null)
             await StartVerificationSessionAsync(connection, transaction, value,
                 command.VerificationSession, token);
+        if (command.VerificationActivation is not null)
+            await ActivateVerificationSessionAsync(connection, transaction, value,
+                command.VerificationActivation, token);
         if (command.VerificationResolution is not null)
             await ResolveVerificationSessionAsync(connection, transaction, value,
                 command.VerificationResolution, token);
@@ -313,8 +316,8 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
             supersede.Transaction = transaction;
             supersede.CommandText = """
                 UPDATE cnc_setup_verification_sessions
-                SET state='SUPERSEDED', resolved_at=$resolvedAt
-                WHERE machine_id=$machineId AND state IN ('PENDING','SUCCEEDED');
+                SET state='SUPERSEDED', resolved_at=$resolvedAt,resolution_workflow_event_id=NULL
+                WHERE machine_id=$machineId AND state IN ('ARMED','PENDING','SUCCEEDED');
                 """;
             supersede.Parameters.AddWithValue("$resolvedAt", Format(workflowEvent.ServerReceivedAt));
             supersede.Parameters.AddWithValue("$machineId", workflowEvent.MachineId);
@@ -326,11 +329,12 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
         insert.CommandText = """
             INSERT INTO cnc_setup_verification_sessions (
                 id,production_run_id,machine_id,nc_release_id,offset_loader_release_id,
-                nonce,macro_version,response_code_digits,state,created_at,expires_at,
-                resolved_at,source_workflow_event_id,resolution_workflow_event_id)
+                nonce,macro_version,response_code_digits,state,created_at,
+                pending_started_at,expires_at,resolved_at,source_workflow_event_id,
+                pending_workflow_event_id,resolution_workflow_event_id)
             SELECT $id,$runId,$machineId,$ncReleaseId,$offsetReleaseId,
-                   $nonce,$macroVersion,$digits,'PENDING',$createdAt,$expiresAt,
-                   NULL,$workflowEventId,NULL
+                   $nonce,$macroVersion,$digits,'ARMED',$createdAt,
+                   NULL,NULL,NULL,$workflowEventId,NULL,NULL
             FROM production_run_current_offset_loaders current
             JOIN offset_loader_releases release ON release.id=current.offset_loader_release_id
             JOIN cnc_verification_settings settings ON settings.machine_id=release.machine_id
@@ -353,11 +357,38 @@ internal sealed class SqliteProductionRunWorkflowEventRepository(SqliteDatabase 
         insert.Parameters.AddWithValue("$digits", seed.ResponseCodeDigits);
         insert.Parameters.AddWithValue("$timeout", seed.TimeoutSeconds);
         insert.Parameters.AddWithValue("$createdAt", Format(workflowEvent.ServerReceivedAt));
-        insert.Parameters.AddWithValue("$expiresAt", Format(workflowEvent.ServerReceivedAt.AddSeconds(seed.TimeoutSeconds)));
         insert.Parameters.AddWithValue("$workflowEventId", workflowEvent.EventId);
         if (await insert.ExecuteNonQueryAsync(token) != 1)
             throw new ProductionRunWorkflowTargetException(
                 "The current Offset Loader and enabled Machine verification settings no longer match the session request.");
+    }
+
+    private static async Task ActivateVerificationSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ProductionRunWorkflowEvent workflowEvent,
+        SetupVerificationActivationSeed activation,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE cnc_setup_verification_sessions
+            SET state='PENDING',pending_started_at=$at,expires_at=$expiresAt,
+                pending_workflow_event_id=$eventId
+            WHERE id=$sessionId AND machine_id=$machineId AND production_run_id=$runId
+              AND state='ARMED';
+            """;
+        command.Parameters.AddWithValue("$at", Format(workflowEvent.ServerReceivedAt));
+        command.Parameters.AddWithValue("$expiresAt", Format(
+            workflowEvent.ServerReceivedAt.AddSeconds(activation.TimeoutSeconds)));
+        command.Parameters.AddWithValue("$eventId", workflowEvent.EventId);
+        command.Parameters.AddWithValue("$sessionId", activation.SessionId);
+        command.Parameters.AddWithValue("$machineId", workflowEvent.MachineId);
+        command.Parameters.AddWithValue("$runId", workflowEvent.ProductionRunId);
+        if (await command.ExecuteNonQueryAsync(token) != 1)
+            throw new ProductionRunWorkflowTargetException(
+                "The setup-verification session is no longer armed for this NC start.");
     }
 
     private static async Task ResolveVerificationSessionAsync(

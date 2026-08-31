@@ -77,6 +77,7 @@ internal static partial class HaasDprintProtocol
             || !OptionalNonnegativeInt(map, "NONCE", out var nonce))
             return Fail("invalid_numeric_field", out error);
         var carriesVerificationEvidence = eventType is "OFFSET_LOADER_COMPLETED"
+            or "SETUP_VERIFICATION_REQUESTED"
             or "SETUP_VERIFICATION_SUCCEEDED" or "SETUP_VERIFICATION_FAILED";
         if (carriesVerificationEvidence && (!releaseToken.HasValue || !nonce.HasValue))
             return Fail("missing_offset_evidence", out error);

@@ -21,7 +21,7 @@ internal static class HaasEndpoints
         string machineId, HaasIntegrationService service, CancellationToken token)
     {
         var value = await service.GetSettingsAsync(machineId, token);
-        return value is null ? Results.Ok(new HaasConnectionResponse(machineId, string.Empty,
+        return value is null ? Results.Ok(new HaasConnectionResponse(machineId, string.Empty, string.Empty,
             5051, 8082, 8080, false, null, null, HaasPartCounterSources.Q500,
             2000, 3000, 2, 50, 32768, NcHeaderParser.DefaultPartPatterns, false, 0, null))
             : Results.Ok(Response(value));
@@ -36,7 +36,7 @@ internal static class HaasEndpoints
         try
         {
             var value = await service.UpdateSettingsAsync(machineId, new HaasSettingsUpdate(
-                request.Host, request.MdcPort, request.MtConnectPort,
+                request.Host, request.MacAddress, request.MdcPort, request.MtConnectPort,
                 request.DprntPort is > 0 ? request.DprntPort : 8080,
                 request.LocalNetShareEnabled, request.LocalNetSharePath, request.CredentialsReference,
                 request.PartCounterSource, request.PollingIntervalMs, request.ConnectionTimeoutMs,
@@ -88,7 +88,8 @@ internal static class HaasEndpoints
         ? Results.Ok(value) : Results.Json(value, statusCode: StatusCodes.Status502BadGateway);
 
     private static HaasConnectionResponse Response(HaasConnectionSettings value) => new(
-        value.MachineId, value.Host, value.MdcPort, value.MtConnectPort, value.DprntPort,
+        value.MachineId, value.Host, value.MacAddress,
+        value.MdcPort, value.MtConnectPort, value.DprntPort,
         value.LocalNetShareEnabled, value.LocalNetSharePath, value.CredentialsReference,
         value.PartCounterSource,
         value.PollingIntervalMs, value.ConnectionTimeoutMs, value.StableProgramPolls,
@@ -97,7 +98,8 @@ internal static class HaasEndpoints
 }
 
 internal sealed record HaasConnectionUpdateRequest(
-    string? Host, int MdcPort, int MtConnectPort, int DprntPort, bool LocalNetShareEnabled,
+    string? Host, string? MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
+    bool LocalNetShareEnabled,
     string? LocalNetSharePath, string? CredentialsReference,
     string? PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
@@ -105,7 +107,8 @@ internal sealed record HaasConnectionUpdateRequest(
     bool Enabled, int Version, string? TelemetryProvider);
 
 internal sealed record HaasConnectionResponse(
-    string MachineId, string Host, int MdcPort, int MtConnectPort, int DprntPort,
+    string MachineId, string Host, string MacAddress,
+    int MdcPort, int MtConnectPort, int DprntPort,
     bool LocalNetShareEnabled, string? LocalNetSharePath, string? CredentialsReference,
     string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,

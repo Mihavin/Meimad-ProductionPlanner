@@ -89,7 +89,11 @@ internal sealed record TimelineSourceOperation(
     double? RemainingProductionSeconds = null,
     double? TotalPlannedMachineSeconds = null,
     IReadOnlyList<string>? SetupEstimateWarnings = null,
-    bool UsesSetupOccupancyEstimate = false);
+    bool UsesSetupOccupancyEstimate = false,
+    int CompletedQuantity = 0,
+    int? TargetQuantity = null,
+    double? MeasuredAverageCycleSeconds = null,
+    int MeasuredCycleSampleCount = 0);
 
 internal sealed record TimelineSourceResource(
     string ResourceId,

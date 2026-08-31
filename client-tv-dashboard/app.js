@@ -1,13 +1,13 @@
 "use strict";
 
-const DASHBOARD_BUILD = "0.1.33";
+const DASHBOARD_BUILD = "0.1.35";
 const translations = {
   en: {
     machineStatus: "Machine status", language: "Language", waitingForStatus: "Waiting for machine status",
     noMachines: "No display-enabled machines", updateRequired: "Dashboard update required",
     statusUnavailable: "Machine status unavailable", noImage: "No image", noPicture: "No picture available",
     pictureUnavailable: "Picture unavailable", partPicture: "part picture", online: "Online", offline: "Offline",
-    noCurrentOperation: "No current operation", batch: "Batch", started: "Started", paused: "Paused",
+    noCurrentOperation: "No current operation", batch: "Batch", started: "In production", paused: "Paused",
     completed: "Completed", waiting: "Waiting", setup: "Setup", part: "Part", ofBatch: "of Batch",
     progressUnavailable: "Progress unavailable", connecting: "Connecting", refreshing: "Refreshing machine status",
     connected: "Connected", liveConnected: "Connected — live updates active",
@@ -125,24 +125,36 @@ function progressLabel(progress) {
   if (progress.phase === "completed") {
     return `${t.part} ${progress.currentPart || progress.plannedParts}/${progress.plannedParts} | 100% ${t.ofBatch}`;
   }
-  if (progress.phase === "production" && progress.currentPart && progress.plannedParts && percent !== null) {
+  if (progress.phase === "production" && Number.isFinite(progress.currentPart) && progress.plannedParts && percent !== null) {
     return `${t.part} ${progress.currentPart}/${progress.plannedParts} | ${percent}% ${t.ofBatch}`;
   }
   return t.progressUnavailable;
 }
 
+function cycleAverageLabel(progress) {
+  if (!Number.isFinite(progress.averageCycleSeconds) || progress.averageCycleSampleCount < 1) return "";
+  const total = Math.max(0, Math.round(progress.averageCycleSeconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const time = hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+  return `AVG ${time} (${progress.averageCycleSampleCount})`;
+}
+
 function renderMachine(machine) {
   const number = escapeHtml(machine.number);
   const name = escapeHtml(machine.name);
-  const preview = renderPreview(machine.current);
   const online = machine.connection?.online === true;
   const connectionState = online ? t.online : t.offline;
-  const connection = `<div class="machine-connection connection-${online ? "online" : "offline"}" role="img" aria-label="${escapeHtml(connectionState)}" title="${escapeHtml(connectionState)}"><span aria-hidden="true"></span></div>`;
+  const connection = `<span class="machine-connection connection-${online ? "online" : "offline"}" role="img" aria-label="${escapeHtml(connectionState)}" title="${escapeHtml(connectionState)}"><span aria-hidden="true"></span></span>`;
   const machineState = String(machine.machineStatus || "").trim();
+  const identity = `<div class="machine-identity"><div class="machine-number" title="${number}">${connection}${number}</div><div class="machine-name" title="${name}">${name}</div></div>`;
   const telemetry = `<div class="machine-telemetry${machineState ? "" : " unavailable"}" title="MTConnect machine state">MT: ${escapeHtml(machineState || "—")}</div>`;
   if (!machine.current) {
     return `<article class="machine-row idle" aria-label="${number} ${name}">
-      <div class="machine-number">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${telemetry}${preview}
+      ${identity}
       <div class="operation empty">${escapeHtml(t.noCurrentOperation)}</div></article>`;
   }
 
@@ -151,14 +163,16 @@ function renderMachine(machine) {
   const percent = Number.isFinite(progress.completionPercent)
     ? Math.max(0, Math.min(100, progress.completionPercent)) : null;
   const progressStyle = percent === null ? "" : ` style="--progress:${percent}%"`;
+  const average = cycleAverageLabel(progress);
   return `<article class="machine-row" aria-label="${number} ${name}">
-    <div class="machine-number" title="${number}">${number}</div><div class="machine-name" title="${name}">${name}</div>${connection}${telemetry}${preview}
+    ${identity}
     <div class="operation">
       <div class="operation-title"><strong>${escapeHtml(operation.partNumber)}</strong> <span class="batch">${escapeHtml(t.batch)} ${escapeHtml(operation.batchNumber)}</span> <span class="job-op">OP${escapeHtml(operation.operationNumber)}</span></div>
       <div class="operation-name">${escapeHtml(operation.operationName)}</div>
     </div>
     <div class="execution status-${escapeHtml(progress.statusCode || "waiting")}">
       <div class="execution-line"><span class="status-label">${escapeHtml(progressStatus(progress))}</span><span class="completion-label">${escapeHtml(progressLabel(progress))}</span></div>
+      ${average ? `<div class="cycle-average">${escapeHtml(average)}</div>` : ""}
       <div class="progress-track"${progressStyle}><span></span></div>
     </div>
   </article>`;

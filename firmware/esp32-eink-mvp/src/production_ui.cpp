@@ -104,6 +104,7 @@ const char* statusText(tablet_api::TabletStatus status) {
 
 const char* verificationStateText(tablet_api::VerificationState state) {
   switch (state) {
+    case tablet_api::VerificationState::Armed:
     case tablet_api::VerificationState::WaitingForOperator:
       return "ENTER RESPONSE CODE";
     case tablet_api::VerificationState::Expired:
@@ -120,6 +121,7 @@ const char* verificationStateText(tablet_api::VerificationState state) {
 
 const char* verificationInstructionText(tablet_api::VerificationState state) {
   switch (state) {
+    case tablet_api::VerificationState::Armed:
     case tablet_api::VerificationState::WaitingForOperator:
       return "TYPE THIS CODE AT THE CNC";
     case tablet_api::VerificationState::Expired:
@@ -219,8 +221,9 @@ void drawProductionScreen(
         40,
         236);
 
-    if (model.verificationState
-        == tablet_api::VerificationState::WaitingForOperator) {
+    if (model.verificationState == tablet_api::VerificationState::Armed
+        || model.verificationState
+            == tablet_api::VerificationState::WaitingForOperator) {
       display.setTextSize(7);
       const int codeWidth = display.textWidth(model.verificationResponseCode);
       display.drawString(

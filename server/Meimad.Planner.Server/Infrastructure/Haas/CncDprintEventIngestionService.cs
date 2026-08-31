@@ -81,10 +81,65 @@ internal sealed class CncDprintEventIngestionService(
                         machineId, parsed.SourceEventId, parsed.Sequence);
                 continue;
             }
+            if (parsed.EventType == "SETUP_VERIFICATION_REQUESTED")
+            {
+                var detectedAt = timeProvider.GetUtcNow();
+                var session = await verification.ResolveVerificationSessionAsync(
+                    machineId, parsed.SourceEventId, detectedAt, token);
+                if (session is null)
+                {
+                    await TrackAsync("offset_loader_not_executed", machineId,
+                        parsed.ProductionRunId, parsed.SourceEventId,
+                        "no_armed_verification_session", token);
+                    continue;
+                }
+                if (!VerificationEvidenceMatches(parsed, session, out var mismatch))
+                {
+                    await TrackAsync(mismatch.AnomalyType, machineId,
+                        session.ProductionRunId, parsed.SourceEventId, mismatch.Code, token);
+                    continue;
+                }
+                if (session.WasDuplicate)
+                {
+                    await TrackAsync("duplicate_cnc_event", machineId,
+                        session.ProductionRunId, parsed.SourceEventId, "duplicate", token);
+                    continue;
+                }
+                if (session.SessionState == "SUCCEEDED")
+                {
+                    logger.LogInformation(
+                        "Ignored redundant verification start for an already verified NC release. MachineId={MachineId} EventId={EventId}",
+                        machineId, parsed.SourceEventId);
+                    continue;
+                }
+                if (session.SessionState != "ARMED")
+                {
+                    await TrackAsync("duplicate_cnc_event", machineId,
+                        session.ProductionRunId, parsed.SourceEventId,
+                        "verification_session_not_armed", token);
+                    continue;
+                }
+                await workflow.AppendAsync(new(
+                    session.ProductionRunId, machineId, parsed.EventType,
+                    $"HAAS_DPRINT:{machineId}", parsed.SourceEventId, parsed.Sequence,
+                    NcReleaseId: session.NcReleaseId,
+                    OffsetLoaderReleaseId: session.OffsetLoaderReleaseId,
+                    MetadataJson: JsonSerializer.Serialize(new
+                    {
+                        macroVersion = parsed.MacroVersion,
+                        programIdentity = parsed.ProgramIdentity,
+                        offsetReleaseToken = parsed.OffsetReleaseToken,
+                        nonce = parsed.Nonce,
+                        rawLine = parsed.RawLine
+                    }),
+                    VerificationActivation: new(
+                        session.SessionId, session.VerificationTimeoutSeconds)), token);
+                continue;
+            }
             if (parsed.EventType is "SETUP_VERIFICATION_SUCCEEDED" or "SETUP_VERIFICATION_FAILED")
             {
                 var detectedAt = timeProvider.GetUtcNow();
-                var pending = await verification.ResolvePendingVerificationAsync(
+                var pending = await verification.ResolveVerificationSessionAsync(
                     machineId, parsed.SourceEventId, detectedAt, token);
                 if (pending is null)
                 {
@@ -96,18 +151,10 @@ internal sealed class CncDprintEventIngestionService(
                         machineId, parsed.SourceEventId);
                     continue;
                 }
-                if (parsed.OffsetReleaseToken != pending.VerificationReleaseToken)
+                if (!VerificationEvidenceMatches(parsed, pending, out var mismatch))
                 {
-                    await TrackAsync(
-                        "stale_offset_loader", machineId, pending.ProductionRunId,
-                        parsed.SourceEventId, "verification_release_token_mismatch", token);
-                    continue;
-                }
-                if (parsed.Nonce != pending.Nonce)
-                {
-                    await TrackAsync(
-                        "offset_loader_not_executed", machineId, pending.ProductionRunId,
-                        parsed.SourceEventId, "verification_challenge_mismatch", token);
+                    await TrackAsync(mismatch.AnomalyType, machineId,
+                        pending.ProductionRunId, parsed.SourceEventId, mismatch.Code, token);
                     continue;
                 }
                 if (pending.WasDuplicate)
@@ -134,39 +181,6 @@ internal sealed class CncDprintEventIngestionService(
                     logger.LogWarning(
                         "Rejected CNC verification result for a non-pending session. MachineId={MachineId} EventId={EventId} SessionState={SessionState}",
                         machineId, parsed.SourceEventId, pending.SessionState);
-                    continue;
-                }
-                if (parsed.MacroVersion != pending.ExpectedMacroVersion
-                    || parsed.MacroVersion != pending.MacroVersion)
-                {
-                    await TrackAsync(
-                        "verification_macro_version_mismatch", machineId,
-                        pending.ProductionRunId, parsed.SourceEventId,
-                        "macro_version_mismatch", token);
-                    continue;
-                }
-                if (parsed.ProductionRunId is not null
-                    && parsed.ProductionRunId != pending.ProductionRunId)
-                {
-                    await TrackAsync(
-                        "unknown_production_run", machineId, parsed.ProductionRunId,
-                        parsed.SourceEventId, "run_identity_mismatch", token);
-                    continue;
-                }
-                if (parsed.ProgramIdentity is null)
-                {
-                    await TrackAsync(
-                        "active_nc_identity_unavailable", machineId,
-                        pending.ProductionRunId, parsed.SourceEventId,
-                        "program_identity_missing", token);
-                    continue;
-                }
-                if (parsed.ProgramIdentity != pending.NcIdentityToken.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture))
-                {
-                    await TrackAsync(
-                        "wrong_nc_program", machineId, pending.ProductionRunId,
-                        parsed.SourceEventId, "nc_identity_mismatch", token);
                     continue;
                 }
                 var succeeded = parsed.EventType == "SETUP_VERIFICATION_SUCCEEDED";
@@ -267,6 +281,48 @@ internal sealed class CncDprintEventIngestionService(
                     "duplicate_cnc_event", machineId, context.ProductionRunId,
                     parsed.SourceEventId, "duplicate", token);
         }
+    }
+
+    private static bool VerificationEvidenceMatches(
+        HaasDprintEvent parsed,
+        CncVerificationSessionContext session,
+        out (string AnomalyType, string Code) mismatch)
+    {
+        if (parsed.OffsetReleaseToken != session.VerificationReleaseToken)
+        {
+            mismatch = ("stale_offset_loader", "verification_release_token_mismatch");
+            return false;
+        }
+        if (parsed.Nonce != session.Nonce)
+        {
+            mismatch = ("offset_loader_not_executed", "verification_challenge_mismatch");
+            return false;
+        }
+        if (parsed.MacroVersion != session.ExpectedMacroVersion
+            || parsed.MacroVersion != session.MacroVersion)
+        {
+            mismatch = ("verification_macro_version_mismatch", "macro_version_mismatch");
+            return false;
+        }
+        if (parsed.ProductionRunId is not null
+            && parsed.ProductionRunId != session.ProductionRunId)
+        {
+            mismatch = ("unknown_production_run", "run_identity_mismatch");
+            return false;
+        }
+        if (parsed.ProgramIdentity is null)
+        {
+            mismatch = ("active_nc_identity_unavailable", "program_identity_missing");
+            return false;
+        }
+        if (parsed.ProgramIdentity != session.NcIdentityToken.ToString(
+            System.Globalization.CultureInfo.InvariantCulture))
+        {
+            mismatch = ("wrong_nc_program", "nc_identity_mismatch");
+            return false;
+        }
+        mismatch = default;
+        return true;
     }
 
     private Task TrackAsync(

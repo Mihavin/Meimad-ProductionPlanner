@@ -12,12 +12,6 @@ public partial class SetupView : UserControl
         InitializeComponent();
     }
 
-    private void VerificationSecret_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is PasswordBox passwordBox && DataContext is SetupViewModel viewModel)
-            viewModel.VerificationSecret = passwordBox.Password;
-    }
-
     private async void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog

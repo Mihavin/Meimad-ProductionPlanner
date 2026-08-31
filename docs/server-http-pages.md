@@ -24,7 +24,7 @@ Example response:
 {
   "status": "healthy",
   "service": "Meimad Planner Server",
-  "version": "0.1.49",
+  "version": "0.1.51",
   "serverTimeUtc": "2026-08-28T12:00:00Z"
 }
 ```
