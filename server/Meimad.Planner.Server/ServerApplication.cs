@@ -270,7 +270,6 @@ public static class ServerApplication
         {
             KeepAliveInterval = TimeSpan.FromSeconds(30)
         });
-        application.UseMiddleware<EInkReadOnlyGuardMiddleware>();
 
         application.Use(async (context, next) =>
         {

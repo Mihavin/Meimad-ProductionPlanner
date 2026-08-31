@@ -8,7 +8,6 @@ internal interface ITabletStatusRepository
 internal sealed record TabletStatusSource(
     string DeviceId,
     string TabletId,
-    string? CredentialHash,
     bool IsEnabled,
     TabletStatusMachineSource? Machine,
     TabletStatusRunSource? Run,

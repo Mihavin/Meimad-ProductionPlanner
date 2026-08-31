@@ -76,8 +76,8 @@ public sealed class PersistenceTests
                 VALUES ('factory.name', 'Meimad');
 
                 INSERT INTO device_registry (
-                    id, device_type, device_name, machine_id, credential_hash)
-                VALUES ('device-1', 'eink', 'Machine 1 tablet', 'machine-1', 'test-hash');
+                    id, tablet_id, hardware_id, device_type, device_name, machine_id)
+                VALUES ('device-1', '5001', 'AA:BB:CC:DD:EE:50', 'eink', 'Machine 1 tablet', 'machine-1');
                 """;
             await command.ExecuteNonQueryAsync();
             await transaction.CommitAsync();

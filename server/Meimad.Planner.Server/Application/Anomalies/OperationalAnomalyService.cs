@@ -11,7 +11,7 @@ internal static class OperationalAnomalyTypes
         "verification_expired", "verification_macro_version_mismatch",
         "cycle_started_before_qc_pass", "cycle_end_without_start", "cycle_interrupted",
         "cnc_event_sequence_gap", "duplicate_cnc_event", "unknown_production_run",
-        "ambiguous_production_run", "tablet_offline", "tablet_credential_revoked"
+        "ambiguous_production_run", "tablet_offline"
     };
 }
 
@@ -115,7 +115,6 @@ internal sealed class OperationalAnomalyService(IOperationalAnomalyRepository re
         "unknown_production_run" => "The reported Production Run is unknown or not current for the Machine.",
         "ambiguous_production_run" => "More than one Production Run could match the Machine evidence.",
         "tablet_offline" => "The assigned tablet is offline.",
-        "tablet_credential_revoked" => "The tablet credential has been revoked.",
         _ => "Operational anomaly."
     };
 

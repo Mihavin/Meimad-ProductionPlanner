@@ -60,7 +60,6 @@ const GLCD_FONT = new Uint8Array([
 
 const state = {
   hardwareId: localStorage.getItem("meimad-tablet-hardware-id") || "",
-  token: sessionStorage.getItem("meimad-tablet-device-token") || "",
   wifiSsid: localStorage.getItem("meimad-tablet-wifi-ssid") || "",
   tabletId: "",
   status: null,
@@ -161,7 +160,7 @@ function batteryVoltage() {
 }
 
 function requestHeaders(extra = {}) {
-  const headers = { ...extra, Authorization: `Bearer ${state.token}`, "X-Meimad-Firmware-Version": FIRMWARE_VERSION };
+  const headers = { ...extra, "X-Meimad-Firmware-Version": FIRMWARE_VERSION };
   const voltage = batteryVoltage();
   if (voltage !== null) headers["X-Meimad-Battery-Voltage"] = voltage.toFixed(3);
   return headers;
@@ -194,12 +193,10 @@ async function readError(response) {
 
 function readBenchConfiguration() {
   state.hardwareId = byId("hardware-id").value.trim();
-  state.token = byId("device-token").value.trim();
   state.wifiSsid = byId("wifi-ssid").value.trim();
-  if (!state.hardwareId || !state.token) throw new Error("Hardware MAC and device token are required.");
+  if (!state.hardwareId) throw new Error("Hardware MAC is required for discovery.");
   localStorage.setItem("meimad-tablet-hardware-id", state.hardwareId);
   localStorage.setItem("meimad-tablet-wifi-ssid", state.wifiSsid);
-  sessionStorage.setItem("meimad-tablet-device-token", state.token);
 }
 
 async function registrationPing() {
@@ -615,7 +612,6 @@ function bindHoldButton(element, shortAction, longAction) {
 }
 
 byId("hardware-id").value = state.hardwareId;
-byId("device-token").value = state.token;
 byId("wifi-ssid").value = state.wifiSsid;
 byId("connect").addEventListener("click", () => void bootOrRefresh("external-reset"));
 byId("apply-scenario").addEventListener("click", applyLocalFixture);

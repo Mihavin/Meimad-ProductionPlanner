@@ -77,7 +77,6 @@ struct DeviceConfiguration {
   String wifiSsid;
   String wifiPassword;
   String serverBaseUrl;
-  String deviceToken;
 };
 
 struct PreviousSleepState {
@@ -120,29 +119,21 @@ DeviceConfiguration loadDeviceConfiguration() {
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
   else if (!preferences.isKey("server_url"))
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
-  if (!preferences.isKey("tablet_id") && strlen(meimad::config::kDefaultTabletId) > 0)
+  if (MEIMAD_PROVISIONING_BUILD
+      && preferences.getString("tablet_id", "") != meimad::config::kDefaultTabletId)
     preferences.putString("tablet_id", meimad::config::kDefaultTabletId);
-  if (strlen(meimad::config::kDefaultDeviceToken) > 0
-      && preferences.getString("device_token", "") != meimad::config::kDefaultDeviceToken)
-    preferences.putString("device_token", meimad::config::kDefaultDeviceToken);
+  else if (!preferences.isKey("tablet_id") && strlen(meimad::config::kDefaultTabletId) > 0)
+    preferences.putString("tablet_id", meimad::config::kDefaultTabletId);
+  if (preferences.isKey("device_token")) preferences.remove("device_token");
   DeviceConfiguration value {
     readHardwareId(),
     preferences.getString("tablet_id", ""),
     preferences.getString("wifi_ssid", ""),
     preferences.getString("wifi_pass", ""),
-    preferences.getString("server_url", meimad::config::kServerBaseUrl),
-    preferences.getString("device_token", "")
+    preferences.getString("server_url", meimad::config::kServerBaseUrl)
   };
   preferences.end();
   return value;
-}
-
-void cacheTabletId(const String& tabletId) {
-  if (tabletId.isEmpty()) return;
-  Preferences preferences;
-  preferences.begin(kPreferencesNamespace, false);
-  preferences.putString("tablet_id", tabletId);
-  preferences.end();
 }
 
 meimad::screen_revision::LastRevision loadLastRevision() {
@@ -390,9 +381,6 @@ bool testServer(
   if (!http.begin(url)) {
     diagnosticResult = "PING INIT FAILED";
     return false;
-  }
-  if (!configuration.deviceToken.isEmpty()) {
-    http.addHeader("Authorization", "Bearer " + configuration.deviceToken);
   }
   const String batteryVoltage =
       meimad::tablet_api::formatBatteryVoltageHeader(batteryTelemetry);
@@ -955,9 +943,10 @@ void setup() {
     MEIMAD_LOG("WIFI", "skipped reason=local_button_wake");
   }
   if (!assignedTabletId.isEmpty() && assignedTabletId != activeConfiguration.tabletId) {
-    cacheTabletId(assignedTabletId);
-    activeConfiguration.tabletId = assignedTabletId;
-    Serial.printf("Server-assigned Tablet ID cached in NVS: %s\n", assignedTabletId.c_str());
+    Serial.printf("Tablet ID mismatch: firmware=%s server=%s. Reflash with the registered TabletID.\n",
+                  activeConfiguration.tabletId.c_str(), assignedTabletId.c_str());
+    serverConnected = false;
+    lastHttpResult = "TABLET ID MISMATCH";
   }
   auto productionScreen = meimad::production_ui::makeDevelopmentFixture(
       activeConfiguration.tabletId);
@@ -1013,7 +1002,6 @@ void setup() {
   if (serverConnected && !activeConfiguration.tabletId.isEmpty()) {
     meimad::tablet_api::TabletApiClient tabletApi(
         activeConfiguration.serverBaseUrl,
-        activeConfiguration.deviceToken,
         batteryTelemetry);
     meimad::tablet_api::TabletStatusResponse tabletStatus;
     meimad::tablet_api::ApiResult statusApiResult;

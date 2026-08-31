@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EInk;
 
-/// <summary>Authenticated bootstrap for physical production tablets.</summary>
+/// <summary>TabletID-identified endpoints for physical production tablets on the trusted LAN.</summary>
 internal static class TabletEndpoints
 {
     internal static void MapTabletEndpoints(this IEndpointRouteBuilder endpoints)
@@ -41,7 +41,6 @@ internal static class TabletEndpoints
             var result = await service.SubmitAsync(
                 new SubmitTabletEventCommand(
                     tabletId,
-                    ReadBearerToken(context),
                     properties[0].Value.GetString() ?? string.Empty,
                     DecimalHeader(context, "X-Meimad-Battery-Voltage", 0m, 12m),
                     IntHeader(context, "X-Meimad-Battery-Percent", 0, 100),
@@ -83,7 +82,6 @@ internal static class TabletEndpoints
         {
             var value = await service.ReadAsync(
                 tabletId,
-                ReadBearerToken(context),
                 timeProvider.GetUtcNow(),
                 DecimalHeader(context, "X-Meimad-Battery-Voltage", 0m, 12m),
                 IntHeader(context, "X-Meimad-Battery-Percent", 0, 100),
@@ -114,7 +112,7 @@ internal static class TabletEndpoints
         try
         {
             var registration = await service.BootstrapAsync(
-                ReadBearerToken(context), hardwareId,
+                hardwareId,
                 DecimalHeader(context, "X-Meimad-Battery-Voltage", 0m, 12m),
                 IntHeader(context, "X-Meimad-Battery-Percent", 0, 100),
                 TextHeader(context, "X-Meimad-Firmware-Version", 64),
@@ -124,9 +122,7 @@ internal static class TabletEndpoints
             return Results.Ok(new
             {
                 status = "ok",
-                tabletId = registration.TabletId,
-                deviceId = registration.DeviceId,
-                machineId = registration.MachineId
+                tabletId = registration.TabletId
             });
         }
         catch (EInkDeviceRegistrationValidationException exception)
@@ -135,17 +131,9 @@ internal static class TabletEndpoints
         }
         catch (EInkDeviceRegistrationNotFoundException)
         {
-            // Deliberately do not reveal whether the token, MAC, or registration failed.
             return PlanningHttpSupport.Error(404, "device_resource_not_found",
                 "The requested tablet resource was not found.", context);
         }
-    }
-
-    private static string ReadBearerToken(HttpContext context)
-    {
-        var value = context.Request.Headers.Authorization.ToString();
-        return value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? value[7..].Trim() : string.Empty;
     }
 
     private static decimal? DecimalHeader(HttpContext context, string name, decimal minimum, decimal maximum) =>

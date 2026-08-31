@@ -176,12 +176,12 @@ INSERT INTO downtimes (id, machine_id, starts_at, ends_at, reason, status) VALUE
     ('down-inspection', 'machine-10', $downtimeInspectionStart, $downtimeInspectionEnd, 'CMM calibration', 'planned');
 
 INSERT INTO device_registry (
-    id, device_type, device_name, machine_id, credential_hash,
+    id, tablet_id, hardware_id, device_type, device_name, machine_id,
     access_mode, is_enabled, metadata_json) VALUES
-    ('acceptance-eink-01', 'eink', 'Acceptance Tablet 01', 'machine-01',
-     $credentialHash, 'read_only', 1, '{"fixture":"acceptance"}'),
-    ('acceptance-tv-01', 'tv', 'Acceptance TV 01', NULL,
-     NULL, 'read_only', 1, '{"fixture":"acceptance"}');
+    ('acceptance-eink-01', '4101', 'A4:CF:12:83:76:A1', 'eink', 'Acceptance Tablet 01', 'machine-01',
+     'read_only', 1, '{"fixture":"acceptance"}'),
+    ('acceptance-tv-01', NULL, NULL, 'tv', 'Acceptance TV 01', NULL,
+     'read_only', 1, '{"fixture":"acceptance"}');
 
 INSERT INTO eink_package_revisions (
     id, batch_operation_id, revision, tool_cart_id, published_at,

@@ -24,7 +24,7 @@ public sealed class OperationalAnomalyTests
         }
 
         var values = await service.ListAsync(null, null, null, 100);
-        Assert.Equal(17, values.Count);
+        Assert.Equal(16, values.Count);
         Assert.Equal(
             OperationalAnomalyTypes.All.Order(StringComparer.Ordinal),
             values.Select(value => value.AnomalyType).Order(StringComparer.Ordinal));
@@ -82,16 +82,16 @@ public sealed class OperationalAnomalyTests
     }
 
     [Fact]
-    public async Task Revoking_tablet_credential_creates_one_immutable_operational_anomaly()
+    public async Task Disabling_tablet_does_not_create_a_credential_anomaly()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO device_registry(
-                id,device_type,device_name,credential_hash,is_enabled,tablet_id,
+                id,device_type,device_name,is_enabled,tablet_id,
                 hardware_id,version,created_at,updated_at)
-            VALUES('anomaly-tablet','eink','Anomaly tablet','hash',1,'7001',
+            VALUES('anomaly-tablet','eink','Anomaly tablet',1,'7001',
                    'AA:BB:CC:DD:EE:70',1,$at,$at);
             UPDATE device_registry
             SET is_enabled=0,version=2,updated_at=$at
@@ -108,6 +108,6 @@ public sealed class OperationalAnomalyTests
               AND tablet_device_id='anomaly-tablet';
             """;
         command.Parameters.Clear();
-        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
     }
 }

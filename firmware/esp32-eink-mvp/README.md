@@ -81,10 +81,10 @@ digit response code and tells the operator to enter it at the CNC. `EXPIRED`,
 `INVALIDATED`, and `UNAVAILABLE` show a text-only `SETUP BLOCKED` reason and
 `PRESS REFRESH - DO NOT START`, with no response code.
 
-The initial `/api/tablet/ping?hardwareId=<mac>` bootstrap sends the provisioned
-bearer credential and accepts the Server-assigned short Tablet ID only after the
-Server verifies that credential against the normalized physical MAC. When the
-approved tablet-status GET succeeds, the layout displays that response.
+The initial `/api/tablet/ping?hardwareId=<mac>` call uses the normalized physical
+MAC only for discovery/mapping. TabletID is provisioned by firmware upload and
+must match the Server registration. The trusted-LAN MVP has no tablet credential.
+When the approved tablet-status GET succeeds, the layout displays that response.
 The status response does not yet carry official tool rows, so the live tool area
 explicitly says `NO TOOL DATA AVAILABLE`; it never fabricates Server data. Until
 the pending Server compatibility route exists, the boot screen uses the example
@@ -210,7 +210,7 @@ request it makes (`/api/tablet/ping`, tablet-status GET, and tablet-event POST)
 as `X-Meimad-Battery-Voltage`, formatted to three decimal places. The optional
 `X-Meimad-Battery-Percent` header is deliberately omitted: percentage requires
 a measured three-AA discharge curve and is not inferred from voltage alone.
-The same authenticated requests report the compiled firmware version and, while
+The same TabletID-identified requests report the compiled firmware version and, while
 connected, the local IP address and RSSI through bounded
 `X-Meimad-Firmware-Version`, `X-Meimad-Wifi-IP`, and `X-Meimad-Wifi-Rssi`
 headers. This health metadata is separate from planning data and does not change
@@ -346,9 +346,9 @@ as Server-generated UTC time plus the echoed identity and event:
 
 Both calls use a 5-second connection timeout and 7-second overall HTTP timeout,
 log the returned HTTP status, and distinguish transport, HTTP, and malformed
-response failures. A device bearer token can be provisioned in the `meimad`
-NVS namespace as `device_token`; `kDefaultDeviceToken` exists only as a local
-development bootstrap and must never contain a committed live credential.
+response failures. TabletID is provisioned at firmware upload through
+`MEIMAD_PROVISION_TABLET_ID`; a provisioning build writes it to NVS. Legacy
+`device_token` data is deleted at boot and no authorization header is sent.
 
 Build the focused on-device contract test image without changing the normal
 firmware artifact with:
@@ -368,7 +368,7 @@ transitions the Server-resolved current run from tablet workflow
 no planning/package mutation authority. The firmware binds it to the guarded
 long-D4 gesture described above and follows the POST with a status GET. The
 Server now has shared append-only workflow-event persistence, derives tablet
-status from it, and implements the schema-v54 path/credential authorization,
+status from it, and implements the schema-v54 TabletID path resolution,
 `IN_SETUP_RUN` eligibility, per-inspection-attempt idempotency, and
 first-timestamp response. Schema v55 permits a later distinct send after
 `QC_FAIL` returns the same Run to setup.

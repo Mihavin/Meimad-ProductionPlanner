@@ -1058,9 +1058,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             new OperationalAnomalyService(new SqliteOperationalAnomalyRepository(fixture.Database)),
             clock, NullLogger<CncDprintEventIngestionService>.Instance);
         var authority = new EditAuthority("verification-client", 1);
-        const string tabletToken = "mp_eink_e2e-token";
-
-        await SeedEndToEndDeviceAndNextRunAsync(fixture.Database, tabletToken);
+        await SeedEndToEndDeviceAndNextRunAsync(fixture.Database);
         await using (var readyConnection = await fixture.Database.OpenConnectionAsync())
         await using (var readyEvidence = readyConnection.CreateCommand())
         {
@@ -1079,7 +1077,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             new SqliteEInkDeviceRegistrationRepository(fixture.Database), protection,
             NullLogger<TabletStatusService>.Instance);
         Task<TabletStatusResponse> Status() => tabletStatus.ReadAsync(
-            "E2E-TABLET", tabletToken, clock.GetUtcNow(), 4.5m, 90,
+            "E2E-TABLET", clock.GetUtcNow(), 4.5m, 90,
             "simulator", "127.0.0.1", -35);
 
         Assert.Equal("READY_FOR_SETUP", (await Status()).Status);
@@ -1112,7 +1110,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             new SqliteTabletEventRepository(fixture.Database), clock);
         clock.Advance();
         await tabletEvents.SubmitAsync(new(
-            "E2E-TABLET", tabletToken, "SEND_TO_QC", 4.4m, 88,
+            "E2E-TABLET", "SEND_TO_QC", 4.4m, 88,
             "simulator", "127.0.0.1", -36));
         Assert.Equal("IN_QC", (await Status()).Status);
 
@@ -1122,7 +1120,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             new("run-verification", "FAIL", "verification-user", "First article dimension out."), authority)).ResultingStatus);
         clock.Advance();
         await tabletEvents.SubmitAsync(new(
-            "E2E-TABLET", tabletToken, "SEND_TO_QC", null, null, null, null, null));
+            "E2E-TABLET", "SEND_TO_QC", null, null, null, null, null));
         clock.Advance();
         Assert.Equal("READY_FOR_PRODUCTION", (await qc.DecideAsync(
             new("run-verification", "PASS", "verification-user", "First article accepted."), authority)).ResultingStatus);
@@ -1315,10 +1313,8 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         new FixedTimeProvider(Now), new EphemeralDataProtectionProvider());
 
     private static async Task SeedEndToEndDeviceAndNextRunAsync(
-        SqliteDatabase database, string tabletToken)
+        SqliteDatabase database)
     {
-        var credentialHash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(tabletToken))).ToLowerInvariant();
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1332,9 +1328,9 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             SET target_quantity=3
             WHERE id='output-verification';
             INSERT INTO device_registry(
-                id,device_type,device_name,machine_id,credential_hash,is_enabled,
+                id,device_type,device_name,machine_id,is_enabled,
                 tablet_id,hardware_id,created_at,updated_at)
-            VALUES('device-e2e','eink','E2E tablet','machine-verification',$hash,1,
+            VALUES('device-e2e','eink','E2E tablet','machine-verification',1,
                    'E2E-TABLET','AA:BB:CC:DD:EE:01',$at,$at);
             INSERT INTO eink_package_revisions(
                 id,batch_operation_id,revision,published_at)
@@ -1366,7 +1362,6 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             SET status='IN_PROGRESS',structure_locked_at=$at
             WHERE id='run-verification';
             """;
-        command.Parameters.AddWithValue("$hash", credentialHash);
         command.Parameters.AddWithValue("$at", Now.ToString("O"));
         await command.ExecuteNonQueryAsync();
     }

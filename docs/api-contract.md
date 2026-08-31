@@ -42,7 +42,7 @@ device tests pass.
 - Case, Order, Batch creation/read, Machine and Machine Type master data, Working Calendar CRUD and Setup Calendar selection, Machine backlog read, BatchOperation assignment, Single Edit Mode, TV Dashboard, and the E-Ink routes identified below are implemented. Other planning routes remain proposed.
 - The source's conceptual `/api/eink/...` paths are implemented as `/api/v1/eink/...`. Future compatibility guarantees/OpenAPI freezing remain TBD.
 - JSON field names are `camelCase` except the approved Task 5 compatibility routes under `/api/tablets/{tablet_id}`, which preserve their explicit `snake_case` wire contract. Examples explicitly labeled Implemented describe the tested wire shape; approved-but-unimplemented examples remain target behavior until the Server tests pass and OpenAPI is updated.
-- Human/TV authentication and authorization mechanisms remain TBD. E-Ink device reads and the exact `SEND_TO_QC` route use implemented revocable bearer tokens with stored SHA-256 hashes and device/Machine scoping; every other mutation remains forbidden to that credential.
+- Human/TV authentication and authorization mechanisms remain TBD. MVP tablet authentication is intentionally absent: TabletID is a non-secret identifier, MAC is optional discovery/mapping metadata, and tablet routes resolve Machine/Run targets on the Server.
 
 Do not implement client and server independently against unreviewed examples. Freeze an OpenAPI document and simulator after Phase 0 decisions, then treat compatibility changes deliberately.
 
@@ -222,7 +222,7 @@ The current endpoint proves only that the process and HTTP pipeline are running.
 
 ### 5.2 Request Edit Mode
 
-`POST /api/v1/edit-mode/requests` is implemented. It requires `X-Meimad-Client-Id` and `X-Meimad-User-Id` and has no request body. These headers are development identity inputs until authentication binds them to a Windows session. TV/E-Ink credential enforcement is pending the authentication layer.
+`POST /api/v1/edit-mode/requests` is implemented. It requires `X-Meimad-Client-Id` and `X-Meimad-User-Id` and has no request body. These headers are development identity inputs until authentication binds them to a Windows session. TV authentication remains pending. An E-Ink TabletID is only an identifier and never grants planning Edit Mode or mutation authority.
 
 If unheld, the Server grants immediately with `201 Created` and returns the full Edit Mode state. If held, it atomically creates one transfer request and returns `202 Accepted` with the full state, including `pendingRequest`. The default deadline is 30 seconds; `EditMode:TransferTimeoutSeconds` is configurable from 1 through 3600 seconds. Repeating the same pending request is idempotent. Exactly one request may be pending; another requester receives `409 edit_request_pending` and is not queued.
 
@@ -1590,20 +1590,20 @@ The Windows client streams to a new local file, verifies SHA-256, and removes an
 
 ## 8. E-Ink scoped contract
 
-All E-Ink routes require an implemented revocable `mp_eink_...` bearer credential whose subject matches `{deviceId}` or `{tablet_id}`. Only the token's SHA-256 hash is stored. The Server resolves the assigned Machine/package/run from registration and current authoritative state; a device cannot select an arbitrary Machine, package, run, or file by changing an ID. Package/planning data remains read-only. `SEND_TO_QC` is the single approved tablet-originated operational command and is not general write authority.
+For the trusted-LAN MVP, tablet authentication is intentionally absent. TabletID is a non-secret identifier and MAC is optional discovery/mapping metadata; spoofing either is an explicitly accepted MVP risk. No tablet token, API key, password, certificate, shared secret, session, or hidden credential exists. The Server resolves the assigned Machine/package/run from the enabled TabletID and current authoritative state; a tablet cannot select an arbitrary Machine, package, run, or file. Package/planning data remains read-only. `SEND_TO_QC` is the single approved tablet-originated operational command and is not general write authority.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/v1/eink/devices/{deviceId}/version` | Small conditional change check used first on wake. |
-| `GET` | `/api/v1/eink/devices/{deviceId}/machine-screen` | Assigned Machine/current/next read-only projection. |
-| `GET` | `/api/v1/eink/devices/{deviceId}/package-manifest` | Resolve current authorized package manifest. |
-| `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/manifest` | Read an exact authorized revision manifest. |
-| `GET` | `/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/files/{fileId}` | Download one authorized manifest file or preview. |
-| `GET` | `/api/v1/eink/devices/{deviceId}/time-config` | Read workday, shift-window, and polling configuration. |
-| `GET` | `/api/tablets/{tablet_id}/status` | Implemented authenticated physical-firmware status projection. |
+| `GET` | `/api/v1/eink/tablets/{tablet_id}/version` | Small conditional change check used first on wake. |
+| `GET` | `/api/v1/eink/tablets/{tablet_id}/machine-screen` | Assigned Machine/current/next read-only projection. |
+| `GET` | `/api/v1/eink/tablets/{tablet_id}/package-manifest` | Resolve current authorized package manifest. |
+| `GET` | `/api/v1/eink/tablets/{tablet_id}/packages/{packageId}/revisions/{revision}/manifest` | Read an exact authorized revision manifest. |
+| `GET` | `/api/v1/eink/tablets/{tablet_id}/packages/{packageId}/revisions/{revision}/files/{fileId}` | Download one authorized manifest file or preview. |
+| `GET` | `/api/v1/eink/tablets/{tablet_id}/time-config` | Read workday, shift-window, and polling configuration. |
+| `GET` | `/api/tablets/{tablet_id}/status` | Implemented TabletID-identified physical-firmware status projection. |
 | `POST` | `/api/tablets/{tablet_id}/events` | Implemented idempotent `SEND_TO_QC` operational command. |
 
-E-Ink planning/package routes remain GET-only. The implemented POST event route is the sole scoped exception. E-Ink credentials receive `403` on planning, Edit Mode, TV, device-registration administration, every other mutation, and any future telemetry route not explicitly scoped to that credential. A path/credential device mismatch returns scoped `404` so it does not reveal another device's registration.
+E-Ink planning/package routes remain GET-only. The implemented POST event route is the sole scoped exception. TabletID is accepted only on tablet routes and grants no Windows planning or Edit Mode authority. A missing, unknown, or disabled TabletID returns `404`. Tablet requests cannot supply Machine, package, run, or event timestamps.
 
 ### 8.0 Registration and binding administration
 
@@ -1611,11 +1611,11 @@ These implemented Server administration routes are for the Windows planning/oper
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/v1/eink/device-registrations` | List registration and non-secret operational monitoring metadata; never returns credential hashes or an existing token. No Edit Mode required. |
-| `POST` | `/api/v1/eink/device-registrations` | Create a named spare or Machine-bound E-Ink device; returns the new token once. |
-| `PATCH` | `/api/v1/eink/device-registrations/{deviceId}` | Bind/unbind, enable/revoke, and optionally rotate the credential. |
+| `GET` | `/api/v1/eink/device-registrations` | List registration and non-secret operational monitoring metadata; no tablet credential fields exist. No Edit Mode required. |
+| `POST` | `/api/v1/eink/device-registrations` | Create a named spare or Machine-bound E-Ink device and allocate its TabletID. |
+| `PATCH` | `/api/v1/eink/device-registrations/{deviceId}` | Bind/unbind and enable/disable the tablet. |
 
-POST/PATCH require the same active `X-Meimad-Client-Id`, `X-Meimad-User-Id`, and `X-Meimad-Edit-Generation` authority as planning mutations; the authority check and registration write share one immediate SQLite transaction. Create requires the physical MAC and accepts `{ "deviceName": "M07 tablet", "machineId": "machine-7", "hardwareId": "A4:CF:12:83:76:91" }`. PATCH accepts `{ "machineId": "machine-7", "isEnabled": true, "rotateCredential": false }`. `machineId` may be null for a spare; a spare remains physically identified by its MAC. The plaintext `registrationToken` is present only in a successful create or rotation response. Human authentication and a narrower administrator role remain OD-012.
+POST/PATCH require the same active `X-Meimad-Client-Id`, `X-Meimad-User-Id`, and `X-Meimad-Edit-Generation` authority as planning mutations; the authority check and registration write share one immediate SQLite transaction. Create requires the physical MAC and accepts `{ "deviceName": "M07 tablet", "machineId": "machine-7", "hardwareId": "A4:CF:12:83:76:91" }`. PATCH accepts `{ "machineId": "machine-7", "isEnabled": true }`. `machineId` may be null for a spare; a spare remains physically identified by its MAC. Create/update responses contain no registration token, credential, key, password, certificate, or session value. Human authentication and a narrower administrator role remain OD-012.
 
 Each GET item includes Tablet ID, device name, hardware MAC, Machine ID/number/name,
 enabled state, last-seen/server-contact timestamps, reported firmware, battery voltage
@@ -1624,7 +1624,7 @@ workflow state, and current package revision. Missing observations are `null`; p
 revision is `MULTIPLE` when a multi-output run resolves to more than one distinct
 revision. This endpoint reports stored observations and does not infer an online SLA.
 
-Authenticated `/api/tablet/ping` and `/api/tablets/{tablet_id}/status` requests may
+TabletID/MAC discovery and `/api/tablets/{tablet_id}/status` requests may
 report bounded non-secret telemetry in `X-Meimad-Firmware-Version`,
 `X-Meimad-Wifi-IP`, `X-Meimad-Wifi-Rssi`, `X-Meimad-Battery-Voltage`, and
 `X-Meimad-Battery-Percent`. Invalid or out-of-range values are ignored. These headers
@@ -1632,7 +1632,7 @@ cannot alter planning, assignment, workflow, package, or execution state.
 
 ### 8.1 Version/change check
 
-`GET /api/v1/eink/devices/{deviceId}/version`
+`GET /api/v1/eink/tablets/{tablet_id}/version`
 
 This should be the first, small request in a normal wake cycle. It supports `If-None-Match`; unchanged state should return `304 Not Modified` with no body.
 
@@ -1658,7 +1658,7 @@ If the registered spare is unassigned, the response remains `200` and uses `mach
 
 ### 8.2 Machine screen
 
-`GET /api/v1/eink/devices/{deviceId}/machine-screen`
+`GET /api/v1/eink/tablets/{tablet_id}/machine-screen`
 
 The implemented v1 form is structured `application/json` and remains the official package/Machine read projection intended for a later firmware consumer. The physical-firmware browser simulator no longer renders this richer target projection as though it were implemented on the real tablet; it uses the approved status/event adapter in section 8.9. A pre-rendered panel asset is not implemented and would require an explicit compatible media/profile contract.
 
@@ -1709,7 +1709,7 @@ Implemented structured response shape:
   "package": {
     "packageId": "package-opaque-id",
     "revision": "2026-08-11.03",
-    "manifestPath": "/api/v1/eink/devices/device-opaque-id/packages/package-opaque-id/revisions/2026-08-11.03/manifest"
+    "manifestPath": "/api/v1/eink/tablets/3041/packages/package-opaque-id/revisions/2026-08-11.03/manifest"
   }
 }
 ```
@@ -1718,11 +1718,11 @@ Implemented structured response shape:
 
 ### 8.3 Package manifest
 
-`GET /api/v1/eink/devices/{deviceId}/package-manifest`
+`GET /api/v1/eink/tablets/{tablet_id}/package-manifest`
 
 This convenience route resolves the device's currently authorized package revision. Its response includes `Content-Location` for the exact revision-qualified manifest:
 
-`GET /api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/manifest`
+`GET /api/v1/eink/tablets/{tablet_id}/packages/{packageId}/revisions/{revision}/manifest`
 
 Implemented response shape:
 
@@ -1741,7 +1741,7 @@ Implemented response shape:
     "part": { "caseId": "case-opaque-id", "partNumber": "PN-100", "name": "Bracket", "revision": "C", "customer": "Customer" },
     "batch": { "batchId": "batch-opaque-id", "batchNumber": "B-2026-0087", "plannedQuantity": 53 },
     "operation": { "batchOperationId": "operation-opaque-id", "operationNumber": 20, "name": "Finish milling" },
-    "setup": { "worker": { "resourceId": "employee-id", "firstName": "Miriam", "lastName": "Cohen", "photoFileId": "photo-file-id", "photoDownloadPath": "/api/v1/eink/devices/device-opaque-id/packages/package-opaque-id/revisions/2026-08-11.03/files/photo-file-id" }, "plannedStartsAt": "2026-08-11T11:00:00Z", "plannedEndsAt": "2026-08-11T11:30:00Z" },
+    "setup": { "worker": { "resourceId": "employee-id", "firstName": "Miriam", "lastName": "Cohen", "photoFileId": "photo-file-id", "photoDownloadPath": "/api/v1/eink/tablets/3041/packages/package-opaque-id/revisions/2026-08-11.03/files/photo-file-id" }, "plannedStartsAt": "2026-08-11T11:00:00Z", "plannedEndsAt": "2026-08-11T11:30:00Z" },
     "tools": { "job": [{ "toolId": "T01", "description": "End mill" }], "expectedOnMachine": [{ "toolId": "T99", "description": "Probe" }] },
     "localChecklist": { "storage": "device_sd", "syncToServer": false, "commentsSupported": true, "items": [{ "itemId": "tools-collected", "label": "Tools collected from Tool Room" }] },
     "tabletPolicy": { "transport": "wifi", "persistentStorage": "sd", "serverAccess": "read_only", "reverseSynchronization": false, "usbMassStorage": false }
@@ -1751,7 +1751,7 @@ Implemented response shape:
       "fileId": "file-opaque-id",
       "assetType": "nc",
       "logicalPath": "nc/OP20_MAIN.nc",
-      "downloadPath": "/api/v1/eink/devices/device-opaque-id/packages/package-opaque-id/revisions/2026-08-11.03/files/file-opaque-id",
+      "downloadPath": "/api/v1/eink/tablets/3041/packages/package-opaque-id/revisions/2026-08-11.03/files/file-opaque-id",
       "mediaType": "text/plain; charset=utf-8",
       "byteLength": 12345,
       "modifiedAt": "2026-08-11T10:54:00Z",
@@ -1774,7 +1774,7 @@ Source shorthand: `GET /api/eink/devices/{device_id}/package-file/{file_id}`.
 
 Implemented revision-safe route:
 
-`GET /api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/files/{fileId}`
+`GET /api/v1/eink/tablets/{tablet_id}/packages/{packageId}/revisions/{revision}/files/{fileId}`
 
 - Returns the authorized bytes with declared `Content-Type`/length, content-specific `ETag`, `X-Meimad-Checksum-SHA256`, and private immutable cache metadata. Before returning bytes, the Server verifies the disk file's configured-root containment, length, and SHA-256 against schema v7 metadata.
 - Rejects a file not present in the device's authorized manifest, even if the file ID exists.
@@ -1785,7 +1785,7 @@ Implemented revision-safe route:
 
 ### 8.5 Time configuration
 
-`GET /api/v1/eink/devices/{deviceId}/time-config`
+`GET /api/v1/eink/tablets/{tablet_id}/time-config`
 
 The implemented response contains a configured time-zone identifier, workdays, one shift window, poll interval, retry limits, an opaque configuration revision, and an empty dated-exceptions list. The clock/NTP/RTC strategy, cross-platform zone mapping, multiple windows, and dated exceptions must be chosen with firmware support.
 
@@ -1818,7 +1818,7 @@ There is intentionally no route to upload tool checks, local statuses, or commen
 
 ### 8.7 Operational contact metadata
 
-Authenticated ping, status, and event calls record only bounded last-contact,
+Ping, status, and event calls record only bounded last-contact,
 battery, firmware, local-IP, and RSSI observations in the device registry. This
 operational metadata is exposed to the Windows User Terminals monitor and cannot
 mutate planning, package, workflow, quantity, execution, or backlog state. There
@@ -1828,7 +1828,7 @@ is no separate general telemetry mutation endpoint.
 
 | Error code | HTTP | Device behavior |
 |---|---:|---|
-| `device_resource_not_found` | `404` | Missing, invalid, revoked, or mismatched device credential/resource; do not infer registration state. |
+| `device_resource_not_found` | `404` | Unknown, disabled, or mismatched TabletID/resource. |
 | `package_not_assigned` | `404` | Retain current verified package but do not activate it as current work. |
 | `service_unavailable` | `503` | Retain last-known-good content and follow bounded backoff. |
 
@@ -1845,7 +1845,7 @@ GET /api/tablets/{tablet_id}/status
 POST /api/tablets/{tablet_id}/events
 ```
 
-The authenticated GET status route, schema-v49 event-driven projection,
+The TabletID-identified GET status route, schema-v49 event-driven projection,
 schema-v52 setup-verification response projection, schema-v54 idempotent
 `SEND_TO_QC` POST, and schema-v55 repeat-inspection behavior are implemented. The shared event table is append-only and
 retains Server receipt time separately from optional Machine time. The physical
@@ -1897,10 +1897,10 @@ projection:
 resolved Machine/Run, or `NOT_REPORTED` when no session evidence exists.
 `protected_macro_version` is omitted when the Server has no reported version.
 These fields participate in `revision`. They expose no nonce, response code,
-Machine secret/key, bearer credential, protected-variable mapping, or algorithm
+Machine secret/key, protected-variable mapping, or algorithm
 internals; the response code remains confined to the `IN_SETUP` projection above.
 
-`response_code` is present only for the credential's assigned Machine and Run when the unique session is `PENDING`, unexpired, still tied to the current Offset Loader and approved NC hook, and its enabled Machine configuration still matches. The Server decrypts the Machine secret and derives the fixed-width response in memory; the session and response JSON contain no raw nonce, Machine key/secret, protected-variable number, or algorithm internals. Expired, invalidated, superseded, missing, or undecryptable contexts return `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE` without `response_code`. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
+`response_code` is present only for the TabletID's assigned Machine and Run when the unique session is `PENDING`, unexpired, still tied to the current Offset Loader and approved NC hook, and its enabled Machine configuration still matches. The Server decrypts the Machine secret and derives the fixed-width response in memory; the session and response JSON contain no raw nonce, Machine key/secret, protected-variable number, or algorithm internals. Expired, invalidated, superseded, missing, or undecryptable contexts return `EXPIRED`, `INVALIDATED`, or `UNAVAILABLE` without `response_code`. These values participate in `revision`. The field is omitted outside `IN_SETUP`.
 An expired session can never accept a late `SVS` or expose its response again.
 An exactly correlated `SVF` may be retained after expiry as fail-safe audit
 evidence; it changes the session from `EXPIRED` to `FAILED`, records
@@ -1978,8 +1978,7 @@ Request:
 ```
 
 The request must contain no timestamp, Machine ID, run ID, program ID, or
-Operation ID. The Server authenticates the enabled device credential, requires
-the credential subject to match `{tablet_id}`, resolves the bound Machine and
+Operation ID. The Server resolves the enabled `{tablet_id}`, its bound Machine and
 the `IN_SETUP_RUN` Production Run from authoritative state, and refuses an
 ambiguous or missing target. Single Edit Mode is not required because this is a
 scoped shop-floor operational command, not a planning edit.
@@ -2009,8 +2008,8 @@ Error behavior is bounded and device-scoped:
 | HTTP | Code | Meaning |
 |---:|---|---|
 | `400` | framework validation | Malformed JSON that cannot be parsed. |
-| `404` | `device_resource_not_found` | Unknown, disabled, revoked, or path/credential-mismatched tablet. |
-| `409` | `tablet_unassigned` / `tablet_no_current_run` | The authenticated tablet has no Machine or current Run. |
+| `404` | `device_resource_not_found` | Unknown, disabled, or mismatched TabletID. |
+| `409` | `tablet_unassigned` / `tablet_no_current_run` | The resolved TabletID has no Machine or current Run. |
 | `409` | `tablet_event_not_allowed` | The resolved current workflow state is not `IN_SETUP_RUN`. |
 | `422` | `tablet_event_invalid` | The JSON is not an object containing only `event_type`, including any client-supplied target/time field. |
 | `422` | `unsupported_tablet_event` | `event_type` is not exactly `SEND_TO_QC`. |
@@ -2153,17 +2152,17 @@ credentials receive `403` on this route.
 ## 11. Security requirements
 
 - Bind only to approved factory interfaces.
-- Do not rely on LAN location as authentication.
+- Tablet authentication is intentionally not part of this trusted-LAN MVP; spoofing TabletID or MAC is an accepted risk. Do not silently add a compensating tablet credential.
 - Use least-privilege caller capabilities.
 - Verify Edit Mode and concurrency server-side for every planning mutation; verify the separate operational preconditions and idempotency key for `SEND_TO_QC`.
-- Keep TV credentials read-only. Keep E-Ink credentials separate from human sessions and limited to assigned reads plus `SEND_TO_QC`.
-- Scope each device to its assigned Machine/package/run, prevent client-selected event targets, and support revocation.
+- Keep TV access read-only. TabletID grants only tablet-route identity and no Windows planning authority.
+- Resolve each enabled TabletID to its assigned Machine/package/run and prevent client-selected event targets.
 - Never return SQLite paths, network credentials, raw stack traces, or unrelated customer data. Return a Case Working Folder path only to an authorized Windows planning caller; omit it from TV, E-Ink, errors, and logs.
 - Redact authorization headers and tokens from logs.
 - Define request/body/file limits before accepting package or text content.
 - Prevent path traversal and content-type confusion for Working Folder/package files.
 
-TLS/certificate deployment, identity provider, login, token storage/rotation, CSRF/browser strategy, CORS, device enrollment, audit, and operator APIs are TBD.
+TLS/certificate deployment, human identity provider/login, CSRF/browser strategy, CORS, audit, and operator APIs are TBD. Tablet credentials are deliberately excluded from MVP.
 
 ## 12. Compatibility and contract tests
 
@@ -2172,8 +2171,8 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 - Use consumer contract tests for Windows, TV, simulator, and firmware.
 - Preserve additive compatibility within `/api/v1`; removals or semantic changes require a new version or an explicit coordinated migration.
 - Include schema/version fields in long-lived E-Ink JSON and manifest formats.
-- Maintain simulator fixtures for unchanged, changed, offline, revoked, missing SD, corrupt manifest, checksum mismatch, interrupted download, and new-revision behavior.
-- Test that TV credentials and E-Ink credentials cannot call every mutation path except the exact authorized E-Ink `SEND_TO_QC` route; test cross-device/run targeting, revocation, invalid state, and retry idempotency.
+- Maintain simulator fixtures for unchanged, changed, offline, disabled, missing SD, corrupt manifest, checksum mismatch, interrupted download, and new-revision behavior.
+- Test tokenless TabletID reads, MAC-only discovery, disabled TabletID rejection, no credential fields/storage, Server-resolved `SEND_TO_QC` targeting, invalid state, and retry idempotency. Test separately that TabletID does not satisfy Windows Edit Mode authority.
 
 ## 13. MVP route coverage and implementation gate
 
@@ -2192,7 +2191,7 @@ TLS/certificate deployment, identity provider, login, token storage/rotation, CS
 | Single Edit Mode | `/edit-mode`, `/edit-mode/requests`, request outcome/decision, `/edit-mode/release` | Implemented development identity headers; Windows-only credential policy pending auth. |
 | TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
-| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; authenticated `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, token-plus-MAC bootstrap, Production-Run-backed physical status, and idempotent `SEND_TO_QC`; it is the only approved device mutation. |
+| E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, MAC-only discovery/bootstrap, Production-Run-backed physical status, and idempotent `SEND_TO_QC`; it is the only approved device mutation. |
 | QC Queue | `/qc-queue`, `/qc-queue/{productionRunId}/decision` | Windows read in View Mode; PASS/FAIL require the active editor and append user-attributed events. |
 
 Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, E-Ink simulator, and Windows QC Queue described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.

@@ -1,12 +1,19 @@
 [CmdletBinding()]
 param(
-    [string] $OutputPath = (Join-Path (Split-Path -Parent $PSScriptRoot) `
-        '.diagnostics\vf3ss-verification-v9.local.json'),
+    [string] $OutputPath,
     [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# Windows PowerShell 5.1 does not reliably populate $PSScriptRoot while it is
+# evaluating default parameter expressions. Resolve the default after binding,
+# when the automatic variable is available.
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $repositoryRoot = Split-Path -Parent $PSScriptRoot
+    $OutputPath = Join-Path $repositoryRoot '.diagnostics\vf3ss-verification-v9.local.json'
+}
 
 $random = [Security.Cryptography.RandomNumberGenerator]::Create()
 $bytes = New-Object byte[] 32

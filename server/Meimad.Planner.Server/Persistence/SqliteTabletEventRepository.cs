@@ -9,7 +9,6 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
 {
     public async Task<TabletEventResult> SubmitSendToQcAsync(
         SubmitTabletEventCommand command,
-        string credentialHash,
         DateTimeOffset serverReceivedAt,
         CancellationToken cancellationToken)
     {
@@ -17,10 +16,7 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
         await using var transaction = connection.BeginTransaction(deferred: false);
         var device = await ReadDeviceAsync(
             connection, transaction, command.TabletId, cancellationToken);
-        if (device is null
-            || !device.IsEnabled
-            || string.IsNullOrWhiteSpace(device.CredentialHash)
-            || !TabletEventService.FixedEquals(credentialHash, device.CredentialHash))
+        if (device is null || !device.IsEnabled)
         {
             throw new TabletEventResourceNotFoundException();
         }
@@ -95,7 +91,7 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
         await using var query = connection.CreateCommand();
         query.Transaction = transaction;
         query.CommandText = """
-            SELECT id,credential_hash,is_enabled,machine_id
+            SELECT id,is_enabled,machine_id
             FROM device_registry
             WHERE device_type='eink' AND tablet_id=$tabletId;
             """;
@@ -104,9 +100,8 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
         return await reader.ReadAsync(cancellationToken)
             ? new(
                 reader.GetString(0),
-                reader.IsDBNull(1) ? null : reader.GetString(1),
-                reader.GetBoolean(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3))
+                reader.GetBoolean(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2))
             : null;
     }
 
@@ -194,7 +189,7 @@ internal sealed class SqliteTabletEventRepository(SqliteDatabase database)
         value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
 
     private sealed record DeviceRow(
-        string DeviceId, string? CredentialHash, bool IsEnabled, string? MachineId);
+        string DeviceId, bool IsEnabled, string? MachineId);
 
     private sealed record RunRow(string RunId, string RunStatus, bool MachineIsActive);
     private sealed record LatestEventRow(

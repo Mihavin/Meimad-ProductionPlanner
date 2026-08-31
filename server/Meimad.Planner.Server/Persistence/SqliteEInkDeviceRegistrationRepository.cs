@@ -17,7 +17,6 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
 
     public async Task<EInkDeviceRegistration> CreateAsync(
         EInkDeviceRegistration registration,
-        string credentialHash,
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
     {
@@ -29,10 +28,10 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO device_registry (
-                id, tablet_id, hardware_id, device_type, device_name, machine_id, credential_hash,
+                id, tablet_id, hardware_id, device_type, device_name, machine_id,
                 access_mode, is_enabled, version, created_at, updated_at)
             VALUES (
-                $id, $tabletId, $hardwareId, 'eink', $name, $machineId, $credentialHash,
+                $id, $tabletId, $hardwareId, 'eink', $name, $machineId,
                 'read_only', 1, 1, $createdAt, $updatedAt);
             """;
         Bind(command, "$id", registration.DeviceId);
@@ -40,7 +39,6 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         Bind(command, "$hardwareId", registration.HardwareId);
         Bind(command, "$name", registration.DeviceName);
         Bind(command, "$machineId", registration.MachineId);
-        Bind(command, "$credentialHash", credentialHash);
         Bind(command, "$createdAt", Iso(registration.CreatedAt));
         Bind(command, "$updatedAt", Iso(registration.UpdatedAt));
         try
@@ -70,7 +68,6 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         string deviceId,
         string? machineId,
         bool isEnabled,
-        string? credentialHash,
         DateTimeOffset updatedAt,
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
@@ -85,14 +82,12 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
             UPDATE device_registry
             SET machine_id = $machineId,
                 is_enabled = $isEnabled,
-                credential_hash = COALESCE($credentialHash, credential_hash),
                 version = version + 1,
                 updated_at = $updatedAt
             WHERE id = $deviceId AND device_type = 'eink';
             """;
         Bind(command, "$machineId", machineId);
         Bind(command, "$isEnabled", isEnabled);
-        Bind(command, "$credentialHash", credentialHash);
         Bind(command, "$updatedAt", Iso(updatedAt));
         Bind(command, "$deviceId", deviceId);
         int changed;
@@ -120,8 +115,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
                 new
                 {
                     machineId,
-                    isEnabled,
-                    credentialRotated = credentialHash is not null
+                    isEnabled
                 }), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return value;
@@ -215,8 +209,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         return values;
     }
 
-    public async Task<EInkDeviceRegistration?> FindEnabledByCredentialAndHardwareAsync(
-        string credentialHash,
+    public async Task<EInkDeviceRegistration?> FindEnabledByHardwareAsync(
         string hardwareId,
         CancellationToken cancellationToken)
     {
@@ -226,9 +219,8 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
             SELECT id, tablet_id, hardware_id, device_name, machine_id, is_enabled, version, created_at, updated_at
             FROM device_registry
             WHERE device_type = 'eink' AND is_enabled = 1
-              AND credential_hash = $credentialHash AND hardware_id = $hardwareId;
+              AND hardware_id = $hardwareId;
             """;
-        Bind(command, "$credentialHash", credentialHash);
         Bind(command, "$hardwareId", hardwareId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;

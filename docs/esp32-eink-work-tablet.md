@@ -16,7 +16,7 @@ The Color E-Ink Work Tablet is a low-cost, low-power operational display and loc
 
 It shows the Machine backlog, current operation, setup package, tool checklist, NC/text files, offsets, instructions, and local notes. It is not a planning editor and never becomes an authoritative planning data source. Its one Server write is the scoped `SEND_TO_QC` operational event.
 
-The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside the setup-verification handshake. The authenticated status API supplies a derived fixed-width response only for a valid pending session. The firmware renders that bounded projection as a prominent code or an explicit expired/invalidated/unavailable setup block. It never receives the raw nonce, Machine secret/key, protected-variable mapping, or algorithm internals and never becomes workflow authority.
+The tablet displays Server-projected workflow state. A persistent CNC Setup/Production variable is removed and is never read by the tablet. Protected temporary CNC variables may be used only inside the setup-verification handshake. The TabletID-identified status API supplies a derived fixed-width response only for a valid pending session. The firmware renders that bounded projection as a prominent code or an explicit expired/invalidated/unavailable setup block. It never receives the raw nonce, Machine secret/key, protected-variable mapping, or algorithm internals and never becomes workflow authority.
 
 Primary goals are:
 
@@ -252,7 +252,7 @@ GET /api/eink/devices/{device_id}/package-file/{file_id}
 GET /api/eink/devices/{device_id}/time-config
 ```
 
-The Server implements the versioned `/api/v1/eink/devices/{deviceId}/...` forms documented in [API contract](api-contract.md), including revision-qualified manifest/file routes. Authentication is by a per-device revocable bearer token; only its SHA-256 hash is persisted. A bound device can read only the package associated with the first unfinished Operation on its assigned Machine.
+The Server implements the versioned `/api/v1/eink/tablets/{tablet_id}/...` forms documented in [API contract](api-contract.md), including revision-qualified manifest/file routes. TabletID is a non-secret identifier; MAC is discovery/mapping metadata, and the trusted-LAN MVP intentionally has no tablet authentication. An enabled TabletID can read only the package associated with the first unfinished Operation on its assigned Machine.
 
 Structured JSON remains the implemented v1 Server package/read baseline. A pre-rendered panel asset may be added only through an explicit compatible contract decision because it changes firmware complexity, fonts, pagination, server rendering, payload size, and display-specific coupling. The browser simulator at `/eink-simulator/` now follows the implemented physical-firmware adapter instead: registration ping, physical tablet status, and the exact scoped `SEND_TO_QC` event. It mirrors the current 800×480 monochrome production and Service/Debug layouts plus the D1/D2/D4 short/hold controls. Its canvas renderer uses the same classic TFT_eSPI 5×7 glyph table, whole-pixel `textSize` scales, and drawing coordinates as the firmware; browser font families, weights, and line boxes do not determine the panel layout. Package-manifest/file/checksum behavior remains covered by Server API tests rather than being presented as a physical firmware screen that does not yet exist. The simulator does not claim physical SD staging, atomic activation, deep sleep, E-Ink refresh timing, button electronics, or local annotation behavior.
 
@@ -301,7 +301,7 @@ Server-side credential rotation/revocation and Machine/spare binding are impleme
 
 ## 12. Security boundary
 
-- A device credential grants only the read-only Machine/package resources assigned to that tablet plus `SEND_TO_QC` for the Server-resolved eligible run.
+- TabletID identifies the tablet for its Server-resolved read-only Machine/package resources and `SEND_TO_QC` target. It is not a credential. The trusted-LAN MVP intentionally has no tablet authentication token, key, password, certificate, session, or hidden secret.
 - Do not expose unrelated customer, drawing, or engineering data.
 - Limit cached official data and support immediate credential revocation for a lost device.
 - Keep official and local data in separate storage namespaces.

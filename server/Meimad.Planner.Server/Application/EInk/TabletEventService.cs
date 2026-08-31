@@ -1,11 +1,7 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace Meimad.Planner.Server.Application.EInk;
 
 internal sealed record SubmitTabletEventCommand(
     string TabletId,
-    string BearerToken,
     string EventType,
     decimal? BatteryVoltage,
     int? BatteryPercent,
@@ -23,7 +19,6 @@ internal interface ITabletEventRepository
 {
     Task<TabletEventResult> SubmitSendToQcAsync(
         SubmitTabletEventCommand command,
-        string credentialHash,
         DateTimeOffset serverReceivedAt,
         CancellationToken cancellationToken);
 }
@@ -45,21 +40,9 @@ internal sealed class TabletEventService(
 
         return repository.SubmitSendToQcAsync(
             command,
-            HashToken(command.BearerToken),
             timeProvider.GetUtcNow(),
             cancellationToken);
     }
-
-    internal static bool FixedEquals(string left, string right)
-    {
-        var leftBytes = Encoding.ASCII.GetBytes(left);
-        var rightBytes = Encoding.ASCII.GetBytes(right);
-        return leftBytes.Length == rightBytes.Length
-            && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
-    }
-
-    private static string HashToken(string token) => Convert.ToHexString(
-        SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty))).ToLowerInvariant();
 }
 
 internal sealed class TabletEventValidationException(string code, string message)

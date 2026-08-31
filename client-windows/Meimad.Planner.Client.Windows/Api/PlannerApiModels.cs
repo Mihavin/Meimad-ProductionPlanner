@@ -1666,7 +1666,6 @@ internal sealed record UserTerminal(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? RegistrationToken,
     DateTimeOffset? LastSeenAt = null,
     DateTimeOffset? LastServerContactAt = null,
     string? FirmwareVersion = null,
@@ -1685,7 +1684,7 @@ internal sealed record UserTerminal(
         : string.IsNullOrWhiteSpace(MachineName)
             ? MachineId
             : $"{MachineNumber} — {MachineName}";
-    public string StateText => IsEnabled ? "Enabled" : "Revoked";
+    public string StateText => IsEnabled ? "Enabled" : "Disabled";
     public string LastSeenText => LastSeenAt?.ToLocalTime().ToString("g") ?? "Never";
     public string FirmwareText => FirmwareVersion ?? "Not reported";
     public string BatteryText => BatteryVoltage is null && BatteryPercent is null
@@ -1695,10 +1694,10 @@ internal sealed record UserTerminal(
         ? "Not reported"
         : $"{WifiIpAddress ?? "IP unavailable"}{(WifiRssi is null ? string.Empty : $" / {WifiRssi} dBm")}";
     public string HealthText => !IsEnabled
-        ? "Credential revoked"
+        ? "Disabled"
         : LastServerContactAt is null
-            ? "No authenticated contact"
-            : $"Authenticated contact {LastServerContactAt.Value.ToLocalTime():g}";
+            ? "No server contact"
+            : $"Server contact {LastServerContactAt.Value.ToLocalTime():g}";
     public string CurrentRunText => CurrentProductionRunId ?? "No current run";
     public string WorkflowText => CurrentWorkflowStatus ?? "Unavailable";
     public string PackageRevisionText => CurrentPackageRevision ?? "No current package";
@@ -1706,7 +1705,7 @@ internal sealed record UserTerminal(
 
 internal sealed record CreateUserTerminalRequest(string DeviceName, string? MachineId, string? HardwareId);
 
-internal sealed record UpdateUserTerminalRequest(string? MachineId, bool IsEnabled, bool RotateCredential);
+internal sealed record UpdateUserTerminalRequest(string? MachineId, bool IsEnabled);
 
 internal sealed record QcQueueItem(
     string ProductionRunId,

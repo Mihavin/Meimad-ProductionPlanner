@@ -2,7 +2,7 @@ namespace Meimad.Planner.Server.Application.EInk;
 
 internal sealed record EInkVersionResponse(
     int SchemaVersion,
-    string DeviceId,
+    string TabletId,
     string? MachineId,
     string MachineScreenRevision,
     EInkVersionPackage? Package,
@@ -12,7 +12,7 @@ internal sealed record EInkVersionPackage(string PackageId, string Revision);
 
 internal sealed record EInkMachineScreenResponse(
     int SchemaVersion,
-    string DeviceId,
+    string TabletId,
     string MachineScreenRevision,
     DateTimeOffset GeneratedAt,
     EInkMachineResponse? Machine,

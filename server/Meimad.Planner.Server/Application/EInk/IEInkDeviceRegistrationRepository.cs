@@ -6,7 +6,6 @@ internal interface IEInkDeviceRegistrationRepository
 {
     Task<EInkDeviceRegistration> CreateAsync(
         EInkDeviceRegistration registration,
-        string credentialHash,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
@@ -14,15 +13,13 @@ internal interface IEInkDeviceRegistrationRepository
         string deviceId,
         string? machineId,
         bool isEnabled,
-        string? credentialHash,
         DateTimeOffset updatedAt,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<EInkDeviceRegistration>> ListAsync(CancellationToken cancellationToken);
 
-    Task<EInkDeviceRegistration?> FindEnabledByCredentialAndHardwareAsync(
-        string credentialHash,
+    Task<EInkDeviceRegistration?> FindEnabledByHardwareAsync(
         string hardwareId,
         CancellationToken cancellationToken);
 
@@ -67,9 +64,4 @@ internal sealed record CreateEInkDeviceRegistrationCommand(
 
 internal sealed record UpdateEInkDeviceRegistrationCommand(
     string? MachineId,
-    bool IsEnabled,
-    bool RotateCredential);
-
-internal sealed record EInkDeviceRegistrationResult(
-    EInkDeviceRegistration Registration,
-    string? RegistrationToken);
+    bool IsEnabled);

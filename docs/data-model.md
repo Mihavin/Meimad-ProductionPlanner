@@ -92,7 +92,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Edit Token | `edit_tokens` | Singleton row `id = 1`; one nullable holder and monotonically increasing generation. |
 | Edit Transfer Request | `edit_requests` | Durable request/outcome; a partial unique index permits only one `pending` row. |
 | Application Setting | `application_settings` | Text key/value storage envelope. |
-| Device Registry | `device_registry` | `eink` or `tv`, always `read_only`; optional Machine binding and credential hash. E-Ink rows also retain bounded last-contact firmware, battery, IP, and RSSI observations for Windows monitoring. |
+| Device Registry | `device_registry` | `eink` or `tv`, always `read_only`; optional Machine binding. `credential_hash` is unused and NULL for E-Ink rows; TabletID is their non-secret identity and MAC is discovery/mapping metadata. E-Ink rows also retain bounded last-contact firmware, battery, IP, and RSSI observations for Windows monitoring. |
 | E-Ink Package Revision | `eink_package_revisions` | Required Batch Operation; unique revision per Operation; immutable Machine/Case/Batch/Operation snapshot after publication. |
 | E-Ink Package File | `eink_package_files` | Required package revision; asset role, stable file ID, safe logical/storage-relative paths, length, media type, order, and SHA-256; no bytes/BLOB. |
 
@@ -283,7 +283,7 @@ Implemented Batch Operation scalar and dependency snapshots do not change when t
 | `isActive` | Implemented boolean. Inactive Machines reject new/moved assignments. |
 | `displayEnabled` | Implemented boolean controlling whether operational displays should include the Machine. |
 | `picturePath` | Implemented optional absolute external path in schema v8 (`picture_reference`). SQLite stores no image bytes; the Server streams PNG/JPEG/BMP/GIF content to the Windows client. |
-| `deviceId` | Implemented read projection from the optional enabled E-Ink device binding. Active-editor binding/revocation/rotation is implemented through the device-registration API. |
+| `deviceId` | Implemented read projection from the optional enabled E-Ink device binding. Active-editor binding and enable/disable administration are implemented through the device-registration API. |
 | `backlogCount` | Implemented derived count, never manually stored. |
 | `executionMode` | Implemented schema-v34 token: `CNC_GCODE` or `MANUAL`. Existing rows migrate to `MANUAL`; no Machine characteristics are inferred. |
 | `supportedPostprocessorIds` | Implemented projection of explicit rows in `machine_supported_postprocessors`; an empty list means no configured G-code compatibility. |
@@ -450,10 +450,10 @@ The following are logical support records, not planning authority:
 - Implemented immutable opaque Device ID, Server-assigned short Tablet ID, and optional normalized physical Wi-Fi MAC hardware ID. Legacy registrations receive a visible `legacy-...` Tablet ID and must be provisioned with a physical MAC before bootstrap.
 - Optional assigned Machine; a partial unique index permits at most one enabled E-Ink device per Machine.
 - Implemented read-only package/planning access level and enabled/revoked state; the scoped `SEND_TO_QC` route is the only device mutation and is not general write access.
-- The Server generates a high-entropy `mp_eink_...` bearer token, stores only its SHA-256 hash, and returns plaintext only on creation or rotation.
+- Schema v62 removes E-Ink authentication: it clears legacy E-Ink credential hashes. TabletID is a non-secret identifier, MAC is optional discovery/mapping metadata, and neither value grants Windows planning authority.
 - Active Windows Edit Mode authority is required to create, bind/unbind, enable/revoke, or rotate a registration; these changes are atomic with the authority check.
 - Authenticated bootstrap/status/event calls record last seen/contact and bounded supplied battery/firmware/IP/RSSI metadata as operational fields only. Firmware profile history and telemetry retention remain open. Schema v54 implements the authenticated, idempotent `SEND_TO_QC` command route.
-- Authenticated physical status reads resolve the enabled credential and path Tablet ID to its bound Machine, first non-final Machine-backlog Production Run, current Program, and exactly one output. The response revision is a deterministic hash of tablet-visible identity, Machine, Run, Program/output, workflow, and status fields; polling/contact timestamps do not change it. Multi-output Programs are rejected rather than reduced to one output by an implicit choice.
+- Physical status reads resolve the enabled path TabletID to its bound Machine, first non-final Machine-backlog Production Run, current Program, and exactly one output. The response revision is a deterministic hash of tablet-visible identity, Machine, Run, Program/output, workflow, and status fields; polling/contact timestamps do not change it. Multi-output Programs are rejected rather than reduced to one output by an implicit choice.
 
 ### 10.2 Operational Workflow Events and Tablet QC target
 

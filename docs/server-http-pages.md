@@ -7,7 +7,7 @@ This is the implemented inventory of browser-facing pages served by the Meimad P
 | URL | Purpose | Access and behavior |
 |---|---|---|
 | `http://127.0.0.1:5080/tv-dashboard/` | Full-screen Machine Status TV dashboard. | Factory-LAN, read-only operational display. It has no forms or edit controls, reads the TV projection, and receives live Machine updates. HTML, CSS, and JavaScript responses use no-cache headers. |
-| `http://127.0.0.1:5080/eink-simulator/` | Physical-firmware simulator for the current 800×480 monochrome E-Ink tablet. | Enter the registered hardware MAC and scoped device token. The page obtains the Server-assigned Tablet ID, renders the firmware production/Service screens, and provides the same D1/D2/D4 short/hold actions plus Reset. Bench fixtures remain local. Official Server access is limited to registration/status reads and the exact guarded `SEND_TO_QC` event; it is not a planning editor, package editor, or CNC-transfer page. |
+| `http://127.0.0.1:5080/eink-simulator/` | Physical-firmware simulator for the current 800×480 monochrome E-Ink tablet. | Enter the registered hardware MAC; no tablet credential is used. The page obtains the mapped TabletID, renders the firmware production/Service screens, and provides the same D1/D2/D4 short/hold actions plus Reset. Bench fixtures remain local. Official Server access is limited to registration/status reads and the exact guarded `SEND_TO_QC` event; it is not a planning editor, package editor, or CNC-transfer page. |
 | `http://127.0.0.1:5080/kitaron-setup/` | Configure/test the Server-owned read-only Kitaron SQL connection, mapping, and synchronization. | **Loopback only.** It is available from the Server PC through `127.0.0.1`/localhost. Non-local requests receive `404`. It stores the SQL secret through the Server protection boundary and may synchronize permitted Kitaron data into Meimad; Kitaron itself is always opened read-only. |
 
 Use the trailing `/` shown above. Each page also serves its own `styles.css` and `app.js` below the same path.
@@ -24,7 +24,7 @@ Example response:
 {
   "status": "healthy",
   "service": "Meimad Planner Server",
-  "version": "0.1.48",
+  "version": "0.1.49",
   "serverTimeUtc": "2026-08-28T12:00:00Z"
 }
 ```

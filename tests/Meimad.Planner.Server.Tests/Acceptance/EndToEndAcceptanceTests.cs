@@ -15,7 +15,7 @@ namespace Meimad.Planner.Server.Tests.Acceptance;
 public sealed class EndToEndAcceptanceTests
 {
     private const string DeviceId = "acceptance-eink-01";
-    private const string DeviceToken = "mp_eink_acceptance-token";
+    private const string TabletId = "4101";
 
     [Fact]
     public async Task Acceptance_dataset_exercises_server_owned_end_to_end_read_models()
@@ -88,14 +88,14 @@ public sealed class EndToEndAcceptanceTests
                 Assert.Equal(HttpStatusCode.MethodNotAllowed, forbiddenTvWrite.StatusCode);
             }
 
-            using (var versionResponse = await client.SendAsync(DeviceGet($"/api/v1/eink/devices/{DeviceId}/version")))
+            using (var versionResponse = await client.SendAsync(DeviceGet($"/api/v1/eink/tablets/{TabletId}/version")))
             {
                 Assert.Equal(HttpStatusCode.OK, versionResponse.StatusCode);
             }
 
             string downloadPath;
             using (var manifestResponse = await client.SendAsync(DeviceGet(
-                       $"/api/v1/eink/devices/{DeviceId}/package-manifest")))
+                       $"/api/v1/eink/tablets/{TabletId}/package-manifest")))
             {
                 Assert.Equal(HttpStatusCode.OK, manifestResponse.StatusCode);
                 using var manifest = JsonDocument.Parse(await manifestResponse.Content.ReadAsStringAsync());
@@ -111,13 +111,6 @@ public sealed class EndToEndAcceptanceTests
                 var bytes = await fileResponse.Content.ReadAsByteArrayAsync();
                 Assert.Equal(Sha256(bytes), fileResponse.Headers.GetValues(
                     "X-Meimad-Checksum-SHA256").Single());
-            }
-
-            using (var forbiddenDeviceMutation = new HttpRequestMessage(HttpMethod.Post, "/api/v1/cases"))
-            {
-                forbiddenDeviceMutation.Headers.Authorization = new("Bearer", DeviceToken);
-                using var response = await client.SendAsync(forbiddenDeviceMutation);
-                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             }
 
             var backupService = application.Services.GetRequiredService<SqliteBackupService>();
@@ -160,7 +153,6 @@ public sealed class EndToEndAcceptanceTests
         command.Parameters.AddWithValue("$downtimeFutureEnd", start.AddDays(1).AddHours(12).ToString("O"));
         command.Parameters.AddWithValue("$downtimeInspectionStart", start.AddHours(14).ToString("O"));
         command.Parameters.AddWithValue("$downtimeInspectionEnd", start.AddHours(15).ToString("O"));
-        command.Parameters.AddWithValue("$credentialHash", Sha256(Encoding.UTF8.GetBytes(DeviceToken)));
         command.Parameters.AddWithValue("$publishedAt", now.ToString("O"));
         command.Parameters.AddWithValue("$packageByteLength", packageBytes.LongLength);
         command.Parameters.AddWithValue("$packageSha256", Sha256(packageBytes));
@@ -258,11 +250,7 @@ public sealed class EndToEndAcceptanceTests
     }
 
     private static HttpRequestMessage DeviceGet(string path)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new("Bearer", DeviceToken);
-        return request;
-    }
+        => new(HttpMethod.Get, path);
 
     private static string Sha256(byte[] bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();

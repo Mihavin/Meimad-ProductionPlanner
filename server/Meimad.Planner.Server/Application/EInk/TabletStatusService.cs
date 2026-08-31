@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Meimad.Planner.Server.Application.Cnc;
@@ -31,7 +30,6 @@ internal sealed class TabletStatusService
 
     internal async Task<TabletStatusResponse> ReadAsync(
         string tabletId,
-        string bearerToken,
         DateTimeOffset contactedAt,
         decimal? batteryVoltage,
         int? batteryPercent,
@@ -41,10 +39,7 @@ internal sealed class TabletStatusService
         CancellationToken cancellationToken = default)
     {
         var source = await repository.ReadAsync(tabletId.Trim(), cancellationToken);
-        if (source is null
-            || !source.IsEnabled
-            || string.IsNullOrWhiteSpace(source.CredentialHash)
-            || !FixedEquals(HashToken(bearerToken), source.CredentialHash))
+        if (source is null || !source.IsEnabled)
         {
             throw new TabletStatusResourceNotFoundException();
         }
@@ -191,16 +186,6 @@ internal sealed class TabletStatusService
         return BinaryPrimitives.ReadUInt32BigEndian(hash);
     }
 
-    private static string HashToken(string token) => Convert.ToHexString(
-        SHA256.HashData(Encoding.UTF8.GetBytes(token ?? string.Empty))).ToLowerInvariant();
-
-    private static bool FixedEquals(string left, string right)
-    {
-        var leftBytes = Encoding.ASCII.GetBytes(left);
-        var rightBytes = Encoding.ASCII.GetBytes(right);
-        return leftBytes.Length == rightBytes.Length
-            && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
-    }
 }
 
 internal sealed record TabletStatusResponse(

@@ -46,7 +46,6 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
         return new TabletStatusSource(
             device.DeviceId,
             device.TabletId,
-            device.CredentialHash,
             device.IsEnabled,
             device.Machine,
             run,
@@ -64,7 +63,7 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT device.id, device.tablet_id, device.credential_hash, device.is_enabled,
+            SELECT device.id, device.tablet_id, device.is_enabled,
                    machine.id, machine.number, machine.name, machine.is_active
             FROM device_registry device
             LEFT JOIN machines machine ON machine.id = device.machine_id
@@ -80,13 +79,12 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
         return new DeviceRow(
             reader.GetString(0),
             reader.GetString(1),
-            reader.IsDBNull(2) ? null : reader.GetString(2),
-            reader.GetBoolean(3),
-            reader.IsDBNull(4)
+            reader.GetBoolean(2),
+            reader.IsDBNull(3)
                 ? null
                 : new TabletStatusMachineSource(
-                    reader.GetString(4), reader.GetString(5), reader.GetString(6),
-                    reader.GetBoolean(7)));
+                    reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                    reader.GetBoolean(6)));
     }
 
     private static async Task<TabletStatusRunSource?> ReadRunAsync(
@@ -237,7 +235,6 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
     private sealed record DeviceRow(
         string DeviceId,
         string TabletId,
-        string? CredentialHash,
         bool IsEnabled,
         TabletStatusMachineSource? Machine);
 }

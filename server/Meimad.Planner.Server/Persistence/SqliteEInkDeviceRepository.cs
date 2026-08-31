@@ -17,12 +17,12 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
     }
 
     public async Task<EInkDeviceSource?> ReadAsync(
-        string deviceId,
+        string tabletId,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: true);
-        var device = await ReadDeviceAsync(connection, transaction, deviceId, cancellationToken);
+        var device = await ReadDeviceAsync(connection, transaction, tabletId, cancellationToken);
         if (device is null)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -82,8 +82,8 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
 
         return new EInkDeviceSource(
             device.DeviceId,
+            device.TabletId,
             device.DeviceName,
-            device.CredentialHash,
             device.IsEnabled,
             device.MachineId,
             machine?.Machine,
@@ -95,23 +95,23 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
     private static async Task<DeviceRow?> ReadDeviceAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        string deviceId,
+        string tabletId,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT id, device_name, credential_hash, is_enabled, machine_id, updated_at
+            SELECT id, tablet_id, device_name, is_enabled, machine_id, updated_at
             FROM device_registry
-            WHERE id = $deviceId AND device_type = 'eink';
+            WHERE tablet_id = $tabletId AND device_type = 'eink';
             """;
-        command.Parameters.AddWithValue("$deviceId", deviceId);
+        command.Parameters.AddWithValue("$tabletId", tabletId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
             ? new DeviceRow(
                 reader.GetString(0),
                 reader.GetString(1),
-                NullableString(reader, 2),
+                reader.GetString(2),
                 reader.GetBoolean(3),
                 NullableString(reader, 4),
                 reader.GetString(5))
@@ -314,8 +314,8 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
 
     private sealed record DeviceRow(
         string DeviceId,
+        string TabletId,
         string DeviceName,
-        string? CredentialHash,
         bool IsEnabled,
         string? MachineId,
         string UpdatedAt);

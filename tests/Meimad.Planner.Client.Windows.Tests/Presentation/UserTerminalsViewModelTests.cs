@@ -24,12 +24,11 @@ public sealed class UserTerminalsViewModelTests
         Assert.False(viewModel.SaveCommand.CanExecute(null));
         Assert.False(viewModel.MarkSpareCommand.CanExecute(null));
         Assert.False(viewModel.ToggleEnabledCommand.CanExecute(null));
-        Assert.False(viewModel.RotateCredentialCommand.CanExecute(null));
         Assert.Contains("monitoring only", viewModel.EditModeText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Edit_mode_enables_assignment_revoke_rotation_and_spare_actions()
+    public async Task Edit_mode_enables_assignment_disable_and_spare_actions()
     {
         var api = new FakeApiClient([Terminal()], [Machine()]);
         var viewModel = new UserTerminalsViewModel();
@@ -41,14 +40,13 @@ public sealed class UserTerminalsViewModelTests
         Assert.True(viewModel.SaveCommand.CanExecute(null));
         Assert.True(viewModel.MarkSpareCommand.CanExecute(null));
         Assert.True(viewModel.ToggleEnabledCommand.CanExecute(null));
-        Assert.True(viewModel.RotateCredentialCommand.CanExecute(null));
         Assert.False(viewModel.CanEditIdentity);
     }
 
     private static UserTerminal Terminal() => new(
         "device-1", "3041", "A4:CF:12:83:76:91", "Tablet One", "machine-1",
         true, 1, DateTimeOffset.Parse("2026-08-26T08:00:00Z"),
-        DateTimeOffset.Parse("2026-08-26T08:00:00Z"), null,
+        DateTimeOffset.Parse("2026-08-26T08:00:00Z"),
         DateTimeOffset.Parse("2026-08-26T09:00:00Z"),
         DateTimeOffset.Parse("2026-08-26T09:00:00Z"),
         "0.1.0", 3.86m, 72, "192.168.50.31", -61, "M-1", "Mill One",

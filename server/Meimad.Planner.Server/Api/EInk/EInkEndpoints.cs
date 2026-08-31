@@ -6,44 +6,42 @@ internal static class EInkEndpoints
 {
     internal static void MapEInkEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/api/v1/eink/devices/{deviceId}/version", ReadVersionAsync);
-        endpoints.MapGet("/api/v1/eink/devices/{deviceId}/machine-screen", ReadMachineScreenAsync);
-        endpoints.MapGet("/api/v1/eink/devices/{deviceId}/package-manifest", ReadCurrentManifestAsync);
+        endpoints.MapGet("/api/v1/eink/tablets/{tabletId}/version", ReadVersionAsync);
+        endpoints.MapGet("/api/v1/eink/tablets/{tabletId}/machine-screen", ReadMachineScreenAsync);
+        endpoints.MapGet("/api/v1/eink/tablets/{tabletId}/package-manifest", ReadCurrentManifestAsync);
         endpoints.MapGet(
-            "/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/manifest",
+            "/api/v1/eink/tablets/{tabletId}/packages/{packageId}/revisions/{revision}/manifest",
             ReadExactManifestAsync);
         endpoints.MapGet(
-            "/api/v1/eink/devices/{deviceId}/packages/{packageId}/revisions/{revision}/files/{fileId}",
+            "/api/v1/eink/tablets/{tabletId}/packages/{packageId}/revisions/{revision}/files/{fileId}",
             ReadFileAsync);
-        endpoints.MapGet("/api/v1/eink/devices/{deviceId}/time-config", ReadTimeConfigAsync);
+        endpoints.MapGet("/api/v1/eink/tablets/{tabletId}/time-config", ReadTimeConfigAsync);
     }
 
     private static async Task<IResult> ReadVersionAsync(
-        string deviceId,
+        string tabletId,
         HttpContext context,
         EInkDeviceService service,
         CancellationToken cancellationToken) => await ReadResourceAsync(
         context,
         () => service.ReadVersionAsync(
-            deviceId,
-            ReadToken(context),
+            tabletId,
             cancellationToken),
         "no-cache");
 
     private static async Task<IResult> ReadMachineScreenAsync(
-        string deviceId,
+        string tabletId,
         HttpContext context,
         EInkDeviceService service,
         CancellationToken cancellationToken) => await ReadResourceAsync(
         context,
         () => service.ReadMachineScreenAsync(
-            deviceId,
-            ReadToken(context),
+            tabletId,
             cancellationToken),
         "no-cache");
 
     private static async Task<IResult> ReadCurrentManifestAsync(
-        string deviceId,
+        string tabletId,
         HttpContext context,
         EInkDeviceService service,
         CancellationToken cancellationToken)
@@ -51,10 +49,9 @@ internal static class EInkEndpoints
         try
         {
             var resource = await service.ReadCurrentManifestAsync(
-                deviceId,
-                ReadToken(context),
+                tabletId,
                 cancellationToken);
-            context.Response.Headers.ContentLocation = ExactManifestPath(deviceId, resource.Value);
+            context.Response.Headers.ContentLocation = ExactManifestPath(tabletId, resource.Value);
             return Conditional(context, resource, "no-cache");
         }
         catch (Exception exception) when (Known(exception))
@@ -64,7 +61,7 @@ internal static class EInkEndpoints
     }
 
     private static async Task<IResult> ReadExactManifestAsync(
-        string deviceId,
+        string tabletId,
         string packageId,
         string revision,
         HttpContext context,
@@ -72,15 +69,14 @@ internal static class EInkEndpoints
         CancellationToken cancellationToken) => await ReadResourceAsync(
         context,
         () => service.ReadExactManifestAsync(
-            deviceId,
+            tabletId,
             packageId,
             revision,
-            ReadToken(context),
             cancellationToken),
         "private, max-age=31536000, immutable");
 
     private static async Task<IResult> ReadFileAsync(
-        string deviceId,
+        string tabletId,
         string packageId,
         string revision,
         string fileId,
@@ -91,11 +87,10 @@ internal static class EInkEndpoints
         try
         {
             var file = await service.ResolveFileAsync(
-                deviceId,
+                tabletId,
                 packageId,
                 revision,
                 fileId,
-                ReadToken(context),
                 cancellationToken);
             context.Response.Headers.ETag = $"\"sha256:{file.Sha256}\"";
             context.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
@@ -112,14 +107,13 @@ internal static class EInkEndpoints
     }
 
     private static async Task<IResult> ReadTimeConfigAsync(
-        string deviceId,
+        string tabletId,
         HttpContext context,
         EInkDeviceService service,
         CancellationToken cancellationToken) => await ReadResourceAsync(
         context,
         () => service.ReadTimeConfigAsync(
-            deviceId,
-            ReadToken(context),
+            tabletId,
             cancellationToken),
         "no-cache");
 
@@ -151,18 +145,10 @@ internal static class EInkEndpoints
                 : Results.Ok(resource.Value);
     }
 
-    private static string ReadToken(HttpContext context)
-    {
-        var value = context.Request.Headers.Authorization.ToString();
-        return value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? value[7..].Trim()
-            : string.Empty;
-    }
-
     private static string ExactManifestPath(
-        string deviceId,
+        string tabletId,
         EInkManifestResponse manifest) =>
-        $"/api/v1/eink/devices/{Uri.EscapeDataString(deviceId)}/packages/{Uri.EscapeDataString(manifest.PackageId)}/revisions/{Uri.EscapeDataString(manifest.Revision)}/manifest";
+        $"/api/v1/eink/tablets/{Uri.EscapeDataString(tabletId)}/packages/{Uri.EscapeDataString(manifest.PackageId)}/revisions/{Uri.EscapeDataString(manifest.Revision)}/manifest";
 
     private static bool Known(Exception exception) => exception is
         EInkDeviceResourceNotFoundException or

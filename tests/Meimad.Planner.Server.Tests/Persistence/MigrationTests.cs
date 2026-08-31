@@ -63,7 +63,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(61L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(62L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -321,7 +321,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(61L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(62L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1534,7 +1534,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 62;";
+            command.CommandText = "PRAGMA user_version = 63;";
             await command.ExecuteNonQueryAsync();
         }
 
@@ -1555,7 +1555,7 @@ public sealed class MigrationTests
             DROP TRIGGER operational_anomaly_from_workflow_anomaly;
             DROP TRIGGER operational_anomaly_from_workflow_event;
             DROP TRIGGER operational_anomaly_from_expired_verification;
-            DROP TRIGGER operational_anomaly_from_tablet_revoke;
+            DROP TRIGGER IF EXISTS operational_anomaly_from_tablet_revoke;
             DROP TABLE operational_anomalies;
             DROP VIEW production_run_cycle_attempt_timing;
             DROP TRIGGER production_run_cycle_attempt_from_start;
@@ -1637,6 +1637,41 @@ public sealed class MigrationTests
             PRAGMA user_version=44;
             """;
         await command.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
+    public async Task Schema_v62_removes_legacy_eink_credentials_and_revocation_trigger()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO device_registry(
+                    id,tablet_id,hardware_id,device_type,device_name,credential_hash,is_enabled)
+                VALUES('legacy-eink','6201','AA:BB:CC:DD:EE:62','eink','Legacy E-Ink','legacy-hash',1);
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        await using (var transaction = connection.BeginTransaction())
+        {
+            await new SchemaV62TabletAuthenticationRemovalMigration().ApplyAsync(
+                connection, transaction, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+
+        await using var verify = connection.CreateCommand();
+        verify.CommandText = """
+            SELECT
+              (SELECT credential_hash IS NULL FROM device_registry WHERE id='legacy-eink'),
+              (SELECT COUNT(*) FROM sqlite_master
+               WHERE type='trigger' AND name='operational_anomaly_from_tablet_revoke');
+            """;
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(0, reader.GetInt32(1));
     }
 
     [Fact]

@@ -27,16 +27,15 @@ internal sealed class EInkDeviceService
     }
 
     internal async Task<EInkResource<EInkVersionResponse>> ReadVersionAsync(
-        string deviceId,
-        string token,
+        string tabletId,
         CancellationToken cancellationToken = default)
     {
-        var source = await AuthorizedAsync(deviceId, token, cancellationToken);
+        var source = await IdentifiedAsync(tabletId, cancellationToken);
         var screenRevision = Revision("screen", source.RevisionSeed);
         var timeRevision = TimeRevision();
         var value = new EInkVersionResponse(
             1,
-            source.DeviceId,
+            source.TabletId,
             source.MachineId,
             screenRevision,
             source.Package is null
@@ -47,11 +46,10 @@ internal sealed class EInkDeviceService
     }
 
     internal async Task<EInkResource<EInkMachineScreenResponse>> ReadMachineScreenAsync(
-        string deviceId,
-        string token,
+        string tabletId,
         CancellationToken cancellationToken = default)
     {
-        var source = await AuthorizedAsync(deviceId, token, cancellationToken);
+        var source = await IdentifiedAsync(tabletId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         TimelineProjection? timeline = null;
         if (source.MachineId is not null)
@@ -88,7 +86,7 @@ internal sealed class EInkDeviceService
         var screenRevision = Revision("screen", source.RevisionSeed);
         var value = new EInkMachineScreenResponse(
             1,
-            source.DeviceId,
+            source.TabletId,
             screenRevision,
             now,
             source.Machine is null ? null : new EInkMachineResponse(
@@ -103,41 +101,38 @@ internal sealed class EInkDeviceService
             source.Package is null ? null : new EInkScreenPackageResponse(
                 source.Package.PackageId,
                 source.Package.Revision,
-                ManifestPath(source.DeviceId, source.Package)));
+                ManifestPath(source.TabletId, source.Package)));
         return new EInkResource<EInkMachineScreenResponse>(value, EntityTag(value));
     }
 
     internal async Task<EInkResource<EInkManifestResponse>> ReadCurrentManifestAsync(
-        string deviceId,
-        string token,
+        string tabletId,
         CancellationToken cancellationToken = default)
     {
-        var source = await AuthorizedAsync(deviceId, token, cancellationToken);
+        var source = await IdentifiedAsync(tabletId, cancellationToken);
         return Manifest(source, source.Package
             ?? throw new EInkPackageNotAssignedException());
     }
 
     internal async Task<EInkResource<EInkManifestResponse>> ReadExactManifestAsync(
-        string deviceId,
+        string tabletId,
         string packageId,
         string revision,
-        string token,
         CancellationToken cancellationToken = default)
     {
-        var source = await AuthorizedAsync(deviceId, token, cancellationToken);
+        var source = await IdentifiedAsync(tabletId, cancellationToken);
         var package = ExactPackage(source, packageId, revision);
         return Manifest(source, package);
     }
 
     internal async Task<EInkFileDownload> ResolveFileAsync(
-        string deviceId,
+        string tabletId,
         string packageId,
         string revision,
         string fileId,
-        string token,
         CancellationToken cancellationToken = default)
     {
-        var source = await AuthorizedAsync(deviceId, token, cancellationToken);
+        var source = await IdentifiedAsync(tabletId, cancellationToken);
         var package = ExactPackage(source, packageId, revision);
         var file = package.Files.SingleOrDefault(value => value.FileId == fileId)
             ?? throw new EInkDeviceResourceNotFoundException();
@@ -165,11 +160,10 @@ internal sealed class EInkDeviceService
     }
 
     internal async Task<EInkResource<EInkTimeConfigResponse>> ReadTimeConfigAsync(
-        string deviceId,
-        string token,
+        string tabletId,
         CancellationToken cancellationToken = default)
     {
-        _ = await AuthorizedAsync(deviceId, token, cancellationToken);
+        _ = await IdentifiedAsync(tabletId, cancellationToken);
         var value = new EInkTimeConfigResponse(
             1,
             TimeRevision(),
@@ -186,17 +180,12 @@ internal sealed class EInkDeviceService
         return new EInkResource<EInkTimeConfigResponse>(value, EntityTag(value));
     }
 
-    private async Task<EInkDeviceSource> AuthorizedAsync(
-        string deviceId,
-        string token,
+    private async Task<EInkDeviceSource> IdentifiedAsync(
+        string tabletId,
         CancellationToken cancellationToken)
     {
-        var source = await repository.ReadAsync(deviceId, cancellationToken);
-        var suppliedHash = HashToken(token);
-        if (source is null
-            || !source.IsEnabled
-            || string.IsNullOrWhiteSpace(source.CredentialHash)
-            || !FixedEquals(suppliedHash, source.CredentialHash))
+        var source = await repository.ReadAsync(tabletId.Trim(), cancellationToken);
+        if (source is null || !source.IsEnabled)
         {
             throw new EInkDeviceResourceNotFoundException();
         }
@@ -257,7 +246,7 @@ internal sealed class EInkDeviceService
             file.FileId,
             file.AssetType,
             normalized,
-            FilePath(source.DeviceId, package, file.FileId),
+            FilePath(source.TabletId, package, file.FileId),
             file.MediaType,
             file.ByteLength,
             file.ModifiedAt,
@@ -297,7 +286,7 @@ internal sealed class EInkDeviceService
                         value.SetupWorkerPhotoFileId,
                         value.SetupWorkerPhotoFileId is null
                             ? null
-                            : FilePath(source.DeviceId, package, value.SetupWorkerPhotoFileId)),
+                            : FilePath(source.TabletId, package, value.SetupWorkerPhotoFileId)),
                 value.PlannedSetupStartsAt,
                 value.PlannedSetupEndsAt),
             new EInkManifestToolsResponse(
@@ -385,14 +374,14 @@ internal sealed class EInkDeviceService
             operation.Status,
             finishes.GetValueOrDefault(operation.OperationId));
 
-    private static string ManifestPath(string deviceId, EInkPackageSource package) =>
-        $"/api/v1/eink/devices/{Uri.EscapeDataString(deviceId)}/packages/{Uri.EscapeDataString(package.PackageId)}/revisions/{Uri.EscapeDataString(package.Revision)}/manifest";
+    private static string ManifestPath(string tabletId, EInkPackageSource package) =>
+        $"/api/v1/eink/tablets/{Uri.EscapeDataString(tabletId)}/packages/{Uri.EscapeDataString(package.PackageId)}/revisions/{Uri.EscapeDataString(package.Revision)}/manifest";
 
     private static string FilePath(
-        string deviceId,
+        string tabletId,
         EInkPackageSource package,
         string fileId) =>
-        $"/api/v1/eink/devices/{Uri.EscapeDataString(deviceId)}/packages/{Uri.EscapeDataString(package.PackageId)}/revisions/{Uri.EscapeDataString(package.Revision)}/files/{Uri.EscapeDataString(fileId)}";
+        $"/api/v1/eink/tablets/{Uri.EscapeDataString(tabletId)}/packages/{Uri.EscapeDataString(package.PackageId)}/revisions/{Uri.EscapeDataString(package.Revision)}/files/{Uri.EscapeDataString(fileId)}";
 
     private string TimeRevision() => Revision("time", JsonSerializer.Serialize(new
     {
@@ -404,9 +393,6 @@ internal sealed class EInkDeviceService
         options.MaximumRetryAttempts,
         options.InitialBackoffSeconds
     }, JsonOptions));
-
-    private static string HashToken(string token) => Convert.ToHexString(
-        SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
 
     private static bool FixedEquals(string left, string right)
     {

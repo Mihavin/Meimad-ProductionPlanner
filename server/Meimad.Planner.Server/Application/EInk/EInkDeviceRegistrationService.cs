@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using Meimad.Planner.Server.Application.EditMode;
 
 namespace Meimad.Planner.Server.Application.EInk;
@@ -17,14 +16,13 @@ internal sealed class EInkDeviceRegistrationService
         this.timeProvider = timeProvider;
     }
 
-    internal async Task<EInkDeviceRegistrationResult> CreateAsync(
+    internal async Task<EInkDeviceRegistration> CreateAsync(
         CreateEInkDeviceRegistrationCommand command,
         EditAuthority editAuthority,
         CancellationToken cancellationToken = default)
     {
         var name = RequiredName(command.DeviceName);
         var hardwareId = RequiredHardwareId(command.HardwareId);
-        var token = CreateToken();
         var now = timeProvider.GetUtcNow();
         for (var attempt = 0; attempt < 20; attempt++)
         {
@@ -42,10 +40,9 @@ internal sealed class EInkDeviceRegistrationService
             {
                 var created = await repository.CreateAsync(
                     registration,
-                    HashToken(token),
                     editAuthority,
                     cancellationToken);
-                return new EInkDeviceRegistrationResult(created, token);
+                return created;
             }
             catch (EInkDeviceBindingException exception) when (exception.Code == "tablet_id_conflict")
             {
@@ -57,30 +54,27 @@ internal sealed class EInkDeviceRegistrationService
             "Could not allocate a unique tablet ID. Please retry registration.");
     }
 
-    internal async Task<EInkDeviceRegistrationResult> UpdateAsync(
+    internal async Task<EInkDeviceRegistration> UpdateAsync(
         string deviceId,
         UpdateEInkDeviceRegistrationCommand command,
         EditAuthority editAuthority,
         CancellationToken cancellationToken = default)
     {
-        var token = command.RotateCredential ? CreateToken() : null;
         var updated = await repository.UpdateAsync(
             deviceId,
             NormalizeMachineId(command.MachineId),
             command.IsEnabled,
-            token is null ? null : HashToken(token),
             timeProvider.GetUtcNow(),
             editAuthority,
             cancellationToken)
             ?? throw new EInkDeviceRegistrationNotFoundException(deviceId);
-        return new EInkDeviceRegistrationResult(updated, token);
+        return updated;
     }
 
     internal Task<IReadOnlyList<EInkDeviceRegistration>> ListAsync(
         CancellationToken cancellationToken = default) => repository.ListAsync(cancellationToken);
 
     internal async Task<EInkDeviceRegistration> BootstrapAsync(
-        string? bearerToken,
         string? hardwareId,
         decimal? batteryVoltage,
         int? batteryPercent,
@@ -89,14 +83,9 @@ internal sealed class EInkDeviceRegistrationService
         int? wifiRssi,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(bearerToken))
-        {
-            throw new EInkDeviceRegistrationNotFoundException("authenticated tablet");
-        }
-
-        var registration = await repository.FindEnabledByCredentialAndHardwareAsync(
-            HashToken(bearerToken), RequiredHardwareId(hardwareId), cancellationToken)
-            ?? throw new EInkDeviceRegistrationNotFoundException("authenticated tablet");
+        var registration = await repository.FindEnabledByHardwareAsync(
+            RequiredHardwareId(hardwareId), cancellationToken)
+            ?? throw new EInkDeviceRegistrationNotFoundException("tablet hardware mapping");
         await repository.RecordContactAsync(
             registration.DeviceId, timeProvider.GetUtcNow(), batteryVoltage, batteryPercent,
             firmwareVersion, wifiIpAddress, wifiRssi, cancellationToken);
@@ -136,14 +125,6 @@ internal sealed class EInkDeviceRegistrationService
     private static string CreateTabletId() => RandomNumberGenerator.GetInt32(1000, 10000)
         .ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-    private static string CreateToken() =>
-        "mp_eink_" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-
-    private static string HashToken(string token) => Convert.ToHexString(
-        SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
 }
 
 internal sealed class EInkDeviceRegistrationValidationException : Exception

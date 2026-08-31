@@ -16,7 +16,6 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     private string name = string.Empty;
     private string hardwareId = string.Empty;
     private string status = "Connect to view registered tablets.";
-    private string provisioningToken = string.Empty;
 
     internal UserTerminalsViewModel()
     {
@@ -33,9 +32,6 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
         MarkSpareCommand = new AsyncCommand(
             MarkSpareAsync,
             () => isEditor && Selected is not null && SelectedMachine is not null);
-        RotateCredentialCommand = new AsyncCommand(
-            RotateCredentialAsync,
-            () => isEditor && Selected is not null && Selected.IsEnabled);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -46,7 +42,6 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     public AsyncCommand SaveCommand { get; }
     public AsyncCommand ToggleEnabledCommand { get; }
     public AsyncCommand MarkSpareCommand { get; }
-    public AsyncCommand RotateCredentialCommand { get; }
 
     public UserTerminal? Selected
     {
@@ -60,7 +55,6 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
                 HardwareId = value.HardwareId ?? string.Empty;
                 SelectedMachine = Machines.FirstOrDefault(
                     machine => machine.MachineId == value.MachineId);
-                ProvisioningToken = string.Empty;
             }
             Raise(nameof(CanEditIdentity));
             RaiseCommandStates();
@@ -95,19 +89,13 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     }
 
     public string Status { get => status; private set => Set(ref status, value); }
-    public string ProvisioningToken
-    {
-        get => provisioningToken;
-        private set => Set(ref provisioningToken, value);
-    }
-
     public bool IsEditor => isEditor;
     public bool CanEditIdentity => isEditor && Selected is null;
     public string EditModeText => isEditor
         ? "Edit Mode — terminal administration enabled"
         : "View Mode — monitoring only";
     public string ToggleEnabledText => Selected?.IsEnabled == true
-        ? "Disable / revoke"
+        ? "Disable"
         : "Enable";
 
     internal void AttachSession(IPlannerApiClient? client, string id, EditModeStatus? edit)
@@ -129,7 +117,6 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
         SelectedMachine = null;
         Name = string.Empty;
         HardwareId = string.Empty;
-        ProvisioningToken = string.Empty;
         Status = "Enter a device name and hardware MAC, then optionally bind a Machine.";
         return Task.CompletedTask;
     }
@@ -179,18 +166,14 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
             {
                 item = await api.UpdateUserTerminalAsync(
                     Selected.DeviceId,
-                    new(SelectedMachine?.MachineId, Selected.IsEnabled, false),
+                    new(SelectedMachine?.MachineId, Selected.IsEnabled),
                     clientId,
                     generation);
             }
 
-            var token = item.RegistrationToken;
             await RefreshAsync();
             Selected = Terminals.FirstOrDefault(value => value.DeviceId == item.DeviceId);
-            ProvisioningToken = token ?? string.Empty;
-            Status = string.IsNullOrEmpty(token)
-                ? "Terminal Machine binding saved."
-                : "Copy the provisioning credential now. It will not be shown again.";
+            Status = "Terminal identity and Machine binding saved.";
         }
         catch (Exception exception)
         {
@@ -199,7 +182,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     }
 
     private Task ToggleEnabledAsync() =>
-        UpdateSelectedAsync(!Selected!.IsEnabled, false);
+        UpdateSelectedAsync(!Selected!.IsEnabled);
 
     private async Task MarkSpareAsync()
     {
@@ -207,10 +190,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
         await SaveAsync();
     }
 
-    private Task RotateCredentialAsync() =>
-        UpdateSelectedAsync(Selected!.IsEnabled, true);
-
-    private async Task UpdateSelectedAsync(bool enabled, bool rotate)
+    private async Task UpdateSelectedAsync(bool enabled)
     {
         if (api is null || Selected is null) return;
         try
@@ -218,18 +198,12 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
             var deviceId = Selected.DeviceId;
             var item = await api.UpdateUserTerminalAsync(
                 deviceId,
-                new(SelectedMachine?.MachineId, enabled, rotate),
+                new(SelectedMachine?.MachineId, enabled),
                 clientId,
                 generation);
-            var token = item.RegistrationToken;
             await RefreshAsync();
             Selected = Terminals.FirstOrDefault(value => value.DeviceId == deviceId);
-            ProvisioningToken = token ?? string.Empty;
-            Status = rotate
-                ? "Copy the new credential now. The old credential was revoked."
-                : enabled
-                    ? "Terminal enabled."
-                    : "Terminal disabled and its credential revoked.";
+            Status = enabled ? "Terminal enabled." : "Terminal disabled.";
         }
         catch (Exception exception)
         {
@@ -244,7 +218,6 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
         SaveCommand.RaiseCanExecuteChanged();
         ToggleEnabledCommand.RaiseCanExecuteChanged();
         MarkSpareCommand.RaiseCanExecuteChanged();
-        RotateCredentialCommand.RaiseCanExecuteChanged();
         Raise(nameof(ToggleEnabledText));
     }
 

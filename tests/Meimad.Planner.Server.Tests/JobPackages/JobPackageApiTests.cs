@@ -14,7 +14,7 @@ namespace Meimad.Planner.Server.Tests.JobPackages;
 public sealed class JobPackageApiTests
 {
     private const string DeviceId = "package-device";
-    private const string DeviceToken = "mp_eink_package-test-token";
+    private const string TabletId = "4201";
 
     [Fact]
     public async Task Active_editor_generates_immutable_official_package_and_device_manifest()
@@ -59,7 +59,7 @@ public sealed class JobPackageApiTests
             Assert.True(Directory.Exists(Path.Combine(packageRoot, packageId)));
 
             using var manifestResponse = await client.SendAsync(DeviceGet(
-                $"/api/v1/eink/devices/{DeviceId}/package-manifest"));
+                $"/api/v1/eink/tablets/{TabletId}/package-manifest"));
             Assert.Equal(HttpStatusCode.OK, manifestResponse.StatusCode);
             using var manifest = JsonDocument.Parse(await manifestResponse.Content.ReadAsStringAsync());
             Assert.Equal("M-PKG", manifest.RootElement.GetProperty("metadata")
@@ -171,7 +171,7 @@ public sealed class JobPackageApiTests
     }
 
     [Fact]
-    public async Task Device_credential_cannot_generate_or_modify_official_packages()
+    public async Task Tablet_id_does_not_grant_job_package_mutation_authority()
     {
         await RunAsync(async (application, client, workingFolder, _) =>
         {
@@ -185,14 +185,12 @@ public sealed class JobPackageApiTests
             {
                 Content = JsonContent.Create(Request("R1"))
             };
-            request.Headers.Authorization = new("Bearer", DeviceToken);
-            request.Headers.Add("X-Meimad-Client-Id", "package-editor");
-            request.Headers.Add("X-Meimad-Edit-Generation", "1");
+            request.Headers.Add("X-Meimad-Tablet-Id", TabletId);
             using var response = await client.SendAsync(request);
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
 
             using var checklist = await client.SendAsync(DeviceGet(
-                $"/api/v1/eink/devices/{DeviceId}/checklist-comments"));
+                $"/api/v1/eink/tablets/{TabletId}/checklist-comments"));
             Assert.Equal(HttpStatusCode.NotFound, checklist.StatusCode);
         });
     }
@@ -235,11 +233,7 @@ public sealed class JobPackageApiTests
     }
 
     private static HttpRequestMessage DeviceGet(string path)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new("Bearer", DeviceToken);
-        return request;
-    }
+        => new(HttpMethod.Get, path);
 
     private static async Task SeedAsync(
         IServiceProvider services,
@@ -310,11 +304,11 @@ public sealed class JobPackageApiTests
                 id, batch_operation_id, machine_id, backlog_position)
             VALUES ('assignment-package', 'operation-package', 'machine-package', 0);
             INSERT INTO device_registry (
-                id, device_type, device_name, machine_id, credential_hash,
+                id, tablet_id, hardware_id, device_type, device_name, machine_id,
                 access_mode, is_enabled)
             VALUES (
-                $deviceId, 'eink', 'Package tablet', 'machine-package',
-                $credentialHash, 'read_only', 1);
+                $deviceId, $tabletId, 'A4:CF:12:83:76:B1', 'eink', 'Package tablet', 'machine-package',
+                'read_only', 1);
             UPDATE edit_tokens
             SET holder_client_id = 'package-editor',
                 holder_user_id = 'package-user',
@@ -328,9 +322,7 @@ public sealed class JobPackageApiTests
         command.Parameters.AddWithValue("$calendarJson", calendarJson);
         command.Parameters.AddWithValue("$workerPhotoPath", workerPhotoPath);
         command.Parameters.AddWithValue("$deviceId", DeviceId);
-        command.Parameters.AddWithValue(
-            "$credentialHash",
-            Sha256(Encoding.UTF8.GetBytes(DeviceToken)));
+        command.Parameters.AddWithValue("$tabletId", TabletId);
         await command.ExecuteNonQueryAsync();
     }
 

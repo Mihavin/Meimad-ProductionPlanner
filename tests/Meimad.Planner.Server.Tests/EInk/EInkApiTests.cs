@@ -16,7 +16,7 @@ namespace Meimad.Planner.Server.Tests.EInk;
 public sealed class EInkApiTests
 {
     private const string DeviceId = "device-eink-1";
-    private const string Token = "mp_eink_test-token-1";
+    private const string TabletId = "3041";
 
     [Fact]
     public async Task Device_reads_version_screen_manifest_file_and_time_configuration()
@@ -24,7 +24,7 @@ public sealed class EInkApiTests
         await RunWithServerAsync(async (application, client, packageRoot) =>
         {
             var fileBytes = await SeedAsync(application.Services, packageRoot);
-            using var versionRequest = Get($"/api/v1/eink/devices/{DeviceId}/version");
+            using var versionRequest = Get($"/api/v1/eink/tablets/{TabletId}/version");
             using var versionResponse = await client.SendAsync(versionRequest);
             Assert.Equal(HttpStatusCode.OK, versionResponse.StatusCode);
             Assert.NotNull(versionResponse.Headers.ETag);
@@ -32,13 +32,13 @@ public sealed class EInkApiTests
             Assert.Equal("machine-eink-1", version.RootElement.GetProperty("machineId").GetString());
             Assert.Equal("package-eink-1", version.RootElement.GetProperty("package").GetProperty("packageId").GetString());
 
-            using var conditional = Get($"/api/v1/eink/devices/{DeviceId}/version");
+            using var conditional = Get($"/api/v1/eink/tablets/{TabletId}/version");
             conditional.Headers.IfNoneMatch.Add(versionResponse.Headers.ETag!);
             using var unchanged = await client.SendAsync(conditional);
             Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
 
             using var screenResponse = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{DeviceId}/machine-screen"));
+                $"/api/v1/eink/tablets/{TabletId}/machine-screen"));
             using var screen = JsonDocument.Parse(await screenResponse.Content.ReadAsStringAsync());
             Assert.Equal("M-EINK-1", screen.RootElement.GetProperty("machine").GetProperty("number").GetString());
             Assert.Equal("operation-eink-1", screen.RootElement.GetProperty("current").GetProperty("batchOperationId").GetString());
@@ -46,9 +46,9 @@ public sealed class EInkApiTests
             Assert.Equal("current", screen.RootElement.GetProperty("status").GetProperty("code").GetString());
 
             using var manifestResponse = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{DeviceId}/package-manifest"));
+                $"/api/v1/eink/tablets/{TabletId}/package-manifest"));
             Assert.Equal(
-                $"/api/v1/eink/devices/{DeviceId}/packages/package-eink-1/revisions/R1/manifest",
+                $"/api/v1/eink/tablets/{TabletId}/packages/package-eink-1/revisions/R1/manifest",
                 manifestResponse.Content.Headers.ContentLocation?.OriginalString);
             using var manifest = JsonDocument.Parse(await manifestResponse.Content.ReadAsStringAsync());
             var file = Assert.Single(manifest.RootElement.GetProperty("files").EnumerateArray());
@@ -65,7 +65,7 @@ public sealed class EInkApiTests
                 fileResponse.Headers.GetValues("X-Meimad-Checksum-SHA256").Single());
 
             using var timeResponse = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{DeviceId}/time-config"));
+                $"/api/v1/eink/tablets/{TabletId}/time-config"));
             using var time = JsonDocument.Parse(await timeResponse.Content.ReadAsStringAsync());
             Assert.Equal("Asia/Jerusalem", time.RootElement.GetProperty("timeZoneId").GetString());
             Assert.Equal(300, time.RootElement.GetProperty("pollIntervalSeconds").GetInt32());
@@ -73,45 +73,29 @@ public sealed class EInkApiTests
     }
 
     [Fact]
-    public async Task Device_credentials_are_scoped_revocable_and_read_only()
+    public async Task Tablet_reads_use_tablet_id_without_credentials_and_disabled_tablets_are_rejected()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
         {
             await SeedAsync(application.Services, packageRoot);
 
-            using var wrongToken = Get($"/api/v1/eink/devices/{DeviceId}/version", "mp_eink_wrong");
-            using var wrongResponse = await client.SendAsync(wrongToken);
-            Assert.Equal(HttpStatusCode.NotFound, wrongResponse.StatusCode);
+            using var noCredential = Get($"/api/v1/eink/tablets/{TabletId}/version");
+            using var noCredentialResponse = await client.SendAsync(noCredential);
+            Assert.Equal(HttpStatusCode.OK, noCredentialResponse.StatusCode);
 
-            using var otherDevice = Get("/api/v1/eink/devices/device-eink-2/version", Token);
+            using var otherDevice = Get("/api/v1/eink/tablets/9999/version");
             using var otherResponse = await client.SendAsync(otherDevice);
             Assert.Equal(HttpStatusCode.NotFound, otherResponse.StatusCode);
 
-            using var planningRead = Get("/api/v1/cases");
-            using var planningReadResponse = await client.SendAsync(planningRead);
-            Assert.Equal(HttpStatusCode.Forbidden, planningReadResponse.StatusCode);
-
-            using var spacedCredential = new HttpRequestMessage(HttpMethod.Get, "/api/v1/cases");
-            spacedCredential.Headers.TryAddWithoutValidation("Authorization", $"Bearer    {Token}");
-            using var spacedCredentialResponse = await client.SendAsync(spacedCredential);
-            Assert.Equal(HttpStatusCode.Forbidden, spacedCredentialResponse.StatusCode);
-
-            using var mutation = new HttpRequestMessage(HttpMethod.Post, "/api/v1/edit-mode/requests");
-            mutation.Headers.Authorization = new("bearer", Token);
-            mutation.Headers.Add("X-Meimad-Client-Id", "device-client");
-            mutation.Headers.Add("X-Meimad-User-Id", "device-user");
-            using var mutationResponse = await client.SendAsync(mutation);
-            Assert.Equal(HttpStatusCode.Forbidden, mutationResponse.StatusCode);
-
             await SetDeviceEnabledAsync(application.Services, false);
             using var revokedResponse = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{DeviceId}/machine-screen"));
+                $"/api/v1/eink/tablets/{TabletId}/machine-screen"));
             Assert.Equal(HttpStatusCode.NotFound, revokedResponse.StatusCode);
         });
     }
 
     [Fact]
-    public async Task Tablet_bootstrap_requires_matching_enabled_token_and_hardware_id()
+    public async Task Tablet_bootstrap_uses_mac_only_for_enabled_device_discovery()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
         {
@@ -122,16 +106,11 @@ public sealed class EInkApiTests
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             Assert.Equal("3041", document.RootElement.GetProperty("tabletId").GetString());
-            Assert.Equal(DeviceId, document.RootElement.GetProperty("deviceId").GetString());
-            Assert.Equal("machine-eink-1", document.RootElement.GetProperty("machineId").GetString());
+            Assert.Equal(2, document.RootElement.EnumerateObject().Count());
 
             using var wrongHardware = await client.SendAsync(Get(
-                "/api/tablet/ping?hardwareId=A4:CF:12:83:76:92"));
+                "/api/tablet/ping?hardwareId=A4:CF:12:83:76:99"));
             Assert.Equal(HttpStatusCode.NotFound, wrongHardware.StatusCode);
-
-            using var otherToken = await client.SendAsync(Get(
-                "/api/tablet/ping?hardwareId=A4:CF:12:83:76:91", "mp_eink_other-token"));
-            Assert.Equal(HttpStatusCode.NotFound, otherToken.StatusCode);
 
             await SetDeviceEnabledAsync(application.Services, false);
             using var revoked = await client.SendAsync(Get(
@@ -184,7 +163,7 @@ public sealed class EInkApiTests
             Assert.Equal("R2", terminal.GetProperty("currentPackageRevision").GetString());
             Assert.True(terminal.GetProperty("lastSeenAt").GetDateTimeOffset() > DateTimeOffset.MinValue);
             Assert.DoesNotContain("credentialHash", json, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(Token, json, StringComparison.Ordinal);
+            Assert.DoesNotContain("registrationToken", json, StringComparison.Ordinal);
         });
     }
 
@@ -266,9 +245,6 @@ public sealed class EInkApiTests
 
             using var wrongPath = await client.SendAsync(Get("/api/tablets/3042/status"));
             Assert.Equal(HttpStatusCode.NotFound, wrongPath.StatusCode);
-            using var wrongToken = await client.SendAsync(Get(
-                "/api/tablets/3041/status", "mp_eink_other-token"));
-            Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
         });
     }
 
@@ -281,7 +257,7 @@ public sealed class EInkApiTests
             await EnterSetupRunAsync(application.Services);
             var before = await ReadPlanningFingerprintAsync(application.Services);
 
-            using var firstResponse = await client.SendAsync(PostEvent("3041", Token,
+            using var firstResponse = await client.SendAsync(PostEvent("3041",
                 new { event_type = "SEND_TO_QC" }));
             Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
             using var first = JsonDocument.Parse(await firstResponse.Content.ReadAsStringAsync());
@@ -290,7 +266,7 @@ public sealed class EInkApiTests
             Assert.False(first.RootElement.GetProperty("duplicate").GetBoolean());
             var acceptedAt = first.RootElement.GetProperty("timestamp").GetDateTimeOffset();
 
-            using var retryResponse = await client.SendAsync(PostEvent("3041", Token,
+            using var retryResponse = await client.SendAsync(PostEvent("3041",
                 new { event_type = "SEND_TO_QC" }));
             Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
             using var retry = JsonDocument.Parse(await retryResponse.Content.ReadAsStringAsync());
@@ -313,21 +289,18 @@ public sealed class EInkApiTests
         {
             await SeedAsync(application.Services, packageRoot);
 
-            using var tooEarly = await client.SendAsync(PostEvent("3041", Token,
+            using var tooEarly = await client.SendAsync(PostEvent("3041",
                 new { event_type = "SEND_TO_QC" }));
             Assert.Equal(HttpStatusCode.Conflict, tooEarly.StatusCode);
 
             await EnterSetupRunAsync(application.Services);
-            using var wrongTablet = await client.SendAsync(PostEvent("3042", Token,
+            using var wrongTablet = await client.SendAsync(PostEvent("9999",
                 new { event_type = "SEND_TO_QC" }));
             Assert.Equal(HttpStatusCode.NotFound, wrongTablet.StatusCode);
-            using var wrongToken = await client.SendAsync(PostEvent(
-                "3041", "mp_eink_other-token", new { event_type = "SEND_TO_QC" }));
-            Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
-            using var wrongEvent = await client.SendAsync(PostEvent("3041", Token,
+            using var wrongEvent = await client.SendAsync(PostEvent("3041",
                 new { event_type = "QC_PASS" }));
             Assert.Equal(HttpStatusCode.UnprocessableEntity, wrongEvent.StatusCode);
-            using var suppliedTarget = await client.SendAsync(PostEvent("3041", Token,
+            using var suppliedTarget = await client.SendAsync(PostEvent("3041",
                 new
                 {
                     event_type = "SEND_TO_QC",
@@ -349,7 +322,7 @@ public sealed class EInkApiTests
 
             var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
             {
-                using var response = await client.SendAsync(PostEvent("3041", Token,
+                using var response = await client.SendAsync(PostEvent("3041",
                     new { event_type = "SEND_TO_QC" }));
                 var json = await response.Content.ReadAsStringAsync();
                 return (response.StatusCode, json);
@@ -380,7 +353,7 @@ public sealed class EInkApiTests
             await EnterSetupRunAsync(application.Services);
             var planningBefore = await ReadPlanningFingerprintAsync(application.Services);
             using (var send = await client.SendAsync(PostEvent(
-                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                "3041", new { event_type = "SEND_TO_QC" })))
                 Assert.Equal(HttpStatusCode.OK, send.StatusCode);
 
             using (var queueResponse = await client.GetAsync("/api/v1/qc-queue"))
@@ -421,7 +394,7 @@ public sealed class EInkApiTests
             Assert.Empty((await ReadQueueAsync(client)).EnumerateArray());
 
             using (var resendResponse = await client.SendAsync(PostEvent(
-                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                "3041", new { event_type = "SEND_TO_QC" })))
             {
                 Assert.Equal(HttpStatusCode.OK, resendResponse.StatusCode);
                 using var resend = JsonDocument.Parse(await resendResponse.Content.ReadAsStringAsync());
@@ -474,7 +447,7 @@ public sealed class EInkApiTests
 
             await EnterSetupRunAsync(application.Services);
             using (var send = await client.SendAsync(PostEvent(
-                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                       "3041", new { event_type = "SEND_TO_QC" })))
                 Assert.Equal(HttpStatusCode.OK, send.StatusCode);
 
             using (var invalidDecision = await client.SendAsync(
@@ -492,10 +465,6 @@ public sealed class EInkApiTests
             using (var unknownRun = await client.SendAsync(PostQcDecision(
                        "PASS", null, productionRunId: "unknown-run")))
                 Assert.Equal(HttpStatusCode.NotFound, unknownRun.StatusCode);
-            using (var deviceMutation = await client.SendAsync(PostQcDecision(
-                       "PASS", null, bearerToken: Token)))
-                Assert.Equal(HttpStatusCode.Forbidden, deviceMutation.StatusCode);
-
             Assert.Single((await ReadQueueAsync(client)).EnumerateArray());
             Assert.Empty(await ReadQcAuditAsync(application.Services));
         });
@@ -510,7 +479,7 @@ public sealed class EInkApiTests
             await GrantEditAsync(application.Services);
             await EnterSetupRunAsync(application.Services);
             using (var send = await client.SendAsync(PostEvent(
-                       "3041", Token, new { event_type = "SEND_TO_QC" })))
+                       "3041", new { event_type = "SEND_TO_QC" })))
                 Assert.Equal(HttpStatusCode.OK, send.StatusCode);
 
             var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(async index =>
@@ -557,10 +526,6 @@ public sealed class EInkApiTests
             Assert.DoesNotContain("tablet-verification-secret", json, StringComparison.Ordinal);
             Assert.DoesNotContain("protectedSecret", json, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("nonce", json, StringComparison.OrdinalIgnoreCase);
-
-            using var wrongToken = await client.SendAsync(Get(
-                "/api/tablets/3041/status", "mp_eink_other-token"));
-            Assert.Equal(HttpStatusCode.NotFound, wrongToken.StatusCode);
 
             await ExecuteAsync(application.Services, """
                 UPDATE production_run_programs
@@ -636,7 +601,7 @@ public sealed class EInkApiTests
                 "corrupted package content");
 
             using var response = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{DeviceId}/packages/package-eink-1/revisions/R1/files/file-eink-1"));
+                $"/api/v1/eink/tablets/{TabletId}/packages/package-eink-1/revisions/R1/files/file-eink-1"));
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             Assert.Equal("package_integrity_failed", document.RootElement.GetProperty("error").GetProperty("code").GetString());
@@ -645,7 +610,7 @@ public sealed class EInkApiTests
     }
 
     [Fact]
-    public async Task Active_editor_can_register_bind_revoke_and_rotate_a_device_token()
+    public async Task Active_editor_can_register_bind_disable_and_enable_a_tablet_without_credentials()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>
         {
@@ -670,8 +635,8 @@ public sealed class EInkApiTests
             Assert.Equal(HttpStatusCode.Created, create.StatusCode);
             using var created = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
             var deviceId = created.RootElement.GetProperty("deviceId").GetString()!;
-            var firstToken = created.RootElement.GetProperty("registrationToken").GetString()!;
-            Assert.StartsWith("mp_eink_", firstToken, StringComparison.Ordinal);
+            var tabletId = created.RootElement.GetProperty("tabletId").GetString()!;
+            Assert.False(created.RootElement.TryGetProperty("registrationToken", out _));
 
             await UnbindDeviceAsync(application.Services, DeviceId);
             using var updateRequest = new HttpRequestMessage(
@@ -681,24 +646,16 @@ public sealed class EInkApiTests
                 Content = JsonContent.Create(new
                 {
                     machineId = "machine-eink-1",
-                    isEnabled = true,
-                    rotateCredential = true
+                    isEnabled = true
                 })
             };
             using var update = await client.SendAsync(updateRequest);
             Assert.Equal(HttpStatusCode.OK, update.StatusCode);
             using var updated = JsonDocument.Parse(await update.Content.ReadAsStringAsync());
-            var rotatedToken = updated.RootElement.GetProperty("registrationToken").GetString()!;
-            Assert.NotEqual(firstToken, rotatedToken);
-
-            using var oldCredential = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{deviceId}/version",
-                firstToken));
-            Assert.Equal(HttpStatusCode.NotFound, oldCredential.StatusCode);
-            using var newCredential = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{deviceId}/version",
-                rotatedToken));
-            Assert.Equal(HttpStatusCode.OK, newCredential.StatusCode);
+            Assert.False(updated.RootElement.TryGetProperty("registrationToken", out _));
+            using var enabledRead = await client.SendAsync(Get(
+                $"/api/v1/eink/tablets/{tabletId}/version"));
+            Assert.Equal(HttpStatusCode.OK, enabledRead.StatusCode);
 
             using var revokeRequest = new HttpRequestMessage(
                 HttpMethod.Patch,
@@ -707,23 +664,20 @@ public sealed class EInkApiTests
                 Content = JsonContent.Create(new
                 {
                     machineId = "machine-eink-1",
-                    isEnabled = false,
-                    rotateCredential = false
+                    isEnabled = false
                 })
             };
             using var revoke = await client.SendAsync(revokeRequest);
             Assert.Equal(HttpStatusCode.OK, revoke.StatusCode);
             using var revoked = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{deviceId}/version",
-                rotatedToken));
+                $"/api/v1/eink/tablets/{tabletId}/version"));
             Assert.Equal(HttpStatusCode.NotFound, revoked.StatusCode);
 
             var audit = await ReadTabletAdministrationAuditAsync(
                 application.Services, deviceId);
             Assert.Equal(1, audit.Registered);
             Assert.Equal(2, audit.RecoveryActions);
-            Assert.Equal(1, audit.CredentialRotations);
-            Assert.Equal(1, audit.Revocations);
+            Assert.Equal(1, audit.Disables);
             Assert.Equal(3, audit.AttributedToEditor);
         });
     }
@@ -795,28 +749,22 @@ public sealed class EInkApiTests
             Assert.Contains("changeToolPage(1)", javascript, StringComparison.Ordinal);
             Assert.Contains("showServiceScreen", javascript, StringComparison.Ordinal);
             Assert.Contains("LOW BATTERY", html, StringComparison.Ordinal);
-            Assert.DoesNotContain("/api/v1/eink/devices/", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("/api/v1/eink/tablets/", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("crypto.subtle.digest", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain("production_run_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("machine_id", javascript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("edit-mode", javascript, StringComparison.OrdinalIgnoreCase);
 
             using var usb = await client.SendAsync(Get(
-                $"/api/v1/eink/devices/{DeviceId}/usb-mass-storage"));
+                $"/api/v1/eink/tablets/{TabletId}/usb-mass-storage"));
             Assert.Equal(HttpStatusCode.NotFound, usb.StatusCode);
         });
     }
 
-    private static HttpRequestMessage Get(string path, string token = Token)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new("Bearer", token);
-        return request;
-    }
+    private static HttpRequestMessage Get(string path) => new(HttpMethod.Get, path);
 
     private static HttpRequestMessage PostEvent(
         string tabletId,
-        string token,
         object body)
     {
         var request = new HttpRequestMessage(
@@ -825,7 +773,6 @@ public sealed class EInkApiTests
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Authorization = new("Bearer", token);
         request.Headers.Add("X-Meimad-Battery-Voltage", "3.850");
         return request;
     }
@@ -836,7 +783,6 @@ public sealed class EInkApiTests
         bool includeAuthority = true,
         string productionRunId = "run:batch-operation:operation-eink-1",
         string generation = "1",
-        string? bearerToken = null,
         string userId = "eink-admin-user")
     {
         var request = new HttpRequestMessage(
@@ -845,8 +791,6 @@ public sealed class EInkApiTests
         {
             Content = JsonContent.Create(new { decision, reason })
         };
-        if (bearerToken is not null)
-            request.Headers.Authorization = new("Bearer", bearerToken);
         if (includeAuthority)
         {
             request.Headers.Add("X-Meimad-Client-Id", "eink-admin-client");
@@ -906,9 +850,6 @@ public sealed class EInkApiTests
               SUM(CASE WHEN event_type='tablet_registered' THEN 1 ELSE 0 END),
               SUM(CASE WHEN event_type='tablet_administration_recovery' THEN 1 ELSE 0 END),
               SUM(CASE WHEN event_type='tablet_administration_recovery'
-                        AND json_extract(after_data_json,'$.credentialRotated')=1
-                       THEN 1 ELSE 0 END),
-              SUM(CASE WHEN event_type='tablet_administration_recovery'
                         AND json_extract(after_data_json,'$.isEnabled')=0
                        THEN 1 ELSE 0 END),
               SUM(CASE WHEN user_id='eink-admin-user' THEN 1 ELSE 0 END)
@@ -921,7 +862,7 @@ public sealed class EInkApiTests
         Assert.True(await reader.ReadAsync());
         return new(
             reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
-            reader.GetInt32(3), reader.GetInt32(4));
+            reader.GetInt32(3));
     }
 
     private static async Task<string> ReadPlanningFingerprintAsync(IServiceProvider services)
@@ -972,8 +913,7 @@ public sealed class EInkApiTests
     private sealed record TabletAdministrationAudit(
         int Registered,
         int RecoveryActions,
-        int CredentialRotations,
-        int Revocations,
+        int Disables,
         int AttributedToEditor);
 
     private static async Task<byte[]> SeedAsync(IServiceProvider services, string packageRoot)
@@ -1036,13 +976,13 @@ public sealed class EInkApiTests
                 ('assignment-eink-3', 'operation-eink-3', 'machine-eink-1', 2),
                 ('assignment-eink-4', 'operation-eink-4', 'machine-eink-1', 3);
             INSERT INTO device_registry (
-                id, tablet_id, hardware_id, device_type, device_name, machine_id, credential_hash,
+                id, tablet_id, hardware_id, device_type, device_name, machine_id,
                 access_mode, is_enabled)
             VALUES
                 ('device-eink-1', '3041', 'A4:CF:12:83:76:91', 'eink', 'Tablet One', 'machine-eink-1',
-                 $credentialHash, 'read_only', 1),
+                 'read_only', 1),
                 ('device-eink-2', '3042', 'A4:CF:12:83:76:92', 'eink', 'Tablet Two', NULL,
-                 $otherCredentialHash, 'read_only', 1);
+                 'read_only', 1);
             INSERT INTO eink_package_revisions (
                 id, batch_operation_id, revision, tool_cart_id, published_at,
                 setup_worker_id, setup_worker_first_name, setup_worker_last_name)
@@ -1057,8 +997,6 @@ public sealed class EInkApiTests
                 $byteLength, $sha256, $publishedAt, 0);
             """;
         command.Parameters.AddWithValue("$calendar", calendar);
-        command.Parameters.AddWithValue("$credentialHash", Sha256(Encoding.UTF8.GetBytes(Token)));
-        command.Parameters.AddWithValue("$otherCredentialHash", Sha256(Encoding.UTF8.GetBytes("mp_eink_other-token")));
         command.Parameters.AddWithValue("$publishedAt", now.ToString("O"));
         command.Parameters.AddWithValue("$byteLength", fileBytes.LongLength);
         command.Parameters.AddWithValue("$sha256", Sha256(fileBytes));

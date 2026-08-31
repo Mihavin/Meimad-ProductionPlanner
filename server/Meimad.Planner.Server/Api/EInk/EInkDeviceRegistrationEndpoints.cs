@@ -40,16 +40,14 @@ internal static class EInkDeviceRegistrationEndpoints
 
         try
         {
-            var result = await service.CreateAsync(
+            var registration = await service.CreateAsync(
                 new CreateEInkDeviceRegistrationCommand(
                     request.DeviceName, request.MachineId, request.HardwareId),
                 editAuthority!,
                 cancellationToken);
             return Results.Created(
-                $"/api/v1/eink/device-registrations/{result.Registration.DeviceId}",
-                EInkDeviceRegistrationResponse.FromApplication(
-                    result.Registration,
-                    result.RegistrationToken));
+                $"/api/v1/eink/device-registrations/{registration.DeviceId}",
+                EInkDeviceRegistrationResponse.FromApplication(registration));
         }
         catch (Exception exception) when (Known(exception))
         {
@@ -74,17 +72,14 @@ internal static class EInkDeviceRegistrationEndpoints
 
         try
         {
-            var result = await service.UpdateAsync(
+            var registration = await service.UpdateAsync(
                 deviceId,
                 new UpdateEInkDeviceRegistrationCommand(
                     request.MachineId,
-                    request.IsEnabled,
-                    request.RotateCredential),
+                    request.IsEnabled),
                 editAuthority!,
                 cancellationToken);
-            return Results.Ok(EInkDeviceRegistrationResponse.FromApplication(
-                result.Registration,
-                result.RegistrationToken));
+            return Results.Ok(EInkDeviceRegistrationResponse.FromApplication(registration));
         }
         catch (Exception exception) when (Known(exception))
         {
@@ -133,8 +128,7 @@ internal sealed record CreateEInkDeviceRegistrationRequest(
 
 internal sealed record UpdateEInkDeviceRegistrationRequest(
     string? MachineId,
-    bool IsEnabled,
-    bool RotateCredential);
+    bool IsEnabled);
 
 internal sealed record EInkDeviceRegistrationResponse(
     string DeviceId,
@@ -157,12 +151,10 @@ internal sealed record EInkDeviceRegistrationResponse(
     string? MachineName,
     string? CurrentProductionRunId,
     string? CurrentWorkflowStatus,
-    string? CurrentPackageRevision,
-    string? RegistrationToken)
+    string? CurrentPackageRevision)
 {
     internal static EInkDeviceRegistrationResponse FromApplication(
-        EInkDeviceRegistration value,
-        string? registrationToken = null) => new(
+        EInkDeviceRegistration value) => new(
         value.DeviceId,
         value.TabletId,
         value.HardwareId,
@@ -183,6 +175,5 @@ internal sealed record EInkDeviceRegistrationResponse(
         value.MachineName,
         value.CurrentProductionRunId,
         value.CurrentWorkflowStatus,
-        value.CurrentPackageRevision,
-        registrationToken);
+        value.CurrentPackageRevision);
 }

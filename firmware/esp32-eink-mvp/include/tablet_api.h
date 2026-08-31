@@ -112,7 +112,6 @@ class TabletApiClient {
  public:
   TabletApiClient(
       const String& serverBaseUrl,
-      const String& bearerToken = String(),
       const BatteryTelemetry& batteryTelemetry = BatteryTelemetry());
 
   ApiResult getStatus(const String& tabletId, TabletStatusResponse& response) const;
@@ -123,7 +122,6 @@ class TabletApiClient {
 
  private:
   String serverBaseUrl_;
-  String bearerToken_;
   BatteryTelemetry batteryTelemetry_;
 };
 

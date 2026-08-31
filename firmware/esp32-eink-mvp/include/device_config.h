@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef MEIMAD_PROVISION_DEVICE_TOKEN
-#define MEIMAD_PROVISION_DEVICE_TOKEN ""
+#ifndef MEIMAD_PROVISION_TABLET_ID
+#define MEIMAD_PROVISION_TABLET_ID "6328"
 #endif
 
 #ifndef MEIMAD_PROVISION_SERVER_URL
@@ -15,7 +15,5 @@ namespace meimad::config {
 constexpr char kDefaultWifiSsid[] = "Planner-Server";
 constexpr char kDefaultWifiPassword[] = "a12345678";
 constexpr char kServerBaseUrl[] = MEIMAD_PROVISION_SERVER_URL;
-constexpr char kDefaultTabletId[] = "6328";
-// Provision a revocable device-scoped token locally. Never commit a live token.
-constexpr char kDefaultDeviceToken[] = MEIMAD_PROVISION_DEVICE_TOKEN;
+constexpr char kDefaultTabletId[] = MEIMAD_PROVISION_TABLET_ID;
 }

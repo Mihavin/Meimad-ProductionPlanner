@@ -2,13 +2,13 @@ namespace Meimad.Planner.Server.Application.EInk;
 
 internal interface IEInkDeviceRepository
 {
-    Task<EInkDeviceSource?> ReadAsync(string deviceId, CancellationToken cancellationToken);
+    Task<EInkDeviceSource?> ReadAsync(string tabletId, CancellationToken cancellationToken);
 }
 
 internal sealed record EInkDeviceSource(
     string DeviceId,
+    string TabletId,
     string DeviceName,
-    string? CredentialHash,
     bool IsEnabled,
     string? MachineId,
     EInkMachineSource? Machine,

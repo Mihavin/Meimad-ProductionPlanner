@@ -43,10 +43,6 @@ String encodePathSegment(const String& value) {
   return encoded;
 }
 
-void addAuthorization(HTTPClient& http, const String& bearerToken) {
-  if (!bearerToken.isEmpty()) http.addHeader("Authorization", "Bearer " + bearerToken);
-}
-
 void addBatteryTelemetry(HTTPClient& http, const BatteryTelemetry& telemetry) {
   const String voltage = formatBatteryVoltageHeader(telemetry);
   if (!voltage.isEmpty()) {
@@ -419,10 +415,8 @@ ApiResult finishRequest(
 
 TabletApiClient::TabletApiClient(
     const String& serverBaseUrl,
-    const String& bearerToken,
     const BatteryTelemetry& batteryTelemetry)
     : serverBaseUrl_(serverBaseUrl),
-      bearerToken_(bearerToken),
       batteryTelemetry_(batteryTelemetry) {
   while (serverBaseUrl_.endsWith("/")) serverBaseUrl_.remove(serverBaseUrl_.length() - 1);
 }
@@ -469,7 +463,6 @@ ApiResult TabletApiClient::getStatus(
   if (!http.begin(url)) {
     return result(ApiResultCode::TransportError, 0, "could not initialize HTTP request");
   }
-  addAuthorization(http, bearerToken_);
   addBatteryTelemetry(http, batteryTelemetry_);
 
   const int httpStatus = http.GET();
@@ -504,7 +497,6 @@ ApiResult TabletApiClient::sendEvent(
   if (!http.begin(url)) {
     return result(ApiResultCode::TransportError, 0, "could not initialize HTTP request");
   }
-  addAuthorization(http, bearerToken_);
   addBatteryTelemetry(http, batteryTelemetry_);
   http.addHeader("Content-Type", "application/json");
 

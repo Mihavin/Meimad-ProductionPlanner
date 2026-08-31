@@ -25,7 +25,7 @@ The immutable schema-v59 ledger, bounded queue API, stable catalog, idempotent c
 
 The catalog contains all required types:
 
-`wrong_nc_program`, `active_nc_identity_unavailable`, `stale_offset_loader`, `offset_loader_not_executed`, `offset_loader_interrupted`, `verification_failed`, `verification_expired`, `verification_macro_version_mismatch`, `cycle_started_before_qc_pass`, `cycle_end_without_start`, `cycle_interrupted`, `cnc_event_sequence_gap`, `duplicate_cnc_event`, `unknown_production_run`, `ambiguous_production_run`, `tablet_offline`, and `tablet_credential_revoked`.
+`wrong_nc_program`, `active_nc_identity_unavailable`, `stale_offset_loader`, `offset_loader_not_executed`, `offset_loader_interrupted`, `verification_failed`, `verification_expired`, `verification_macro_version_mismatch`, `cycle_started_before_qc_pass`, `cycle_end_without_start`, `cycle_interrupted`, `cnc_event_sequence_gap`, `duplicate_cnc_event`, `unknown_production_run`, `ambiguous_production_run`, `tablet_offline`.
 
 Automated evidence is in `tests/Meimad.Planner.Server.Tests/Anomalies/OperationalAnomalyTests.cs` and `tests/Meimad.Planner.Server.Tests/Cnc/CncVerificationFoundationTests.cs`. The ingestion regressions prove that missing or mismatched NC identity cannot create an Offset Loader verification session, resolve a protected-macro result, or advance a production cycle. Verification results must also repeat the exact current Offset Loader release token and nonce, so delayed evidence from an older challenge cannot resolve a newer session. The tests also prove that a source identifier reused for a conflicting cycle event is rejected and recorded. Anomaly recording appends operational evidence; it contains no planning-assignment, quantity, allocation, or backlog mutation path.
 
@@ -43,10 +43,10 @@ Required recovery paths and evidence:
 | Revoke current Offset Loader release | Same service/endpoint/test; immutable release history is retained |
 | Generate a new Offset Loader release | `CreateOffsetLoaderReleaseAsync`, the Setup recovery UI, and `CncVerificationApiTests.Windows_recovery_routes_require_edit_authority_and_preserve_release_history` |
 | Reassign replacement tablet | `EInkDeviceRegistrationEndpoints.cs`, `UserTerminalsViewModel.cs`, and `UserTerminalsViewModelTests.Edit_mode_enables_assignment_revoke_rotation_and_spare_actions` |
-| Rotate tablet credential | Same registration and User Terminals surfaces; `EInkApiTests.Active_editor_can_register_bind_revoke_and_rotate_a_device_token` |
+| Enable/disable tablet | Registration and User Terminals surfaces; `EInkApiTests.Active_editor_can_register_bind_disable_and_enable_a_tablet_without_credentials` |
 | Retry QC workflow after failure | `QcWorkflowService.cs` and `EInkApiTests.Qc_queue_supports_fail_resend_and_pass_with_user_reason_and_approval_time` |
 
-All actions require the appropriate editor/credential scope and write attributed audit or immutable workflow evidence. The Windows Setup view explicitly says recovery restores a valid process. There is no generic `BYPASS VERIFICATION` button, service method, or route.
+All actions require the appropriate editor authority or TabletID route boundary and write attributed audit or immutable workflow evidence. The Windows Setup view explicitly says recovery restores a valid process. There is no generic `BYPASS VERIFICATION` button, service method, or route.
 
 ## Task 26 - Track Protected CNC Macro Version Per Machine
 
@@ -91,7 +91,7 @@ Status: `IMPLEMENTED_AND_TESTED`.
 | 1-4 | Seed Production Runs, package and tool readiness, assert `READY_FOR_SETUP`, configure the Machine, and create the current Offset Loader release |
 | 5-11 | Ingest OLC with nonce/release evidence, validate it, assert `IN_SETUP`, calculate a six-digit response, and expose it through tablet status |
 | 12-14 | Ingest SVF, create a fresh challenge, ingest SVS, and assert `IN_SETUP_RUN` |
-| 15-20 | Submit authenticated `SEND_TO_QC`, assert `IN_QC`, record QC FAIL, resend, record QC PASS, and assert `READY_FOR_PRODUCTION` |
+| 15-20 | Submit TabletID-identified `SEND_TO_QC`, assert `IN_QC`, record QC FAIL, resend, record QC PASS, and assert `READY_FOR_PRODUCTION` |
 | 21-23 | Ingest valid CST/CEN, assert `IN_PRODUCTION`, and verify counted output |
 | 24-26 | Exercise START/START interruption, duplicate delivery, and a sequence gap/end-without-start anomaly |
 | 27-29 | Assign/start the next Run setup, close the prior production session retroactively, and verify the readable debug timeline plus anomaly/audit rows |
