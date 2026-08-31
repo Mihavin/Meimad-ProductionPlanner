@@ -44,22 +44,17 @@ with failure/expiry handling where appropriate.
    - verification becomes **ARMED**;
    - the response/challenge code may be made available to the tablet;
    - **do not start the 120-second verification timeout yet**.
-
 2. On the **first start of the main NC program** for that armed verification context:
    - verification becomes **PENDING**;
    - set `created_at`/`started_at` as appropriate at this moment;
    - set `expires_at = first_main_nc_start + VerificationTimeoutSeconds`;
    - default timeout remains 120 seconds unless configured otherwise.
-
 3. The operator enters the verification code during this window.
-
 4. After successful verification:
    - state becomes **SUCCEEDED/VERIFIED**;
    - the same released NC program must continue to run without asking for the verification code again on subsequent cycle starts;
    - verification is one-time for that current Offset Loader / NC release context.
-
 5. A newly executed/current Offset Loader must invalidate/reset the previous successful verification and create a new **ARMED** verification context.
-
 6. Expiry must be based on the time since the **first main NC start**, not time since Offset Loader execution.
 
 ### Preserve
@@ -117,8 +112,7 @@ The physical handover of the prepared tool cart from Tool Room to the setup oper
 - Select/assign the setup operator.
 - The setup-operator list must be filtered by the operator's skills/qualification for the assigned machine or machine group.
 - Record at minimum operator/user identity and timestamp.
-- Transition:
-  - `Queue for Setup` -> `Ready for Setup`
+- Transition: `Queue for Setup` -> `Ready for Setup`.
 - This handover does **not** mean setup has physically started on the CNC yet.
 
 ### D. Setup start — automatic from CNC fact
@@ -164,23 +158,15 @@ The operator must not have to edit a macro variable such as the configured persi
 
 ### Required behavior
 1. Do **not** require `incoming_sequence == last_sequence + 1` as a prerequisite for processing an event.
-2. A forward gap/jump in sequence numbers:
-   - may create `cnc_event_sequence_gap` diagnostic/anomaly evidence;
-   - must still allow the event to be processed if its Machine, Production Run/context, NC identity, Offset Loader/release correlation, event type, and other required event-specific evidence are valid.
-3. A sequence reset/rollback after controller reboot, macro-variable loss, service work, manual reset, or wrap must not permanently brick the Machine integration.
-   - establish a new observed baseline automatically from valid subsequent evidence, or otherwise handle the discontinuity without requiring operator-side counter synchronization;
-   - record the discontinuity diagnostically when useful.
-4. Preserve real duplicate/idempotency protection.
-   - Retransmission of the same logical event must remain idempotent.
-   - Reuse of the same sequence/source identity with a conflicting payload must not silently create a second contradictory workflow event; record/reject the conflict according to the existing anomaly model.
-5. Out-of-order or delayed events must be judged primarily by their event-specific correlation and current workflow context, not by a global exact-next-sequence expectation.
-6. Sequence numbers must not be used to decide which Production Run, NC release, Offset Loader release, verification session, or cycle is authoritative when stronger explicit correlation already exists.
-7. Do not replace this with another fragile global counter, epoch, secret, or manual synchronization ritual unless the repository already has an independently required explicit correlation field for that event.
+2. A forward gap/jump in sequence numbers may create diagnostic/anomaly evidence, but must still allow an otherwise valid event to be processed.
+3. A reset/rollback after controller reboot, macro-variable loss, service work, manual reset, or wrap must not permanently brick the Machine integration; recover automatically and record the discontinuity diagnostically when useful.
+4. Preserve real duplicate/idempotency protection. Same logical retransmission stays idempotent; same sequence/source identity with conflicting payload must be detected and must not double-apply state.
+5. Out-of-order or delayed events must be judged primarily by event-specific correlation and workflow context, not by a global exact-next-sequence expectation.
+6. Sequence numbers must not decide Production Run, NC release, Offset Loader release, verification session, or cycle authority when stronger explicit correlation exists.
+7. Do not replace this with another fragile global counter, epoch, secret, or manual synchronization ritual.
 
 ### Architecture/documentation cleanup
-The repository currently documents `PERSISTENT_COUNTER` as a selected design and contains commissioning/tests around a persistent event-sequence variable. Revisit those assumptions everywhere they make sequence continuity a hard gate.
-
-Update, as needed:
+Revisit `PERSISTENT_COUNTER` assumptions anywhere sequence continuity is a hard gate, including as needed:
 - `AGENTS.md`
 - `docs/architecture.md`
 - `docs/functional-spec.md`
@@ -193,120 +179,115 @@ Update, as needed:
 - server ingestion/persistence logic
 - tests
 
-Keep a sequence field if it is still useful as evidence. The goal is **not necessarily to delete the field**; the goal is to delete the requirement that the Server and controller must maintain an exact synchronized, never-lost counter for normal operation.
+Keep a sequence field if useful as evidence; delete only the exact synchronized-counter requirement.
 
 ### Preserve
 - NC identity verification.
 - Offset Loader verification/authorization and stale-loader protection.
-- Verification release/nonce or other explicit event correlation that is still part of the current approved protocol.
+- Verification release/nonce or other explicit event correlation still part of the approved protocol.
 - Duplicate-event idempotency.
 - Conflicting-event anomaly detection.
 - Production-cycle correctness and no double counting.
 
-Do not weaken these protections merely to make sequence handling tolerant.
-
 ### Acceptance tests
 Add tests proving at least:
-- normal contiguous sequences still work;
-- a skipped sequence value records a gap but does not block an otherwise valid next event;
-- a large forward jump does not require manual resynchronization;
-- a controller reboot/reset that returns the sequence to a low value does not permanently block subsequent valid events;
-- wrap/reset behavior is recoverable automatically;
+- normal contiguous sequences work;
+- skipped and large-forward-jump sequences do not block valid events;
+- controller reset/wrap is automatically recoverable;
 - duplicate retransmission remains idempotent;
-- same sequence/source identity with conflicting payload is detected and does not double-apply state;
-- delayed/out-of-order evidence cannot incorrectly bind to a newer verification/Offset Loader/Production Run;
-- cycle counting cannot double-count because of sequence reset or reuse;
+- conflicting reuse is detected and does not double-apply state;
+- delayed/out-of-order evidence cannot bind incorrectly to a newer context;
+- cycle counting cannot double-count because of reset/reuse;
 - no commissioning procedure requires manually setting the sequence variable to the Server's expected next value.
 
 ### Completion report
-When complete, report:
-- exactly where strict sequence continuity was previously enforced;
-- what now provides idempotency/correlation for each CNC event type;
-- which sequence-related anomalies remain diagnostic only;
-- migrations/configuration changes, if any;
-- updated commissioning steps;
-- test results.
+Report where strict continuity was enforced, what now provides idempotency/correlation, which sequence anomalies are diagnostic only, migrations/config changes, updated commissioning steps, and test results.
 
 ---
 
 ## 5. Implement tablet power / deep-sleep / Wi-Fi behavior by workflow status
 
-Implement the agreed ESP32 e-ink tablet power model as an explicit state-driven policy. The tablet must not use one generic sleep rule for all workflow states.
+Replace the previous tablet-power state list with the following **authoritative seven-state policy**. Implement it as an explicit centralized state-driven policy in the ESP32/e-ink tablet code. Do not keep older conflicting mappings.
 
-### Product goal
-Maximize battery life while keeping the tablet responsive during active setup work. Wi-Fi is expensive and must remain OFF unless it is actually needed. Deep sleep is allowed only in workflow states where the user does not need immediate local interaction.
+### Product rules
+- Wi-Fi is OFF by default unless a state explicitly requires a refresh session.
+- Screen/UI awake state and Wi-Fi connectivity are separate concerns.
+- `Ready for Setup` and `In Setup` must remain responsive for the setup operator without keeping Wi-Fi connected.
+- Deep-sleep states must consume minimal battery and wake only from the explicitly allowed sources.
+- Do not add background 15-second polling.
 
-### Required behavior by status
+### Authoritative state policy
 
-#### 1. Ready for Production — idle/pre-setup state
+#### 1. Ready for Setup
+- **No deep sleep.** Tablet remains awake for local interaction.
+- Wi-Fi **OFF** by default.
+- Wi-Fi turns **ON by physical button**.
+- After button press, connect to the server and keep Wi-Fi ON until either:
+  - the configured Wi-Fi/session timeout expires, or
+  - the server reports transition to `In Setup`.
+- Then apply the new state policy and turn Wi-Fi OFF.
+- No periodic polling while waiting if no button was pressed.
+
+#### 2. In Setup
+- **No deep sleep.** Tablet remains awake so the setup operator can browse tool tables/pages.
+- Wi-Fi **OFF** by default.
+- Wi-Fi turns **ON by physical button** for an explicit refresh/check.
+- After the refresh completes or times out, turn Wi-Fi OFF again.
+- No background periodic polling.
+
+#### 3. In Setup Run
 - Enter **deep sleep**.
 - Wi-Fi OFF while sleeping.
-- Wake only by physical button.
-- No periodic server polling.
+- Wake by **physical button only**.
+- No periodic refresh.
 
-#### 2. Ready for Setup
-- **Do not enter deep sleep.** The tablet remains awake so the setup operator can browse tool tables and other local pages without wake latency.
-- Wi-Fi is **OFF by default**.
-- Physical button starts a Wi-Fi/server refresh session.
-- After button press:
-  - connect Wi-Fi;
-  - contact the server and refresh the tablet projection;
-  - keep Wi-Fi ON while waiting for the expected setup-related server state/result;
-  - turn Wi-Fi OFF when either:
-    - the expected `In Setup` / `Setup In Progress` state is observed, or
-    - the configured timeout expires.
-- Do **not** poll every 15 seconds in the background.
-- If no button is pressed, the tablet may remain awake for hours with Wi-Fi OFF.
-
-#### 3. In Setup / Setup In Progress
-- **Do not enter deep sleep.**
-- Wi-Fi OFF by default.
-- User can browse the local tool-table/setup UI continuously.
-- Physical button may enable Wi-Fi for an explicit server refresh/check.
-- After the explicit refresh completes or times out, Wi-Fi returns OFF.
-- No background periodic polling is required.
+`In Setup Run` is intentionally distinct from `In Setup`: once the setup activity has reached the run/check phase where continuous tablet interaction is no longer required, battery saving takes priority.
 
 #### 4. In QA
 - Enter **deep sleep**.
 - Wi-Fi OFF while sleeping.
-- Wake by physical button only.
-- No periodic polling unless an existing QA requirement explicitly proves otherwise.
+- Wake by **physical button only**.
+- No periodic refresh.
 
-#### 5. Ready for Production — post-QA / waiting-for-production state
-There are currently two workflow positions that appear to use the same visible name `Ready for Production`, but they have different tablet behavior. Do not silently collapse them.
-
-For the post-QA waiting state:
-- Enter **deep sleep**.
-- Support timer wake / auto-refresh every **60 seconds**.
-- Also support physical-button wake at any time.
-- On timer wake:
-  - enable Wi-Fi;
-  - perform one server refresh;
-  - update the e-ink display only if the relevant projection changed;
-  - disable Wi-Fi;
-  - return to deep sleep.
-- On button wake, perform the normal interactive refresh behavior and return to the correct state policy afterward.
-
-If the domain model already has a distinct canonical name for this post-QA state, use it. If it does not, introduce a clear internal distinction so the firmware/policy can distinguish the two states even if the visible UI wording remains temporarily identical.
-
-#### 8. In Production
+#### 5. Ready for Production
 - Enter **deep sleep**.
 - Wi-Fi OFF while sleeping.
-- Wake only by physical button.
-- No 60-second auto-refresh and no background polling.
+- Wake automatically every **60 seconds** for one refresh, or wake by physical button.
+- On 60-second timer wake:
+  - enable Wi-Fi;
+  - perform exactly one server refresh;
+  - update the local projection/display only if relevant data changed;
+  - disable Wi-Fi;
+  - return to deep sleep.
+- On button wake, perform the explicit interactive refresh and then return to the correct state policy.
+- The 60-second interval should be configurable where practical, with 60 seconds as the default.
 
-### Important design rules
-- Treat **screen/UI awake state** and **Wi-Fi connectivity** as separate concerns.
-- `Ready for Setup` and `In Setup` are awake states with Wi-Fi normally OFF.
-- Do not keep Wi-Fi continuously connected just because the tablet itself is awake.
-- Do not reintroduce the old 15-second polling concept.
-- Button-triggered Wi-Fi is the primary mechanism for setup-time synchronization.
-- Preserve deep-sleep GPIO/button wake behavior already proven by the current hardware implementation.
-- Do not break e-ink page navigation while Wi-Fi is OFF.
-- Avoid unnecessary e-ink full refreshes; update only when projection/content actually changes where practical.
+#### 6. In Production
+- Enter **deep sleep**.
+- Wi-Fi OFF while sleeping.
+- Wake by **physical button only**.
+- No periodic refresh.
+
+#### 7. Complete
+- Treat the operation as completed and no longer requiring active tablet interaction.
+- Enter **deep sleep**.
+- Wi-Fi OFF.
+- Do not perform periodic server refreshes.
+- Preserve button wake only if the existing product UX requires viewing the completed operation/history; otherwise remain asleep according to the existing completed-item lifecycle.
+- Do not invent a new active polling requirement for `Complete`.
+
+### Transition behavior
+The power policy must be reapplied immediately whenever a server refresh returns a different workflow state.
+
+Examples:
+- `Ready for Setup` + button -> Wi-Fi ON -> server reports `In Setup` -> apply `In Setup`: stay awake, Wi-Fi OFF.
+- `In Setup` -> server/machine workflow reaches `In Setup Run` -> apply `In Setup Run`: deep sleep, button wake only.
+- `In QA` -> server reports `Ready for Production` -> apply `Ready for Production`: deep sleep with 60-second timer wake enabled.
+- `Ready for Production` -> server reports `In Production` -> cancel 60-second periodic wake and apply button-only deep sleep.
+- `In Production` -> `Complete` -> remain deep-sleep oriented with no periodic refresh.
 
 ### Implementation guidance
-Inspect the current tablet firmware/client implementation and define one explicit policy mapping from server workflow status to at least:
+Inspect the current tablet firmware/client implementation and define one policy mapping from workflow status to at least:
 - `sleep_mode`
 - `wifi_default`
 - `wake_sources`
@@ -314,41 +295,33 @@ Inspect the current tablet firmware/client implementation and define one explici
 - `button_refresh_behavior`
 - `wifi_session_timeout`
 
-Prefer one centralized state-policy table/state machine over scattered conditional logic.
+Prefer one centralized state-policy table/state machine rather than scattered conditional logic.
 
-The firmware must safely handle status changes observed during a refresh. Example:
-- tablet is in `Ready for Setup`;
-- user presses button;
-- Wi-Fi connects;
-- server now reports `In Setup`;
-- firmware applies the `In Setup` policy and turns Wi-Fi OFF after completing the refresh.
-
-### Configuration
-- Keep the **60-second post-QA refresh interval** configurable if the current firmware has a suitable configuration mechanism, with 60 seconds as the default.
-- Keep the button-initiated Wi-Fi session timeout configurable, with a sensible default based on the current networking implementation.
-- Do not add a recurring 15-second setup refresh setting.
+Preserve existing proven GPIO/button wake behavior and e-ink page navigation. Wi-Fi OFF must not prevent browsing already-cached local tool/setup data in awake states.
 
 ### Acceptance tests / simulator scenarios
-Add automated tests or firmware/simulator scenarios proving at least:
-- Ready for Production idle state enters deep sleep and only button wake is active.
-- Ready for Setup stays awake indefinitely while Wi-Fi remains OFF when no button is pressed.
-- Ready for Setup button press connects Wi-Fi and turns it OFF after timeout if no status change arrives.
-- Ready for Setup button press followed by server transition to In Setup applies the new state and turns Wi-Fi OFF.
-- In Setup remains awake with Wi-Fi OFF and supports button-triggered refresh.
-- In QA enters deep sleep and wakes by button.
-- Post-QA Ready for Production wakes every 60 seconds, refreshes once, and returns to deep sleep.
-- In Production does not wake every 60 seconds and only wakes by button.
-- No background 15-second polling remains in Ready for Setup or In Setup.
-- Local tool-table/page navigation works while Wi-Fi is OFF.
+Add tests proving at least:
+- `Ready for Setup` stays awake indefinitely with Wi-Fi OFF until the user presses the button.
+- `Ready for Setup` button press enables Wi-Fi and disables it after timeout if no transition occurs.
+- `Ready for Setup` button press followed by `In Setup` transition keeps the tablet awake and turns Wi-Fi OFF.
+- `In Setup` stays awake, Wi-Fi OFF, and supports button refresh.
+- `In Setup Run` enters deep sleep and has no periodic wake.
+- `In QA` enters deep sleep and wakes only by button.
+- `Ready for Production` wakes every 60 seconds, refreshes exactly once, and returns to deep sleep; button wake also works.
+- Transition from `Ready for Production` to `In Production` disables the 60-second timer wake.
+- `In Production` wakes only by button.
+- `Complete` has no periodic polling/refresh and remains deep-sleep oriented.
+- no 15-second background setup polling remains anywhere.
 
 ### Completion report
-When complete, report:
-- the exact workflow-status-to-power-policy mapping implemented;
-- how the two `Ready for Production` contexts are distinguished;
-- default/configurable timeout and refresh values;
-- files changed;
-- firmware/client tests and simulator results;
-- any physical-device tests still required, especially battery-only wake/deep-sleep verification.
+Report:
+- the final workflow-status-to-power-policy mapping;
+- firmware/client files changed;
+- how timer wake and button wake are configured;
+- Wi-Fi session timeout behavior;
+- how state changes cancel/enable wake timers;
+- tests/simulator results;
+- any remaining physical-device commissioning step.
 
 ---
 
