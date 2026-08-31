@@ -153,6 +153,82 @@ Keep the visual/interaction pattern consistent, but expose only the actions appr
 
 ---
 
+## 4. Make CNC event sequence numbers non-blocking evidence
+
+The current protected Haas/CNC event design is too brittle around the persistent event-sequence counter. If the controller-side sequence value is lost, reset, jumps, wraps, is manually changed, or simply does not equal the exact value the Server expected, the workflow can fail and require manual counter resynchronization. Remove that operational dependency.
+
+### Product rule
+The CNC event sequence number is **evidence for diagnostics, duplicate detection, and anomaly reporting only**. It is **not workflow authority** and must never be the sole reason a valid, otherwise correctly correlated CNC event is rejected or the Production Run/verification workflow becomes unusable.
+
+The operator must not have to edit a macro variable such as the configured persistent sequence variable (for example `#504`) just to make the Server and CNC agree again.
+
+### Required behavior
+1. Do **not** require `incoming_sequence == last_sequence + 1` as a prerequisite for processing an event.
+2. A forward gap/jump in sequence numbers:
+   - may create `cnc_event_sequence_gap` diagnostic/anomaly evidence;
+   - must still allow the event to be processed if its Machine, Production Run/context, NC identity, Offset Loader/release correlation, event type, and other required event-specific evidence are valid.
+3. A sequence reset/rollback after controller reboot, macro-variable loss, service work, manual reset, or wrap must not permanently brick the Machine integration.
+   - establish a new observed baseline automatically from valid subsequent evidence, or otherwise handle the discontinuity without requiring operator-side counter synchronization;
+   - record the discontinuity diagnostically when useful.
+4. Preserve real duplicate/idempotency protection.
+   - Retransmission of the same logical event must remain idempotent.
+   - Reuse of the same sequence/source identity with a conflicting payload must not silently create a second contradictory workflow event; record/reject the conflict according to the existing anomaly model.
+5. Out-of-order or delayed events must be judged primarily by their event-specific correlation and current workflow context, not by a global exact-next-sequence expectation.
+6. Sequence numbers must not be used to decide which Production Run, NC release, Offset Loader release, verification session, or cycle is authoritative when stronger explicit correlation already exists.
+7. Do not replace this with another fragile global counter, epoch, secret, or manual synchronization ritual unless the repository already has an independently required explicit correlation field for that event.
+
+### Architecture/documentation cleanup
+The repository currently documents `PERSISTENT_COUNTER` as a selected design and contains commissioning/tests around a persistent event-sequence variable. Revisit those assumptions everywhere they make sequence continuity a hard gate.
+
+Update, as needed:
+- `AGENTS.md`
+- `docs/architecture.md`
+- `docs/functional-spec.md`
+- `docs/data-model.md`
+- `docs/api-contract.md`
+- `docs/implementation-plan.md`
+- CNC commissioning/audit documents
+- Haas package-generation scripts/macros
+- simulator scenarios
+- server ingestion/persistence logic
+- tests
+
+Keep a sequence field if it is still useful as evidence. The goal is **not necessarily to delete the field**; the goal is to delete the requirement that the Server and controller must maintain an exact synchronized, never-lost counter for normal operation.
+
+### Preserve
+- NC identity verification.
+- Offset Loader verification/authorization and stale-loader protection.
+- Verification release/nonce or other explicit event correlation that is still part of the current approved protocol.
+- Duplicate-event idempotency.
+- Conflicting-event anomaly detection.
+- Production-cycle correctness and no double counting.
+
+Do not weaken these protections merely to make sequence handling tolerant.
+
+### Acceptance tests
+Add tests proving at least:
+- normal contiguous sequences still work;
+- a skipped sequence value records a gap but does not block an otherwise valid next event;
+- a large forward jump does not require manual resynchronization;
+- a controller reboot/reset that returns the sequence to a low value does not permanently block subsequent valid events;
+- wrap/reset behavior is recoverable automatically;
+- duplicate retransmission remains idempotent;
+- same sequence/source identity with conflicting payload is detected and does not double-apply state;
+- delayed/out-of-order evidence cannot incorrectly bind to a newer verification/Offset Loader/Production Run;
+- cycle counting cannot double-count because of sequence reset or reuse;
+- no commissioning procedure requires manually setting the sequence variable to the Server's expected next value.
+
+### Completion report
+When complete, report:
+- exactly where strict sequence continuity was previously enforced;
+- what now provides idempotency/correlation for each CNC event type;
+- which sequence-related anomalies remain diagnostic only;
+- migrations/configuration changes, if any;
+- updated commissioning steps;
+- test results.
+
+---
+
 ## General instructions
 
 - First inspect the current implementation and existing tests before changing architecture.
