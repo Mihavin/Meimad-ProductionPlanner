@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
+using System.Text;
+using Microsoft.Win32;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Configuration;
 using Meimad.Planner.Client.Windows.Localization;
@@ -26,6 +28,9 @@ public partial class MainWindow : Window
             new PlannerApiClientFactory(),
             RequestAssignmentOverrideReason);
         DataContext = viewModel;
+        viewModel.NcCreatorQueue.ActionRequested += PreparationActionRequested;
+        viewModel.ToolRoomQueue.ActionRequested += PreparationActionRequested;
+        viewModel.SetupQueue.ActionRequested += PreparationActionRequested;
         refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromSeconds(5)
@@ -138,5 +143,68 @@ public partial class MainWindow : Window
         {
             await viewModel.RequestEditAsync();
         }
+    }
+
+    private async void PreparationActionRequested(object? sender, PreparationQueueActionRequest request)
+    {
+        try
+        {
+            switch (request.Action)
+            {
+                case "OPEN_CASE":
+                case "OPEN_OPERATION":
+                case "UPLOAD_GCODE":
+                    WorkspaceTabs.SelectedIndex = 0;
+                    await viewModel.CaseWorkspace.NavigateToOperationAsync(
+                        request.Item.CaseId!, request.Action == "OPEN_CASE" ? null : request.Item.CaseOperationId);
+                    break;
+                case "OPEN_TOOL_TABLE" when request.Payload is byte[] toolBytes:
+                    ShowReadOnlyText("Current Tool Table", Encoding.UTF8.GetString(toolBytes));
+                    break;
+                case "VIEW_NC_READ_ONLY" when request.Payload is string ncText:
+                    ShowReadOnlyText("Current NC release - read only", ncText);
+                    break;
+                case "OPEN_PRODUCTION_PACKAGE" when request.Payload is ProductionPackageInfo package:
+                    var picker = new OpenFolderDialog
+                    {
+                        Title = $"Export Production Package {package.ProductionPackageId}",
+                        Multiselect = false
+                    };
+                    if (picker.ShowDialog(this) == true)
+                    {
+                        await viewModel.SetupQueue.ExportCurrentProductionPackageAsync(package, picker.FolderName);
+                        Process.Start(new ProcessStartInfo(picker.FolderName) { UseShellExecute = true });
+                    }
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "Preparation action", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void ShowReadOnlyText(string title, string text)
+    {
+        var viewer = new Window
+        {
+            Owner = this,
+            Title = title,
+            Width = 900,
+            Height = 650,
+            Content = new System.Windows.Controls.TextBox
+            {
+                Text = text,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                AcceptsTab = true,
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 14,
+                TextWrapping = TextWrapping.NoWrap,
+                VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto
+            }
+        };
+        viewer.Show();
     }
 }

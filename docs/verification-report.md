@@ -273,8 +273,9 @@ field. Focused Server tests exercise the projector and real HTTP/SQLite path,
 including unassigned exclusion, assignment-to-NC, NC-to-Tool-Room,
 Tool-Room-to-Setup, mutual exclusivity, later-workflow removal, and reopening
 the same migrated database. Focused Windows tests verify the shared role queue
-view model and that its only command is Refresh; the typed API-client contract
-is also covered. Existing QC tests remain in the full regression suite.
+view model, role-specific context actions, existing-workflow G-code routing,
+and checksum-verified package export; the typed API-client contract is also
+covered. Existing QC tests remain in the full regression suite.
 
 Schema v64 now makes a valid current Server-owned Production Package the exact
 Setup-readiness boundary. The focused Production Package suite covers enabled,
@@ -288,14 +289,14 @@ Verification commands completed on 2026-09-01:
 
 | Test assembly | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| `Meimad.Planner.Server.Tests` | 630 | 0 | 0 |
-| `Meimad.Planner.Client.Windows.Tests` | 248 | 0 | 0 |
-| **Total** | **878** | **0** | **0** |
+| `Meimad.Planner.Server.Tests` | 636 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 250 | 0 | 0 |
+| **Total** | **886** | **0** | **0** |
 
 The Windows build was also verified with single-process WPF compilation. One
 Edit Mode concurrency test initially encountered SQLite transaction contention
 while two full Server test processes were accidentally running concurrently;
-the test passed in isolation and the subsequent clean single-process 630-test
+the test passed in isolation and the subsequent clean single-process 636-test
 Server run passed completely.
 
 ## 6. Historical baseline test execution

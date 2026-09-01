@@ -111,7 +111,10 @@ public sealed class ProductionPackageApiTests
             Assert.True(Directory.Exists(Path.Combine(packageRoot, packageId)));
             Assert.Empty(Directory.GetDirectories(packageRoot, ".staging-*"));
 
-            await SupersedeGCodeAsync(application.Services, releaseRoot);
+            if (verificationEnabled)
+                await ChangeVerificationConfigurationAsync(application.Services);
+            else
+                await SupersedeGCodeAsync(application.Services, releaseRoot);
             using var stale = await client.GetAsync(
                 "/api/v1/batch-operations/operation-package/production-package");
             Assert.Equal(HttpStatusCode.NotFound, stale.StatusCode);
@@ -162,6 +165,23 @@ public sealed class ProductionPackageApiTests
             Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("gCodeReleaseId").ValueKind);
             Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("offsetLoaderReleaseId").ValueKind);
             Assert.False(document.RootElement.GetProperty("verificationEnabled").GetBoolean());
+
+            await using (var connection = await application.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var reassign = connection.CreateCommand())
+            {
+                reassign.CommandText = """
+                    INSERT INTO machines(id,number,name,machine_type,working_calendar_id,status,is_active,
+                                         display_enabled,execution_mode,usable_tool_positions)
+                    VALUES('machine-package-2','M-PKG-2','Second Manual Machine','mill','calendar-package',
+                           'active',1,1,'MANUAL',20);
+                    UPDATE machine_assignments SET machine_id='machine-package-2'
+                    WHERE id='assignment-package';
+                    """;
+                await reassign.ExecuteNonQueryAsync();
+            }
+            using var stale = await client.GetAsync(
+                "/api/v1/batch-operations/operation-package/production-package");
+            Assert.Equal(HttpStatusCode.NotFound, stale.StatusCode);
         }
         finally
         {
@@ -344,6 +364,18 @@ public sealed class ProductionPackageApiTests
         command.Parameters.AddWithValue("$path", relative);
         command.Parameters.AddWithValue("$hash", new string('c', 64));
         command.Parameters.AddWithValue("$at", "2026-09-01T09:00:00Z");
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ChangeVerificationConfigurationAsync(IServiceProvider services)
+    {
+        await using var connection = await services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE cnc_verification_settings
+            SET expected_macro_version=11,version=version+1,updated_at='2026-09-01T09:30:00Z'
+            WHERE machine_id='machine-package';
+            """;
         await command.ExecuteNonQueryAsync();
     }
 }

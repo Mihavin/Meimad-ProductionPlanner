@@ -5,7 +5,7 @@ Controller workflow boundary: **Persistent CNC workflow mode variable: REMOVED.*
 Machine-configured and physically commissioned handshake; Server events remain
 workflow authority.
 
-- **Status:** Target architecture; Server foundation through schema v61, Production Runs, operational workflow-event and human debug-timeline projection, post-QC DPRINT cycle completion/interruption, raw attempt timing, and automatic session closure, staged legacy import, Timeline, TV Dashboard, E-Ink API/simulator, Single Edit Mode, verified backup, Windows operational workspaces including QC Queue, and Case Operation graph validation implemented
+- **Status:** Target architecture; Server foundation through schema v64, Production Runs, operational workflow-event and human debug-timeline projection, post-QC DPRINT cycle completion/interruption, raw attempt timing, automatic session closure, staged legacy import, Timeline, TV Dashboard, E-Ink API/simulator, Single Edit Mode, verified backup, derived role queues, immutable Production Packages, Windows operational workspaces including QC Queue, and Case Operation graph validation implemented
 - **Scope:** Factory-local MVP
 
 ## 1. Architectural drivers

@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using Meimad.Planner.Client.Windows.Api;
 
 namespace Meimad.Planner.Client.Windows.Presentation;
@@ -133,6 +135,33 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
             ActionRequested?.Invoke(this, new("OPEN_PRODUCTION_PACKAGE", Selected, package));
             Status = $"Opened current Production Package {package.ProductionPackageId}. No workflow state changed.";
         });
+    }
+
+    internal async Task ExportCurrentProductionPackageAsync(
+        ProductionPackageInfo package,
+        string selectedDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        if (api is null) throw new InvalidOperationException("Connect to the Server first.");
+        var root = Path.GetFullPath(selectedDirectory).TrimEnd(Path.DirectorySeparatorChar);
+        Directory.CreateDirectory(root);
+        foreach (var artifact in package.Artifacts)
+        {
+            var relative = artifact.LogicalPath.Replace('/', Path.DirectorySeparatorChar);
+            var destination = Path.GetFullPath(Path.Combine(root, relative));
+            if (!destination.StartsWith(root + Path.DirectorySeparatorChar,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                throw new InvalidOperationException("A package artifact path escaped the selected export folder.");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            var bytes = await api.ReadProductionPackageArtifactAsync(
+                package.BatchOperationId, artifact.ArtifactId, cancellationToken);
+            var actualHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
+            if (!string.Equals(actualHash, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Package artifact '{artifact.LogicalPath}' failed checksum verification.");
+            await File.WriteAllBytesAsync(destination, bytes, cancellationToken);
+        }
+        Status = $"Exported Production Package {package.ProductionPackageId}. No workflow state changed.";
     }
 
     private async Task RunActionAsync(Func<Task> action)

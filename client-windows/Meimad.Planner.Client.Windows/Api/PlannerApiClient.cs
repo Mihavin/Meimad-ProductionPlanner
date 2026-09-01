@@ -220,6 +220,10 @@ internal interface IPlannerApiClient : IDisposable
         string batchOperationId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    Task<byte[]> ReadProductionPackageArtifactAsync(
+        string batchOperationId, string artifactId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<string> ReadGCodeFileTextAsync(
         string caseId, string caseOperationId, string releaseId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -1413,6 +1417,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         return await ReadSuccessAsync<ProductionPackageInfo>(response, cancellationToken);
+    }
+
+    public async Task<byte[]> ReadProductionPackageArtifactAsync(
+        string batchOperationId, string artifactId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package/artifacts/{Uri.EscapeDataString(artifactId)}",
+            cancellationToken);
+        return await ReadBytesSuccessAsync(response, cancellationToken);
     }
 
     public async Task<string> ReadGCodeFileTextAsync(

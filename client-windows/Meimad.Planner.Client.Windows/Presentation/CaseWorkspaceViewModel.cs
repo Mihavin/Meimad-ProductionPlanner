@@ -30,6 +30,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string? editingOrderId;
     private string? editingOrderEntityTag;
     private bool selectedDetailsAreStale;
+    private bool suppressAutomaticCaseLoad;
     private CasePoolItemViewModel? selectedCase;
     private CaseOperation? selectedOperation;
     private PlannerOrder? selectedOrder;
@@ -295,7 +296,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 ResetOrderForm();
                 ResetBatchForm();
                 RaiseStateProperties();
-                _ = LoadSelectedCaseSafeAsync();
+                if (!suppressAutomaticCaseLoad) _ = LoadSelectedCaseSafeAsync();
             }
         }
     }
@@ -1068,6 +1069,37 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         StatusMessage = "Enter demand for the selected Case. Orders are never assigned directly to Machines.";
         RaiseStateProperties();
         return Task.CompletedTask;
+    }
+
+    internal async Task NavigateToOperationAsync(string caseId, string? caseOperationId)
+    {
+        if (apiClient is null) return;
+        var target = Cases.FirstOrDefault(value => value.CaseId == caseId);
+        if (target is null)
+        {
+            SearchText = string.Empty;
+            CustomerFilter = "All";
+            ActiveFilter = "All";
+            await LoadCasesAsync();
+            target = Cases.FirstOrDefault(value => value.CaseId == caseId);
+        }
+        if (target is null)
+        {
+            StatusMessage = "The requested Case is not available in the current Server result.";
+            return;
+        }
+
+        suppressAutomaticCaseLoad = true;
+        try { SelectedCase = target; }
+        finally { suppressAutomaticCaseLoad = false; }
+        await LoadSelectedCaseSafeAsync();
+        if (caseOperationId is not null)
+        {
+            SelectedOperation = Operations.FirstOrDefault(
+                value => value.CaseOperationId == caseOperationId);
+            if (SelectedOperation is null)
+                StatusMessage = "The requested Operation is no longer current for this Case.";
+        }
     }
 
     internal Task BeginEditOrderAsync()

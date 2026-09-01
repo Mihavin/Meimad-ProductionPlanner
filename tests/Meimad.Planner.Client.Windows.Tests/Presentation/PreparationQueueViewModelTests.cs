@@ -1,5 +1,6 @@
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
+using System.Security.Cryptography;
 
 namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 
@@ -66,16 +67,48 @@ public sealed class PreparationQueueViewModelTests
         Assert.Equal("case-operation-1", routed.Item.CaseOperationId);
     }
 
+    [Fact]
+    public async Task Setup_export_downloads_exact_current_package_artifacts_without_a_workflow_command()
+    {
+        var bytes = "immutable package file"u8.ToArray();
+        var artifact = new ProductionPackageArtifactInfo(
+            "artifact-1", "RUNNABLE_NC", "nc/main.nc", bytes.Length,
+            Convert.ToHexStringLower(SHA256.HashData(bytes)), "gcode-1");
+        var package = new ProductionPackageInfo(
+            "package-1", "operation-1", "run-1", "assignment-1", "machine-1",
+            "gcode-1", "tools-1", null, "CNC_GCODE", false, null, null,
+            new string('a', 64), DateTimeOffset.Parse("2026-09-01T10:00:00Z"),
+            "tool-room-user", null, true, false, false, [artifact]);
+        var api = new FakeApiClient([Item()], bytes);
+        var viewModel = new PreparationQueueViewModel("SETUP_PENDING", "Setup", "Ready");
+        viewModel.AttachSession(api);
+        var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.PackageExport.Tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            await viewModel.ExportCurrentProductionPackageAsync(package, root);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(root, "nc", "main.nc")));
+            Assert.Equal("artifact-1", api.RequestedArtifactId);
+            Assert.Contains("No workflow state changed", viewModel.Status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     private static PreparationQueueItem Item() => new(
         "TOOL_PREPARATION_PENDING", "operation-1", "run-1", "assignment-1",
         "machine-1", "M01", "Mill", "PN-1", "Part", "B1", 10, "Rough",
         "process-1", "gcode-1", "tools-1", "READY_FOR_SETUP",
         [new("toolOffsets", "Tool Offsets", "MISSING", "Offsets missing", false)]);
 
-    private sealed class FakeApiClient(IReadOnlyList<PreparationQueueItem> items)
+    private sealed class FakeApiClient(
+        IReadOnlyList<PreparationQueueItem> items,
+        byte[]? artifactBytes = null)
         : IPlannerApiClient
     {
         internal string? RequestedStage { get; private set; }
+        internal string? RequestedArtifactId { get; private set; }
 
         public Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
             string stage,
@@ -83,6 +116,14 @@ public sealed class PreparationQueueViewModelTests
         {
             RequestedStage = stage;
             return Task.FromResult(items);
+        }
+
+        public Task<byte[]> ReadProductionPackageArtifactAsync(
+            string batchOperationId, string artifactId,
+            CancellationToken cancellationToken = default)
+        {
+            RequestedArtifactId = artifactId;
+            return Task.FromResult(artifactBytes ?? []);
         }
 
         public Task<ServerHealth> GetHealthAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
