@@ -461,6 +461,203 @@ Report:
 
 ---
 
+## 7. Implement server-owned Production Package creation and role actions
+
+Implement the actual **Production Package** workflow on top of the role queues from Task 6. This task defines the package composition, server storage, context-menu actions, readiness boundary, and Machine-dependent build behavior.
+
+This task **supersedes earlier Task 3 / Task 6 wording where they say that Tool Offset Table completion or physical handover alone makes the Operation `Ready for Setup`**. The authoritative new rule is:
+
+> A valid current Production Package for the exact Operation + assigned Machine is what makes the Operation **Ready for Setup**.
+
+Opening, downloading, or copying the package does not change workflow state.
+
+### A. Production Package is scoped to one Operation and one assigned Machine
+A Production Package is a server-owned immutable snapshot prepared for one concrete Operation on its currently assigned Machine.
+
+The package must bind at minimum:
+- `ProductionPackageId`;
+- Operation / Production Run identity according to the current domain model;
+- assigned `MachineId`;
+- exact current NC release when applicable;
+- exact current Tool Table / Tool Offset Table release used by Tool Room;
+- verification mode/capabilities used during build;
+- generated Offset Loader release when applicable;
+- creation timestamp and actor;
+- artifact hashes/checksums and a manifest sufficient to prove exactly what was packaged.
+
+Do not treat a package as reusable across Operations. A package created for one Operation must never become current for another Operation, even when the same NC program or tool data happens to be reused.
+
+### B. Server stores the actual package artifacts
+Unlike the earlier metadata-only idea, the Server must retain the actual current Production Package artifacts.
+
+Store the exact files produced for the package in a server-managed package directory/storage area and keep them immutable once the package becomes current.
+
+The Setup user may open/copy/export these files, but those actions must never mutate the authoritative server copy.
+
+A package should be activated atomically only after all required artifacts are generated, written, and verified successfully. Do not expose a half-built package as Ready for Setup.
+
+Keep historical/superseded packages according to the existing retention model; do not silently delete audit evidence merely because a new package becomes current.
+
+### C. Machine-capability-driven package composition
+Determine package composition automatically from the assigned Machine configuration. Do not ask the Tool Room user to manually choose a package type.
+
+#### CNC + Server Verification Enabled
+The package contains at least:
+1. the package-specific runnable NC file derived from the exact released NC source/template;
+2. the finalized current Tool Table / Tool Offset Table artifact required for that Operation;
+3. a newly generated **package-specific Offset Loader** prepared for the existing Server verification protocol.
+
+The Offset Loader is unique to this package/context and must not be valid as the current loader for a different Operation/package.
+
+Bind the package to the existing verification architecture rather than creating a second challenge/response mechanism.
+
+#### CNC + Server Verification Disabled
+The package contains at least:
+1. the runnable NC file;
+2. the finalized Tool Table / Tool Offset Table artifact.
+
+Do **not** generate an executable verification Offset Loader and do **not** inject verification calls/codes into the runnable NC when Server Verification is disabled.
+
+#### Manual Machine
+Do not generate CNC verification code or an executable CNC Offset Loader.
+
+Build the Machine-specific manual package from the artifacts that are meaningful for manual setup, at minimum the finalized Tool Table / tool-offset/setup information already represented by the current model. If a third human-readable offset/setup sheet is required, make it a manual setup artifact, not CNC executable code.
+
+Do not invent NC requirements for a Manual Machine.
+
+### D. Network connectivity affects delivery, not verification policy
+A Machine may be network-connected or not connected.
+
+Use network capability to decide which delivery actions are available:
+- when a supported direct Machine-transfer path exists and the Machine is connected, it may be offered as an additional delivery option;
+- otherwise the user must still be able to open/export/copy the package through the normal file workflow.
+
+Do **not** silently turn Server Verification off merely because the Machine is temporarily disconnected. Verification policy comes from the Machine configuration. If a configuration combination cannot actually support verification, expose a clear blocking/configuration error instead of silently building a weaker package.
+
+### E. Verification placeholders are resolved during package build
+Change the NC preparation model so that verification-specific executable content is a **package-build concern**, not something permanently forced into every runnable NC regardless of Machine configuration.
+
+The released NC source/template must contain explicit, stable, machine-readable placeholders/markers at every protocol-defined location where package-specific Meimad verification content may be required.
+
+Requirements:
+- do not use fragile free-text search/replace heuristics;
+- validate placeholder presence/uniqueness/structure when the NC is released or before package creation;
+- for a verification-enabled CNC package, resolve the placeholders into the required current verification hooks/content and produce the runnable package NC;
+- for a verification-disabled CNC package, resolve/remove the verification placeholders so the resulting runnable NC contains no unnecessary Server-verification code;
+- preserve the immutable identity of the original NC release and record the exact generated package artifact hash separately.
+
+This changes the earlier permanent rule that every released runnable NC must already contain an always-active generic verification hook. Update `AGENTS.md`, architecture/specification documents, commissioning tooling, examples, tests, and postprocessor guidance so they agree with the package-build placeholder model. Do not leave contradictory rules in the repository.
+
+Do not weaken NC identity matching or the existing exact Run/Machine/NC/Offset Loader binding when verification is enabled.
+
+### F. NC Creator queue context-menu actions
+For an Operation in the NC Creator / Programming Pending view, provide role-appropriate context-menu actions at minimum:
+- **Open Case**;
+- **Open Operation**;
+- **Upload G-code**.
+
+`Upload G-code` must navigate into the existing Operation/NC upload-release workflow, ideally directly to the relevant NC/G-code section. Do not implement a second independent G-code upload/versioning system inside the queue view.
+
+Machine assignment remains Planner authority.
+
+### G. Tool Room Manager context-menu actions
+For an Operation in the Tool Room preparation view, provide at minimum:
+- **Open Case**;
+- **Open Operation**;
+- **Open Tool Table**;
+- **View NC File** as read-only text using the current released NC relevant to the assigned Machine;
+- **Create Production Package**.
+
+`Create Production Package` is the deliberate Tool Room action that assembles the final Machine-specific server package from the current authoritative releases/configuration.
+
+Before building, validate that every required prerequisite for the assigned Machine type is current. If not, explain exactly what is missing/stale rather than creating a partial package.
+
+When creation succeeds:
+- store the package and its manifest on the Server;
+- mark it current for this exact Operation + Machine;
+- automatically make the Operation **Ready for Setup**;
+- remove it from Tool Room pending ownership according to the derived queue predicates.
+
+Do not require a second manual "send to Setup" action.
+
+### H. Setupist context-menu actions
+Keep the Setup queue menu intentionally small for now. Provide at minimum:
+- **Open Case**;
+- **Open Operation**;
+- **Open Production Package**.
+
+`Open Production Package` must open/browse the exact current package files for that Operation. The setupist can copy them to removable media, a local disk, or the Machine using the available shop-floor workflow.
+
+Opening/copying/downloading the package is **not** a workflow transition and must not produce a fake setup-start event.
+
+Additional photo/checklist/web-app functionality is outside this task unless already required by existing behavior.
+
+### I. Ready for Setup and Setup start semantics
+The current valid Production Package is the readiness boundary:
+
+`Tool Room preparation -> Create Production Package -> Ready for Setup`
+
+Do not require package download or physical file copy to reach `Ready for Setup`.
+
+For verification-enabled CNC work, preserve the existing machine-driven transition where execution of the package's current Offset Loader is authoritative evidence that setup has actually started and can move the workflow into `Setup In Progress` / the corresponding current setup state.
+
+For Machine types that do not use an executable Offset Loader, do not invent a fake loader merely to obtain a setup-start event. Preserve an existing suitable start signal if one already exists; otherwise report that start-trigger choice as a product decision still required rather than silently creating a new manual status button.
+
+### J. Package invalidation / supersession
+A current package must become stale/superseded when any fact it was built from changes materially, including at minimum:
+- assigned Machine changes;
+- current NC release changes or is invalidated;
+- current Tool Table / Tool Offset Table release changes;
+- verification-enabled configuration changes in a way that affects package contents;
+- a new Production Package is deliberately created for the same Operation + Machine.
+
+When a package is no longer valid/current, `Ready for Setup` must be recomputed accordingly. Do not continue presenting an old package as ready after one of its bound inputs changed.
+
+A newly generated Offset Loader must have a fresh package/release identity and must supersede the prior loader for that Operation context according to the existing verification rules.
+
+### K. Security / integrity / authority boundaries
+- Production Package creation is a Server-authoritative operation, even when initiated from the Windows Tool Room view.
+- Keep package files immutable on the Server after successful creation.
+- Use checksums/hashes in the manifest and verify generated artifact integrity before activation.
+- Do not introduce Machine Secrets, replacement shared secrets, or a parallel verification protocol.
+- Do not let clients choose a different Machine while creating/opening the package; use the Planner-assigned Machine.
+- Do not let a Setup client edit the authoritative server package in place.
+
+### Acceptance tests
+Add tests proving at least:
+- NC Creator `Upload G-code` routes to the existing Operation NC workflow rather than duplicating release logic;
+- Tool Room can open the current Tool Table and read-only NC;
+- a verification-enabled CNC package contains NC + current tool/offset table + a unique generated Offset Loader and is bound to the exact Operation/Machine/releases;
+- a verification-disabled CNC package contains NC + tool/offset table and contains no active Server-verification injection/Offset Loader;
+- a Manual Machine package contains only applicable manual setup artifacts and no CNC verification executable;
+- package creation is atomic and a failed build never creates `Ready for Setup`;
+- successful current package creation automatically produces `Ready for Setup`;
+- opening/copying/downloading a package does not change workflow state;
+- the same Offset Loader cannot become current for another Operation/package;
+- Machine reassignment invalidates/supersedes the current package;
+- new NC release invalidates/supersedes the current package;
+- new Tool Table/Tool Offset Table release invalidates/supersedes the current package;
+- verification configuration changes invalidate a package when its generated contents are affected;
+- verification placeholders are validated deterministically and do not depend on arbitrary text searching;
+- verification-disabled package NC output has no leftover active verification code/placeholders;
+- Setup `Open Production Package` resolves only the exact current package for that Operation;
+- disconnected Machines still support file-based package access/export and are not silently downgraded from configured verification policy.
+
+### Completion report
+Report:
+- the final Production Package data model and server storage layout;
+- exact package composition rules by Machine type / verification mode;
+- placeholder grammar and package-build transformation rules;
+- how package identity binds to Operation, Machine, NC release, tool/offset release, and Offset Loader;
+- exact derived predicate for `Ready for Setup` after this task;
+- context-menu actions added to NC Creator, Tool Room, and Setup views;
+- invalidation/supersession rules;
+- migrations and documentation changes, especially any `AGENTS.md` rule replaced by this decision;
+- tests executed and results;
+- any unresolved setup-start signal for Manual or non-Offset-Loader Machines.
+
+---
+
 ## General instructions
 
 - First inspect the current implementation and existing tests before changing architecture.
