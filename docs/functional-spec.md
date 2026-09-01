@@ -15,7 +15,7 @@ This document normalizes `Meimad_Planner_Functional_Specification_v0.3_Client_Se
 
 Meimad Production Planner is a local client-server system for manual planning of CNC machining work inside a factory. It replaces a slow shared Excel backlog with a fast visual planning tool.
 
-The system centralizes planning data, calculates timeline consequences, and identifies and explains conflicts. It does not optimize the schedule automatically and does not silently repair a plan. All assignment, sequencing, and corrective decisions remain with a human planner.
+The system centralizes planning data, calculates timeline consequences, and identifies and explains conflicts. Concrete Machine assignment and Machine backlog order remain deliberate planner decisions. Once that anchor exists, the Server automatically creates deterministic provisional assignments for configured Employees, Workstations, and External Resources; the planner may override them. The allocator never creates master data, moves confirmed/actual work, or silently changes the authoritative Machine backlog.
 
 The central server is the only authoritative source of planning data. Windows Planning Clients provide full planning editing; TV Dashboard is read-only. Color E-Ink Work Tablets read assigned operational/package data and have one narrow operational command, `SEND_TO_QC`, which asks the Server to move the tablet workflow projection for its resolved active Production Run to `IN_QC` without granting planning Edit Mode.
 
@@ -43,7 +43,7 @@ The central server is the only authoritative source of planning data. Windows Pl
 
 ### 3.2 Excluded
 
-- Automatic scheduling, optimization, or silent plan repair.
+- Automatic Machine selection, Machine-backlog optimization, or silent repair of authoritative planner choices. Deterministic provisional scheduling of auxiliary resources is included.
 - Public Internet exposure or remote editing.
 - Customer Portal.
 - ERP inventory synchronization.
@@ -328,6 +328,16 @@ Manual cycle commands and valid CNC cycle completions share one Server-owned tra
 All mutations remain gated by confirmed Edit Mode. Delete and deactivate controls are convenience commands only; the Server remains authoritative and blocks references or active assignments atomically. The Planning Board does not duplicate master-data forms. Employee Machine qualifications, roles, calendars, active state, and exceptions constrain the read-only Timeline calculation; cached holidays constrain opted-in calendars. A submitted qualification must identify an existing Machine. Report/email settings remain administrative only. Excel preview itself is not a planning mutation; only the explicit commit requires Edit Mode. A blocking source issue may be resolved through an explicit supported mapping or by choosing Skip, but it is never silently ignored for a selected row.
 
 The Planning Board context menu changes an assigned operation's mode through an Edit-Mode-gated, ETag-checked mutation of its existing Machine Assignment. It provides `Schedule from delivery date`, `Schedule forward`, and `Set manual mode`; a successful change refreshes the same canonical Timeline and preserves assignment identity, Machine, and backlog position. The Timeline tab remains embedded in the main window and offers a separate-window action. Both surfaces use the same read-only Timeline view model and committed Server projection; the separate window is the same shared Timeline, never a backward/manual layer. Opening, refreshing, or closing it cannot assign, reorder, start, suspend, finish, or otherwise mutate planning data.
+
+## 9.9 Generic resources and automatic provisional allocation
+
+Schema v65 preserves `machines` as the specialized Machine resource and adds three complementary classes: Employees with data-managed Skills, generic internal Workstations with data-managed types/capabilities/calendars/capacity, and External Resources with promised lead time, safety buffer, optional working calendar, and planned/actual send-return facts. Names such as Tool Room, CMM, deburring, assembly, painting, or presetter are configuration examples and are not domain enums.
+
+Process requirements state the resource class, Workstation type/capability, Employee Skill, simultaneous capacity, duration, direction, and dependency. They never make one concrete Employee or Workstation permanent process authority. The allocator supports the common simultaneous pair of one physical Workstation plus one qualified Employee. It intersects both calendars, enforces Workstation capacity and Employee non-overlap, chooses the earliest feasible/least-displacing combination with stable resource-ID tie breaks, schedules preparation latest-fit backward from an existing Machine anchor, and following work earliest-fit forward. Confirmed/actual reservations are fixed; an explicit provisional pin is a recalculation constraint.
+
+Valid contention is resolved by another eligible resource or a shifted feasible slot and is reported as predicted displacement/load, not as a blocking conflict. Missing eligible resources/Skills or an unusable calendar are blocking configuration errors. Delivery risk is computed only after predicted completion. External intervals consume no modeled internal capacity; return is send plus promised lead time and Meimad buffer, using calendar-time or configured working-time semantics. Planned and actual assignments/times are separate persisted facts.
+
+Production Package creation offers `MEASURED` and `MANUAL_DUMMY` tool-offset modes. `MANUAL_DUMMY` requires assigned-Machine configuration, omits the measured Tool Table artifact, and records setupist manual-entry responsibility in the immutable manifest. A verification-enabled CNC package still produces the exact package/Run/Machine/NC-bound Offset Loader and normal verification/setup hooks, with no measured offset payload. Schema v65 initially enables existing Machine-number records 10, 14, and 15 through configuration rows; domain code never branches on those numbers.
 
 ## 10. TV Dashboard
 

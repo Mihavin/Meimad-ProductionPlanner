@@ -70,6 +70,12 @@
                 <Style TargetType="MenuItem"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding PlacementTarget.Tag.Stage, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="TOOL_PREPARATION_PENDING"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style>
               </MenuItem.Style>
             </MenuItem>
+            <MenuItem Header="Create Production Package — Manual / Dummy Tool Offsets"
+                      Command="{Binding PlacementTarget.Tag.CreateManualOffsetProductionPackageCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+              <MenuItem.Style>
+                <Style TargetType="MenuItem"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding PlacementTarget.Tag.Stage, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="TOOL_PREPARATION_PENDING"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style>
+              </MenuItem.Style>
+            </MenuItem>
             <MenuItem Header="Open Production Package"
                       Command="{Binding PlacementTarget.Tag.OpenProductionPackageCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
               <MenuItem.Style>

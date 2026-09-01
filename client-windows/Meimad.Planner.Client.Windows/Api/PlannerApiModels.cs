@@ -1810,7 +1810,10 @@ internal sealed record ProductionPackageInfo(
     bool FileExportAvailable,
     bool DirectTransferConfigured,
     bool DirectTransferOnline,
-    IReadOnlyList<ProductionPackageArtifactInfo> Artifacts);
+    IReadOnlyList<ProductionPackageArtifactInfo> Artifacts)
+{
+    public string ToolOffsetMode { get; init; } = "MEASURED";
+}
 
 internal sealed class PlannerApiException : Exception
 {

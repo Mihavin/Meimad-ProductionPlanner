@@ -12,6 +12,61 @@ namespace Meimad.Planner.Server.Tests.ProductionPackages;
 
 public sealed class ProductionPackageApiTests
 {
+    [Fact]
+    public async Task Manual_dummy_offsets_are_explicit_auditable_and_keep_verification_identity()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ManualOffsets.Tests", Guid.NewGuid().ToString("N"));
+        var releaseRoot = Path.Combine(root, "releases");
+        var packageRoot = Path.Combine(root, "packages");
+        Directory.CreateDirectory(root);
+        await using var application = ServerApplication.Build(
+            ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
+             $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
+            webHost => webHost.UseTestServer());
+        try
+        {
+            await application.StartAsync();
+            await SeedAsync(application.Services, releaseRoot, true);
+            await using (var connection = await application.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var enable = connection.CreateCommand())
+            {
+                enable.CommandText = "INSERT INTO machine_package_capabilities(machine_id,allow_manual_dummy_tool_offsets,updated_at,updated_by) VALUES('machine-package',1,'2026-09-01T08:00:00Z','test');";
+                await enable.ExecuteNonQueryAsync();
+            }
+            File.Delete(Path.Combine(releaseRoot,"operations","case-operation-package","tool-tables","tools-1","tools.csv"));
+            using var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "tool-room-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "tool-room-user");
+            using var create = await client.PostAsync(
+                "/api/v1/batch-operations/operation-package/production-package?toolOffsetMode=MANUAL_DUMMY",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+            using var document = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
+            Assert.Equal("MANUAL_DUMMY",document.RootElement.GetProperty("toolOffsetMode").GetString());
+            Assert.True(document.RootElement.GetProperty("verificationEnabled").GetBoolean());
+            var artifacts=document.RootElement.GetProperty("artifacts").EnumerateArray().ToArray();
+            Assert.DoesNotContain(artifacts,value=>value.GetProperty("artifactType").GetString()=="TOOL_TABLE");
+            Assert.Contains(artifacts,value=>value.GetProperty("artifactType").GetString()=="OFFSET_LOADER");
+            var loader=artifacts.Single(value=>value.GetProperty("artifactType").GetString()=="OFFSET_LOADER");
+            var loaderBytes=await client.GetByteArrayAsync($"/api/v1/batch-operations/operation-package/production-package/artifacts/{loader.GetProperty("artifactId").GetString()}");
+            var loaderText=Encoding.ASCII.GetString(loaderBytes);
+            Assert.Contains("PRODUCTION PACKAGE",loaderText,StringComparison.Ordinal);
+            Assert.Contains("G65 P9001",loaderText,StringComparison.Ordinal);
+            Assert.DoesNotContain("G10",loaderText,StringComparison.OrdinalIgnoreCase);
+            var manifest=artifacts.Single(value=>value.GetProperty("artifactType").GetString()=="MANIFEST");
+            using var manifestDocument=JsonDocument.Parse(await client.GetByteArrayAsync($"/api/v1/batch-operations/operation-package/production-package/artifacts/{manifest.GetProperty("artifactId").GetString()}"));
+            Assert.Equal("MANUAL_DUMMY",manifestDocument.RootElement.GetProperty("toolOffsetMode").GetString());
+            Assert.True(manifestDocument.RootElement.GetProperty("setupistMustEnterToolOffsetsManually").GetBoolean());
+            Assert.Equal(JsonValueKind.Null,manifestDocument.RootElement.GetProperty("toolTableSourceHash").ValueKind);
+        }
+        finally
+        {
+            await application.StopAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root,true);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

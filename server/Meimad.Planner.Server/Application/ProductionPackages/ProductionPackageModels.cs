@@ -37,6 +37,7 @@ internal sealed record ProductionPackageBuildContext(
     ProductionPackageVerificationConfiguration? Verification,
     bool DirectTransferConfigured,
     bool DirectTransferOnline,
+    bool ManualDummyToolOffsetsAllowed,
     string? CurrentPackageId,
     ProductionReadinessContext ReadinessContext);
 
@@ -59,6 +60,7 @@ internal sealed record ProductionPackageRecord(
     string ToolTableReleaseId,
     string? OffsetLoaderReleaseId,
     string ExecutionMode,
+    string ToolOffsetMode,
     bool VerificationEnabled,
     int? VerificationConfigurationVersion,
     int? VerificationMacroVersion,

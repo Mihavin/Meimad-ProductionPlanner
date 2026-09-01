@@ -33,6 +33,8 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
             () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
         CreateProductionPackageCommand = new AsyncCommand(CreateProductionPackageAsync,
             () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
+        CreateManualOffsetProductionPackageCommand = new AsyncCommand(CreateManualOffsetProductionPackageAsync,
+            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
         OpenProductionPackageCommand = new AsyncCommand(OpenProductionPackageAsync,
             () => CanUseSelected() && Stage == "SETUP_PENDING");
     }
@@ -50,6 +52,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     public AsyncCommand OpenToolTableCommand { get; }
     public AsyncCommand ViewNcFileCommand { get; }
     public AsyncCommand CreateProductionPackageCommand { get; }
+    public AsyncCommand CreateManualOffsetProductionPackageCommand { get; }
     public AsyncCommand OpenProductionPackageCommand { get; }
 
     public PreparationQueueItem? Selected
@@ -113,14 +116,22 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     }
 
     private async Task CreateProductionPackageAsync()
+        => await CreateProductionPackageAsync("MEASURED");
+
+    private async Task CreateManualOffsetProductionPackageAsync()
+        => await CreateProductionPackageAsync("MANUAL_DUMMY");
+
+    private async Task CreateProductionPackageAsync(string toolOffsetMode)
     {
         if (api is null || Selected is null) return;
         await RunActionAsync(async () =>
         {
             var package = await api.CreateProductionPackageAsync(
-                Selected.BatchOperationId, clientId, userId);
+                Selected.BatchOperationId, clientId, userId, toolOffsetMode);
             ActionRequested?.Invoke(this, new("PRODUCTION_PACKAGE_CREATED", Selected, package));
-            Status = $"Production Package {package.ProductionPackageId} created and made current.";
+            Status = package.ToolOffsetMode == "MANUAL_DUMMY"
+                ? $"Production Package {package.ProductionPackageId} created. Setupist must enter real tool offsets manually."
+                : $"Production Package {package.ProductionPackageId} created and made current.";
         });
         await RefreshAsync();
     }
@@ -182,6 +193,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         OpenToolTableCommand.RaiseCanExecuteChanged();
         ViewNcFileCommand.RaiseCanExecuteChanged();
         CreateProductionPackageCommand.RaiseCanExecuteChanged();
+        CreateManualOffsetProductionPackageCommand.RaiseCanExecuteChanged();
         OpenProductionPackageCommand.RaiseCanExecuteChanged();
     }
 

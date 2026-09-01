@@ -214,6 +214,7 @@ internal interface IPlannerApiClient : IDisposable
 
     Task<ProductionPackageInfo> CreateProductionPackageAsync(
         string batchOperationId, string clientId, string userId,
+        string toolOffsetMode = "MEASURED",
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
@@ -1397,10 +1398,11 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     public async Task<ProductionPackageInfo> CreateProductionPackageAsync(
         string batchOperationId, string clientId, string userId,
+        string toolOffsetMode = "MEASURED",
         CancellationToken cancellationToken = default)
     {
         using var request = CreateRequest(HttpMethod.Post,
-            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package",
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package?toolOffsetMode={Uri.EscapeDataString(toolOffsetMode)}",
             clientId);
         request.Headers.Add(UserIdHeader, userId);
         request.Content = JsonContent.Create(new { }, options: JsonOptions);

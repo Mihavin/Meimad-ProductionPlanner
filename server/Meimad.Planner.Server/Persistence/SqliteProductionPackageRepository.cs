@@ -33,13 +33,15 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    settings.verify_program_number,settings.expected_macro_version,
                    settings.event_sequence_variable,
                    connection.enabled,connection.allow_write,connection.connection_status,
-                   current.production_package_id
+                   current.production_package_id,
+                   COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)
             FROM batch_operations operation
             JOIN machine_assignments assignment ON assignment.batch_operation_id=operation.id
             JOIN machines machine ON machine.id=assignment.machine_id
             LEFT JOIN cnc_verification_settings settings ON settings.machine_id=machine.id
             LEFT JOIN machine_connections connection ON connection.machine_id=machine.id
             LEFT JOIN production_package_current current ON current.batch_operation_id=operation.id
+            LEFT JOIN machine_package_capabilities package_capability ON package_capability.machine_id=machine.id
             WHERE operation.id=$operationId
             ORDER BY assignment.id LIMIT 1;
             """;
@@ -67,6 +69,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var directOnline = directConfigured && !reader.IsDBNull(14)
             && reader.GetString(14) == "ONLINE";
         var currentPackageId = Nullable(reader, 15);
+        var manualDummyAllowed = reader.GetBoolean(16);
         await reader.DisposeAsync();
 
         if (readiness.ActiveToolTableReleaseId is null)
@@ -87,7 +90,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             batchOperationId, runId, assignmentId, machineId, machineNumber, machineName,
             executionMode, gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
-            verification, directConfigured, directOnline, currentPackageId, readiness);
+            verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness);
     }
 
     public async Task ActivateAsync(
@@ -121,10 +124,10 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             INSERT INTO production_packages (
                 id,batch_operation_id,production_run_id,machine_assignment_id,machine_id,
                 gcode_release_id,tool_table_release_id,offset_loader_release_id,execution_mode,
-                verification_enabled,verification_configuration_version,verification_macro_version,
+                verification_enabled,verification_configuration_version,verification_macro_version,tool_offset_mode,
                 manifest_relative_path,manifest_hash,created_at,created_by,supersedes_package_id)
             VALUES ($id,$operationId,$runId,$assignmentId,$machineId,$gcodeId,$toolId,$loaderId,
-                    $mode,$verification,$configVersion,$macroVersion,$manifestPath,$manifestHash,
+                    $mode,$verification,$configVersion,$macroVersion,$offsetMode,$manifestPath,$manifestHash,
                     $at,$by,$supersedes);
             """, cancellationToken,
             ("$id", package.ProductionPackageId), ("$operationId", package.BatchOperationId),
@@ -134,6 +137,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             ("$mode", package.ExecutionMode), ("$verification", package.VerificationEnabled ? 1 : 0),
             ("$configVersion", Db(package.VerificationConfigurationVersion)),
             ("$macroVersion", Db(package.VerificationMacroVersion)),
+            ("$offsetMode", package.ToolOffsetMode),
             ("$manifestPath", package.ManifestRelativePath), ("$manifestHash", package.ManifestHash),
             ("$at", Format(package.CreatedAt)), ("$by", package.CreatedBy),
             ("$supersedes", Db(package.SupersedesPackageId)));
@@ -208,7 +212,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    package.execution_mode,package.verification_enabled,
                    package.verification_configuration_version,package.verification_macro_version,
                    package.manifest_relative_path,package.manifest_hash,package.created_at,
-                   package.created_by,package.supersedes_package_id,
+                   package.created_by,package.supersedes_package_id,package.tool_offset_mode,
                    connection.enabled,connection.allow_write,connection.connection_status
             FROM production_package_current current
             JOIN production_packages package ON package.id=current.production_package_id
@@ -223,8 +227,11 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
              AND process.tool_table_release_id=package.tool_table_release_id
             LEFT JOIN cnc_verification_settings settings ON settings.machine_id=package.machine_id
             LEFT JOIN machine_connections connection ON connection.machine_id=package.machine_id
+            LEFT JOIN machine_package_capabilities package_capability ON package_capability.machine_id=package.machine_id
             WHERE current.batch_operation_id=$operationId
               AND machine.execution_mode=package.execution_mode
+              AND (package.tool_offset_mode='MEASURED'
+                   OR COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)=1)
               AND ((package.execution_mode='MANUAL' AND package.gcode_release_id IS NULL)
                    OR (package.execution_mode='CNC_GCODE'
                        AND package.gcode_release_id=COALESCE(
@@ -279,6 +286,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                  AND process.is_active=1
                  AND process.tool_table_release_id=$toolId
                 LEFT JOIN cnc_verification_settings settings ON settings.machine_id=machine.id
+                LEFT JOIN machine_package_capabilities package_capability ON package_capability.machine_id=machine.id
                 WHERE operation.id=$operationId
                   AND (($mode='MANUAL' AND $gcodeId IS NULL)
                        OR ($mode='CNC_GCODE' AND $gcodeId=COALESCE(
@@ -294,6 +302,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                                   WHERE latest.process_revision_id=release.process_revision_id
                                     AND latest.postprocessor_id=release.postprocessor_id)
                             ORDER BY release.id LIMIT 1))))
+                  AND ($offsetMode='MEASURED'
+                       OR COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)=1)
                   AND ($mode='MANUAL'
                        OR ($verification=0 AND COALESCE(settings.enabled,0)=0)
                        OR ($verification=1 AND settings.enabled=1
@@ -311,6 +321,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         command.Parameters.AddWithValue("$assignmentId", package.MachineAssignmentId);
         command.Parameters.AddWithValue("$machineId", package.MachineId);
         command.Parameters.AddWithValue("$mode", package.ExecutionMode);
+        command.Parameters.AddWithValue("$offsetMode", package.ToolOffsetMode);
         command.Parameters.AddWithValue("$gcodeId", Db(package.GCodeReleaseId));
         command.Parameters.AddWithValue("$toolId", package.ToolTableReleaseId);
         command.Parameters.AddWithValue("$verification", package.VerificationEnabled ? 1 : 0);
@@ -324,15 +335,15 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         SqliteDataReader reader,
         IReadOnlyList<ProductionPackageArtifact> artifacts)
     {
-        var configured = !reader.IsDBNull(17) && reader.GetBoolean(17)
-            && !reader.IsDBNull(18) && reader.GetBoolean(18);
+        var configured = !reader.IsDBNull(18) && reader.GetBoolean(18)
+            && !reader.IsDBNull(19) && reader.GetBoolean(19);
         return new(
             reader.GetString(0), reader.GetString(1), Nullable(reader, 2), reader.GetString(3),
             reader.GetString(4), Nullable(reader, 5), reader.GetString(6), Nullable(reader, 7),
-            reader.GetString(8), reader.GetBoolean(9), NullableInt(reader, 10), NullableInt(reader, 11),
+            reader.GetString(8), reader.GetString(17), reader.GetBoolean(9), NullableInt(reader, 10), NullableInt(reader, 11),
             reader.GetString(12), reader.GetString(13), Parse(reader.GetString(14)), reader.GetString(15),
             Nullable(reader, 16), configured,
-            configured && !reader.IsDBNull(19) && reader.GetString(19) == "ONLINE", artifacts);
+            configured && !reader.IsDBNull(20) && reader.GetString(20) == "ONLINE", artifacts);
     }
 
     private static async Task<IReadOnlyList<ProductionPackageArtifact>> ReadArtifactsAsync(

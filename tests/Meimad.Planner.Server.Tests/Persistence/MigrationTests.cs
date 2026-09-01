@@ -42,6 +42,13 @@ public sealed class MigrationTests
         "setup_calendar_settings",
         "employee_resources",
         "employee_calendar_exceptions",
+        "skills",
+        "workstation_types",
+        "workstations",
+        "external_resources",
+        "operation_resource_requirements",
+        "resource_schedule_work",
+        "external_resource_executions",
         "israeli_holidays",
         "report_email_settings",
         "kitaron_connection_settings",
@@ -63,7 +70,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(64L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(65L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -339,7 +346,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(64L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(65L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1552,7 +1559,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 65;";
+            command.CommandText = "PRAGMA user_version = 66;";
             await command.ExecuteNonQueryAsync();
         }
 

@@ -15,6 +15,7 @@ internal static class ProductionPackageEndpoints
 
     private static async Task<IResult> CreateAsync(
         string operationId,
+        string? toolOffsetMode,
         ProductionPackageService service,
         HttpContext context,
         CancellationToken token)
@@ -23,7 +24,7 @@ internal static class ProductionPackageEndpoints
             return error!;
         try
         {
-            var package = await service.CreateAsync(operationId, userId!, token);
+            var package = await service.CreateAsync(operationId, userId!, toolOffsetMode ?? "MEASURED", token);
             return Results.Created(
                 $"/api/v1/batch-operations/{operationId}/production-package",
                 ProductionPackageResponse.FromDomain(package));
@@ -75,6 +76,7 @@ internal sealed record ProductionPackageResponse(
     string ToolTableReleaseId,
     string? OffsetLoaderReleaseId,
     string ExecutionMode,
+    string ToolOffsetMode,
     bool VerificationEnabled,
     int? VerificationConfigurationVersion,
     int? VerificationMacroVersion,
@@ -91,6 +93,7 @@ internal sealed record ProductionPackageResponse(
         value.ProductionPackageId, value.BatchOperationId, value.ProductionRunId,
         value.MachineAssignmentId, value.MachineId, value.GCodeReleaseId,
         value.ToolTableReleaseId, value.OffsetLoaderReleaseId, value.ExecutionMode,
+        value.ToolOffsetMode,
         value.VerificationEnabled, value.VerificationConfigurationVersion,
         value.VerificationMacroVersion, value.ManifestHash, value.CreatedAt, value.CreatedBy,
         value.SupersedesPackageId, true, value.DirectTransferConfigured,

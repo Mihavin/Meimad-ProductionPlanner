@@ -2262,3 +2262,17 @@ The authoritative routes, compatibility façades, concurrency rules, error seman
 - `GET .../{id}/readiness` returns run, program, and output readiness; `GET /api/v1/batch-operations/unallocated` returns remaining allocatable quantities.
 
 Planning mutations require Single Edit Mode headers. Existing resources require a matching `If-Match: "production-run:{id}:v{version}"`; stale versions return 412. Validation is structured and never rounds, over-allocates, silently selects a release, or partially advances one coupled output.
+
+## Generic resource planning (schema v65)
+
+Resource-master mutations require the normal `X-Meimad-Client-Id` and current `X-Meimad-Edit-Generation`; reads and preview calculation are non-mutating.
+
+- `GET|POST /api/v1/resources/skills`
+- `PUT /api/v1/resources/employees/{employeeId}/skills` replaces operational Skill mappings only, not roles or legacy Machine qualifications.
+- `GET|POST /api/v1/resources/workstation-types`
+- `GET|POST /api/v1/resources/workstations`
+- `GET|POST /api/v1/resources/external`
+- `GET|POST /api/v1/case-operations/{operationId}/resource-requirements` manages data-driven requirements rather than concrete assignments.
+- `POST /api/v1/resource-plan/preview` returns deterministic assignments, internal load intervals including fixed facts, configuration errors, predicted shift/completion, and delivery risk. Pins are request constraints; it never mutates Machine assignments/backlogs.
+
+`POST /api/v1/batch-operations/{operationId}/production-package?toolOffsetMode=MEASURED|MANUAL_DUMMY` selects the immutable offset source mode. Default is `MEASURED`; manual mode returns 422 when the Machine lacks capability. The response/manifest include `toolOffsetMode`. A manual package has no measured Tool Table artifact, while verification-enabled CNC still has its bound Offset Loader.

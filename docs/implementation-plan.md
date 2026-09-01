@@ -728,3 +728,11 @@ first-article/QC operating strategy.
 - **OD-031 - Firmware update:** Define safe update/service procedure if OTA remains deferred.
 - **OD-032 - Measured acceptance:** Define numeric battery-life/current, wake/download/refresh time, readability distance/lighting/temperature, ghosting, storage, failure recovery, and one-week pilot success thresholds.
 - **OD-033 - Source version:** Correct or confirm the E-Ink concept's v0.1 title versus v0.3 footer.
+
+## Task 8 implementation record - generic resources and manual-offset pilot
+
+Schema v65 and the Server/Windows vertical slice retain specialized Machines; add data-managed Skills, Employee mappings, Workstation types/instances, External Resources, generic Operation requirements, provisional/actual assignment history, external send/return history, and Machine package capability. The deterministic allocator handles simultaneous Workstation/Employee demand, backward preparation, forward successors, fixed/actual reservations, request pins, load projection, external lead/buffer semantics, and post-schedule delivery risk.
+
+Production Package creation now exposes explicit `Manual / Dummy Tool Offsets`; existing 10/14/15 Machine records are enabled through migration data. NC-template verification, CNC challenge/response, exact binding, and Offset Loader authorization are unchanged.
+
+Deployment work remains: configure real resources/Skills/calendars and process requirements, review pilot packages, and perform bounded no-motion commissioning on Machines 10/14/15. Detailed Windows CRUD screens for every new master and a persisted whole-factory recalculation command remain follow-on UX work; the APIs, schema, pure allocator, and package choice are implemented foundations.

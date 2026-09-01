@@ -5,7 +5,7 @@ Controller workflow boundary: **Persistent CNC workflow mode variable: REMOVED.*
 Machine-configured and physically commissioned handshake; Server events remain
 workflow authority.
 
-- **Status:** Target architecture; Server foundation through schema v64, Production Runs, operational workflow-event and human debug-timeline projection, post-QC DPRINT cycle completion/interruption, raw attempt timing, automatic session closure, staged legacy import, Timeline, TV Dashboard, E-Ink API/simulator, Single Edit Mode, verified backup, derived role queues, immutable Production Packages, Windows operational workspaces including QC Queue, and Case Operation graph validation implemented
+- **Status:** Target architecture; Server foundation through schema v65, Production Runs, operational workflow-event and human debug-timeline projection, post-QC DPRINT cycle completion/interruption, raw attempt timing, automatic session closure, staged legacy import, Timeline, TV Dashboard, E-Ink API/simulator, Single Edit Mode, verified backup, derived role queues, immutable Production Packages, generic resource masters/provisional allocator, Windows operational workspaces including QC Queue, and Case Operation graph validation implemented
 - **Scope:** Factory-local MVP
 
 ## 1. Architectural drivers
@@ -483,3 +483,11 @@ Infrastructure may depend on domain/application abstractions; domain logic must 
 ## 14. Architectural decisions still required
 
 The blocking choices are tracked in [Implementation plan](implementation-plan.md#open-decisions). No implementation should freeze the technology stack, identity model, scheduling semantics, allocation equation, route versioning, E-Ink rendering strategy, or telemetry behavior without recording the decision and updating this document.
+
+## 15. Schema-v65 resource scheduling boundary
+
+The existing Machine aggregate, Machine calendars, compatibility, CNC configuration, assignment, and backlog remain unchanged. `AutomaticResourceScheduler` is a pure Server-domain allocator layered after a planner-owned Machine anchor. Its inputs are data-managed candidates, availability, requirements, fixed facts, and optional pins; its output is provisional assignment, resource-load intervals, predicted completion/displacement, and configuration errors. It does not write Machine assignments or reorder backlogs.
+
+Workstation and Skill semantics live in master data rather than code. One work item can require a Workstation and Employee simultaneously; the allocator intersects their calendars and existing reservations. Forward selection sorts by start, finish, Workstation ID, then Employee ID. Backward selection sorts by latest feasible finish and stable IDs. External Resource intervals use lead time and safety buffer, never supplier utilization. The schema retains appendable assignment provenance plus separate planned and actual fields; confirmed/actual reservations are immutable allocator constraints.
+
+Production Package `MANUAL_DUMMY` uses the same package state machine, immutable source/package hashes, Machine binding, NC identity, and Offset Loader authorization as `MEASURED`. Only measured offset payload/artifact is absent. The Windows preparation queue exposes the choice explicitly; the Server rejects it unless Machine configuration allows it.

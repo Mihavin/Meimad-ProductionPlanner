@@ -21,6 +21,7 @@ internal sealed class ProductionPackageService(
     internal async Task<ProductionPackageRecord> CreateAsync(
         string batchOperationId,
         string createdBy,
+        string toolOffsetMode = "MEASURED",
         CancellationToken cancellationToken = default)
     {
         var operationId = Required(batchOperationId, "batchOperationId");
@@ -29,7 +30,8 @@ internal sealed class ProductionPackageService(
             ?? throw new ProductionPackageBuildException(
                 "production_package_operation_not_found",
                 "The assigned Operation was not found.");
-        ValidatePrerequisites(context);
+        var offsetMode = NormalizeOffsetMode(toolOffsetMode);
+        ValidatePrerequisites(context, offsetMode);
 
         var packageId = Guid.NewGuid().ToString("N");
         var offsetLoaderId = context.Verification is null ? null : Guid.NewGuid().ToString("N");
@@ -87,17 +89,20 @@ internal sealed class ProductionPackageService(
                 }
             }
 
-            var toolPath = releaseStore.ResolveStoredPath(context.ToolTableStoredRelativePath);
-            if (!File.Exists(toolPath))
-                throw new ProductionPackageBuildException(
-                    "production_package_source_missing",
-                    "The immutable Tool Table source artifact is missing; no package was activated.");
-            var toolBytes = await ReadVerifiedSourceAsync(
-                toolPath, context.ToolTableHash, "Tool Table", cancellationToken);
-            artifacts.Add(await WriteAsync(
-                staging, packageId, ProductionPackageArtifactTypes.ToolTable,
-                $"tool-table/{SafeFileName(context.ToolTableOriginalFileName)}", toolBytes,
-                context.ToolTableReleaseId, cancellationToken));
+            if (offsetMode == "MEASURED")
+            {
+                var toolPath = releaseStore.ResolveStoredPath(context.ToolTableStoredRelativePath);
+                if (!File.Exists(toolPath))
+                    throw new ProductionPackageBuildException(
+                        "production_package_source_missing",
+                        "The immutable Tool Table source artifact is missing; no package was activated.");
+                var toolBytes = await ReadVerifiedSourceAsync(
+                    toolPath, context.ToolTableHash, "Tool Table", cancellationToken);
+                artifacts.Add(await WriteAsync(
+                    staging, packageId, ProductionPackageArtifactTypes.ToolTable,
+                    $"tool-table/{SafeFileName(context.ToolTableOriginalFileName)}", toolBytes,
+                    context.ToolTableReleaseId, cancellationToken));
+            }
 
             var manifestRelative = $"{packageId}/manifest.json";
             var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(new
@@ -109,13 +114,15 @@ internal sealed class ProductionPackageService(
                 machineAssignmentId = context.MachineAssignmentId,
                 machine = new { id = context.MachineId, number = context.MachineNumber, name = context.MachineName },
                 executionMode = context.ExecutionMode,
+                toolOffsetMode = offsetMode,
+                setupistMustEnterToolOffsetsManually = offsetMode == "MANUAL_DUMMY",
                 serverVerificationEnabled = context.Verification is not null,
                 verificationConfigurationVersion = context.Verification?.Version,
                 verificationMacroVersion = context.Verification?.ExpectedMacroVersion,
                 gCodeReleaseId = context.GCodeReleaseId,
                 gCodeSourceHash = context.GCodeHash,
                 toolTableReleaseId = context.ToolTableReleaseId,
-                toolTableSourceHash = context.ToolTableHash,
+                toolTableSourceHash = offsetMode == "MEASURED" ? context.ToolTableHash : null,
                 offsetLoaderReleaseId = offsetLoaderId,
                 offsetLoaderReleaseToken = releaseToken,
                 createdAt,
@@ -142,6 +149,7 @@ internal sealed class ProductionPackageService(
                 packageId, context.BatchOperationId, context.ProductionRunId,
                 context.MachineAssignmentId, context.MachineId, context.GCodeReleaseId,
                 context.ToolTableReleaseId, offsetLoaderId, context.ExecutionMode,
+                offsetMode,
                 context.Verification is not null, context.Verification?.Version,
                 context.Verification?.ExpectedMacroVersion, manifestRelative, manifest.FileHash,
                 createdAt, actor, context.CurrentPackageId,
@@ -186,10 +194,14 @@ internal sealed class ProductionPackageService(
         return (path, Path.GetFileName(artifact.LogicalPath), artifact.FileHash);
     }
 
-    private static void ValidatePrerequisites(ProductionPackageBuildContext context)
+    private static void ValidatePrerequisites(ProductionPackageBuildContext context, string offsetMode)
     {
         var readiness = ProductionReadinessEvaluator.Evaluate(context.ReadinessContext);
-        var requiredKeys = context.ExecutionMode == "MANUAL"
+        var requiredKeys = offsetMode == "MANUAL_DUMMY"
+            ? (context.ExecutionMode == "MANUAL" ? Array.Empty<string>() :
+                new[] { ReadinessComponentKeys.GCode, ReadinessComponentKeys.MachinePostprocessorCompatibility,
+                    ReadinessComponentKeys.ToolCapacity })
+            : context.ExecutionMode == "MANUAL"
             ? new[] { ReadinessComponentKeys.ToolTable, ReadinessComponentKeys.ToolCapacity, ReadinessComponentKeys.ToolOffsets }
             : new[] { ReadinessComponentKeys.GCode, ReadinessComponentKeys.MachinePostprocessorCompatibility,
                 ReadinessComponentKeys.ToolTable, ReadinessComponentKeys.ToolCapacity, ReadinessComponentKeys.ToolOffsets };
@@ -209,6 +221,18 @@ internal sealed class ProductionPackageService(
             throw new ProductionPackageBuildException(
                 "production_package_run_missing",
                 "Server Verification requires a concrete Production Run for exact Run/Machine/NC/Offset Loader binding.");
+        if (offsetMode == "MANUAL_DUMMY" && !context.ManualDummyToolOffsetsAllowed)
+            throw new ProductionPackageBuildException(
+                "manual_dummy_tool_offsets_not_enabled",
+                "Manual / Dummy Tool Offsets is not enabled for the assigned Machine.");
+    }
+
+    private static string NormalizeOffsetMode(string? value)
+    {
+        var result = string.IsNullOrWhiteSpace(value) ? "MEASURED" : value.Trim().ToUpperInvariant();
+        return result is "MEASURED" or "MANUAL_DUMMY" ? result :
+            throw new ProductionPackageBuildException("production_package_offset_mode_invalid",
+                "toolOffsetMode must be MEASURED or MANUAL_DUMMY.");
     }
 
     private async Task<ProductionPackageArtifact> WriteAsync(
