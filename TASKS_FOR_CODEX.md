@@ -688,6 +688,293 @@ Report:
 
 ---
 
+## 8. Implement generic resource architecture, manual-offset pilot, and automatic resource scheduling
+
+Build the resource foundation and automatic scheduling layer for Meimad Planner. This task must preserve the existing Machine model and existing operation-planning authority while adding generic internal resources, employees/skills, external services, planned-vs-actual resource history, and an initial automatic allocator that produces a realistic resource-load prediction before manual override.
+
+This is an architecture task, not a hard-coded list of shop departments or equipment names.
+
+### A. Four base resource classes are authoritative
+Use four base resource classes with distinct behavior. Do not collapse them into one generic table if doing so would remove the specialized Machine behavior that already exists.
+
+#### 1. Machine Resource
+- Preserve the current Machine model and all existing Machine-specific properties/capabilities.
+- Existing CNC/manual, post/machine compatibility, verification/network capability, machine calendar, and other specialized Machine behavior must remain intact.
+- Do not rewrite Machines as generic Workstations merely for architectural symmetry.
+- Existing rule remains: an Operation is not permanently bound to a concrete Machine in its definition; Planning assigns the concrete Machine later.
+
+#### 2. Employee Resource
+- Employee has its own working calendar/availability.
+- Employee can have zero or more **Skills**.
+- Skills are user-manageable master data, not hard-coded enums.
+- The system must support adding a new Skill without a code change.
+- Keep application roles/permissions and operational skills conceptually separate. If the current model has authorizations/qualifications beyond skills, do not silently merge them into one field.
+
+#### 3. Workstation Resource
+- Workstation is the generic internal physical-resource class for resources that are not represented by the specialized Machine model.
+- Workstation types/names are user-configurable master data; do not hard-code business names such as CMM, Deburring, Assembly, Painting, Measurement, Tool Room, or Presetter into domain enums.
+- A Workstation instance must have at least identity/name, user-defined type/category, calendar/availability, active/inactive state, and capacity. Default capacity is 1.
+- Allow extensible properties/capabilities so future workstation types can carry additional configuration without a schema rewrite for every new shop resource.
+- One Workstation with capacity 1 cannot execute two jobs simultaneously even if two qualified employees are available.
+- The user decides whether a real shop asset belongs in the specialized Machine class or the generic Workstation class. Do not encode assumptions from example names.
+
+#### 4. External Resource
+- External Resource represents outsourced work/services whose internal capacity Meimad does not manage.
+- Store at minimum resource/service identity, supplier identity where applicable, expected/promised lead time, Meimad safety buffer, calendar/working-day information where relevant, planned send/return, and actual send/return.
+- Do not model the supplier's employees, machines, queues, or internal capacity.
+- External work must appear as a real timed step on the production timeline, not merely as an opaque number embedded inside an Operation.
+- Preserve enough planned/actual data to build supplier lead-time statistics later.
+
+### B. Resource types and Skills are data, not code
+The system must provide manageable master data for at least:
+- Workstation types/categories;
+- Workstation instances;
+- Skills;
+- Employee-to-Skill assignment;
+- External Resources/services;
+- calendars/availability for internal resources and employees.
+
+Examples discussed during design are only examples. They must not appear as closed enums or hard-coded switch statements.
+
+A new future process such as a new finishing/painting station must be possible by creating a Workstation type/resource, creating or selecting the required Skill, and adding it to the process definition without changing application code.
+
+### C. Operation/process definitions express requirements, not concrete assignments
+Preserve the current planning principle:
+
+> Process/Operation definition says **what is required**; Planning decides **which concrete resource/person is assigned**.
+
+Do not store a concrete employee or concrete Workstation as permanent authority in the Operation definition merely because the scheduler later assigns one.
+
+Represent schedulable requirements in a generic way. A requirement may include as appropriate:
+- base resource class;
+- required user-defined Workstation type/capability or existing Machine compatibility rule;
+- required Skill(s) for an Employee;
+- required simultaneous capacity/quantity;
+- estimated duration;
+- dependency relationship to other schedulable work.
+
+The data model should support a collection of resource requirements rather than hard-coded fields such as `AssemblerEmployeeId`, `PresetterId`, `DeburringStationId`, etc.
+
+At minimum the allocator must support the common internal-manual pattern:
+
+`one physical resource + one qualified Employee, required simultaneously for the same duration`
+
+Examples:
+- one assembly Workstation + one employee with the required assembly Skill;
+- one presetter/measurement resource + one employee with the required operating Skill;
+- one deburring Workstation + one qualified employee.
+
+If the same Employee is the only person qualified for two sequential tasks, those tasks cannot overlap. If two qualified Employees exist and physical resources allow it, the scheduler may use them in parallel.
+
+### D. Tool Room process must be representable without special-case resource code
+Do not hard-code Tool Room as a unique resource class.
+
+The resource architecture must support at least the following process shape when configured by the user:
+1. Tool Assembly work requiring a physical internal resource plus a qualified employee.
+2. Measurement / Production Package preparation requiring its own physical resource plus a qualified employee.
+
+These may be performed by:
+- the same Employee, in which case their time cannot overlap; or
+- different Employees, in which case pipeline/parallel preparation is allowed subject to physical-resource capacity.
+
+If there is no dedicated presetter yet, the shop must be able to represent the Tool Room/preparation area as a normal Workstation with its own calendar and required Skill. Later, adding dedicated equipment must not require redesigning the scheduling model.
+
+### E. Initial QA migration must remain simple
+Do not force immediate detailed modeling of every QA instrument.
+
+The current QA capacity may initially be represented as one aggregate Workstation/resource with its current calendar/capacity behavior. The architecture must allow it to be decomposed later into concrete resources without redesigning Operation requirements or the scheduler.
+
+### F. Planned vs actual resource history is required
+For every scheduled internal assignment retain enough history for capacity/load statistics and later estimate improvement, including at minimum:
+- schedulable work identity;
+- planned resource assignments;
+- planned start/end and planned duration;
+- actual/confirmed resource assignments when known;
+- actual start/end and actual duration when facts exist;
+- assignment/reassignment provenance where the current audit model supports it.
+
+For External Resources retain planned and actual send/return dates/times and calculated planned/actual lead time.
+
+Do not overwrite the historical actual with the latest plan. Planned prediction and actual execution are different facts.
+
+### G. Automatic resource scheduling — product principle
+The first schedule shown to the planner should already contain **automatic provisional resource assignments** and a realistic prediction of resource loads. Manual override comes after this automatic pass.
+
+The allocator must use:
+- Operation/process dependencies;
+- existing Machine plan/assignment;
+- Machine calendars;
+- Workstation calendars and capacity;
+- Employee calendars;
+- Employee Skills/qualifications;
+- fixed/confirmed/actual work that must not be moved;
+- External Resource lead times/buffers;
+- planned durations.
+
+Do not create employees or resources automatically. Select from configured eligible resources/employees.
+
+### H. Machine operation is the primary anchor for preparation scheduling
+When a concrete Machine operation is already placed on the production timeline, treat its planned Machine slot as the initial scheduling anchor.
+
+For prerequisite/preparation work:
+- schedule **backward from the required Machine start**;
+- place work as late as reasonably possible while still finishing before its dependent step, to avoid unnecessary early WIP;
+- respect dependencies and the simultaneous availability of every required resource/person.
+
+For work that follows the Machine operation:
+- schedule **forward from the predecessor completion** into the earliest feasible slot.
+
+For a chain of multiple machining Operations, preserve the existing inter-Operation dependencies and propagate timing through the chain.
+
+### I. Resource contention produces a new feasible prediction, not a normal "conflict"
+Ordinary resource contention is not a user-facing error condition.
+
+The allocator must first try to preserve the requested/anchored timing by selecting another eligible resource or Employee. For example, if the first qualified employee is busy and another qualified employee is available, select the available employee automatically.
+
+If no eligible combination is available at the requested time:
+- find the nearest feasible slot according to dependencies/calendars/capacity;
+- shift the affected planned work automatically;
+- if preparation can no longer finish before the current Machine anchor, move the affected Machine start and propagate the schedule as required;
+- expose the resulting **predicted shift/delay**, not a generic resource-conflict state.
+
+A missing configuration such as "no resource of the required type exists", "no Employee has the required Skill", or an invalid calendar is a genuine blocking configuration/data error and may be shown as such. Do not confuse this with normal contention between valid scheduled jobs.
+
+### J. Delivery-date risk is a separate layer
+Do not label resource contention itself as a delivery problem.
+
+Scheduling order is:
+1. build a feasible resource-constrained production timeline;
+2. compute the predicted completion date/time from that timeline;
+3. compare predicted completion against the relevant required finish/delivery date;
+4. only then surface lateness / delivery-date risk.
+
+In other words:
+
+> Resource constraints move the plan. The business deadline decides whether that movement is a problem.
+
+Keep these concepts separate in domain logic and UI.
+
+### K. Deterministic provisional assignment and load projection
+When several eligible resources/employees can satisfy a requirement, assignment must be deterministic and explainable. Prefer the combination that preserves the dependent Machine timing / yields the earliest feasible completion with the least displacement; use a stable tie-breaker rather than random selection.
+
+The resulting provisional assignments must feed resource-load projections for at least:
+- Machines;
+- Workstations;
+- Employees.
+
+External Resources should appear on the production timeline with planned lead-time intervals, but do not calculate an invented internal utilization percentage for the supplier.
+
+### L. Manual override and recalculation
+Provisional resource assignments remain editable before they become physically confirmed/actual.
+
+The planner must be able to override at least:
+- selected eligible Employee;
+- selected eligible Workstation/resource;
+- planned timing where existing planner UX permits it.
+
+After a manual override:
+- treat the override/pin as a planning constraint;
+- recalculate affected downstream/upstream provisional assignments and load projections;
+- do not silently move already confirmed/actual work;
+- preserve existing authoritative physical handoff/start facts such as the current setupist confirmation workflow.
+
+### M. External Resource scheduling semantics
+External Resource scheduling does not reserve internal capacity.
+
+For an assigned External Resource/service:
+- derive planned return from planned send plus the configured/promised lead time and Meimad safety buffer, respecting calendar-day/working-day semantics selected by the model;
+- allow the actual promised date to override the generic estimate when supplied by the vendor;
+- record actual send/return as facts;
+- use the actual history for later supplier statistics;
+- propagate dependent internal work from the predicted/actual return date.
+
+Do not simulate supplier staffing or internal queues.
+
+### N. Pilot: Manual / Dummy Tool Offsets in Production Package Creator
+Add an explicit pilot path for shops that do not yet have the HAIMER Tool Room/presetter workflow available.
+
+Initial pilot target is Machines **10, 14, and 15**. Do not branch on those numeric IDs in domain code. Enable the capability/configuration for those Machine records so the implementation remains generic.
+
+The choice is made in **Create Production Package**, at the point where Tool Room would normally provide/select the measured Tool Offset Table.
+
+Add an explicit option equivalent to:
+
+`Manual / Dummy Tool Offsets`
+
+This is not a separate global "Dummy Tool Room" resource class or a bypass around Production Package workflow.
+
+When this option is deliberately selected:
+- package creation may proceed without a measured HAIMER-generated Tool Offset Table;
+- record the package's tool-offset source/mode explicitly in the immutable manifest/audit;
+- the setupist is responsible for loading/entering the real tool offsets manually on the Machine;
+- preserve the normal Production Package lifecycle, readiness, package identity, audit, handoff, setup, verification, and later workflow as far as the assigned Machine capabilities require.
+
+For a verification-enabled CNC Machine, generate a **package-specific dummy/manual Offset Loader** that contains no measured tool-offset payload but still contains every package identity / protocol / verification / setup-start hook required by the existing approved verification workflow. "Dummy" means no measured offsets; it must not mean anonymous, unverifiable, or disconnected from the package identity.
+
+This section supersedes only the Task 7 assumption that a measured/current Tool Offset Table is mandatory for every package. All other Task 7 package-integrity, immutability, Machine binding, verification, and audit rules remain authoritative.
+
+Do not weaken Server Verification merely because the offset values are entered manually.
+
+The goal is that later HAIMER integration replaces the offset-data source, not the surrounding Production Package or setup workflow.
+
+### O. Architecture / migration guidance
+Before implementation, inspect the current resource, Machine, QA, calendar, Operation, planning, setupist-assignment, Production Package, and external-operation code paths.
+
+Prefer extending current models and migrations rather than creating a second planner alongside the existing planner.
+
+At minimum update the relevant architecture/data-model/functional-specification documents and `AGENTS.md` so future work preserves:
+- the four base resource classes;
+- no hard-coded Workstation types or Skills;
+- Operation requirements vs planning assignments;
+- resource-constrained automatic scheduling before manual override;
+- resource contention => predicted shift, not normal conflict;
+- delivery risk as a separate post-scheduling evaluation;
+- Manual/Dummy Tool Offsets as an explicit package input mode, not a workflow bypass.
+
+### Acceptance tests / scenarios
+Add automated tests covering at least:
+- existing Machines retain their specialized properties and behavior after migration;
+- a new Workstation type and Skill can be created from data without code changes;
+- one capacity-1 Workstation + two qualified Employees still allows only one simultaneous job;
+- two Workstations + one qualified Employee still allows only one simultaneous job;
+- two suitable Workstations + two qualified Employees can run two jobs in parallel when dependencies allow;
+- the same Employee assigned to Tool Assembly and Measurement cannot overlap with themself;
+- different qualified Employees allow Tool Assembly of the next job to overlap Measurement/Package work on the previous job when physical resources allow;
+- the allocator automatically selects another eligible Employee when the first one is unavailable;
+- prerequisite work is scheduled backward from a Machine start and post-work is scheduled forward;
+- normal resource contention moves the predicted schedule instead of producing a blocking resource-conflict status;
+- the resource-driven shift propagates through dependent work and updates resource-load projections;
+- delivery-date risk is evaluated only after the feasible predicted completion is known;
+- a manual provisional reassignment triggers recalculation and does not move confirmed/actual work;
+- External Resource lead time + safety buffer affects the dependent timeline without consuming modeled internal capacity;
+- planned and actual resource times remain separately queryable for statistics;
+- current aggregate QA behavior can be represented on the new resource infrastructure without requiring concrete CMM decomposition;
+- no domain enum/switch hard-codes example Workstation types or Skills;
+- pilot Machines 10/14/15 can enable `Manual / Dummy Tool Offsets` through configuration rather than ID-specific code;
+- a manual/dummy package is auditable and follows the same Production Package lifecycle;
+- for verification-enabled pilot work, the dummy Offset Loader carries the required current package/verification identity but no measured offset payload;
+- later switching the same process to a real measured Tool Offset Table does not require a different workflow/state machine.
+
+### Completion report
+Report:
+- resource/domain schema and migrations;
+- how the existing Machine model was preserved;
+- Workstation type/property/capability representation;
+- Skill master-data and Employee-skill mapping;
+- Operation/resource requirement representation;
+- automatic scheduling algorithm and tie-break rules;
+- backward/forward scheduling behavior and shift propagation;
+- manual override/pinning and recalculation behavior;
+- planned-vs-actual history retained for statistics;
+- External Resource lead-time model;
+- resource-load projection/API/UI changes;
+- exact Manual/Dummy Tool Offsets package behavior and pilot configuration for Machines 10/14/15;
+- documentation/`AGENTS.md` changes;
+- tests executed and results;
+- any remaining product decisions or physical commissioning steps.
+
+---
+
 ## General instructions
 
 - First inspect the current implementation and existing tests before changing architecture.
