@@ -2344,6 +2344,33 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Preparation_queue_read_uses_stage_path_and_typed_readiness_facts()
+    {
+        const string json = """
+            {"items":[{"stage":"TOOL_PREPARATION_PENDING","batchOperationId":"op:1",
+            "productionRunId":"run-1","machineAssignmentId":"assignment-1",
+            "machineId":"machine-1","machineNumber":"M01","machineName":"Mill",
+            "partNumber":"PN-1","partName":"Part","batchNumber":"B1",
+            "operationNumber":10,"operationName":"Rough","processRevisionId":"process-1",
+            "gCodeReleaseId":"gcode-1","toolTableReleaseId":"tools-1",
+            "workflowStatus":"READY_FOR_SETUP","readinessFacts":[{"key":"toolOffsets",
+            "label":"Tool Offsets","state":"MISSING","message":"Offsets missing.",
+            "isSatisfied":false}]}]}
+            """;
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, json));
+        using var api = CreateClient(handler);
+
+        var queue = await api.ListPreparationQueueAsync("TOOL_PREPARATION_PENDING");
+
+        var item = Assert.Single(queue);
+        Assert.Equal("op:1", item.BatchOperationId);
+        Assert.False(Assert.Single(item.ReadinessFacts).IsSatisfied);
+        Assert.Equal(
+            "/api/v1/preparation-queues/TOOL_PREPARATION_PENDING",
+            handler.Requests[0].Path);
+    }
+
+    [Fact]
     public async Task Server_maintenance_client_sends_identity_authority_filters_and_verifies_backup_download()
     {
         const string database = """{"readAt":"2026-08-28T10:00:00Z","databaseFileBytes":4096,"walFileBytes":0,"sharedMemoryFileBytes":0,"totalOnDiskBytes":4096,"pageSizeBytes":4096,"pageCount":1,"freePageCount":0,"usedPageBytesEstimate":4096,"reusablePageBytes":0,"schemaVersion":61,"collectedData":[]}""";

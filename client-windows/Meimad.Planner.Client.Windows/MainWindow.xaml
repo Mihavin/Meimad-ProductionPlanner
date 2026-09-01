@@ -196,6 +196,15 @@
             <TabItem Header="User Terminals" ToolTip="Monitor and configure E-Ink tablets">
                 <views:UserTerminalsView DataContext="{Binding UserTerminals}" Margin="5" />
             </TabItem>
+            <TabItem Header="NC Creator" ToolTip="View assigned operations waiting for a valid current NC release">
+                <views:PreparationQueueView DataContext="{Binding NcCreatorQueue}" Margin="5" />
+            </TabItem>
+            <TabItem Header="Tool Room" ToolTip="View NC-ready operations waiting for tool preparation">
+                <views:PreparationQueueView DataContext="{Binding ToolRoomQueue}" Margin="5" />
+            </TabItem>
+            <TabItem Header="Setup Queue" ToolTip="View operations whose NC and Tool Room gates are complete">
+                <views:PreparationQueueView DataContext="{Binding SetupQueue}" Margin="5" />
+            </TabItem>
             <TabItem Header="QC Queue" ToolTip="Inspect Production Runs sent to Quality Control">
                 <views:QcQueueView DataContext="{Binding QcQueue}" Margin="5" />
             </TabItem>

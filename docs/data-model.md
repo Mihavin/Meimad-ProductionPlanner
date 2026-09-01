@@ -495,6 +495,36 @@ tablet send. Retention/history read access remains implementation work.
 
 Package approval roles/UI, allowed-format expansion, retention/garbage collection, signatures, backup inclusion, and access to superseded revisions remain TBD. A correction is implemented as a distinct new immutable revision; there is no update/delete API.
 
+### 10.4 Derived preparation queue projection
+
+No `PROGRAMMING_PENDING`, `TOOL_ROOM_PENDING`, or `SETUP_PENDING` column/table
+exists. Queue membership is rebuilt from `machine_assignments`, active
+`process_revisions`, immutable `gcode_releases` and `tool_table_releases`,
+`machine_supported_postprocessors`, contextual
+`tool_offset_readiness_records`, tool-capacity facts, and the latest
+`production_run_workflow_events` row when a Run exists. Consequently restart
+and migration cannot make a cached role status authoritative, and one
+Operation cannot simultaneously belong to Tool Room and Setup.
+
+Schema v64 adds immutable `production_packages` and
+`production_package_artifacts`, the replaceable derived pointer
+`production_package_current`, and append-only
+`production_package_invalidations`. A package records its Batch Operation,
+optional concrete Production Run, Machine Assignment, Machine, exact NC and
+Tool Table releases, optional generated Offset Loader release, execution and
+verification configuration used, manifest hash/path, creator, Server creation
+time, and prior package. Artifacts record type, logical and Server-relative
+path, byte length, SHA-256, and optional source release. Update/delete triggers
+protect package, artifact, and invalidation audit records; the current-pointer
+trigger requires the package's exact Operation and Machine.
+
+`Ready for Setup` requires the earlier NC/Tool prerequisites plus a current
+package pointer whose immutable bindings still equal the current assignment,
+Machine, active Process/Tool Table, effective selected/current NC release, and
+verification-content configuration. A mismatch makes the package stale by
+predicate without rewriting history. Creating a replacement atomically records
+an invalidation/supersession relation and advances the one Operation pointer.
+
 ## 11. Device-local model
 
 Device-local data never enters server planning state.
@@ -601,6 +631,6 @@ Schema v50 adds `offset_loader_releases` as immutable identities tied to one Pro
 
 Schema v52 adds `cnc_setup_verification_sessions`; schema v63 evolves it to the secretless lifecycle. Each row immutably binds Machine, Production Run, approved NC release/identity, current Offset Loader release, six-digit nonce, macro version, response width, creation, optional pending start/expiration, and source Offset Loader event. State is `ARMED`, `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED`, or `SUPERSEDED`. Offset Loader completion creates untimed ARMED. The first matching `SETUP_VERIFICATION_REQUESTED` event records `pending_started_at`, starts expiration, and changes it to PENDING. Matching success becomes reusable SUCCEEDED authority for the exact binding; a new Offset Loader supersedes it. The row stores no credential or response code; the tablet projection derives the public consistency response in memory.
 
-Schema v51 adds `gcode_release_verification_hooks`. Publication validates exactly one marker as the first executable NC block, accepts a protected `G65 P9xxx` call or a custom `G1`-`G999` alias other than `G65`, and requires a unique integer identity from 100000 through 999999. The Server stores the parsed invocation and source line but preserves the exact uploaded bytes. No migration row is synthesized for older releases; a null hook therefore means historical/readable but not eligible as proof of NC identity.
+Schema v51 originally added `gcode_release_verification_hooks`; schema v64 changes new-publication syntax to one `(MEIMAD PACKAGE VERIFY V1 NCID=xxxxxx)` source-template marker before the first executable block and an optional exact START/END cycle-marker pair. The same table preserves the immutable unique six-digit NC identity and source line for compatibility, while the Machine-specific invocation is supplied by package-build configuration. The Server preserves the exact uploaded bytes and separately hashes generated runnable package artifacts. No row is synthesized for older releases; null remains historical/readable but not eligible as proof of NC identity.
 
 Key target constraints are: one or more programs per run; one or more outputs per program; positive integer quantity per cycle and target quantity; exact divisibility; equal required cycles for coupled outputs; unique program sequence; no active allocation plus produced quantity above a Batch Operation's required quantity; restrictive foreign keys; and immutable started composition.

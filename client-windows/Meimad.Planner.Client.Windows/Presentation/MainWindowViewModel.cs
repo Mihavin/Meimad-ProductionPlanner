@@ -40,6 +40,15 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             () => !IsBusy && apiClient is not null);
         UserTerminals = new UserTerminalsViewModel();
         QcQueue = new QcQueueViewModel();
+        NcCreatorQueue = new PreparationQueueViewModel(
+            "PROGRAMMING_PENDING", "NC Creator — Programming Pending",
+            "Assigned operations that do not yet have one current Machine-compatible NC release selection.");
+        ToolRoomQueue = new PreparationQueueViewModel(
+            "TOOL_PREPARATION_PENDING", "Tool Room Manager — Tool Preparation Pending",
+            "NC-ready operations whose current Tool Table, capacity, or exact tool-offset readiness gate is incomplete.");
+        SetupQueue = new PreparationQueueViewModel(
+            "SETUP_PENDING", "Setup — Setup Pending",
+            "Operations whose NC and Tool Room gates are complete and remain in the setup workflow.");
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
@@ -114,6 +123,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public UserTerminalsViewModel UserTerminals { get; }
 
     public QcQueueViewModel QcQueue { get; }
+
+    public PreparationQueueViewModel NcCreatorQueue { get; }
+
+    public PreparationQueueViewModel ToolRoomQueue { get; }
+
+    public PreparationQueueViewModel SetupQueue { get; }
 
     public string ClientId
     {
@@ -391,6 +406,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals.AttachSession(apiClient, ClientId, status);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, status);
+        AttachPreparationQueues(apiClient);
     }
 
     private void SetOffline(string headline, string detail)
@@ -412,6 +428,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
+        AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }
 
@@ -431,7 +448,16 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
+        AttachPreparationQueues(apiClient);
         RaiseCommandStates();
+    }
+
+    private void AttachPreparationQueues(IPlannerApiClient? client)
+    {
+        var userId = activeSettings?.LocalUserId ?? string.Empty;
+        NcCreatorQueue.AttachSession(client, ClientId, userId);
+        ToolRoomQueue.AttachSession(client, ClientId, userId);
+        SetupQueue.AttachSession(client, ClientId, userId);
     }
 
     private bool CanDecideTransfer() => !IsBusy

@@ -25,6 +25,7 @@ internal static class ReadinessComponentKeys
     internal const string Material = "material";
     internal const string MachinePostprocessorCompatibility = "machinePostprocessorCompatibility";
     internal const string ToolCapacity = "toolCapacity";
+    internal const string ProductionPackage = "productionPackage";
 }
 
 internal sealed record ReadinessRelease(

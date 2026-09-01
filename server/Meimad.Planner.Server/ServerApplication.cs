@@ -23,6 +23,8 @@ using Meimad.Planner.Server.Api.Orders;
 using Meimad.Planner.Server.Api.ProductionBatches;
 using Meimad.Planner.Server.Api.ProductionRuns;
 using Meimad.Planner.Server.Api.Qc;
+using Meimad.Planner.Server.Api.Preparation;
+using Meimad.Planner.Server.Api.ProductionPackages;
 using Meimad.Planner.Server.Api.Tablets;
 using Meimad.Planner.Server.Api.Postprocessors;
 using Meimad.Planner.Server.Api.Reports;
@@ -53,6 +55,8 @@ using Meimad.Planner.Server.Application.MachineTypes;
 using Meimad.Planner.Server.Application.Orders;
 using Meimad.Planner.Server.Application.ProductionBatches;
 using Meimad.Planner.Server.Application.ProductionRuns;
+using Meimad.Planner.Server.Application.Preparation;
+using Meimad.Planner.Server.Application.ProductionPackages;
 using Meimad.Planner.Server.Application.Qc;
 using Meimad.Planner.Server.Application.Postprocessors;
 using Meimad.Planner.Server.Application.Reports;
@@ -107,6 +111,9 @@ public static class ServerApplication
         var gCodeOptions = GCodeOptions.FromConfiguration(
             builder.Configuration,
             builder.Environment.ContentRootPath);
+        var productionPackageOptions = ProductionPackageOptions.FromConfiguration(
+            builder.Configuration,
+            builder.Environment.ContentRootPath);
         var timelineOptions = TimelineOptions.FromConfiguration(builder.Configuration);
         var setupEstimationOptions = SetupEstimationOptions.FromConfiguration(builder.Configuration);
         var legacyImportOptions = LegacyImportOptions.FromConfiguration(builder.Configuration);
@@ -120,6 +127,7 @@ public static class ServerApplication
         builder.Services.AddSingleton(tvDashboardOptions);
         builder.Services.AddSingleton(eInkOptions);
         builder.Services.AddSingleton(gCodeOptions);
+        builder.Services.AddSingleton(productionPackageOptions);
         builder.Services.AddSingleton(timelineOptions);
         builder.Services.AddSingleton(setupEstimationOptions);
         builder.Services.AddSingleton(legacyImportOptions);
@@ -170,6 +178,10 @@ public static class ServerApplication
         builder.Services.AddSingleton<OperationalAnomalyService>();
         builder.Services.AddSingleton<IQcWorkflowRepository, SqliteQcWorkflowRepository>();
         builder.Services.AddSingleton<QcWorkflowService>();
+        builder.Services.AddSingleton<IPreparationQueueRepository, SqlitePreparationQueueRepository>();
+        builder.Services.AddSingleton<PreparationQueueService>();
+        builder.Services.AddSingleton<IProductionPackageRepository, SqliteProductionPackageRepository>();
+        builder.Services.AddSingleton<ProductionPackageService>();
         builder.Services.AddSingleton<ICncVerificationFoundationRepository, SqliteCncVerificationFoundationRepository>();
         builder.Services.AddSingleton<CncVerificationFoundationService>();
         builder.Services.AddSingleton<CncDprintEventIngestionService>();
@@ -343,6 +355,8 @@ public static class ServerApplication
         application.MapProductionRunEndpoints();
         application.MapOperationalAnomalyEndpoints();
         application.MapQcWorkflowEndpoints();
+        application.MapPreparationQueueEndpoints();
+        application.MapProductionPackageEndpoints();
         application.MapMaterialReconciliationEndpoints();
         application.MapServerMaintenanceEndpoints();
         application.MapMachineEndpoints();

@@ -207,6 +207,27 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<QcQueueItem>>([]);
 
+    Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
+        string stage,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PreparationQueueItem>>([]);
+
+    Task<ProductionPackageInfo> CreateProductionPackageAsync(
+        string batchOperationId, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<string> ReadGCodeFileTextAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<byte[]> ReadToolTableFileAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<QcDecisionResult> DecideQcAsync(
         string productionRunId, QcDecisionRequest request,
         string clientId, string userId, long editGeneration,
@@ -1363,6 +1384,58 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
 
+    public async Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
+        string stage,
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<PreparationQueueItem>(
+            $"api/v1/preparation-queues/{Uri.EscapeDataString(stage)}",
+            cancellationToken);
+
+    public async Task<ProductionPackageInfo> CreateProductionPackageAsync(
+        string batchOperationId, string clientId, string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package",
+            clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(new { }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ProductionPackageInfo>(response, cancellationToken);
+    }
+
+    public async Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/production-package",
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        return await ReadSuccessAsync<ProductionPackageInfo>(response, cancellationToken);
+    }
+
+    public async Task<string> ReadGCodeFileTextAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/gcode-releases/{Uri.EscapeDataString(releaseId)}/file",
+            cancellationToken);
+        var bytes = await ReadBytesSuccessAsync(response, cancellationToken);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    public async Task<byte[]> ReadToolTableFileAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/tool-table-releases/{Uri.EscapeDataString(releaseId)}/file",
+            cancellationToken);
+        return await ReadBytesSuccessAsync(response, cancellationToken);
+    }
+
     public async Task<QcDecisionResult> DecideQcAsync(
         string productionRunId, QcDecisionRequest value,
         string clientId, string userId, long editGeneration,
@@ -2393,6 +2466,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             throw new PlannerProtocolException(
                 $"Server returned an invalid {typeof(T).Name} response: {exception.Message}");
         }
+    }
+
+    private static async Task<byte[]> ReadBytesSuccessAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (!response.IsSuccessStatusCode)
+            await ThrowApiErrorAsync(response, cancellationToken);
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
 
     private static async Task<HaasConnectionTest> ReadHaasConnectionTestAsync(

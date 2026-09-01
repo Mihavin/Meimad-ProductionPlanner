@@ -215,7 +215,7 @@ public sealed class GCodeReleaseApiTests
             {
                 Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
                 using var problem = JsonDocument.Parse(await missing.Content.ReadAsStringAsync());
-                Assert.Equal("verification_hook_required",
+                Assert.Equal("verification_placeholder_required",
                     problem.RootElement.GetProperty("error").GetProperty("details")[0].GetProperty("code").GetString());
             }
 
@@ -1317,7 +1317,7 @@ public sealed class GCodeReleaseApiTests
             }
             break;
         }
-        lines.Insert(index, $"G65 P9002 A{identity:D6}. (MEIMAD VERIFY V1)");
+        lines.Insert(index, $"(MEIMAD PACKAGE VERIFY V1 NCID={identity:D6})");
         return Encoding.UTF8.GetBytes(string.Join("\n", lines));
     }
 

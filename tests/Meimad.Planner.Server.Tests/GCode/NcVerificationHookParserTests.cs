@@ -5,11 +5,11 @@ namespace Meimad.Planner.Server.Tests.GCode;
 public sealed class NcVerificationHookParserTests
 {
     [Fact]
-    public void Parses_G65_hook_as_first_executable_block()
+    public void Parses_package_placeholder_before_first_executable_block()
     {
         var value = NcVerificationHookParser.ParseRequired([
             "%", "O1234 (PART)", "(APPROVED NC)",
-            "N10 G65 P9002 A483921. (MEIMAD VERIFY V1)", "G90", "M30", "%"]);
+            "(MEIMAD PACKAGE VERIFY V1 NCID=483921)", "G90", "M30", "%"]);
 
         Assert.Equal(1, value.HookVersion);
         Assert.Equal("G65", value.InvocationKind);
@@ -19,24 +19,26 @@ public sealed class NcVerificationHookParserTests
     }
 
     [Fact]
-    public void Parses_configurable_custom_G_code_hook()
+    public void Accepts_one_optional_cycle_placeholder_pair()
     {
         var value = NcVerificationHookParser.ParseRequired([
-            "O4321", "G605 A583921 (MEIMAD VERIFY V1)", "M30"]);
+            "O4321", "(MEIMAD PACKAGE VERIFY V1 NCID=583921)",
+            "(MEIMAD PACKAGE CYCLE START V1)", "G90",
+            "(MEIMAD PACKAGE CYCLE END V1)", "M30"]);
 
-        Assert.Equal("CUSTOM_GCODE", value.InvocationKind);
-        Assert.Equal(605, value.InvocationNumber);
+        Assert.Equal("G65", value.InvocationKind);
+        Assert.Equal(9002, value.InvocationNumber);
         Assert.Equal(583921, value.NcIdentityToken);
     }
 
     [Theory]
-    [InlineData("O1234\nM30", "verification_hook_required")]
-    [InlineData("O1234\nG90\nG65 P9002 A483921 (MEIMAD VERIFY V1)\nM30", "verification_hook_not_first")]
-    [InlineData("O1234\nG65 P9002 A483921 (MEIMAD VERIFY V1)\nG65 P9002 A583921 (MEIMAD VERIFY V1)\nM30", "verification_hook_ambiguous")]
-    [InlineData("O1234\nG65 P8002 A483921 (MEIMAD VERIFY V1)\nM30", "verification_hook_invalid")]
-    [InlineData("O1234\nG000 A483921 (MEIMAD VERIFY V1)\nM30", "verification_hook_invalid")]
-    [InlineData("O1234\nG65 P9002 A000001 (MEIMAD VERIFY V1)\nM30", "verification_hook_invalid")]
-    public void Missing_late_duplicate_or_malformed_hook_fails_closed(string program, string code)
+    [InlineData("O1234\nM30", "verification_placeholder_required")]
+    [InlineData("O1234\nG90\n(MEIMAD PACKAGE VERIFY V1 NCID=483921)\nM30", "verification_placeholder_not_first")]
+    [InlineData("O1234\n(MEIMAD PACKAGE VERIFY V1 NCID=483921)\n(MEIMAD PACKAGE VERIFY V1 NCID=583921)\nM30", "verification_placeholder_ambiguous")]
+    [InlineData("O1234\nG65 P9002 A483921 (MEIMAD VERIFY V1)\nM30", "verification_executable_not_allowed_in_template")]
+    [InlineData("O1234\n(MEIMAD PACKAGE VERIFY V1 NCID=483921)\n(MEIMAD PACKAGE CYCLE START V1)\nM30", "verification_cycle_placeholders_invalid")]
+    [InlineData("O1234\n(MEIMAD PACKAGE VERIFY V1 NCID=483921)\n(MEIMAD PACKAGE CYCLE END V1)\nG90\n(MEIMAD PACKAGE CYCLE START V1)\nM30", "verification_cycle_placeholders_invalid")]
+    public void Missing_late_duplicate_or_malformed_placeholder_fails_closed(string program, string code)
     {
         var exception = Assert.Throws<GCodeValidationException>(() =>
             NcVerificationHookParser.ParseRequired(program.Split('\n')));

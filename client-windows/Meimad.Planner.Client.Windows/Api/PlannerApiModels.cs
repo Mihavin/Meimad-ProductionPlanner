@@ -1742,6 +1742,76 @@ internal sealed record QcDecisionResult(
     DateTimeOffset Timestamp,
     DateTimeOffset? ProductionApprovedAt);
 
+internal sealed record PreparationReadinessFact(
+    string Key,
+    string Label,
+    string State,
+    string Message,
+    bool IsSatisfied)
+{
+    public string DisplayText => $"{Label}: {State.Replace('_', ' ')} — {Message}";
+}
+
+internal sealed record PreparationQueueItem(
+    string Stage,
+    string BatchOperationId,
+    string? ProductionRunId,
+    string MachineAssignmentId,
+    string MachineId,
+    string MachineNumber,
+    string MachineName,
+    string PartNumber,
+    string PartName,
+    string BatchNumber,
+    int OperationNumber,
+    string OperationName,
+    string? ProcessRevisionId,
+    string? GCodeReleaseId,
+    string? ToolTableReleaseId,
+    string WorkflowStatus,
+    IReadOnlyList<PreparationReadinessFact> ReadinessFacts,
+    string? CaseId = null,
+    string? CaseOperationId = null)
+{
+    public string MachineText => $"{MachineNumber} — {MachineName}";
+    public string PartText => $"{PartNumber} — {PartName}";
+    public string OperationText => $"OP{OperationNumber:00} {OperationName}";
+    public string ProductionRunText => ProductionRunId ?? "Not created";
+    public string GCodeReleaseText => GCodeReleaseId ?? "Missing / not selected";
+    public string ToolTableReleaseText => ToolTableReleaseId ?? "Missing";
+    public string WorkflowText => WorkflowStatus.Replace('_', ' ');
+}
+
+internal sealed record ProductionPackageArtifactInfo(
+    string ArtifactId,
+    string ArtifactType,
+    string LogicalPath,
+    long FileSize,
+    string Sha256,
+    string? SourceReleaseId);
+
+internal sealed record ProductionPackageInfo(
+    string ProductionPackageId,
+    string BatchOperationId,
+    string? ProductionRunId,
+    string MachineAssignmentId,
+    string MachineId,
+    string? GCodeReleaseId,
+    string ToolTableReleaseId,
+    string? OffsetLoaderReleaseId,
+    string ExecutionMode,
+    bool VerificationEnabled,
+    int? VerificationConfigurationVersion,
+    int? VerificationMacroVersion,
+    string ManifestSha256,
+    DateTimeOffset CreatedAt,
+    string CreatedBy,
+    string? SupersedesProductionPackageId,
+    bool FileExportAvailable,
+    bool DirectTransferConfigured,
+    bool DirectTransferOnline,
+    IReadOnlyList<ProductionPackageArtifactInfo> Artifacts);
+
 internal sealed class PlannerApiException : Exception
 {
     internal PlannerApiException(

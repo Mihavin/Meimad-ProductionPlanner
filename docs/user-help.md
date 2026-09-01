@@ -73,7 +73,7 @@ An operation can be blocked by missing material, an unassigned machine, incompat
 For a released G-code revision:
 
 1. Select the postprocessor and change scope.
-2. Confirm the postprocessor generated exactly one generic verification hook as the first executable block: `G65 P9xxx Axxxxxx. (MEIMAD VERIFY V1)` or the approved custom-G-code equivalent. The six-digit `A` identity must be new for this exact release.
+2. Confirm the postprocessor generated exactly one `(MEIMAD PACKAGE VERIFY V1 NCID=xxxxxx)` placeholder before the first executable block. The six-digit identity must be new for this exact release. Do not upload a new source template containing an active `G65` Meimad verification call.
 3. Choose the released G-code and the exact physical tool table supplied to the machine.
 4. Enter the release comment and process-change description.
 5. Confirm the physical tool table and the creation of the new manufacturing-process revision.

@@ -673,7 +673,7 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/manufacturing-programs/{programId}/tool-table-releases/{toolTableReleaseId}/file` | Stream a referenced exact tool-table release after length and SHA-256 verification. |
 | `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/tool-table-releases/{toolTableReleaseId}/file` | Download and verify an historical tool-table release. |
 
-Every case-operation or Manufacturing-Program G-code publication now validates a schema-v51 generic verification hook in the uploaded NC bytes. Ignoring blank lines, `%`, full-line comments, and an `O` program header, the first executable block must be exactly `G65 P9xxx Axxxxxx[.] (MEIMAD VERIFY V1)` or `Gxxx Axxxxxx[.] (MEIMAD VERIFY V1)`; an optional leading `N` sequence word is accepted. The six-digit `A` identity is globally unique and is bound to the resulting immutable release. The Server never injects the block. Missing, late, duplicate, malformed, or reused identities return `422 validation_failed` with detail code `verification_hook_required`, `verification_hook_not_first`, `verification_hook_ambiguous`, `verification_hook_invalid`, or `verification_identity_reused`. G-code release representations return nullable `verificationHook` with `hookVersion`, `invocationKind`, `invocationNumber`, `ncIdentityToken`, and `lineNumber`; null is expected only for migrated history.
+Every new case-operation or Manufacturing-Program G-code publication validates one exact package marker `(MEIMAD PACKAGE VERIFY V1 NCID=xxxxxx)` before the first executable block. Blank lines, `%`, full-line comments, and an `O` header are ignored when locating the first executable block. The six-digit identity is globally unique and remains bound to the immutable source release. Optional `(MEIMAD PACKAGE CYCLE START V1)` and `(MEIMAD PACKAGE CYCLE END V1)` markers must be absent together or occur exactly once each in start/end order. Active `(MEIMAD VERIFY V1)` calls in a new template, missing/late/duplicate/malformed verification markers, malformed cycle pairs, and reused identities return `422 validation_failed` with a stable verification detail code. Release representations retain the parsed identity metadata for compatibility; the invocation number is package-build configuration, not source-template authority.
 
 Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. A separately confirmed Batch deletion is the exception to relationship blocking: it deletes the Batch-owned Machine Assignments, pause history, assignment overrides, package metadata/file records, allocations, and Batch Operations, compacts affected Machine backlogs, deletes the Batch, and recomputes affected Order lifecycles in one immediate transaction. Machine deletion still requires no assignment, downtime, device binding, official package, or Employee qualification reference. These endpoints never delete external folders, images, engineering files, or physical package bytes.
 
@@ -2048,7 +2048,58 @@ independently of planning and tablet workflow state. Bounded observation
 history and its retention policy remain future work. No extra firmware POST is
 made for this metadata.
 
-### 8.11 Windows QC Queue and decision contract
+### 8.11 Windows preparation queues
+
+```http
+GET /api/v1/preparation-queues/{stage}
+```
+
+This read-only route accepts exactly `PROGRAMMING_PENDING`,
+`TOOL_PREPARATION_PENDING`, or `SETUP_PENDING`. It requires no Edit Mode and
+has no corresponding preparation-status or Machine-assignment mutation. The
+Server reloads authoritative assignment/release/readiness/workflow facts and
+recomputes the selected projection on every request. Invalid stages return
+`422 preparation_stage_invalid`.
+
+Each item includes `stage`, `batchOperationId`, optional `productionRunId`,
+Machine assignment/identity, part/Batch/Operation display identity, current
+`processRevisionId`, effective `gCodeReleaseId`, current
+`toolTableReleaseId`, derived `workflowStatus`, and the applicable
+`readinessFacts` array. Each readiness fact has `key`, `label`, `state`,
+`message`, and `isSatisfied`. An unassigned Operation is absent. An assigned
+Operation can occur in at most one preparation-stage response.
+
+The NC predicate requires, for CNC G-code Machines, an active Process Revision
+and effective current release satisfying existing Machine/Postprocessor
+compatibility/selection rules. MANUAL execution makes the NC gate not required.
+Tool Room also waits for the active immutable Tool Table, capacity, and exact
+Machine/process/effective-G-code Tool Offset facts. Even after those pass, the
+item remains Tool Room pending until a valid current Production Package exists
+for this exact Operation and assigned Machine. Setup requires that package and
+a latest workflow projection of `READY_FOR_SETUP`, `IN_SETUP`, or
+`IN_SETUP_RUN`. Later QC/production events remove the item.
+
+### 8.12 Production Packages
+
+`POST /api/v1/batch-operations/{operationId}/production-package` requires
+`X-Meimad-Client-Id` and `X-Meimad-User-Id`; it needs no package approver or
+second sign-off. The client cannot supply a Machine or release selection. The
+Server resolves current authoritative context, validates all prerequisites,
+atomically builds/activates the package, and returns `201`. Missing/stale or
+incompatible facts return `422` with a precise build error.
+
+`GET /api/v1/batch-operations/{operationId}/production-package` returns only
+the exact currently valid package or `404`. `GET
+/api/v1/batch-operations/{operationId}/production-package/artifacts/{artifactId}`
+streams only an artifact belonging to that same current package after SHA-256
+verification. Reads never alter workflow. The representation includes all
+bound IDs, execution/verification configuration, creator/Server time, manifest
+hash, superseded predecessor, artifact hashes and source releases, plus
+`fileExportAvailable`, `directTransferConfigured`, and
+`directTransferOnline`. Offline direct transfer never disables file export or
+downgrades configured verification.
+
+### 8.13 Windows QC Queue and decision contract
 
 ```http
 GET /api/v1/qc-queue
@@ -2194,9 +2245,10 @@ TLS/certificate deployment, human identity provider/login, CSRF/browser strategy
 | TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
 | E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, MAC-only discovery/bootstrap, Production-Run-backed physical status, and idempotent `SEND_TO_QC`; it is the only approved device mutation. |
+| Preparation Queues | `/preparation-queues/{stage}` | Implemented read-only NC Creator, Tool Room, and Setup projections; no Machine or send-next mutation. |
 | QC Queue | `/qc-queue`, `/qc-queue/{productionRunId}/decision` | Windows read in View Mode; PASS/FAIL require the active editor and append user-attributed events. |
 
-Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, E-Ink simulator, and Windows QC Queue described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
+Case and Case Operation create/read/update, Order create/read/allocation-safe update/derived production lifecycle, Batch creation/read/derived lifecycle, Machine and Machine Type master data, recurring multi-window/break/dated-exception Working Calendar CRUD with one-window overnight support and dedicated Setup Calendar selection, staged legacy Excel preview/commit, Machine backlog, explicit Batch Operation assignment/execution, derived preparation queues, Timeline calculation, TV Dashboard, Single Edit Mode, official job-package generation, E-Ink device administration/read APIs, E-Ink simulator, and Windows QC Queue described above are implemented. Before implementing the remaining endpoints, convert this Markdown contract into reviewed OpenAPI and approve identity, Calendar combined-overnight/overtime/archive/automatic-holiday policy, aggregate route revision/reorder, arbitrary dependency fan-in/out, cross-Batch over-allocation/reallocation, final Timeline rules, conflict policy, Edit Mode recovery/notification/audit behavior, and E-Ink package approval/retention. Structural changes after that point require a deliberate versioning decision.
 
 The contract cannot be frozen until the API, identity, edit-token, data-model, timeline, rendering, package, and telemetry questions in [Implementation plan](implementation-plan.md#open-decisions) are resolved.
 ## Production Run API target

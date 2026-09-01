@@ -266,6 +266,38 @@ General create idempotency, pagination limits, OpenAPI publication, consumer com
 
 The repository now has an initial `HEAD` commit. Verification results can be tied to a revision and subsequent work reviewed as a diff; release verification must continue to record the tested commit or artifact hashes.
 
+### Role preparation queue verification (2026-09-01)
+
+The derived preparation-queue slice adds no schema or mutable pending-status
+field. Focused Server tests exercise the projector and real HTTP/SQLite path,
+including unassigned exclusion, assignment-to-NC, NC-to-Tool-Room,
+Tool-Room-to-Setup, mutual exclusivity, later-workflow removal, and reopening
+the same migrated database. Focused Windows tests verify the shared role queue
+view model and that its only command is Refresh; the typed API-client contract
+is also covered. Existing QC tests remain in the full regression suite.
+
+Schema v64 now makes a valid current Server-owned Production Package the exact
+Setup-readiness boundary. The focused Production Package suite covers enabled,
+disabled, and Manual composition; deterministic marker transformation; exact
+artifact hashes/audit bindings; automatic Ready for Setup; stale-current
+rejection after release change; and read-only open behavior. Windows tests cover
+the role action set and route Upload G-code back to the existing Operation NC
+workflow rather than adding a second release implementation.
+
+Verification commands completed on 2026-09-01:
+
+| Test assembly | Passed | Failed | Skipped |
+|---|---:|---:|---:|
+| `Meimad.Planner.Server.Tests` | 630 | 0 | 0 |
+| `Meimad.Planner.Client.Windows.Tests` | 248 | 0 | 0 |
+| **Total** | **878** | **0** | **0** |
+
+The Windows build was also verified with single-process WPF compilation. One
+Edit Mode concurrency test initially encountered SQLite transaction contention
+while two full Server test processes were accidentally running concurrently;
+the test passed in isolation and the subsequent clean single-process 630-test
+Server run passed completely.
+
 ## 6. Historical baseline test execution
 
 The following command/result applies to the 2026-08-11 schema-v9 baseline only. It must not be treated as evidence for the schema-v10/v11 working-tree additions listed in the addendum.

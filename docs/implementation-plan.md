@@ -25,7 +25,7 @@ Milestone A is implemented in schema v49: the persistent CNC Setup/Production va
 
 Milestone B is implemented in schema v50. It adds immutable Offset Loader releases and an explicit current pointer for the active Production Run/Machine; strict CNC-safe DPRINT v1 parsing; idempotent ingestion of a valid current `OFFSET_LOADER_COMPLETED`; per-source monotonic sequence gap/out-of-order anomalies without invented events; and protected, optimistic per-Machine verification configuration exposed only to Windows planning configuration. A newly created release makes older releases non-current without modifying their approved NC or tool-table releases. Configuration may be stored while disabled, but enabling it does not prove or deploy protected controller macros.
 
-The Milestone C fallback decision is resolved: every newly approved NC release uses one generic verification hook as its first executable block. Schema v51 validates the hook without modifying the upload and immutably binds its unique six-digit NC identity to the exact release. Migrated historical releases remain readable but receive no inferred identity; using one for protected verification requires an explicit new release. Algorithm v1 has a disconnected Server reference implementation, independent PowerShell calculator, public vectors, and protected-program layout in `docs/haas-verification-response-algorithm.md`. On 2026-08-26 the VF-3SS physically proved direct/nested supplied-identity transport and reproduced all seven public arithmetic vectors. On 2026-08-27 the correct response was accepted after at least 130 seconds at M109 and the `#3001` sequence was found non-monotonic. Macro candidates v3–v5 and packages v1–v3 remain quarantined. On 2026-08-30 the bounded R2 test then retained the sixth M109 ASCII value after alarm 903, quarantining macro v6 as well. The separately reviewed macro-v7 R3 attempt cleared the temporary variables and stopped before M30, but the physical tablet missed the response window and the failure DPRNT was not retained by the Server. This evidence does not establish a production interlock; verification stays disabled.
+The Milestone C identity decision remains accepted, but schema v64 changes where executable verification content is produced. Every new NC source release contains one stable `(MEIMAD PACKAGE VERIFY V1 NCID=xxxxxx)` marker before executable code; the identity remains immutable and unique. Machine-specific active verification and optional commissioned cycle-event blocks are resolved only during Production Package build. Algorithm v1 has a disconnected Server reference implementation, independent PowerShell calculator, public vectors, and protected-program layout in `docs/haas-verification-response-algorithm.md`. On 2026-08-26 the VF-3SS physically proved direct/nested supplied-identity transport and reproduced all seven public arithmetic vectors. On 2026-08-27 the correct response was accepted after at least 130 seconds at M109 and the `#3001` sequence was found non-monotonic. Macro candidates v3–v5 and packages v1–v3 remain quarantined. On 2026-08-30 the bounded R2 test then retained the sixth M109 ASCII value after alarm 903, quarantining macro v6 as well. The separately reviewed macro-v7 R3 attempt cleared the temporary variables and stopped before M30, but the physical tablet missed the response window and the failure DPRNT was not retained by the Server. This evidence does not establish a production interlock; verification stays disabled until the Machine-specific configuration is commissioned.
 
 Milestone D Server behavior is implemented through schema v63. `OLC` and untimed `ARMED` commit atomically with the exact Run/Machine/NC/Offset Loader/nonce binding. The assigned tablet derives the fixed-width response for ARMED or unexpired PENDING. `SVR` starts PENDING and its timeout; exact `SVS` establishes success. No Machine credential or response is stored. Sequence discontinuity is retained only as evidence. Physical panel/readability and CNC execution blocking remain commissioning gates.
 
@@ -589,6 +589,30 @@ remain separate Server work.
 11. Order additional units only after the pilot and battery target pass.
 
 ## 16. Cross-cutting test strategy
+
+### Role preparation queues and Production Packages
+
+**Implementation status:** Implemented. Preparation stages remain derived
+projections. Schema v64 adds immutable, Server-owned Machine-specific
+Production Packages, artifacts, one current pointer per Operation, and retained
+invalidation/supersession evidence. Tool Room package creation is one deliberate
+action with creator/time audit and no approval workflow. Only a successfully
+activated exact current package satisfies Ready for Setup; opening/exporting it
+does not start setup or change state. The shared Windows queue adds the required
+NC Creator, Tool Room, and Setup role context actions without Machine selection
+or a second G-code release path.
+
+New NC releases use deterministic package markers. Package build injects the
+commissioned configured hook/CST/CEN content only for verification-enabled CNC
+work; disabled CNC output has no verification code or residual marker, and
+manual output has no CNC executable. Connection state changes delivery options
+only. Machine assignment, effective NC, Tool Table, and verification-content
+configuration mismatches invalidate current-package eligibility immediately.
+
+**Open product decision:** Manual Machines and CNC configurations without an
+executable Offset Loader still need a separately approved authoritative
+setup-start signal if no suitable existing Machine event is available. No fake
+loader or client-only manual status was added.
 
 - **Domain tests:** invariants, allocation, lifecycle, route/dependency graphs, and no-silent-repair behavior.
 - **Property/model tests:** allocation conservation, ordering, dependency interval relationships, and deterministic recalculation.

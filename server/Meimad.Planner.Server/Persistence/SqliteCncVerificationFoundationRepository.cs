@@ -226,11 +226,7 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
             JOIN gcode_release_verification_hooks hook
               ON hook.gcode_release_id=release.nc_release_id
             WHERE release.machine_id=$machineId
-              AND release.verification_release_token=$releaseToken
-              AND ((hook.invocation_kind='G65'
-                    AND hook.invocation_number=settings.verify_program_number)
-                   OR (hook.invocation_kind='CUSTOM_GCODE'
-                       AND hook.invocation_number=settings.custom_gcode_alias));
+              AND release.verification_release_token=$releaseToken;
             """;
         command.Parameters.AddWithValue("$machineId", machineId);
         command.Parameters.AddWithValue("$releaseToken", releaseToken);
