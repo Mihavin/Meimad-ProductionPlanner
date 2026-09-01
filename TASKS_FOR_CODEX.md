@@ -623,6 +623,32 @@ A newly generated Offset Loader must have a fresh package/release identity and m
 - Do not let clients choose a different Machine while creating/opening the package; use the Planner-assigned Machine.
 - Do not let a Setup client edit the authoritative server package in place.
 
+### L. Package responsibility and audit — minimal, no approval workflow
+Do **not** introduce a separate Production Package supervisor, approver, sign-off stage, or multi-step approval workflow in this task.
+
+The responsibility model for now is intentionally simple:
+- the **Tool Room role** creates the Production Package through `Create Production Package`;
+- successful package creation itself is the authoritative completion of Tool Room package preparation for that Operation;
+- the Server automatically records the identity of the user who created the package and the Server timestamp;
+- the immutable package snapshot/manifest is the audit record.
+
+At minimum, the audit record must retain:
+- `ProductionPackageId`;
+- creator/user identity;
+- creation Server timestamp;
+- exact Operation / Production Run identity;
+- assigned Machine identity;
+- exact NC release used, when applicable;
+- exact Tool Table / Tool Offset Table release used;
+- exact generated Offset Loader release, when applicable;
+- Machine capability / verification mode used to build the package;
+- artifact hashes/checksums and manifest identity;
+- later supersession/invalidation relationship when the package stops being current.
+
+Opening, viewing, copying, exporting, or sending the package does not require separate package approval and does not transfer package authorship. If access/use events are already part of the existing operational audit infrastructure they may be retained, but do not create a new mandatory approval bureaucracy around the package.
+
+A user may hold multiple application roles; do not assume that package creation requires a distinct human supervisor merely because role authorization exists elsewhere in the system.
+
 ### Acceptance tests
 Add tests proving at least:
 - NC Creator `Upload G-code` routes to the existing Operation NC workflow rather than duplicating release logic;
@@ -632,6 +658,9 @@ Add tests proving at least:
 - a Manual Machine package contains only applicable manual setup artifacts and no CNC verification executable;
 - package creation is atomic and a failed build never creates `Ready for Setup`;
 - successful current package creation automatically produces `Ready for Setup`;
+- successful package creation records creator/user identity and Server creation timestamp;
+- the package audit record retains the exact bound releases/configuration/artifact identities needed to reconstruct what was created;
+- no supervisor approval/sign-off is required to make a successfully built package current;
 - opening/copying/downloading a package does not change workflow state;
 - the same Offset Loader cannot become current for another Operation/package;
 - Machine reassignment invalidates/supersedes the current package;
@@ -652,6 +681,7 @@ Report:
 - exact derived predicate for `Ready for Setup` after this task;
 - context-menu actions added to NC Creator, Tool Room, and Setup views;
 - invalidation/supersession rules;
+- package creator/audit fields retained and confirmation that no separate supervisor approval stage was introduced;
 - migrations and documentation changes, especially any `AGENTS.md` rule replaced by this decision;
 - tests executed and results;
 - any unresolved setup-start signal for Manual or non-Offset-Loader Machines.
