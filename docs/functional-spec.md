@@ -258,23 +258,26 @@ The dedicated Setup page owns connection settings and Server-authoritative resou
 - Database maintenance shows the Server-local SQLite database, WAL, shared-memory, total-on-disk, and reusable-page sizes without exposing a database path. It lists only three deletable non-authoritative diagnostic collections: raw CNC telemetry, normalized Machine state history, and CNC connection events. An operator selects a half-open UTC range (`from <= timestamp < to`), one or more types, and optionally one Machine ID, then previews exact per-type row counts. Deletion requires active Edit Mode, a reason, a fresh expected row count, and the Windows typed confirmation. The Server refuses a changed preview, creates and verifies a managed backup before deleting, and records an append-only structured audit. Planning records, releases, Production Run workflow/cycle/output events, anomalies, current Machine state, and structured audit history are outside the deletion catalog.
 - The active Edit Mode holder may download a newly created, integrity-checked and restore-verified SQLite backup through the factory-LAN HTTP API. The Windows client streams it to an operator-selected local folder and rejects/removes a partial file if the SHA-256 response header does not match. This is not a restore command and does not make the client a database owner.
 - A temporary fixed-mapping Excel importer. Its Windows page asks only for the workbook and worksheet, previews Case/Order rows, and provides one `Import Cases and Orders` action. The fixed mapping is Case Part Number A, Name O, Revision F, Customer D; Order Number B, Quantity L, Work Finish Date E; and active/production-instruction filter N. Other Case/Order fields remain empty. Part Number matches one Case and Case + Order Number matches one Order; existing records are not silently overwritten. Invalid rows are explained and skipped while valid rows remain eligible for one atomic pass. Exact approved passes replay idempotently. A later changed approval for the same workbook is accepted only when it is again Case/Order-only, contains at least one explicit creation, and contains no planning sheet, Batch, Operation, Machine mapping, assignment, or planning mutation; this lets the fixed tool resume after an older partial import while retaining a separate durable receipt for every accepted pass. Changed planning approvals remain rejected. This tool is temporary until Kitaron integration.
-- A Server-local Kitaron connector page at `/kitaron-setup/`. Only loopback requests may use it. Steps 1-3 manage encrypted connection settings, metadata detection, and an optimistic Draft/Ready field mapping, including a `material_orders` group. Step 4 shows one-way synchronization status and permits a manual run; Ready mappings also run periodically. SQL Server is always opened with read intent. Each run atomically creates or refreshes connector-owned Cases, canonical `TSubOrder` Orders, reusable Case Operations, and every valid direct BOM edge returned by `TTreeNodes`. Schema v41 also imports `TBuyRow` raw-material purchase lines plus the latest matching `TAppCostOfferBySupplier` delivery approval into an advisory register. Historical Kitaron received quantities and approvals never create a locally verified receipt or reservation and never satisfy material readiness. Matching manual records are linked but never overwritten; stale links are repaired, missing imported component edges are deactivated, failures roll back, and no Kitaron mutation, allocation, Machine assignment, backlog entry, or Timeline position is created.
+- A Server-local Kitaron connector page at `/kitaron-setup/`. Only loopback requests may use it. Steps 1-3 manage encrypted connection settings, metadata detection, and an optimistic Draft/Ready field mapping, including a `material_orders` group. Step 4 shows one-way synchronization status and permits a manual run; Ready mappings also run periodically. SQL Server is always opened with read intent. Each run atomically creates or refreshes connector-owned Cases, canonical `TSubOrder` Orders, reusable Case Operations, and every valid direct BOM edge returned by `TTreeNodes`. All `TSubOrder` siblings for the same Kitaron `OrderID` and `DetailID` are retained as separate Planner Orders; each keeps its own quantity and supply date and is displayed as `<OrderNumber>/<TSubOrder.RecordID>`. The connector never collapses or sums those delivery rows into one Order. Schema v41 also imports `TBuyRow` raw-material purchase lines plus the latest matching `TAppCostOfferBySupplier` delivery approval into an advisory register. Historical Kitaron received quantities and approvals never create a locally verified receipt or reservation and never satisfy material readiness. Matching manual records are linked but never overwritten; stale links are repaired, missing imported component edges are deactivated, failures roll back, and no Kitaron mutation, allocation, Machine assignment, backlog entry, or Timeline position is created.
 
 ### 9.4 User Terminals
 
 The implemented **User Terminals** Windows page is a read-only monitoring surface in
 View Mode and an administration surface for the active Edit Mode holder. Every tablet
 shows its stable Tablet ID, name, hardware MAC, Machine or spare assignment,
-enabled/revoked state, last authenticated contact, reported firmware, battery and
+enabled/disabled state, last Server contact, reported firmware, battery and
 Wi-Fi IP/RSSI, current Production Run, Server-projected workflow state, and current
 official package revision. Absence is displayed explicitly; a recent timestamp is not
 silently promoted to an online guarantee.
 
-The active editor may register a tablet, bind or reassign its Machine, mark it spare,
-enable or revoke it, and rotate its credential. The plaintext credential is returned
-only at registration or rotation. Monitoring needs no Edit Mode, while each mutation
-is revalidated against the current Server generation. Credential hashes and existing
-plaintext credentials are never returned by the monitoring API.
+The active editor may register a tablet, edit its display name, bind or reassign its
+Machine, mark it spare, enable/disable it, and delete an unreferenced registration.
+Monitoring needs no Edit Mode, while each mutation is revalidated against the current
+Server generation. Tablet ID and MAC are identifiers only; the MVP tablet layer has no credential.
+
+The Planning Board provides a board-wide operation search and an **Open operation**
+context action. Timeline operation blocks provide **Open operation** and **Show in
+Planning Board** context actions. These are navigation-only and never mutate planning.
 
 ### Haas VF-3 NGC execution integration
 
@@ -332,6 +335,8 @@ The Planning Board context menu changes an assigned operation's mode through an 
 ## 9.9 Generic resources and automatic provisional allocation
 
 Schema v65 preserves `machines` as the specialized Machine resource and adds three complementary classes: Employees with data-managed Skills, generic internal Workstations with data-managed types/capabilities/calendars/capacity, and External Resources with promised lead time, safety buffer, optional working calendar, and planned/actual send-return facts. Names such as Tool Room, CMM, deburring, assembly, painting, or presetter are configuration examples and are not domain enums.
+
+The Windows Setup **Resource Types & Skills** page is the MVP master-data surface for creating Skills, Workstation types/instances, and External Resources and for assigning operational Skills to Employees. These Skill mappings are intentionally separate from the legacy per-Machine employee qualification list. View Mode may inspect the lists; only the Single Edit Mode holder may create or replace mappings.
 
 Process requirements state the resource class, Workstation type/capability, Employee Skill, simultaneous capacity, duration, direction, and dependency. They never make one concrete Employee or Workstation permanent process authority. The allocator supports the common simultaneous pair of one physical Workstation plus one qualified Employee. It intersects both calendars, enforces Workstation capacity and Employee non-overlap, chooses the earliest feasible/least-displacing combination with stable resource-ID tie breaks, schedules preparation latest-fit backward from an existing Machine anchor, and following work earliest-fit forward. Confirmed/actual reservations are fixed; an explicit provisional pin is a recalculation constraint.
 

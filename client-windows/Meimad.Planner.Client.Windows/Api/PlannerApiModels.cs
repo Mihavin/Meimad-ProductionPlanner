@@ -710,6 +710,64 @@ internal sealed record PlannerResource(
 
 internal sealed record ResourceResource(PlannerResource Value, string EntityTag);
 
+internal sealed record PlannerSkill(
+    string Id,
+    string Name,
+    string? Description,
+    bool IsActive,
+    int Version)
+{
+    public string DisplayName => IsActive ? Name : $"{Name} (inactive)";
+}
+
+internal sealed record PlannerWorkstationType(
+    string Id,
+    string Name,
+    string? Description,
+    string PropertySchemaJson,
+    bool IsActive,
+    int Version)
+{
+    public string DisplayName => IsActive ? Name : $"{Name} (inactive)";
+}
+
+internal sealed record PlannerWorkstation(
+    string Id,
+    string Name,
+    string WorkstationTypeId,
+    string WorkingCalendarId,
+    int Capacity,
+    IReadOnlyList<string> Capabilities,
+    string PropertiesJson,
+    bool IsActive,
+    int Version);
+
+internal sealed record PlannerExternalResource(
+    string Id,
+    string Name,
+    string? SupplierName,
+    int PromisedLeadTimeMinutes,
+    int SafetyBufferMinutes,
+    string LeadTimeSemantics,
+    string? WorkingCalendarId,
+    string PropertiesJson,
+    bool IsActive,
+    int Version);
+
+internal sealed record PlannerEmployeeSkills(string EmployeeId, IReadOnlyList<string> SkillIds);
+
+internal sealed record SkillCreate(string Name, string? Description);
+internal sealed record SkillUpdate(string Name,string? Description,bool IsActive,int ExpectedVersion);
+internal sealed record WorkstationTypeCreate(string Name, string? Description, string PropertySchemaJson);
+internal sealed record WorkstationTypeUpdate(string Name,string? Description,string PropertySchemaJson,bool IsActive,int ExpectedVersion);
+internal sealed record WorkstationCreate(string Name, string WorkstationTypeId, string WorkingCalendarId,
+    int Capacity, IReadOnlyList<string> Capabilities, string PropertiesJson);
+internal sealed record WorkstationUpdate(string Name,string WorkstationTypeId,string WorkingCalendarId,int Capacity,IReadOnlyList<string> Capabilities,string PropertiesJson,bool IsActive,int ExpectedVersion);
+internal sealed record ExternalResourceCreate(string Name, string? SupplierName, int PromisedLeadTimeMinutes,
+    int SafetyBufferMinutes, string LeadTimeSemantics, string? WorkingCalendarId, string PropertiesJson);
+internal sealed record ExternalResourceUpdate(string Name,string? SupplierName,int PromisedLeadTimeMinutes,int SafetyBufferMinutes,string LeadTimeSemantics,string? WorkingCalendarId,string PropertiesJson,bool IsActive,int ExpectedVersion);
+internal sealed record EmployeeSkillsUpdate(IReadOnlyList<string> SkillIds);
+
 internal sealed record ResourceCreate(
     string EmployeeNumber,
     string FirstName,
@@ -1428,7 +1486,8 @@ internal sealed record PlanningBoardOperation(
     double? RemainingProductionRuntimeSeconds = null,
     double? TotalPlannedMachineTimeSeconds = null,
     IReadOnlyList<string>? SetupEstimateWarnings = null,
-    bool UsesSetupOccupancyEstimate = false);
+    bool UsesSetupOccupancyEstimate = false,
+    string? CaseOperationId = null);
 
 internal sealed record PlannerReadinessComponent(
     string Key,
@@ -1710,7 +1769,7 @@ internal sealed record UserTerminal(
 
 internal sealed record CreateUserTerminalRequest(string DeviceName, string? MachineId, string? HardwareId);
 
-internal sealed record UpdateUserTerminalRequest(string? MachineId, bool IsEnabled);
+internal sealed record UpdateUserTerminalRequest(string DeviceName, string? MachineId, bool IsEnabled);
 
 internal sealed record QcQueueItem(
     string ProductionRunId,

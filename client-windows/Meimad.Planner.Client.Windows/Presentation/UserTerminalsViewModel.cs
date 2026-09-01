@@ -32,6 +32,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
         MarkSpareCommand = new AsyncCommand(
             MarkSpareAsync,
             () => isEditor && Selected is not null && SelectedMachine is not null);
+        DeleteCommand = new AsyncCommand(DeleteAsync, () => isEditor && Selected is not null);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -42,6 +43,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     public AsyncCommand SaveCommand { get; }
     public AsyncCommand ToggleEnabledCommand { get; }
     public AsyncCommand MarkSpareCommand { get; }
+    public AsyncCommand DeleteCommand { get; }
 
     public UserTerminal? Selected
     {
@@ -90,7 +92,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
 
     public string Status { get => status; private set => Set(ref status, value); }
     public bool IsEditor => isEditor;
-    public bool CanEditIdentity => isEditor && Selected is null;
+    public bool CanEditIdentity => isEditor;
     public string EditModeText => isEditor
         ? "Edit Mode — terminal administration enabled"
         : "View Mode — monitoring only";
@@ -166,7 +168,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
             {
                 item = await api.UpdateUserTerminalAsync(
                     Selected.DeviceId,
-                    new(SelectedMachine?.MachineId, Selected.IsEnabled),
+                    new(Name.Trim(), SelectedMachine?.MachineId, Selected.IsEnabled),
                     clientId,
                     generation);
             }
@@ -184,6 +186,19 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     private Task ToggleEnabledAsync() =>
         UpdateSelectedAsync(!Selected!.IsEnabled);
 
+    internal async Task DeleteAsync()
+    {
+        if (api is null || Selected is null) return;
+        try
+        {
+            await api.DeleteUserTerminalAsync(Selected.DeviceId, clientId, generation);
+            Selected = null;
+            await RefreshAsync();
+            Status = "Terminal deleted.";
+        }
+        catch (Exception exception) { Status = exception.Message; }
+    }
+
     private async Task MarkSpareAsync()
     {
         SelectedMachine = null;
@@ -198,7 +213,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
             var deviceId = Selected.DeviceId;
             var item = await api.UpdateUserTerminalAsync(
                 deviceId,
-                new(SelectedMachine?.MachineId, enabled),
+                new(Name.Trim(), SelectedMachine?.MachineId, enabled),
                 clientId,
                 generation);
             await RefreshAsync();
@@ -218,6 +233,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
         SaveCommand.RaiseCanExecuteChanged();
         ToggleEnabledCommand.RaiseCanExecuteChanged();
         MarkSpareCommand.RaiseCanExecuteChanged();
+        DeleteCommand.RaiseCanExecuteChanged();
         Raise(nameof(ToggleEnabledText));
     }
 

@@ -19,6 +19,16 @@ public partial class MachinePlanningBoardView : UserControl
         InitializeComponent();
     }
 
+    internal event EventHandler<PlanningOperationViewModel>? OpenOperationRequested;
+
+    private void OpenOperation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem menuItem
+            && ItemsControl.ItemsControlFromItemContainer(menuItem) is ContextMenu contextMenu
+            && contextMenu.PlacementTarget is FrameworkElement { DataContext: PlanningOperationViewModel operation })
+            OpenOperationRequested?.Invoke(this, operation);
+    }
+
     private async void CreateProductionRun_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MachinePlanningBoardViewModel viewModel || !viewModel.CanDrag) return;

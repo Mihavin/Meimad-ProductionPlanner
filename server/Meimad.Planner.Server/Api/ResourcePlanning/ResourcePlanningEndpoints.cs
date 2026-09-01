@@ -10,13 +10,23 @@ internal static class ResourcePlanningEndpoints
         var root = endpoints.MapGroup("/api/v1/resources");
         root.MapGet("/skills", async (ResourceMasterDataService s, CancellationToken t) => Results.Ok(await s.ListSkillsAsync(t)));
         root.MapPost("/skills", CreateSkillAsync);
+        root.MapPatch("/skills/{id}", (string id,SkillUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,a=>s.UpdateSkillAsync(id,r.Name,r.Description,r.IsActive,r.ExpectedVersion,a,t)));
+        root.MapDelete("/skills/{id}", (string id,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,async a=>{await s.DeleteSkillAsync(id,version,a,t);return new{id};}));
+        root.MapGet("/employees/{employeeId}/skills", async (string employeeId, ResourceMasterDataService s, CancellationToken t) =>
+            Results.Ok(await s.GetEmployeeSkillsAsync(employeeId, t)));
         root.MapPut("/employees/{employeeId}/skills", SetEmployeeSkillsAsync);
         root.MapGet("/workstation-types", async (ResourceMasterDataService s, CancellationToken t) => Results.Ok(await s.ListWorkstationTypesAsync(t)));
         root.MapPost("/workstation-types", CreateTypeAsync);
+        root.MapPatch("/workstation-types/{id}",(string id,WorkstationTypeUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,a=>s.UpdateWorkstationTypeAsync(id,r.Name,r.Description,r.PropertySchemaJson,r.IsActive,r.ExpectedVersion,a,t)));
+        root.MapDelete("/workstation-types/{id}",(string id,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,async a=>{await s.DeleteWorkstationTypeAsync(id,version,a,t);return new{id};}));
         root.MapGet("/workstations", async (ResourceMasterDataService s, CancellationToken t) => Results.Ok(await s.ListWorkstationsAsync(t)));
         root.MapPost("/workstations", CreateWorkstationAsync);
+        root.MapPatch("/workstations/{id}",(string id,WorkstationUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,a=>s.UpdateWorkstationAsync(id,r.Name,r.WorkstationTypeId,r.WorkingCalendarId,r.Capacity,r.Capabilities,r.PropertiesJson,r.IsActive,r.ExpectedVersion,a,t)));
+        root.MapDelete("/workstations/{id}",(string id,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,async a=>{await s.DeleteWorkstationAsync(id,version,a,t);return new{id};}));
         root.MapGet("/external", async (ResourceMasterDataService s, CancellationToken t) => Results.Ok(await s.ListExternalResourcesAsync(t)));
         root.MapPost("/external", CreateExternalAsync);
+        root.MapPatch("/external/{id}",(string id,ExternalResourceUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,a=>s.UpdateExternalResourceAsync(id,r.Name,r.SupplierName,r.PromisedLeadTimeMinutes,r.SafetyBufferMinutes,r.LeadTimeSemantics,r.WorkingCalendarId,r.PropertiesJson,r.IsActive,r.ExpectedVersion,a,t)));
+        root.MapDelete("/external/{id}",(string id,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>Mutate(c,async a=>{await s.DeleteExternalResourceAsync(id,version,a,t);return new{id};}));
         endpoints.MapPost("/api/v1/resource-plan/preview", Preview);
         endpoints.MapGet("/api/v1/case-operations/{operationId}/resource-requirements",async(string operationId,ResourceMasterDataService s,CancellationToken t)=>Results.Ok(await s.ListRequirementsAsync(operationId,t)));
         endpoints.MapPost("/api/v1/case-operations/{operationId}/resource-requirements",CreateRequirementAsync);
@@ -50,8 +60,12 @@ internal static class ResourcePlanningEndpoints
 }
 
 internal sealed record SkillRequest(string? Name,string? Description);
+internal sealed record SkillUpdateRequest(string? Name,string? Description,bool IsActive,int ExpectedVersion);
 internal sealed record EmployeeSkillsRequest(IReadOnlyList<string?>? SkillIds);
 internal sealed record WorkstationTypeRequest(string? Name,string? Description,string? PropertySchemaJson);
+internal sealed record WorkstationTypeUpdateRequest(string? Name,string? Description,string? PropertySchemaJson,bool IsActive,int ExpectedVersion);
 internal sealed record WorkstationRequest(string? Name,string? WorkstationTypeId,string? WorkingCalendarId,int Capacity,IReadOnlyList<string?>? Capabilities,string? PropertiesJson);
+internal sealed record WorkstationUpdateRequest(string? Name,string? WorkstationTypeId,string? WorkingCalendarId,int Capacity,IReadOnlyList<string?>? Capabilities,string? PropertiesJson,bool IsActive,int ExpectedVersion);
 internal sealed record ExternalResourceRequest(string? Name,string? SupplierName,int PromisedLeadTimeMinutes,int SafetyBufferMinutes,string? LeadTimeSemantics,string? WorkingCalendarId,string? PropertiesJson);
+internal sealed record ExternalResourceUpdateRequest(string? Name,string? SupplierName,int PromisedLeadTimeMinutes,int SafetyBufferMinutes,string? LeadTimeSemantics,string? WorkingCalendarId,string? PropertiesJson,bool IsActive,int ExpectedVersion);
 internal sealed record RequirementRequest(int SequencePosition,string? ResourceClass,string? WorkstationTypeId,string? ExternalResourceId,string? RequiredCapability,string? RequiredSkillId,int CapacityRequired,int EstimatedDurationSeconds,string? Direction,string? SimultaneousGroupKey,string? PredecessorRequirementId);

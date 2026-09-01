@@ -9,6 +9,17 @@ namespace Meimad.Planner.Server.Persistence;
 internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database) : IResourceMasterDataRepository
 {
     public Task<IReadOnlyList<SkillRecord>> ListSkillsAsync(CancellationToken token) => ReadSkillsAsync(token);
+    public async Task<EmployeeSkillsRecord> GetEmployeeSkillsAsync(string employeeId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT skill_id FROM employee_skills WHERE employee_resource_id=$id ORDER BY skill_id;";
+        command.Parameters.AddWithValue("$id", employeeId);
+        var ids = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) ids.Add(reader.GetString(0));
+        return new(employeeId, ids);
+    }
     public Task<IReadOnlyList<WorkstationTypeRecord>> ListWorkstationTypesAsync(CancellationToken token) => ReadTypesAsync(token);
     public Task<IReadOnlyList<WorkstationRecord>> ListWorkstationsAsync(CancellationToken token) => ReadWorkstationsAsync(token);
     public Task<IReadOnlyList<ExternalResourceRecord>> ListExternalResourcesAsync(CancellationToken token) => ReadExternalAsync(token);
@@ -20,12 +31,16 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
             "VALUES($id,$name,$description,1,1,$at,$at);", value.Id, value.Name, value.Description, authority, token);
         return value;
     }
+    public async Task<SkillRecord> UpdateSkillAsync(SkillRecord v,int expected,EditAuthority a,CancellationToken t){await UpdateAsync("skills","name=$name,description=$description,is_active=$active",v.Id,expected,v.Name,v.Description,v.IsActive,null,a,t);return v;}
+    public Task DeleteSkillAsync(string id,int expected,EditAuthority a,CancellationToken t)=>DeleteAsync("skills",id,expected,a,t);
     public async Task<WorkstationTypeRecord> CreateWorkstationTypeAsync(WorkstationTypeRecord value, EditAuthority authority, CancellationToken token)
     {
         await ExecuteCreateAsync("INSERT INTO workstation_types(id,name,description,property_schema_json,is_active,version,created_at,updated_at) " +
             "VALUES($id,$name,$description,$extra,1,1,$at,$at);", value.Id, value.Name, value.Description, authority, token, value.PropertySchemaJson);
         return value;
     }
+    public async Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(WorkstationTypeRecord v,int expected,EditAuthority a,CancellationToken t){await UpdateAsync("workstation_types","name=$name,description=$description,property_schema_json=$extra,is_active=$active",v.Id,expected,v.Name,v.Description,v.IsActive,v.PropertySchemaJson,a,t);return v;}
+    public Task DeleteWorkstationTypeAsync(string id,int expected,EditAuthority a,CancellationToken t)=>DeleteAsync("workstation_types",id,expected,a,t);
     public async Task<WorkstationRecord> CreateWorkstationAsync(WorkstationRecord value, EditAuthority authority, CancellationToken token)
     {
         await using var connection = await database.OpenConnectionAsync(token);
@@ -40,6 +55,13 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
         command.Parameters.AddWithValue("$properties", value.PropertiesJson); command.Parameters.AddWithValue("$at", Now());
         await ExecuteMappedAsync(command, token); await transaction.CommitAsync(token); return value;
     }
+    public async Task<WorkstationRecord> UpdateWorkstationAsync(WorkstationRecord v,int expected,EditAuthority a,CancellationToken token)
+    {
+        await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,a,token);
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="UPDATE workstations SET name=$name,workstation_type_id=$type,working_calendar_id=$calendar,capacity=$capacity,capabilities_json=$capabilities,properties_json=$properties,is_active=$active,version=version+1,updated_at=$at WHERE id=$id AND version=$version;";
+        q.Parameters.AddWithValue("$name",v.Name);q.Parameters.AddWithValue("$type",v.WorkstationTypeId);q.Parameters.AddWithValue("$calendar",v.WorkingCalendarId);q.Parameters.AddWithValue("$capacity",v.Capacity);q.Parameters.AddWithValue("$capabilities",JsonSerializer.Serialize(v.Capabilities));q.Parameters.AddWithValue("$properties",v.PropertiesJson);q.Parameters.AddWithValue("$active",v.IsActive);q.Parameters.AddWithValue("$at",Now());q.Parameters.AddWithValue("$id",v.Id);q.Parameters.AddWithValue("$version",expected);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);return v;
+    }
+    public Task DeleteWorkstationAsync(string id,int expected,EditAuthority a,CancellationToken t)=>DeleteAsync("workstations",id,expected,a,t);
     public async Task<ExternalResourceRecord> CreateExternalResourceAsync(ExternalResourceRecord value, EditAuthority authority, CancellationToken token)
     {
         await using var connection = await database.OpenConnectionAsync(token);
@@ -54,6 +76,13 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
         command.Parameters.AddWithValue("$calendar", Db(value.WorkingCalendarId)); command.Parameters.AddWithValue("$properties", value.PropertiesJson);
         command.Parameters.AddWithValue("$at", Now()); await ExecuteMappedAsync(command, token); await transaction.CommitAsync(token); return value;
     }
+    public async Task<ExternalResourceRecord> UpdateExternalResourceAsync(ExternalResourceRecord v,int expected,EditAuthority a,CancellationToken token)
+    {
+        await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,a,token);
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="UPDATE external_resources SET name=$name,supplier_name=$supplier,promised_lead_time_minutes=$lead,safety_buffer_minutes=$buffer,lead_time_semantics=$semantics,working_calendar_id=$calendar,properties_json=$properties,is_active=$active,version=version+1,updated_at=$at WHERE id=$id AND version=$version;";
+        q.Parameters.AddWithValue("$name",v.Name);q.Parameters.AddWithValue("$supplier",Db(v.SupplierName));q.Parameters.AddWithValue("$lead",v.PromisedLeadTimeMinutes);q.Parameters.AddWithValue("$buffer",v.SafetyBufferMinutes);q.Parameters.AddWithValue("$semantics",v.LeadTimeSemantics);q.Parameters.AddWithValue("$calendar",Db(v.WorkingCalendarId));q.Parameters.AddWithValue("$properties",v.PropertiesJson);q.Parameters.AddWithValue("$active",v.IsActive);q.Parameters.AddWithValue("$at",Now());q.Parameters.AddWithValue("$id",v.Id);q.Parameters.AddWithValue("$version",expected);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);return v;
+    }
+    public Task DeleteExternalResourceAsync(string id,int expected,EditAuthority a,CancellationToken t)=>DeleteAsync("external_resources",id,expected,a,t);
 
     public async Task SetEmployeeSkillsAsync(string employeeId, IReadOnlyList<string> skillIds, EditAuthority authority, CancellationToken token)
     {
@@ -97,6 +126,21 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
         command.Parameters.AddWithValue("$description", Db(description)); command.Parameters.AddWithValue("$at", Now());
         if (extra is not null) command.Parameters.AddWithValue("$extra", extra);
         await ExecuteMappedAsync(command, token); await transaction.CommitAsync(token);
+    }
+
+    private async Task UpdateAsync(string table,string sets,string id,int expected,string name,string? description,bool active,string? extra,EditAuthority authority,CancellationToken token)
+    {
+        await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=$"UPDATE {table} SET {sets},version=version+1,updated_at=$at WHERE id=$id AND version=$version;";q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);q.Parameters.AddWithValue("$name",name);q.Parameters.AddWithValue("$description",Db(description));q.Parameters.AddWithValue("$active",active);q.Parameters.AddWithValue("$at",Now());if(extra is not null)q.Parameters.AddWithValue("$extra",extra);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);
+    }
+    private async Task DeleteAsync(string table,string id,int expected,EditAuthority authority,CancellationToken token)
+    {
+        await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=$"DELETE FROM {table} WHERE id=$id AND version=$version;";q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);
+    }
+    private static async Task ExecuteChangedAsync(SqliteCommand q,CancellationToken token)
+    {
+        try { if(await q.ExecuteNonQueryAsync(token)==0)throw new ResourceMasterDataException("resource_version_stale","version","The resource changed or no longer exists. Refresh and retry."); }
+        catch(SqliteException e) when(e.SqliteErrorCode==19){throw new ResourceMasterDataException("resource_in_use","resource","This resource is referenced and cannot be deleted. Deactivate it or remove its references first.");}
     }
 
     private async Task<IReadOnlyList<SkillRecord>> ReadSkillsAsync(CancellationToken token)

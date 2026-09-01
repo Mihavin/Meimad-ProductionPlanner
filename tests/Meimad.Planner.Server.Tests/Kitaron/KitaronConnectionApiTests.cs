@@ -276,9 +276,35 @@ public sealed class KitaronConnectionApiTests
         Assert.Contains("so.StopProduction", query, StringComparison.Ordinal);
         Assert.Contains("WHERE StopProduction = 1", query, StringComparison.Ordinal);
         Assert.Contains("so.RecordID", query, StringComparison.Ordinal);
+        Assert.Contains("FROM dbo.TSubOrder so", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("source_order_groups", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("TRY_CONVERT", query, StringComparison.Ordinal);
         Assert.DoesNotContain("INSERT", query, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE", query, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DELETE", query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Canonical_order_rows_remain_separate_with_order_row_reference_quantity_and_date()
+    {
+        KitaronSourceOrder[] source =
+        [
+            new("501", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 24, new DateTime(2027,3,2), false),
+            new("502", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,9), false),
+            new("503", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,16), false),
+            new("504", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,23), false),
+            new("505", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,30), false)
+        ];
+        var warnings = new List<string>();
+
+        var orders = KitaronSyncService.BuildOrders(source, warnings);
+
+        Assert.Equal(5, orders.Count);
+        Assert.Equal(72, orders.Sum(order => order.Quantity));
+        Assert.Equal("3000030679/501", orders[0].OrderNumber);
+        Assert.Equal("3000030679", orders[0].CanonicalOrderNumber);
+        Assert.Equal(new DateOnly(2027,3,30), orders[4].WorkFinishDate);
+        Assert.Empty(warnings);
     }
 
     [Fact]

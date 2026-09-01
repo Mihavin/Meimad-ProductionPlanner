@@ -94,6 +94,7 @@
             </WrapPanel>
             <WrapPanel Margin="0,6,0,0">
               <Button Content="{Binding ToggleEnabledText}" Command="{Binding ToggleEnabledCommand}" />
+              <Button Content="Delete terminal" Click="DeleteTerminal_Click" Margin="6,0,0,0" />
             </WrapPanel>
           </StackPanel>
         </StackPanel>

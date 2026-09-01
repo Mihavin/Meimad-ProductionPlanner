@@ -10,6 +10,7 @@ internal static class EInkDeviceRegistrationEndpoints
         endpoints.MapGet("/api/v1/eink/device-registrations", ListAsync);
         endpoints.MapPost("/api/v1/eink/device-registrations", CreateAsync);
         endpoints.MapPatch("/api/v1/eink/device-registrations/{deviceId}", UpdateAsync);
+        endpoints.MapDelete("/api/v1/eink/device-registrations/{deviceId}", DeleteAsync);
     }
 
     private static async Task<IResult> ListAsync(
@@ -75,6 +76,7 @@ internal static class EInkDeviceRegistrationEndpoints
             var registration = await service.UpdateAsync(
                 deviceId,
                 new UpdateEInkDeviceRegistrationCommand(
+                    request.DeviceName,
                     request.MachineId,
                     request.IsEnabled),
                 editAuthority!,
@@ -85,6 +87,18 @@ internal static class EInkDeviceRegistrationEndpoints
         {
             return Error(context, exception);
         }
+    }
+
+    private static async Task<IResult> DeleteAsync(string deviceId, HttpContext context,
+        EInkDeviceRegistrationService service, CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        try
+        {
+            await service.DeleteAsync(deviceId, authority!, cancellationToken);
+            return Results.NoContent();
+        }
+        catch (Exception exception) when (Known(exception)) { return Error(context, exception); }
     }
 
     private static bool Known(Exception exception) => exception is
@@ -127,6 +141,7 @@ internal sealed record CreateEInkDeviceRegistrationRequest(
     string HardwareId);
 
 internal sealed record UpdateEInkDeviceRegistrationRequest(
+    string? DeviceName,
     string? MachineId,
     bool IsEnabled);
 

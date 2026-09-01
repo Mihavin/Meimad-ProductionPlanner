@@ -306,7 +306,7 @@ Unless explicitly marked implemented, paths in this section are **Proposed**. Mu
 | `GET` | `/api/v1/cases/{caseId}` | Read Case details. |
 | `PATCH` | `/api/v1/cases/{caseId}` | Change approved current master fields. |
 | `GET` | `/api/v1/cases/{caseId}/operations` | Read ordered route template and dependencies. |
-| `GET` | `/api/v1/cases/{caseId}/preview` | Stream the Case preview image to a Windows planning caller. |
+| `GET` | `/api/v1/cases/{caseId}/preview` | Stream the Case preview image to a Windows planning caller. Configured drive-to-UNC mappings tolerate multihomed file-server DNS by trying resolved IPv4 paths. |
 | `POST` | `/api/v1/cases/{caseId}/operations` | Add a Case Operation. |
 | `PATCH` | `/api/v1/cases/{caseId}/operations/{operationId}` | Edit one route operation. |
 | `GET` | `/api/v1/cases/{caseId}/components` | List child Case Component relationships. |
@@ -1069,7 +1069,7 @@ These routes are available only when the immediate remote address is loopback. A
 
 The PUT body contains `serverHost`, `serverPort`, `databaseName`, `viewSchema`, `viewName`, `username`, optional `password`, `clearPassword`, `enabled`, `refreshIntervalSeconds` (30–86400), and `version`. Database/schema/view identifiers accept a conservative SQL-identifier character set and are bracket quoted. Enabling periodic work requires a stored password. The response never contains the password or ciphertext. A stale version returns `412 kitaron_connection_stale`; validation returns `422 validation_failed`. A failed test returns 502 with `succeeded: false`, a bounded diagnostic, no columns, and refreshed non-secret settings. Success returns `succeeded: true`, the detected `{ name, dataType }` columns, and refreshed settings. The same interval controls Ready-mapping synchronization; source access remains read-only.
 
-The mapping PUT body contains `modelMode` (`domain_aligned` or `flat_requested`), `status` (`draft` or `ready_for_implementation`), all catalog `fields`, optional overall `notes`, and optimistic `version`. Ready rejects blocked/missing/unknown active mappings. Sync is localhost-only, requires enabled successfully tested connection settings and a Ready mapping, and never accepts source rows from the caller. It caps each source query at 200,000 rows and returns `succeeded`, `failed`, or `blocked`. Besides mapped work-view columns, the read-only connector queries canonical `TSubOrder` rows selected by planning-view `RecordID` plus every stopped row, direct root-child `TTreeNodes` BOM edges, and canonical raw-material purchase rows from `TBuyRow`/`TBuyMain`. Each material row uses `TBuyRow.BuyRowID` as stable identity; the latest matching `TAppCostOfferBySupplier` record supplies the supplier-approved delivery date, quantity, and remark, while `TBuyReceptionHeader` supplies an advisory historical received total. `StopProduction = 1` writes `cancelled`; each sales order line uses `TSubOrder.RecordID` as its stable source identity. Every valid direct BOM edge returned by Kitaron is applied, including roots absent from work/order rows and an empty Planner; duplicate source edges reuse one relationship. The Planner apply is one immediate SQLite transaction and repairs stale source links whose target record was deleted. Material purchase data is stored only in `kitaron_material_orders`; it never creates `verified_material_receipts`, reservations, readiness, Batches, assignments, backlog entries, Timeline positions, or any Kitaron mutation.
+The mapping PUT body contains `modelMode` (`domain_aligned` or `flat_requested`), `status` (`draft` or `ready_for_implementation`), all catalog `fields`, optional overall `notes`, and optimistic `version`. Ready rejects blocked/missing/unknown active mappings. Sync is localhost-only, requires enabled successfully tested connection settings and a Ready mapping, and never accepts source rows from the caller. It caps each source query at 200,000 rows and returns `succeeded`, `failed`, or `blocked`. Besides mapped work-view columns, the read-only connector queries canonical `TSubOrder` rows selected by planning-view `RecordID`, every sibling row with the same `OrderID` and `DetailID`, plus every stopped row; it also reads direct root-child `TTreeNodes` BOM edges and canonical raw-material purchase rows from `TBuyRow`/`TBuyMain`. Each `TSubOrder` delivery row is a separate Planner Order with its own quantity and supply date. Its API `orderNumber` is `<Kitaron OrderNumber>/<TSubOrder.RecordID>`, while `TSubOrder.RecordID` remains the stable source identity; sibling rows are never aggregated. Each material row uses `TBuyRow.BuyRowID` as stable identity; the latest matching `TAppCostOfferBySupplier` record supplies the supplier-approved delivery date, quantity, and remark, while `TBuyReceptionHeader` supplies an advisory historical received total. `StopProduction = 1` writes `cancelled`. Every valid direct BOM edge returned by Kitaron is applied, including roots absent from work/order rows and an empty Planner; duplicate source edges reuse one relationship. The Planner apply is one immediate SQLite transaction and repairs stale source links whose target record was deleted. Material purchase data is stored only in `kitaron_material_orders`; it never creates `verified_material_receipts`, reservations, readiness, Batches, assignments, backlog entries, Timeline positions, or any Kitaron mutation.
 
 ## 7. Planning projections
 
@@ -1614,7 +1614,8 @@ These implemented Server administration routes are for the Windows planning/oper
 |---|---|---|
 | `GET` | `/api/v1/eink/device-registrations` | List registration and non-secret operational monitoring metadata; no tablet credential fields exist. No Edit Mode required. |
 | `POST` | `/api/v1/eink/device-registrations` | Create a named spare or Machine-bound E-Ink device and allocate its TabletID. |
-| `PATCH` | `/api/v1/eink/device-registrations/{deviceId}` | Bind/unbind and enable/disable the tablet. |
+| `PATCH` | `/api/v1/eink/device-registrations/{deviceId}` | Edit display name, bind/unbind, and enable/disable the tablet. |
+| `DELETE` | `/api/v1/eink/device-registrations/{deviceId}` | Delete an unreferenced registration; referenced history returns `409 device_registration_in_use`. |
 
 POST/PATCH require the same active `X-Meimad-Client-Id`, `X-Meimad-User-Id`, and `X-Meimad-Edit-Generation` authority as planning mutations; the authority check and registration write share one immediate SQLite transaction. Create requires the physical MAC and accepts `{ "deviceName": "M07 tablet", "machineId": "machine-7", "hardwareId": "A4:CF:12:83:76:91" }`. PATCH accepts `{ "machineId": "machine-7", "isEnabled": true }`. `machineId` may be null for a spare; a spare remains physically identified by its MAC. Create/update responses contain no registration token, credential, key, password, certificate, or session value. Human authentication and a narrower administrator role remain OD-012.
 
@@ -2267,12 +2268,15 @@ Planning mutations require Single Edit Mode headers. Existing resources require 
 
 Resource-master mutations require the normal `X-Meimad-Client-Id` and current `X-Meimad-Edit-Generation`; reads and preview calculation are non-mutating.
 
-- `GET|POST /api/v1/resources/skills`
+- `GET|POST /api/v1/resources/skills`; `PATCH|DELETE /api/v1/resources/skills/{id}` update or reference-safely delete using `expectedVersion` / `version`.
+- `GET /api/v1/resources/employees/{employeeId}/skills` reads the employee's operational Skill IDs.
 - `PUT /api/v1/resources/employees/{employeeId}/skills` replaces operational Skill mappings only, not roles or legacy Machine qualifications.
-- `GET|POST /api/v1/resources/workstation-types`
-- `GET|POST /api/v1/resources/workstations`
-- `GET|POST /api/v1/resources/external`
+- `GET|POST /api/v1/resources/workstation-types`; `PATCH|DELETE /api/v1/resources/workstation-types/{id}` update or reference-safely delete.
+- `GET|POST /api/v1/resources/workstations`; `PATCH|DELETE /api/v1/resources/workstations/{id}` update or reference-safely delete.
+- `GET|POST /api/v1/resources/external`; `PATCH|DELETE /api/v1/resources/external/{id}` update or reference-safely delete.
 - `GET|POST /api/v1/case-operations/{operationId}/resource-requirements` manages data-driven requirements rather than concrete assignments.
 - `POST /api/v1/resource-plan/preview` returns deterministic assignments, internal load intervals including fixed facts, configuration errors, predicted shift/completion, and delivery risk. Pins are request constraints; it never mutates Machine assignments/backlogs.
+
+Windows Setup exposes these master-data routes in **Resource Types & Skills**, with separate screens for Skills, Workstation types, Workstation instances, Employee Skill assignment, and External Resources. Create, edit, delete, and assignment require active Edit Mode; deletes are rejected while referenced, and all lists remain visible in View Mode.
 
 `POST /api/v1/batch-operations/{operationId}/production-package?toolOffsetMode=MEASURED|MANUAL_DUMMY` selects the immutable offset source mode. Default is `MEASURED`; manual mode returns 422 when the Machine lacks capability. The response/manifest include `toolOffsetMode`. A manual package has no measured Tool Table artifact, while verification-enabled CNC still has its bound Offset Loader.

@@ -257,6 +257,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public ServerMaintenanceViewModel ServerMaintenance { get; } = new();
 
+    public ResourceMasterDataViewModel ResourceMasterData { get; } = new();
+
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public IReadOnlyList<WorkingCalendar> MachineWorkingCalendars => WorkingCalendars
@@ -720,6 +722,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         var nextGeneration = editStatus?.Generation ?? 0;
         ServerMaintenance.AttachSession(
             newApiClient, newClientId, LocalUserName, nextGeneration, nextIsEditor, ServerAddress);
+        ResourceMasterData.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
             && isEditor == nextIsEditor
@@ -779,8 +782,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var resourcesTask = apiClient.ListResourcesAsync();
             var holidaysTask = apiClient.ListIsraeliHolidaysAsync();
             var reportSettingsTask = apiClient.GetReportEmailSettingsAsync();
+            var resourceMasterDataTask = ResourceMasterData.RefreshAsync();
             await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, postprocessorsTask, setupCalendarTask, masterCalendarTask,
-                resourcesTask, holidaysTask, reportSettingsTask);
+                resourcesTask, holidaysTask, reportSettingsTask, resourceMasterDataTask);
 
             Replace(WorkingCalendars, await calendarsTask);
             OnPropertyChanged(nameof(MachineWorkingCalendars));

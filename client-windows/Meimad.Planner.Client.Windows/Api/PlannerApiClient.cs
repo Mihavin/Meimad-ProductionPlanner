@@ -203,6 +203,9 @@ internal interface IPlannerApiClient : IDisposable
         string deviceId, UpdateUserTerminalRequest request, string clientId, long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    Task DeleteUserTerminalAsync(string deviceId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<QcQueueItem>>([]);
@@ -429,6 +432,37 @@ internal interface IPlannerApiClient : IDisposable
     Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerResource>>([]);
+
+    Task<IReadOnlyList<PlannerSkill>> ListSkillsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerSkill>>([]);
+    Task<PlannerSkill> CreateSkillAsync(SkillCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PlannerSkill> UpdateSkillAsync(string id,SkillUpdate update,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task DeleteSkillAsync(string id,int version,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerWorkstationType>> ListWorkstationTypesAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerWorkstationType>>([]);
+    Task<PlannerWorkstationType> CreateWorkstationTypeAsync(WorkstationTypeCreate create, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PlannerWorkstationType> UpdateWorkstationTypeAsync(string id,WorkstationTypeUpdate update,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task DeleteWorkstationTypeAsync(string id,int version,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerWorkstation>> ListWorkstationsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerWorkstation>>([]);
+    Task<PlannerWorkstation> CreateWorkstationAsync(WorkstationCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PlannerWorkstation> UpdateWorkstationAsync(string id,WorkstationUpdate update,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task DeleteWorkstationAsync(string id,int version,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerExternalResource>> ListExternalResourcesAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerExternalResource>>([]);
+    Task<PlannerExternalResource> CreateExternalResourceAsync(ExternalResourceCreate create, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PlannerExternalResource> UpdateExternalResourceAsync(string id,ExternalResourceUpdate update,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task DeleteExternalResourceAsync(string id,int version,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new PlannerEmployeeSkills(employeeId, []));
+    Task<PlannerEmployeeSkills> SetEmployeeSkillsAsync(string employeeId, EmployeeSkillsUpdate update,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
 
     Task<PlannerResource> CreateResourceAsync(
         ResourceCreate create,
@@ -1385,6 +1419,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<UserTerminal>(response, cancellationToken);
     }
 
+    public async Task DeleteUserTerminalAsync(string deviceId, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete,
+            $"api/v1/eink/device-registrations/{Uri.EscapeDataString(deviceId)}", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
@@ -1948,6 +1992,61 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<PlannerResource>("api/v1/resources", cancellationToken);
 
+    public async Task<IReadOnlyList<PlannerSkill>> ListSkillsAsync(CancellationToken cancellationToken = default) =>
+        await ReadArrayAsync<PlannerSkill>("api/v1/resources/skills", cancellationToken);
+
+    public Task<PlannerSkill> CreateSkillAsync(SkillCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        PostResourceAsync<PlannerSkill>("api/v1/resources/skills", create, clientId, editGeneration, cancellationToken);
+    public Task<PlannerSkill> UpdateSkillAsync(string id,SkillUpdate value,string clientId,long generation,CancellationToken token=default)=>PatchResourceAsync<PlannerSkill>($"api/v1/resources/skills/{Uri.EscapeDataString(id)}",value,clientId,generation,token);
+    public Task DeleteSkillAsync(string id,int version,string clientId,long generation,CancellationToken token=default)=>DeleteAsync($"api/v1/resources/skills/{Uri.EscapeDataString(id)}?version={version}",clientId,generation,token);
+
+    public async Task<IReadOnlyList<PlannerWorkstationType>> ListWorkstationTypesAsync(CancellationToken cancellationToken = default) =>
+        await ReadArrayAsync<PlannerWorkstationType>("api/v1/resources/workstation-types", cancellationToken);
+
+    public Task<PlannerWorkstationType> CreateWorkstationTypeAsync(WorkstationTypeCreate create, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) =>
+        PostResourceAsync<PlannerWorkstationType>("api/v1/resources/workstation-types", create, clientId, editGeneration, cancellationToken);
+    public Task<PlannerWorkstationType> UpdateWorkstationTypeAsync(string id,WorkstationTypeUpdate value,string clientId,long generation,CancellationToken token=default)=>PatchResourceAsync<PlannerWorkstationType>($"api/v1/resources/workstation-types/{Uri.EscapeDataString(id)}",value,clientId,generation,token);
+    public Task DeleteWorkstationTypeAsync(string id,int version,string clientId,long generation,CancellationToken token=default)=>DeleteAsync($"api/v1/resources/workstation-types/{Uri.EscapeDataString(id)}?version={version}",clientId,generation,token);
+
+    public async Task<IReadOnlyList<PlannerWorkstation>> ListWorkstationsAsync(CancellationToken cancellationToken = default) =>
+        await ReadArrayAsync<PlannerWorkstation>("api/v1/resources/workstations", cancellationToken);
+
+    public Task<PlannerWorkstation> CreateWorkstationAsync(WorkstationCreate create, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        PostResourceAsync<PlannerWorkstation>("api/v1/resources/workstations", create, clientId, editGeneration, cancellationToken);
+    public Task<PlannerWorkstation> UpdateWorkstationAsync(string id,WorkstationUpdate value,string clientId,long generation,CancellationToken token=default)=>PatchResourceAsync<PlannerWorkstation>($"api/v1/resources/workstations/{Uri.EscapeDataString(id)}",value,clientId,generation,token);
+    public Task DeleteWorkstationAsync(string id,int version,string clientId,long generation,CancellationToken token=default)=>DeleteAsync($"api/v1/resources/workstations/{Uri.EscapeDataString(id)}?version={version}",clientId,generation,token);
+
+    public async Task<IReadOnlyList<PlannerExternalResource>> ListExternalResourcesAsync(CancellationToken cancellationToken = default) =>
+        await ReadArrayAsync<PlannerExternalResource>("api/v1/resources/external", cancellationToken);
+
+    public Task<PlannerExternalResource> CreateExternalResourceAsync(ExternalResourceCreate create, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) =>
+        PostResourceAsync<PlannerExternalResource>("api/v1/resources/external", create, clientId, editGeneration, cancellationToken);
+    public Task<PlannerExternalResource> UpdateExternalResourceAsync(string id,ExternalResourceUpdate value,string clientId,long generation,CancellationToken token=default)=>PatchResourceAsync<PlannerExternalResource>($"api/v1/resources/external/{Uri.EscapeDataString(id)}",value,clientId,generation,token);
+    public Task DeleteExternalResourceAsync(string id,int version,string clientId,long generation,CancellationToken token=default)=>DeleteAsync($"api/v1/resources/external/{Uri.EscapeDataString(id)}?version={version}",clientId,generation,token);
+
+    public async Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/resources/employees/{Uri.EscapeDataString(employeeId)}/skills", cancellationToken);
+        return await ReadSuccessAsync<PlannerEmployeeSkills>(response, cancellationToken);
+    }
+
+    public async Task<PlannerEmployeeSkills> SetEmployeeSkillsAsync(string employeeId, EmployeeSkillsUpdate update,
+        string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/resources/employees/{Uri.EscapeDataString(employeeId)}/skills", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerEmployeeSkills>(response, cancellationToken);
+    }
+
     public async Task<PlannerResource> CreateResourceAsync(
         ResourceCreate create,
         string clientId,
@@ -2444,6 +2543,31 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             request.Headers.Add(EditGenerationHeader,
                 editGeneration.Value.ToString(CultureInfo.InvariantCulture));
         return request;
+    }
+
+    private async Task<IReadOnlyList<T>> ReadArrayAsync<T>(string path, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync(path, cancellationToken);
+        return await ReadSuccessAsync<T[]>(response, cancellationToken);
+    }
+
+    private async Task<T> PostResourceAsync<T>(string path, object value, string clientId,
+        long editGeneration, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(HttpMethod.Post, path, clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(value, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<T>(response, cancellationToken);
+    }
+
+    private async Task<T> PatchResourceAsync<T>(string path,object value,string clientId,long editGeneration,CancellationToken cancellationToken)
+    {
+        using var request=CreateRequest(HttpMethod.Patch,path,clientId);
+        request.Headers.Add(EditGenerationHeader,editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content=JsonContent.Create(value,options:JsonOptions);
+        using var response=await httpClient.SendAsync(request,cancellationToken);
+        return await ReadSuccessAsync<T>(response,cancellationToken);
     }
 
     private static string? Header(HttpResponseMessage response, string name) =>

@@ -196,27 +196,7 @@ internal sealed class KitaronSyncService
                     Hash(group.Key, name, revision, customer, folder));
             }).OrderBy(item => item.PartNumber, StringComparer.OrdinalIgnoreCase).ToArray();
 
-        var orders = snapshot.Orders
-            .GroupBy(row => row.SourceKey, StringComparer.OrdinalIgnoreCase)
-            .Select(group =>
-            {
-                var valid = group.Where(row => row.Quantity is > 0
-                    && row.WorkFinishDate is not null
-                    && double.IsFinite(row.Quantity.Value)
-                    && row.Quantity.Value <= int.MaxValue
-                    && Math.Truncate(row.Quantity.Value) == row.Quantity.Value).ToArray();
-                if (valid.Length == 0)
-                {
-                    AddWarning(warnings, $"Order {group.First().OrderNumber} was skipped because quantity or finish date is invalid.");
-                    return null;
-                }
-                var first = valid[0];
-                var quantity = (int)valid.Max(row => row.Quantity!.Value);
-                var date = DateOnly.FromDateTime(valid.Min(row => row.WorkFinishDate!.Value));
-                var status = valid.Any(row => row.StopProduction) ? "cancelled" : "active";
-                return new KitaronSyncOrder(group.Key, first.PartNumber, first.OrderNumber, quantity, date, status,
-                    Hash(group.Key, quantity, date, status));
-            }).Where(item => item is not null).Cast<KitaronSyncOrder>()
+        var orders = BuildOrders(snapshot.Orders, warnings)
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var components = selectedComponents
@@ -377,6 +357,41 @@ internal sealed class KitaronSyncService
         if (value is DateOnly date) return date;
         var text = Convert.ToString(value, CultureInfo.InvariantCulture);
         return DateOnly.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var parsed) ? parsed : null;
+    }
+
+    internal static IReadOnlyList<KitaronSyncOrder> BuildOrders(
+        IEnumerable<KitaronSourceOrder> source,
+        ICollection<string> warnings)
+    {
+        return source.GroupBy(row => row.SourceKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var valid = group.Where(row => row.Quantity is > 0
+                    && row.WorkFinishDate is not null
+                    && double.IsFinite(row.Quantity.Value)
+                    && row.Quantity.Value <= int.MaxValue
+                    && Math.Truncate(row.Quantity.Value) == row.Quantity.Value).ToArray();
+                if (valid.Length == 0)
+                {
+                    AddWarning(warnings,
+                        $"Order {group.First().OrderNumber}, row {group.Key}, was skipped because quantity or finish date is invalid.");
+                    return null;
+                }
+
+                var first = valid[0];
+                var quantity = (int)valid.Max(row => row.Quantity!.Value);
+                var date = DateOnly.FromDateTime(valid.Min(row => row.WorkFinishDate!.Value));
+                var status = valid.Any(row => row.StopProduction) ? "cancelled" : "active";
+                var reference = $"{first.OrderNumber.Trim()}/{group.Key.Trim()}";
+                return new KitaronSyncOrder(group.Key, first.PartNumber, reference, quantity, date, status,
+                    Hash(group.Key, reference, quantity, date, status))
+                {
+                    CanonicalOrderNumber = first.OrderNumber.Trim()
+                };
+            })
+            .Where(item => item is not null)
+            .Cast<KitaronSyncOrder>()
+            .ToArray();
     }
 
     private static string? Consistent(IEnumerable<string?> values, string key, string field, ICollection<string> warnings)

@@ -13,6 +13,7 @@ namespace Meimad.Planner.Client.Windows.Views;
 
 public partial class TimelineView : UserControl
 {
+    internal event EventHandler<TimelineOperationActionRequest>? OperationActionRequested;
     private const double LabelWidth = 185;
     private const double HeaderHeight = 42;
     private const double DateHeaderRowHeight = 19;
@@ -888,6 +889,17 @@ public partial class TimelineView : UserControl
                     interval, label, width, laneHeight, clippedStart, clippedEnd)
             };
             block.ToolTip = IntervalToolTip(interval, label, DisplayTimeZone());
+            if (!string.IsNullOrWhiteSpace(interval.OperationId))
+            {
+                var menu = new ContextMenu();
+                var open = new MenuItem { Header = "Open operation", Tag = interval.OperationId };
+                open.Click += TimelineOpenOperation_Click;
+                var show = new MenuItem { Header = "Show in Planning Board", Tag = interval.OperationId };
+                show.Click += TimelineShowInBoard_Click;
+                menu.Items.Add(open);
+                menu.Items.Add(show);
+                block.ContextMenu = menu;
+            }
             Canvas.SetLeft(block, x);
             Canvas.SetTop(block, y + laneTop + lane * laneHeight);
             TimelineCanvas.Children.Add(block);
@@ -954,6 +966,18 @@ public partial class TimelineView : UserControl
             TimelineCanvas.Children.Add(line);
             AddArrowHead(x1, y1, x2, y2, dependency.Summary);
         }
+    }
+
+    private void TimelineOpenOperation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string operationId })
+            OperationActionRequested?.Invoke(this, new(operationId, TimelineOperationAction.OpenOperation));
+    }
+
+    private void TimelineShowInBoard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string operationId })
+            OperationActionRequested?.Invoke(this, new(operationId, TimelineOperationAction.ShowInPlanningBoard));
     }
 
     private void AddArrowHead(double x1, double y1, double x2, double y2, string tooltip)
@@ -1430,3 +1454,7 @@ public partial class TimelineView : UserControl
         TimelineCanvas.Children.Add(line);
     }
 }
+
+internal enum TimelineOperationAction { OpenOperation, ShowInPlanningBoard }
+
+internal sealed record TimelineOperationActionRequest(string OperationId, TimelineOperationAction Action);

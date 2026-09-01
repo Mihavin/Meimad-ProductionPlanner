@@ -546,6 +546,123 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Resource Types &amp; Skills" ToolTip="Manage data-driven Skills, Workstations, and External Resources">
+                <Grid Margin="8" DataContext="{Binding ResourceMasterData}">
+                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <TabControl>
+                        <TabItem Header="Skills">
+                            <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                                    <DataGrid ItemsSource="{Binding Skills}" SelectedItem="{Binding SelectedSkill}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                        <DataGrid.Columns><DataGridTextColumn Header="Skill" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/></DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                                    <StackPanel IsEnabled="{Binding IsEditor}">
+                                        <TextBlock Text="ADD / EDIT SKILL" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Skills are user-defined qualifications used by resource scheduling." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Skill name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding SkillName, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Description" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding SkillDescription}" AcceptsReturn="True" MinHeight="70"/></StackPanel>
+                                        <CheckBox Content="Active" IsChecked="{Binding SkillIsActive}" Margin="0,0,0,8"/>
+                                        <WrapPanel><Button Content="Save Skill" Command="{Binding AddSkillCommand}"/><Button Content="Delete" Click="DeleteSkill_Click" Margin="6,0,0,0"/></WrapPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="Workstation Types">
+                            <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                                    <DataGrid ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedWorkstationType}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                        <DataGrid.Columns><DataGridTextColumn Header="Type" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/></DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
+                                        <TextBlock Text="ADD / EDIT WORKSTATION TYPE" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Examples such as Tool Room, CMM, assembly, or deburring are configuration—not fixed application types." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Type name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeName}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Description" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeDescription}" AcceptsReturn="True" MinHeight="55"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Property schema (JSON object)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationTypeSchema}" AcceptsReturn="True" MinHeight="90" FontFamily="Consolas"/></StackPanel>
+                                        <CheckBox Content="Active" IsChecked="{Binding WorkstationTypeIsActive}" Margin="0,0,0,8"/>
+                                        <WrapPanel><Button Content="Save Workstation Type" Command="{Binding AddWorkstationTypeCommand}"/><Button Content="Delete" Click="DeleteWorkstationType_Click" Margin="6,0,0,0"/></WrapPanel>
+                                    </StackPanel></ScrollViewer>
+                                </Border>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="Workstations">
+                            <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                                    <DataGrid ItemsSource="{Binding Workstations}" SelectedItem="{Binding SelectedWorkstation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                        <DataGrid.Columns><DataGridTextColumn Header="Workstation" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Capacity" Binding="{Binding Capacity}" Width="75"/><DataGridTextColumn Header="Capabilities" Binding="{Binding Capabilities}" Width="2*"/><DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="65"/></DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
+                                        <TextBlock Text="ADD / EDIT WORKSTATION" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                                        <UniformGrid Columns="2">
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationName}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capacity" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationCapacity}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Workstation type" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedType}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working calendar" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding Calendars}" SelectedItem="{Binding SelectedCalendar}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                        </UniformGrid>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capabilities (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationCapabilities}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Properties (JSON object)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding WorkstationProperties}" AcceptsReturn="True" MinHeight="80" FontFamily="Consolas"/></StackPanel>
+                                        <CheckBox Content="Active" IsChecked="{Binding WorkstationIsActive}" Margin="0,0,0,8"/>
+                                        <WrapPanel><Button Content="Save Workstation" Command="{Binding AddWorkstationCommand}"/><Button Content="Delete" Click="DeleteWorkstation_Click" Margin="6,0,0,0"/></WrapPanel>
+                                    </StackPanel></ScrollViewer>
+                                </Border>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="Employee Skills">
+                            <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                                    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                        <TextBlock Text="SELECT EMPLOYEE" FontWeight="Bold" Margin="0,0,0,8"/>
+                                        <ListBox Grid.Row="1" ItemsSource="{Binding Employees}" SelectedItem="{Binding SelectedEmployee}" DisplayMemberPath="DisplayName"/>
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                                    <StackPanel IsEnabled="{Binding IsEditor}">
+                                        <TextBlock Text="ASSIGN SKILLS" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                                        <TextBlock Text="These operational Skills are separate from the existing Machine-operation qualifications on the employee record." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" Padding="8" MinHeight="140" MaxHeight="330">
+                                            <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsControl ItemsSource="{Binding EmployeeSkillOptions}"><ItemsControl.ItemTemplate><DataTemplate><CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,3"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></ScrollViewer>
+                                        </Border>
+                                        <Button Content="Save Employee Skills" Command="{Binding SaveEmployeeSkillsCommand}" HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="External Resources">
+                            <Grid Margin="8"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                                    <DataGrid ItemsSource="{Binding ExternalResources}" SelectedItem="{Binding SelectedExternalResource}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                        <DataGrid.Columns><DataGridTextColumn Header="Service" Binding="{Binding Name}" Width="*"/><DataGridTextColumn Header="Supplier" Binding="{Binding SupplierName}" Width="*"/><DataGridTextColumn Header="Lead min" Binding="{Binding PromisedLeadTimeMinutes}" Width="80"/><DataGridTextColumn Header="Buffer" Binding="{Binding SafetyBufferMinutes}" Width="70"/></DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
+                                        <TextBlock Text="ADD / EDIT EXTERNAL RESOURCE" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                                        <UniformGrid Columns="2">
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Service name" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ExternalName}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Supplier" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ExternalSupplier}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Promised lead time (minutes)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ExternalLeadMinutes}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Safety buffer (minutes)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ExternalBufferMinutes}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Lead-time semantics" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding LeadTimeSemantics}" SelectedItem="{Binding ExternalSemantics}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Working calendar (optional)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding Calendars}" SelectedItem="{Binding SelectedExternalCalendar}" DisplayMemberPath="DisplayName" IsEditable="False"/></StackPanel>
+                                        </UniformGrid>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Properties (JSON object)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding ExternalProperties}" AcceptsReturn="True" MinHeight="75" FontFamily="Consolas"/></StackPanel>
+                                        <CheckBox Content="Active" IsChecked="{Binding ExternalIsActive}" Margin="0,0,0,8"/>
+                                        <WrapPanel><Button Content="Save External Resource" Command="{Binding AddExternalResourceCommand}"/><Button Content="Delete" Click="DeleteExternalResource_Click" Margin="6,0,0,0"/></WrapPanel>
+                                    </StackPanel></ScrollViewer>
+                                </Border>
+                            </Grid>
+                        </TabItem>
+                    </TabControl>
+                    <DockPanel Grid.Row="1" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh resource data" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/></DockPanel>
+                </Grid>
+            </TabItem>
+
             <TabItem ToolTip="Manage employees, roles, skills, and availability">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ResourcesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Employees / Resources" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">

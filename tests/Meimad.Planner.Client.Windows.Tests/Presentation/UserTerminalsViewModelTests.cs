@@ -40,7 +40,8 @@ public sealed class UserTerminalsViewModelTests
         Assert.True(viewModel.SaveCommand.CanExecute(null));
         Assert.True(viewModel.MarkSpareCommand.CanExecute(null));
         Assert.True(viewModel.ToggleEnabledCommand.CanExecute(null));
-        Assert.False(viewModel.CanEditIdentity);
+        Assert.True(viewModel.CanEditIdentity);
+        Assert.True(viewModel.DeleteCommand.CanExecute(null));
     }
 
     private static UserTerminal Terminal() => new(

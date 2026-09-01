@@ -156,19 +156,9 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         $"SELECT {string.Join(", ", columns.Select(Quote))} FROM {Quote(schema)}.{Quote(view)};";
 
     internal static string BuildOrderQuery(string schema, string view) => $$"""
-        WITH source_order_ids AS (
-            SELECT DISTINCT TRY_CONVERT(int, {{Quote("RecordID")}}) AS record_id
-            FROM {{Quote(schema)}}.{{Quote(view)}}
-            WHERE {{Quote("RecordID")}} IS NOT NULL
-            UNION
-            SELECT RecordID
-            FROM dbo.TSubOrder
-            WHERE StopProduction = 1
-        )
         SELECT so.RecordID, d.DetailNumber, d.DetailName, d.REV,
                o.OrderNumber, so.Number, so.SupplyDate, so.StopProduction
-        FROM source_order_ids source
-        JOIN dbo.TSubOrder so ON so.RecordID = source.record_id
+        FROM dbo.TSubOrder so
         JOIN dbo.TDetails d ON d.DetailID = so.DetailID
         JOIN dbo.TOrder o ON o.OrderID = so.OrderID
         WHERE NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL

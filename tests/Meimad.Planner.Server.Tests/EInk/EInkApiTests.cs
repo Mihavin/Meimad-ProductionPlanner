@@ -664,6 +664,7 @@ public sealed class EInkApiTests
             {
                 Content = JsonContent.Create(new
                 {
+                    deviceName = "VF3 operator tablet",
                     machineId = "machine-eink-1",
                     isEnabled = true
                 })
@@ -671,6 +672,7 @@ public sealed class EInkApiTests
             using var update = await client.SendAsync(updateRequest);
             Assert.Equal(HttpStatusCode.OK, update.StatusCode);
             using var updated = JsonDocument.Parse(await update.Content.ReadAsStringAsync());
+            Assert.Equal("VF3 operator tablet", updated.RootElement.GetProperty("deviceName").GetString());
             Assert.False(updated.RootElement.TryGetProperty("registrationToken", out _));
             using var enabledRead = await client.SendAsync(Get(
                 $"/api/v1/eink/tablets/{tabletId}/version"));

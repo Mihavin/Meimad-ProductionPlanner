@@ -55,7 +55,10 @@ internal sealed record KitaronSyncOrder(
     int Quantity,
     DateOnly WorkFinishDate,
     string Status,
-    string SourceHash);
+    string SourceHash)
+{
+    internal string CanonicalOrderNumber { get; init; } = OrderNumber;
+}
 
 internal sealed record KitaronSyncComponent(
     string SourceKey,

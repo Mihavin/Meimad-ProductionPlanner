@@ -3,6 +3,7 @@ using Meimad.Planner.Server.Application.EditMode;
 namespace Meimad.Planner.Server.Application.ResourcePlanning;
 
 internal sealed record SkillRecord(string Id, string Name, string? Description, bool IsActive, int Version);
+internal sealed record EmployeeSkillsRecord(string EmployeeId, IReadOnlyList<string> SkillIds);
 internal sealed record WorkstationTypeRecord(string Id, string Name, string? Description, string PropertySchemaJson, bool IsActive, int Version);
 internal sealed record WorkstationRecord(string Id, string Name, string WorkstationTypeId, string WorkingCalendarId,
     int Capacity, IReadOnlyList<string> Capabilities, string PropertiesJson, bool IsActive, int Version);
@@ -16,13 +17,22 @@ internal interface IResourceMasterDataRepository
 {
     Task<IReadOnlyList<SkillRecord>> ListSkillsAsync(CancellationToken token);
     Task<SkillRecord> CreateSkillAsync(SkillRecord value, EditAuthority authority, CancellationToken token);
+    Task<SkillRecord> UpdateSkillAsync(SkillRecord value, int expectedVersion, EditAuthority authority, CancellationToken token);
+    Task DeleteSkillAsync(string id, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task SetEmployeeSkillsAsync(string employeeId, IReadOnlyList<string> skillIds, EditAuthority authority, CancellationToken token);
+    Task<EmployeeSkillsRecord> GetEmployeeSkillsAsync(string employeeId, CancellationToken token);
     Task<IReadOnlyList<WorkstationTypeRecord>> ListWorkstationTypesAsync(CancellationToken token);
     Task<WorkstationTypeRecord> CreateWorkstationTypeAsync(WorkstationTypeRecord value, EditAuthority authority, CancellationToken token);
+    Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(WorkstationTypeRecord value, int expectedVersion, EditAuthority authority, CancellationToken token);
+    Task DeleteWorkstationTypeAsync(string id, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task<IReadOnlyList<WorkstationRecord>> ListWorkstationsAsync(CancellationToken token);
     Task<WorkstationRecord> CreateWorkstationAsync(WorkstationRecord value, EditAuthority authority, CancellationToken token);
+    Task<WorkstationRecord> UpdateWorkstationAsync(WorkstationRecord value, int expectedVersion, EditAuthority authority, CancellationToken token);
+    Task DeleteWorkstationAsync(string id, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task<IReadOnlyList<ExternalResourceRecord>> ListExternalResourcesAsync(CancellationToken token);
     Task<ExternalResourceRecord> CreateExternalResourceAsync(ExternalResourceRecord value, EditAuthority authority, CancellationToken token);
+    Task<ExternalResourceRecord> UpdateExternalResourceAsync(ExternalResourceRecord value, int expectedVersion, EditAuthority authority, CancellationToken token);
+    Task DeleteExternalResourceAsync(string id, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task<IReadOnlyList<OperationResourceRequirementRecord>> ListRequirementsAsync(string caseOperationId,CancellationToken token);
     Task<OperationResourceRequirementRecord> CreateRequirementAsync(OperationResourceRequirementRecord value,EditAuthority authority,CancellationToken token);
 }
@@ -30,6 +40,8 @@ internal interface IResourceMasterDataRepository
 internal sealed class ResourceMasterDataService(IResourceMasterDataRepository repository)
 {
     internal Task<IReadOnlyList<SkillRecord>> ListSkillsAsync(CancellationToken token = default) => repository.ListSkillsAsync(token);
+    internal Task<EmployeeSkillsRecord> GetEmployeeSkillsAsync(string employeeId, CancellationToken token = default) =>
+        repository.GetEmployeeSkillsAsync(Required(employeeId, "employeeId", 200), token);
     internal Task<IReadOnlyList<WorkstationTypeRecord>> ListWorkstationTypesAsync(CancellationToken token = default) => repository.ListWorkstationTypesAsync(token);
     internal Task<IReadOnlyList<WorkstationRecord>> ListWorkstationsAsync(CancellationToken token = default) => repository.ListWorkstationsAsync(token);
     internal Task<IReadOnlyList<ExternalResourceRecord>> ListExternalResourcesAsync(CancellationToken token = default) => repository.ListExternalResourcesAsync(token);
@@ -38,10 +50,18 @@ internal sealed class ResourceMasterDataService(IResourceMasterDataRepository re
     internal Task<SkillRecord> CreateSkillAsync(string? name, string? description, EditAuthority authority, CancellationToken token = default) =>
         repository.CreateSkillAsync(new(Guid.NewGuid().ToString("N"), Required(name, "name", 120), Optional(description, 1000), true, 1), authority, token);
 
+    internal Task<SkillRecord> UpdateSkillAsync(string id, string? name, string? description, bool active, int version, EditAuthority authority, CancellationToken token = default) =>
+        repository.UpdateSkillAsync(new(Required(id,"id",200), Required(name,"name",120), Optional(description,1000), active, version + 1), version, authority, token);
+    internal Task DeleteSkillAsync(string id,int version,EditAuthority authority,CancellationToken token=default)=>repository.DeleteSkillAsync(Required(id,"id",200),version,authority,token);
+
     internal Task<WorkstationTypeRecord> CreateWorkstationTypeAsync(string? name, string? description,
         string? propertySchemaJson, EditAuthority authority, CancellationToken token = default) =>
         repository.CreateWorkstationTypeAsync(new(Guid.NewGuid().ToString("N"), Required(name, "name", 120),
             Optional(description, 1000), JsonObject(propertySchemaJson, "propertySchema"), true, 1), authority, token);
+
+    internal Task<WorkstationTypeRecord> UpdateWorkstationTypeAsync(string id,string? name,string? description,string? schema,bool active,int version,EditAuthority authority,CancellationToken token=default)=>
+        repository.UpdateWorkstationTypeAsync(new(Required(id,"id",200),Required(name,"name",120),Optional(description,1000),JsonObject(schema,"propertySchema"),active,version+1),version,authority,token);
+    internal Task DeleteWorkstationTypeAsync(string id,int version,EditAuthority authority,CancellationToken token=default)=>repository.DeleteWorkstationTypeAsync(Required(id,"id",200),version,authority,token);
 
     internal Task<WorkstationRecord> CreateWorkstationAsync(string? name, string? typeId, string? calendarId,
         int capacity, IReadOnlyList<string?>? capabilities, string? propertiesJson, EditAuthority authority,
@@ -49,6 +69,10 @@ internal sealed class ResourceMasterDataService(IResourceMasterDataRepository re
             Required(name, "name", 120), Required(typeId, "workstationTypeId", 200), Required(calendarId, "workingCalendarId", 200),
             capacity > 0 ? capacity : throw Invalid("capacity", "Capacity must be greater than zero."),
             NormalizeList(capabilities, "capabilities"), JsonObject(propertiesJson, "properties"), true, 1), authority, token);
+
+    internal Task<WorkstationRecord> UpdateWorkstationAsync(string id,string? name,string? typeId,string? calendarId,int capacity,IReadOnlyList<string?>? capabilities,string? properties,bool active,int version,EditAuthority authority,CancellationToken token=default)=>
+        repository.UpdateWorkstationAsync(new(Required(id,"id",200),Required(name,"name",120),Required(typeId,"workstationTypeId",200),Required(calendarId,"workingCalendarId",200),capacity>0?capacity:throw Invalid("capacity","Capacity must be greater than zero."),NormalizeList(capabilities,"capabilities"),JsonObject(properties,"properties"),active,version+1),version,authority,token);
+    internal Task DeleteWorkstationAsync(string id,int version,EditAuthority authority,CancellationToken token=default)=>repository.DeleteWorkstationAsync(Required(id,"id",200),version,authority,token);
 
     internal Task<ExternalResourceRecord> CreateExternalResourceAsync(string? name, string? supplierName,
         int leadMinutes, int bufferMinutes, string? semantics, string? calendarId, string? propertiesJson,
@@ -62,6 +86,15 @@ internal sealed class ResourceMasterDataService(IResourceMasterDataRepository re
             Optional(supplierName, 160), leadMinutes, bufferMinutes, normalizedSemantics, Optional(calendarId, 200),
             JsonObject(propertiesJson, "properties"), true, 1), authority, token);
     }
+
+    internal Task<ExternalResourceRecord> UpdateExternalResourceAsync(string id,string? name,string? supplier,int lead,int buffer,string? semantics,string? calendar,string? properties,bool active,int version,EditAuthority authority,CancellationToken token=default)
+    {
+        if(lead<0||buffer<0)throw Invalid("leadTime","Lead time and buffer cannot be negative.");
+        var normalized=Required(semantics??"CALENDAR_TIME","leadTimeSemantics",40).ToUpperInvariant();
+        if(normalized is not ("CALENDAR_TIME" or "WORKING_TIME"))throw Invalid("leadTimeSemantics","Use CALENDAR_TIME or WORKING_TIME.");
+        return repository.UpdateExternalResourceAsync(new(Required(id,"id",200),Required(name,"name",160),Optional(supplier,160),lead,buffer,normalized,Optional(calendar,200),JsonObject(properties,"properties"),active,version+1),version,authority,token);
+    }
+    internal Task DeleteExternalResourceAsync(string id,int version,EditAuthority authority,CancellationToken token=default)=>repository.DeleteExternalResourceAsync(Required(id,"id",200),version,authority,token);
 
     internal Task SetEmployeeSkillsAsync(string employeeId, IReadOnlyList<string?>? skillIds,
         EditAuthority authority, CancellationToken token = default) => repository.SetEmployeeSkillsAsync(

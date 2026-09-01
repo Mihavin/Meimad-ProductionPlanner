@@ -62,6 +62,7 @@ internal sealed class EInkDeviceRegistrationService
     {
         var updated = await repository.UpdateAsync(
             deviceId,
+            string.IsNullOrWhiteSpace(command.DeviceName) ? null : RequiredName(command.DeviceName),
             NormalizeMachineId(command.MachineId),
             command.IsEnabled,
             timeProvider.GetUtcNow(),
@@ -69,6 +70,12 @@ internal sealed class EInkDeviceRegistrationService
             cancellationToken)
             ?? throw new EInkDeviceRegistrationNotFoundException(deviceId);
         return updated;
+    }
+
+    internal async Task DeleteAsync(string deviceId, EditAuthority editAuthority, CancellationToken cancellationToken = default)
+    {
+        if (!await repository.DeleteAsync(deviceId, editAuthority, cancellationToken))
+            throw new EInkDeviceRegistrationNotFoundException(deviceId);
     }
 
     internal Task<IReadOnlyList<EInkDeviceRegistration>> ListAsync(

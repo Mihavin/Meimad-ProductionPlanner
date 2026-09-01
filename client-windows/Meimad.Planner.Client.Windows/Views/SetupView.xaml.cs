@@ -91,6 +91,34 @@ public partial class SetupView : UserControl
         }
     }
 
+    private async void DeleteSkill_Click(object sender,RoutedEventArgs e)
+    {
+        if(sender is FrameworkElement { DataContext: ResourceMasterDataViewModel { SelectedSkill: { } skill } vm }
+            && Confirm($"Delete Skill {skill.Name}? Referenced Skills are protected by the Server.","Delete Skill"))
+            await vm.DeleteSkillAsync();
+    }
+
+    private async void DeleteWorkstationType_Click(object sender,RoutedEventArgs e)
+    {
+        if(sender is FrameworkElement { DataContext: ResourceMasterDataViewModel { SelectedWorkstationType: { } item } vm }
+            && Confirm($"Delete Workstation Type {item.Name}? Referenced types are protected by the Server.","Delete Workstation Type"))
+            await vm.DeleteWorkstationTypeAsync();
+    }
+
+    private async void DeleteWorkstation_Click(object sender,RoutedEventArgs e)
+    {
+        if(sender is FrameworkElement { DataContext: ResourceMasterDataViewModel { SelectedWorkstation: { } item } vm }
+            && Confirm($"Delete Workstation {item.Name}? Scheduled references are protected by the Server.","Delete Workstation"))
+            await vm.DeleteWorkstationAsync();
+    }
+
+    private async void DeleteExternalResource_Click(object sender,RoutedEventArgs e)
+    {
+        if(sender is FrameworkElement { DataContext: ResourceMasterDataViewModel { SelectedExternalResource: { } item } vm }
+            && Confirm($"Delete External Resource {item.Name}? Requirement references are protected by the Server.","Delete External Resource"))
+            await vm.DeleteExternalResourceAsync();
+    }
+
     private static bool Confirm(string message, string title) => MessageBox.Show(
         message,
         title,

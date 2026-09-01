@@ -165,7 +165,7 @@
             </TabItem>
             <TabItem ToolTip="Open the Machine Planning Board and unassigned operation Pool">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource PlanningBoardButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Planning Board" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
-                <views:MachinePlanningBoardView DataContext="{Binding MachinePlanningBoard}" Margin="5" />
+                <views:MachinePlanningBoardView x:Name="PlanningBoardView" DataContext="{Binding MachinePlanningBoard}" Margin="5" />
             </TabItem>
             <TabItem x:Name="TimelineTab" ToolTip="Open the calculated Machine Timeline">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource TimelineButtonIcon}" Width="22" Height="22" Margin="0,0,6,0" /><TextBlock Text="Timeline" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
@@ -185,7 +185,7 @@
                                    Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                     </DockPanel>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <views:TimelineView DataContext="{Binding Timeline}" />
+                        <views:TimelineView x:Name="MainTimelineView" DataContext="{Binding Timeline}" />
                     </ScrollViewer>
                 </Grid>
             </TabItem>

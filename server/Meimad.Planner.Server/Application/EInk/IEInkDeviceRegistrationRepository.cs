@@ -11,11 +11,14 @@ internal interface IEInkDeviceRegistrationRepository
 
     Task<EInkDeviceRegistration?> UpdateAsync(
         string deviceId,
+        string? deviceName,
         string? machineId,
         bool isEnabled,
         DateTimeOffset updatedAt,
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
+
+    Task<bool> DeleteAsync(string deviceId, EditAuthority editAuthority, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<EInkDeviceRegistration>> ListAsync(CancellationToken cancellationToken);
 
@@ -63,5 +66,6 @@ internal sealed record CreateEInkDeviceRegistrationCommand(
     string HardwareId);
 
 internal sealed record UpdateEInkDeviceRegistrationCommand(
+    string? DeviceName,
     string? MachineId,
     bool IsEnabled);

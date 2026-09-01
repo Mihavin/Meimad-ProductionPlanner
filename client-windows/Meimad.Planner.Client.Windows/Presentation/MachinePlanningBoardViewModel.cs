@@ -19,6 +19,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     private bool isBusy;
     private string statusMessage = "Connect to the Server to load the Machine Planning Board.";
     private string conflictCalculationStatus = "Conflict calculation unavailable.";
+    private string searchText = string.Empty;
     private bool isAddingMachine;
     private string machineNumber = string.Empty;
     private string machineName = string.Empty;
@@ -685,6 +686,30 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    public string SearchText
+    {
+        get => searchText;
+        set
+        {
+            if (!SetField(ref searchText, value)) return;
+            ApplySearch();
+        }
+    }
+
+    internal bool FocusOperation(string operationId)
+    {
+        var operation = FindOperation(operationId);
+        if (operation is null) return false;
+        SearchText = operation.BatchOperationId;
+        return true;
+    }
+
+    private void ApplySearch()
+    {
+        foreach (var operation in Pool.Concat(Machines.SelectMany(machine => machine.Backlog)))
+            operation.IsSearchMatch = operation.Matches(SearchText);
+    }
+
     internal async Task RecordManualReportAsync(PlanningOperationViewModel operation, string reportType, int? partTimeSeconds = null)
     {
         if (apiClient is null || !isEditor || IsBusy || operation.MachineId is null) return;
@@ -947,7 +972,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     private ManualOperationPlacement? PlacementFor(string operationId) =>
         FindOperation(operationId) is { } operation ? PlacementFrom(operation) : null;
 
-    private PlanningOperationViewModel? FindOperation(string operationId) => Pool
+    internal PlanningOperationViewModel? FindOperation(string operationId) => Pool
         .Concat(Machines.SelectMany(machine => machine.Backlog))
         .FirstOrDefault(operation => operation.BatchOperationId == operationId);
 
@@ -986,6 +1011,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         ConflictCalculationStatus = snapshot.ConflictCalculationStatus == "current"
             ? $"Current: {snapshot.ConflictCalculationMessage}"
             : $"Unavailable: {snapshot.ConflictCalculationMessage}";
+        ApplySearch();
     }
 
     private void ApplyCalendars(IReadOnlyList<WorkingCalendar> calendars)
@@ -1201,12 +1227,14 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
 {
     private BitmapImage? preview;
     private bool planningModeEditAvailable;
+    private bool isSearchMatch = true;
 
     internal PlanningOperationViewModel(
         PlanningBoardOperation operation,
         bool planningModeEditAvailable = false)
     {
         BatchOperationId = operation.BatchOperationId;
+        CaseOperationId = operation.CaseOperationId;
         BatchId = operation.BatchId;
         CaseId = operation.CaseId;
         CaseName = operation.CaseName;
@@ -1265,6 +1293,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     }
 
     public string BatchOperationId { get; }
+    public string? CaseOperationId { get; }
     public string BatchId { get; }
     public string CaseId { get; }
     public string? CaseName { get; }
@@ -1341,6 +1370,29 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+    public bool IsSearchMatch
+    {
+        get => isSearchMatch;
+        internal set
+        {
+            if (isSearchMatch == value) return;
+            isSearchMatch = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSearchMatch)));
+        }
+    }
+
+    internal bool Matches(string? query)
+    {
+        var value = query?.Trim();
+        if (string.IsNullOrEmpty(value)) return true;
+        return new[]
+        {
+            BatchOperationId, CaseOperationId, BatchId, CaseId, CaseName, BatchNumber, PartNumber,
+            OperationNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"OP{OperationNumber}", OperationName, RequiredMachineType,
+            string.Join(" ", OrderReferences)
+        }.Any(candidate => candidate?.Contains(value, StringComparison.OrdinalIgnoreCase) == true);
+    }
     public string PartCaseText => $"{PartNumber} / {CaseName ?? CaseId}";
     public string OperationText => $"OP{OperationNumber} {OperationName}";
     public string BatchOrderText => OrderReferences.Count == 0

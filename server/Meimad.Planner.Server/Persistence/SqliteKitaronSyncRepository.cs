@@ -342,7 +342,7 @@ internal sealed class SqliteKitaronSyncRepository(
             connection, transaction, "order", item.SourceKey, "orders", counts, cancellationToken);
         if (link is null)
         {
-            var legacyKey = $"{item.CaseSourceKey}\u001f{item.OrderNumber}";
+            var legacyKey = $"{item.CaseSourceKey}\u001f{item.CanonicalOrderNumber}";
             var legacyLink = await ReadValidLinkAsync(
                 connection, transaction, "order", legacyKey, "orders", counts, cancellationToken);
             if (legacyLink is not null)
@@ -368,6 +368,47 @@ internal sealed class SqliteKitaronSyncRepository(
                 item.OrderNumber, cancellationToken, caseId);
             if (matches.Count > 1)
                 throw new KitaronSyncDataException($"Order {item.OrderNumber} matches multiple Planner Orders.");
+
+            if (matches.Count == 0)
+            {
+                var legacyMatches = await FindIdsAsync(connection, transaction,
+                    """
+                    SELECT id FROM orders
+                    WHERE case_id=$caseId AND order_reference=$key COLLATE NOCASE
+                      AND quantity=$quantity AND work_finish_date=$date
+                      AND status=$status COLLATE NOCASE
+                      AND NOT EXISTS (
+                          SELECT 1 FROM kitaron_sync_links
+                          WHERE source_entity='order' AND target_id=orders.id)
+                    ORDER BY id;
+                    """,
+                    item.CanonicalOrderNumber, cancellationToken, caseId,
+                    ("$quantity", item.Quantity),
+                    ("$date", item.WorkFinishDate.ToString("yyyy-MM-dd")),
+                    ("$status", item.Status));
+                if (legacyMatches.Count > 1)
+                    throw new KitaronSyncDataException(
+                        $"Order {item.CanonicalOrderNumber} has multiple exact legacy Planner matches.");
+                if (legacyMatches.Count == 1)
+                {
+                    await using var adopt = connection.CreateCommand();
+                    adopt.Transaction = transaction;
+                    adopt.CommandText = """
+                        UPDATE orders
+                        SET order_reference=$number, version=version+1, updated_at=$now
+                        WHERE id=$id;
+                        """;
+                    Add(adopt, "$number", item.OrderNumber);
+                    Add(adopt, "$now", now.ToString("O"));
+                    Add(adopt, "$id", legacyMatches[0]);
+                    await adopt.ExecuteNonQueryAsync(cancellationToken);
+                    await UpsertLinkAsync(connection, transaction, "order", item.SourceKey,
+                        legacyMatches[0], true, item.SourceHash, now, cancellationToken);
+                    counts.OrdersUpdated++;
+                    return;
+                }
+            }
+
             var id = matches.Count == 1 ? matches[0] : StableId("kit-order", item.SourceKey);
             var owns = matches.Count == 0;
             if (owns)
@@ -400,10 +441,10 @@ internal sealed class SqliteKitaronSyncRepository(
                 await using var update = connection.CreateCommand();
                 update.Transaction = transaction;
                 update.CommandText = """
-                    UPDATE orders SET quantity=$quantity, work_finish_date=$date, status=$status,
+                    UPDATE orders SET order_reference=$number, quantity=$quantity, work_finish_date=$date, status=$status,
                         version=version+1, updated_at=$now WHERE id=$id;
                     """;
-                Add(update, "$quantity", item.Quantity); Add(update, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
+                Add(update, "$number", item.OrderNumber); Add(update, "$quantity", item.Quantity); Add(update, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
                 Add(update, "$status", item.Status);
                 Add(update, "$now", now.ToString("O")); Add(update, "$id", link.Value.TargetId);
                 await update.ExecuteNonQueryAsync(cancellationToken);
@@ -414,10 +455,10 @@ internal sealed class SqliteKitaronSyncRepository(
                 await using var update = connection.CreateCommand();
                 update.Transaction = transaction;
                 update.CommandText = """
-                    UPDATE orders SET work_finish_date=$date, status=$status,
+                    UPDATE orders SET order_reference=$number, work_finish_date=$date, status=$status,
                         version=version+1, updated_at=$now WHERE id=$id;
                     """;
-                Add(update, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
+                Add(update, "$number", item.OrderNumber); Add(update, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
                 Add(update, "$status", item.Status); Add(update, "$now", now.ToString("O"));
                 Add(update, "$id", link.Value.TargetId);
                 await update.ExecuteNonQueryAsync(cancellationToken);
@@ -749,11 +790,13 @@ internal sealed class SqliteKitaronSyncRepository(
 
     private static async Task<IReadOnlyList<string>> FindIdsAsync(
         SqliteConnection connection, SqliteTransaction transaction, string sql, object key,
-        CancellationToken cancellationToken, string? caseId = null)
+        CancellationToken cancellationToken, string? caseId = null,
+        params (string Name, object Value)[] extras)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction; command.CommandText = sql;
         Add(command, "$key", key); if (caseId is not null) Add(command, "$caseId", caseId);
+        foreach (var extra in extras) Add(command, extra.Name, extra.Value);
         var result = new List<string>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(reader.GetString(0));

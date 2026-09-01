@@ -181,12 +181,13 @@ public sealed class ViewStartupTests
                     && Descendants<Ellipse>(operationCard).Any(ellipse => ellipse.Width <= 8 && ellipse.ToolTip is not null);
                 var operationBorder = Assert.IsType<Border>(operationCard);
                 var modeItems = operationBorder.ContextMenu!.Items.OfType<MenuItem>().ToArray();
-                assignmentModeActionsWereVisible = modeItems.Length >= 4
-                    && Equals(modeItems[0].Header, "Schedule from delivery date")
-                    && Equals(modeItems[1].Header, "Schedule forward")
-                    && Equals(modeItems[2].Header, "Set manual mode")
-                    && Equals(modeItems[3].Header, "Production readiness...")
-                    && modeItems[0].ToolTip?.ToString()?.Contains("existing assignment", StringComparison.Ordinal) == true;
+                var backwardItem = modeItems.SingleOrDefault(item => Equals(item.Header, "Schedule from delivery date"));
+                assignmentModeActionsWereVisible = modeItems.Any(item => Equals(item.Header, "Open operation"))
+                    && backwardItem is not null
+                    && modeItems.Any(item => Equals(item.Header, "Schedule forward"))
+                    && modeItems.Any(item => Equals(item.Header, "Set manual mode"))
+                    && modeItems.Any(item => Equals(item.Header, "Production readiness..."))
+                    && backwardItem.ToolTip?.ToString()?.Contains("existing assignment", StringComparison.Ordinal) == true;
 
                 var renderStart = DateTimeOffset.Parse("2026-08-18T04:00:00Z");
                 var renderViewModel = new TimelineViewModel();

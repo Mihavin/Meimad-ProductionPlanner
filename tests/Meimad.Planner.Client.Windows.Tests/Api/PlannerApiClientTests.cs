@@ -2416,6 +2416,30 @@ public sealed class PlannerApiClientTests
         }
     }
 
+    [Fact]
+    public async Task Resource_master_data_client_reads_skills_and_round_trips_employee_skill_assignment()
+    {
+        var handler = new RecordingHandler(
+            Json(HttpStatusCode.OK, """[{"id":"skill-1","name":"Assembly","description":"Manual assembly","isActive":true,"version":1}]"""),
+            Json(HttpStatusCode.OK, """{"employeeId":"employee-1","skillIds":["skill-1"]}"""),
+            Json(HttpStatusCode.OK, """{"employeeId":"employee-1","skillIds":["skill-1"]}"""));
+        using var api = CreateClient(handler);
+
+        var skills = await api.ListSkillsAsync();
+        var current = await api.GetEmployeeSkillsAsync("employee-1");
+        var saved = await api.SetEmployeeSkillsAsync("employee-1", new(["skill-1"]), "windows-1", 17);
+
+        Assert.Equal("Assembly", Assert.Single(skills).Name);
+        Assert.Equal(["skill-1"], current.SkillIds);
+        Assert.Equal(["skill-1"], saved.SkillIds);
+        Assert.Equal("/api/v1/resources/skills", handler.Requests[0].Path);
+        Assert.Equal("/api/v1/resources/employees/employee-1/skills", handler.Requests[1].Path);
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+        Assert.Equal("windows-1", handler.Requests[2].ClientId);
+        Assert.Equal("17", handler.Requests[2].Generation);
+        Assert.Contains("\"skillIds\":[\"skill-1\"]", handler.Requests[2].Body, StringComparison.Ordinal);
+    }
+
     private static PlannerApiClient CreateClient(HttpMessageHandler handler) => new(
         new HttpClient(handler)
         {

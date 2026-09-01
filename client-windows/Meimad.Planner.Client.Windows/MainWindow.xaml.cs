@@ -31,6 +31,8 @@ public partial class MainWindow : Window
         viewModel.NcCreatorQueue.ActionRequested += PreparationActionRequested;
         viewModel.ToolRoomQueue.ActionRequested += PreparationActionRequested;
         viewModel.SetupQueue.ActionRequested += PreparationActionRequested;
+        PlanningBoardView.OpenOperationRequested += PlanningBoardOpenOperationRequested;
+        MainTimelineView.OperationActionRequested += TimelineOperationActionRequested;
         refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromSeconds(5)
@@ -38,6 +40,28 @@ public partial class MainWindow : Window
         refreshTimer.Tick += RefreshTimerOnTick;
         Loaded += OnLoaded;
         Closed += OnClosed;
+    }
+
+    private async void PlanningBoardOpenOperationRequested(object? sender, PlanningOperationViewModel operation)
+    {
+        WorkspaceTabs.SelectedIndex = 0;
+        await viewModel.CaseWorkspace.NavigateToOperationAsync(operation.CaseId, operation.CaseOperationId);
+    }
+
+    private async void TimelineOperationActionRequested(object? sender, TimelineOperationActionRequest request)
+    {
+        var operation = viewModel.MachinePlanningBoard.FindOperation(request.OperationId);
+        if (request.Action == TimelineOperationAction.ShowInPlanningBoard)
+        {
+            WorkspaceTabs.SelectedIndex = 1;
+            viewModel.MachinePlanningBoard.FocusOperation(request.OperationId);
+            return;
+        }
+        if (operation is not null)
+        {
+            WorkspaceTabs.SelectedIndex = 0;
+            await viewModel.CaseWorkspace.NavigateToOperationAsync(operation.CaseId, operation.CaseOperationId);
+        }
     }
 
     private void LanguageSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -129,6 +153,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
+        timelineWindow.OperationActionRequested += TimelineOperationActionRequested;
         timelineWindow.Closed += (_, _) => timelineWindow = null;
         timelineWindow.Show();
     }

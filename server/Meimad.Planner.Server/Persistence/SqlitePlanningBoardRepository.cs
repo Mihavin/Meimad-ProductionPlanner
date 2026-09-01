@@ -164,7 +164,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    nc_estimate.gcode_release_id,
                    nc_estimate.estimated_cycle_seconds,
                    nc_estimate.confidence,
-                   nc_estimate.warnings_json
+                   nc_estimate.warnings_json,
+                   batch_operations.source_case_operation_id
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -292,7 +293,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 RemainingProductionRuntimeSeconds: occupancy?.RemainingProductionSeconds,
                 TotalPlannedMachineTimeSeconds: occupancy?.TotalPlannedMachineSeconds,
                 SetupEstimateWarnings: occupancy?.Warnings ?? [],
-                UsesSetupOccupancyEstimate: occupancy is not null));
+                UsesSetupOccupancyEstimate: occupancy is not null,
+                CaseOperationId: GetNullableString(reader, 42)));
         }
 
         await reader.DisposeAsync();

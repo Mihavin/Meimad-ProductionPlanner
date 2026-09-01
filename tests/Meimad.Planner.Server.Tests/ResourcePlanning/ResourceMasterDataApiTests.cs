@@ -36,11 +36,26 @@ public sealed class ResourceMasterDataApiTests
             station.EnsureSuccessStatusCode();
             using var assignment=await client.PutAsJsonAsync("/api/v1/resources/employees/employee-resource/skills",new{skillIds=new[]{skillId}});
             assignment.EnsureSuccessStatusCode();
+            var savedAssignment=await client.GetFromJsonAsync<JsonElement>("/api/v1/resources/employees/employee-resource/skills");
+            Assert.Equal("employee-resource",savedAssignment.GetProperty("employeeId").GetString());
+            Assert.Equal(skillId,savedAssignment.GetProperty("skillIds")[0].GetString());
             using var list=await client.GetAsync("/api/v1/resources/workstations");
             using var listJson=JsonDocument.Parse(await list.Content.ReadAsStringAsync());
             Assert.Equal("Future finishing station",(await client.GetFromJsonAsync<JsonElement[]>("/api/v1/resources/workstation-types"))![0].GetProperty("name").GetString());
             Assert.Equal("Station A",listJson.RootElement[0].GetProperty("name").GetString());
             Assert.Equal(1,listJson.RootElement[0].GetProperty("capacity").GetInt32());
+
+            using var updateSkill=await client.PatchAsJsonAsync($"/api/v1/resources/skills/{skillId}",new{name="Coating specialist",description="Edited",isActive=true,expectedVersion=1});
+            updateSkill.EnsureSuccessStatusCode();
+            Assert.Equal(2,(await updateSkill.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("version").GetInt32());
+            using var blockedDelete=await client.DeleteAsync($"/api/v1/resources/skills/{skillId}?version=2");
+            Assert.Equal(HttpStatusCode.UnprocessableEntity,blockedDelete.StatusCode);
+
+            using var disposable=await client.PostAsJsonAsync("/api/v1/resources/skills",new{name="Disposable skill"});
+            disposable.EnsureSuccessStatusCode();
+            var disposableId=(await disposable.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+            using var deleted=await client.DeleteAsync($"/api/v1/resources/skills/{disposableId}?version=1");
+            deleted.EnsureSuccessStatusCode();
         }
         finally { await app.StopAsync();SqliteConnection.ClearAllPools();if(Directory.Exists(root))Directory.Delete(root,true); }
     }

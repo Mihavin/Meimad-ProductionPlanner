@@ -7,6 +7,22 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class MachinePlanningBoardViewModelTests
 {
     [Fact]
+    public void Planning_board_search_matches_case_part_batch_operation_and_order()
+    {
+        var operation = new PlanningOperationViewModel(new PlanningBoardOperation(
+            "batch-operation-1", "batch-1", "B-417", "case-1", "PN-500", 30,
+            "Finish Milling", "mill", 0, 10, "not_started", null, null,
+            OrderReferences: ["SO-991"], CaseName: "Housing",
+            CaseOperationId: "case-operation-30"));
+
+        Assert.True(operation.Matches("housing"));
+        Assert.True(operation.Matches("PN-500"));
+        Assert.True(operation.Matches("OP30"));
+        Assert.True(operation.Matches("SO-991"));
+        Assert.False(operation.Matches("turning"));
+    }
+
+    [Fact]
     public async Task Loads_pool_machine_columns_and_explicit_conflict_unavailability()
     {
         var api = new FakeApiClient(BoardBefore());

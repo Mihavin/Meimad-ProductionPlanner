@@ -96,7 +96,8 @@ internal sealed record PlanningBoardOperation(
     double? RemainingProductionRuntimeSeconds = null,
     double? TotalPlannedMachineTimeSeconds = null,
     IReadOnlyList<string>? SetupEstimateWarnings = null,
-    bool UsesSetupOccupancyEstimate = false);
+    bool UsesSetupOccupancyEstimate = false,
+    string? CaseOperationId = null);
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

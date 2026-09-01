@@ -66,6 +66,7 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
 
     public async Task<EInkDeviceRegistration?> UpdateAsync(
         string deviceId,
+        string? deviceName,
         string? machineId,
         bool isEnabled,
         DateTimeOffset updatedAt,
@@ -80,13 +81,15 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         command.Transaction = transaction;
         command.CommandText = """
             UPDATE device_registry
-            SET machine_id = $machineId,
+            SET device_name = COALESCE($deviceName, device_name),
+                machine_id = $machineId,
                 is_enabled = $isEnabled,
                 version = version + 1,
                 updated_at = $updatedAt
             WHERE id = $deviceId AND device_type = 'eink';
             """;
         Bind(command, "$machineId", machineId);
+        Bind(command, "$deviceName", deviceName);
         Bind(command, "$isEnabled", isEnabled);
         Bind(command, "$updatedAt", Iso(updatedAt));
         Bind(command, "$deviceId", deviceId);
@@ -119,6 +122,31 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
                 }), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return value;
+    }
+
+    public async Task<bool> DeleteAsync(string deviceId, EditAuthority editAuthority, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await ValidateAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM device_registry WHERE id=$id AND device_type='eink';";
+        Bind(command, "$id", deviceId);
+        try
+        {
+            if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) return false;
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
+        {
+            throw new EInkDeviceBindingException("device_registration_in_use",
+                "The terminal has retained workflow, status, or audit references and cannot be deleted. Disable it instead.");
+        }
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
+            new("tablet_deleted", DateTimeOffset.UtcNow, actor,
+                new Dictionary<string, string> { ["tabletDeviceId"] = deviceId }, null, null, null, null), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     public async Task<IReadOnlyList<EInkDeviceRegistration>> ListAsync(
