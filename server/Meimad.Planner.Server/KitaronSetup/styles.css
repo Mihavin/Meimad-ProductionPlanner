@@ -66,3 +66,13 @@ tr.inactive-mode { display:none; }
 code { font-family:Consolas,monospace; }
 @media (max-width:1050px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .model-options { grid-template-columns:1fr; } .sync-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:680px) { .grid { grid-template-columns:1fr; } header,.section-heading { flex-direction:column; } .header-badges { justify-content:flex-start; } }
+.managed-mark {
+  display: inline-block;
+  margin-left: .45rem;
+  padding: .1rem .35rem;
+  border: 1px solid #365f7d;
+  color: #244d6b;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+}

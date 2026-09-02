@@ -1,5 +1,7 @@
+using System.Security.Cryptography;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Haas;
+using Meimad.Planner.Server.Application.ProductionPackages;
 using Meimad.Planner.Server.Domain.GCode;
 using Meimad.Planner.Server.Domain.Haas;
 
@@ -107,8 +109,31 @@ internal sealed class GCodeService
 
             var releasedAt = timeProvider.GetUtcNow();
             var storedGCodePath = artifactStore.ResolveStoredPath(gcodePublication.File.StoredRelativePath);
-            var verificationHook = NcVerificationHookParser.ParseRequired(
-                File.ReadLines(storedGCodePath));
+            var sourceLines = File.ReadLines(storedGCodePath).ToArray();
+            NcVerificationHook verificationHook;
+            if (NcPackagePlaceholderSchema.IsCanonical(sourceLines))
+            {
+                try
+                {
+                    var canonical = NcPackagePlaceholderSchema.ValidateCanonical(sourceLines);
+                    verificationHook = new(
+                        canonical.ProtocolVersion,
+                        NcVerificationHookInvocationKinds.G65,
+                        9002,
+                        RandomNumberGenerator.GetInt32(100000, 1_000_000),
+                        canonical.VerificationHookLineNumber);
+                }
+                catch (ProductionPackageBuildException exception)
+                {
+                    throw new GCodeValidationException("gCodeFile", exception.Code, exception.Message);
+                }
+            }
+            else
+            {
+                // Explicit compatibility path for immutable V1 templates released before
+                // the canonical [[MEIMAD:KEY]] contract. New postprocessor guidance emits V2.
+                verificationHook = NcVerificationHookParser.ParseRequired(sourceLines);
+            }
             NcHeaderMetadata headerMetadata;
             try
             {

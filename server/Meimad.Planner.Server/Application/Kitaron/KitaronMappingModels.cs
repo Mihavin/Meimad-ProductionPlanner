@@ -21,7 +21,8 @@ internal sealed record KitaronMappingField(
     string Transform,
     string? Notes,
     IReadOnlyList<string> SuggestedSourceColumns,
-    IReadOnlyList<string> ModelModes);
+    IReadOnlyList<string> ModelModes,
+    bool ConnectorManaged = false);
 
 internal sealed record KitaronMappingUpdate(
     string? ModelMode,

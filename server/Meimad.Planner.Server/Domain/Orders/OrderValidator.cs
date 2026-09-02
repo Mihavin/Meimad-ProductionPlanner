@@ -49,6 +49,14 @@ internal static class OrderValidator
 
         var notes = OptionalText(values.Notes, "notes", NotesMaximum, issues);
 
+        if (values.Price is < 0)
+        {
+            issues.Add(new OrderValidationIssue(
+                "price",
+                "non_negative_required",
+                "price must be zero or greater."));
+        }
+
         if (issues.Count > 0)
         {
             throw new OrderValidationException(issues);
@@ -60,7 +68,8 @@ internal static class OrderValidator
             values.Quantity,
             workFinishDate,
             status,
-            notes);
+            notes,
+            values.Price);
     }
 
     private static string? RequiredText(
@@ -123,7 +132,8 @@ internal sealed record OrderValues(
     int Quantity,
     string? WorkFinishDate,
     string? Status,
-    string? Notes);
+    string? Notes,
+    decimal? Price = null);
 
 internal sealed record ValidatedOrderValues(
     string CaseId,
@@ -131,7 +141,8 @@ internal sealed record ValidatedOrderValues(
     int Quantity,
     DateOnly WorkFinishDate,
     OrderStatus Status,
-    string? Notes);
+    string? Notes,
+    decimal? Price = null);
 
 internal sealed record OrderValidationIssue(string Field, string Code, string Message);
 

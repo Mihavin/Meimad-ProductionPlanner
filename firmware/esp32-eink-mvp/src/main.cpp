@@ -144,15 +144,14 @@ DeviceConfiguration loadDeviceConfiguration() {
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
   else if (!preferences.isKey("server_url"))
     preferences.putString("server_url", meimad::config::kServerBaseUrl);
-  if (MEIMAD_PROVISIONING_BUILD
-      && preferences.getString("tablet_id", "") != meimad::config::kDefaultTabletId)
-    preferences.putString("tablet_id", meimad::config::kDefaultTabletId);
-  else if (!preferences.isKey("tablet_id") && strlen(meimad::config::kDefaultTabletId) > 0)
-    preferences.putString("tablet_id", meimad::config::kDefaultTabletId);
+  // TabletID is firmware identity, not mutable configuration. Remove the
+  // legacy NVS value so a previous tablet assignment cannot override a newly
+  // uploaded per-device image. Preserve Wi-Fi and Server configuration.
+  if (preferences.isKey("tablet_id")) preferences.remove("tablet_id");
   if (preferences.isKey("device_token")) preferences.remove("device_token");
   DeviceConfiguration value {
     readHardwareId(),
-    preferences.getString("tablet_id", ""),
+    String(meimad::config::kFirmwareTabletId),
     preferences.getString("wifi_ssid", ""),
     preferences.getString("wifi_pass", ""),
     preferences.getString("server_url", meimad::config::kServerBaseUrl)

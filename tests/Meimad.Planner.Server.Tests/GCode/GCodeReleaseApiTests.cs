@@ -240,6 +240,42 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
+    public async Task Canonical_release_validates_v2_placeholders_and_server_assigns_nc_identity()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var canonical = Encoding.UTF8.GetBytes(string.Join("\n", new[]
+            {
+                "%", "O1234", "(PART: [[MEIMAD:PART_NAME]])",
+                "(OPERATION: [[MEIMAD:OPERATION_NAME]])",
+                "(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])",
+                "(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])",
+                "(MACHINE: [[MEIMAD:MACHINE_ID]])",
+                "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])",
+                "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])",
+                "[[MEIMAD:VERIFICATION_HOOK]]", "[[MEIMAD:EVENT_CONTEXT]]",
+                "G90", "M30", "%", ""
+            }));
+            var tools = Encoding.UTF8.GetBytes("tool,position\nT1,1\n");
+
+            using var response = await SendReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Canonical V2", canonical, tools,
+                confirmNewProcess: true, reuseActiveTools: false, confirmTools: true,
+                includeVerificationHook: false);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var hook = document.RootElement.GetProperty("verificationHook");
+            Assert.Equal(2, hook.GetProperty("hookVersion").GetInt32());
+            Assert.InRange(hook.GetProperty("ncIdentityToken").GetInt32(), 100000, 999999);
+            var releaseId = document.RootElement.GetProperty("gCodeReleaseId").GetString();
+            Assert.Equal(canonical, await client.GetByteArrayAsync(
+                $"/api/v1/cases/case-1/operations/case-op-1/gcode-releases/{releaseId}/file"));
+        });
+    }
+
+    [Fact]
     public async Task Task8_end_to_end_workflow_preserves_history_recalculates_readiness_and_audits_changes()
     {
         await RunAsync(async (application, client, _) =>

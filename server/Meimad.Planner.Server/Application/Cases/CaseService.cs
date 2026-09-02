@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Domain.Cases;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.CaseOperations;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Application.Cases;
 
@@ -164,6 +165,10 @@ internal sealed class CaseService
     {
         var current = await repository.GetByIdAsync(caseId, cancellationToken)
             ?? throw new CaseNotFoundException(caseId);
+        if (current.IsKitaronManaged)
+        {
+            throw new KitaronManagedResourceException("Case", caseId);
+        }
 
         var values = CaseValidator.ValidateAndNormalize(new CaseValues(
             Select(command.PartNumber, current.PartNumber),

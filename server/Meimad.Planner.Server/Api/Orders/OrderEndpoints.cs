@@ -4,6 +4,7 @@ using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.Orders;
 using Meimad.Planner.Server.Domain.Orders;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Api.Orders;
 
@@ -63,6 +64,10 @@ internal static class OrderEndpoints
                 "resource_not_found",
                 exception.Message,
                 httpContext);
+        }
+        catch (KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
         }
         catch (EditModeMutationException exception)
         {
@@ -183,6 +188,10 @@ internal static class OrderEndpoints
                 "resource_version_stale",
                 "The Order changed after it was read.",
                 httpContext);
+        }
+        catch (KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
         }
         catch (OrderQuantityBelowAllocatedException exception)
         {

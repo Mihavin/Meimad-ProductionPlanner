@@ -6,6 +6,20 @@ namespace Meimad.Planner.Server.Application.Kitaron;
 internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 {
     private const int MaximumRows = 200_000;
+    private static readonly string[] OrderPriceColumnCandidates =
+    [
+        // The commissioned Kitaron schema stores the sales-order unit price in
+        // the order currency as PriceInCurr. Do not substitute manufacturing
+        // cost, BOM cost, or calculated row-total fields for this value.
+        "PriceInCurr",
+        "UnitPrice",
+        "PriceForOne",
+        "PricePerUnit",
+        "OrderPrice",
+        "Price",
+        "RowPrice",
+        "PriceRow"
+    ];
 
     public async Task<KitaronSourceSnapshot> ReadAsync(
         StoredKitaronConnectionSettings settings,
@@ -71,8 +85,24 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         StoredKitaronConnectionSettings settings,
         CancellationToken cancellationToken)
     {
+        var priceColumn = await FindFirstColumnAsync(
+            connection,
+            "dbo",
+            "TSubOrder",
+            OrderPriceColumnCandidates,
+            cancellationToken);
+        var closedColumn = await FindFirstColumnAsync(
+            connection,
+            "dbo",
+            "TSubOrder",
+            ["RecordClosed", "RowClosed", "Closed"],
+            cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = BuildOrderQuery(settings.ViewSchema, settings.ViewName);
+        command.CommandText = BuildOrderQuery(
+            settings.ViewSchema,
+            settings.ViewName,
+            priceColumn,
+            closedColumn);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceOrder>();
         while (await reader.ReadAsync(cancellationToken))
@@ -86,7 +116,9 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                 reader.GetString(4).Trim(),
                 reader.IsDBNull(5) ? null : Convert.ToDouble(reader.GetValue(5), CultureInfo.InvariantCulture),
                 reader.IsDBNull(6) ? null : reader.GetDateTime(6),
-                reader.GetBoolean(7)));
+                reader.GetBoolean(7),
+                !reader.IsDBNull(8) && Convert.ToBoolean(reader.GetValue(8), CultureInfo.InvariantCulture),
+                reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9), CultureInfo.InvariantCulture)));
         }
         return result;
     }
@@ -155,16 +187,78 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     internal static string BuildQuery(string schema, string view, IReadOnlyList<string> columns) =>
         $"SELECT {string.Join(", ", columns.Select(Quote))} FROM {Quote(schema)}.{Quote(view)};";
 
-    internal static string BuildOrderQuery(string schema, string view) => $$"""
+    internal static string BuildOrderQuery(
+        string schema,
+        string view,
+        string? priceColumn = null,
+        string? closedColumn = null)
+    {
+        var price = priceColumn is null ? "CAST(NULL AS decimal(19,4))" : $"so.{Quote(priceColumn)}";
+        var closed = closedColumn is null ? "CAST(0 AS bit)" : $"so.{Quote(closedColumn)}";
+        return $$"""
+        WITH source_details AS (
+            SELECT DISTINCT detail.DetailID
+            FROM {{Quote(schema)}}.{{Quote(view)}} work
+            JOIN dbo.TDetails detail
+              ON LTRIM(RTRIM(detail.DetailNumber)) = LTRIM(RTRIM(work.{{Quote("DetailNumber")}}))
+            WHERE NULLIF(LTRIM(RTRIM(work.{{Quote("DetailNumber")}})), N'') IS NOT NULL
+            UNION
+            SELECT DISTINCT node.TreeHead
+            FROM dbo.TTreeNodes node
+            WHERE node.Tree = N'Detail'
+            UNION
+            SELECT DISTINCT node.IDNodeContens
+            FROM dbo.TTreeNodes node
+            WHERE node.Tree = N'Detail'
+              AND node.IDNodeContens <> node.TreeHead
+            UNION
+            SELECT DISTINCT DetailID
+            FROM dbo.TSubOrder
+            WHERE StopProduction = 1
+        )
         SELECT so.RecordID, d.DetailNumber, d.DetailName, d.REV,
-               o.OrderNumber, so.Number, so.SupplyDate, so.StopProduction
-        FROM dbo.TSubOrder so
+               o.OrderNumber, so.Number, so.SupplyDate, so.StopProduction,
+               {{closed}} AS IsClosed, {{price}} AS Price
+        FROM source_details source
+        JOIN dbo.TSubOrder so
+          ON so.DetailID = source.DetailID
         JOIN dbo.TDetails d ON d.DetailID = so.DetailID
         JOIN dbo.TOrder o ON o.OrderID = so.OrderID
         WHERE NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL
           AND NULLIF(LTRIM(RTRIM(o.OrderNumber)), N'') IS NOT NULL
+          AND LTRIM(RTRIM(o.OrderNumber)) <> N'הזמנה לדוגמא 1'
         ORDER BY so.RecordID;
         """;
+    }
+
+    private static async Task<string?> FindFirstColumnAsync(
+        SqlConnection connection,
+        string schema,
+        string table,
+        IReadOnlyList<string> candidates,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT c.name
+            FROM sys.columns c
+            JOIN sys.tables t ON t.object_id=c.object_id
+            JOIN sys.schemas s ON s.schema_id=t.schema_id
+            WHERE s.name=@schema AND t.name=@table;
+            """;
+        command.Parameters.AddWithValue("@schema", schema);
+        command.Parameters.AddWithValue("@table", table);
+        var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) available.Add(reader.GetString(0));
+        return candidates.FirstOrDefault(available.Contains);
+    }
+
+    internal static string? SelectOrderPriceColumn(IEnumerable<string> availableColumns)
+    {
+        var available = availableColumns.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return OrderPriceColumnCandidates.FirstOrDefault(available.Contains);
+    }
 
     internal static string BuildMaterialQuery(IReadOnlyList<string> columns) => $$"""
         WITH material_orders AS (

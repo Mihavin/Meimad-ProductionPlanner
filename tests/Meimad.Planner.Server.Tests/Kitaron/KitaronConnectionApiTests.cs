@@ -33,6 +33,8 @@ public sealed class KitaronConnectionApiTests
             Assert.Contains("Domain aligned — recommended", pageText, StringComparison.Ordinal);
             Assert.Contains("One-way Server synchronization", pageText, StringComparison.Ordinal);
             Assert.Contains("Synchronize now", pageText, StringComparison.Ordinal);
+            Assert.Contains("CONNECTOR MANAGED", pageText, StringComparison.Ordinal);
+            Assert.Contains("PriceInCurr", pageText, StringComparison.Ordinal);
 
             using var script = await client.GetAsync("/kitaron-setup/app.js");
             var scriptText = await script.Content.ReadAsStringAsync();
@@ -90,7 +92,16 @@ public sealed class KitaronConnectionApiTests
             using var mappingJson = JsonDocument.Parse(await mapping.Content.ReadAsStringAsync());
             Assert.Equal("domain_aligned", mappingJson.RootElement.GetProperty("modelMode").GetString());
             Assert.Equal("draft", mappingJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal(37, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
+            Assert.Equal(39, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
+            var orderFields = mappingJson.RootElement.GetProperty("fields").EnumerateArray()
+                .Where(field => field.GetProperty("targetEntity").GetString() == "orders")
+                .ToArray();
+            var statusField = orderFields.Single(field => field.GetProperty("targetField").GetString() == "status");
+            var priceField = orderFields.Single(field => field.GetProperty("targetField").GetString() == "price");
+            Assert.True(statusField.GetProperty("connectorManaged").GetBoolean());
+            Assert.Equal("canonical_order_status", statusField.GetProperty("transform").GetString());
+            Assert.True(priceField.GetProperty("connectorManaged").GetBoolean());
+            Assert.Equal("PriceInCurr", priceField.GetProperty("sourceColumn").GetString());
             Assert.Equal(3, mappingJson.RootElement.GetProperty("detectedColumns").GetArrayLength());
 
             using var after = await client.GetAsync("/api/v1/kitaron/connection");
@@ -149,7 +160,7 @@ public sealed class KitaronConnectionApiTests
                     SELECT mapping_status || '/' || json_array_length(mappings_json)
                     FROM kitaron_mapping_settings WHERE id = 1;
                     """;
-                Assert.Equal("draft/37", await command.ExecuteScalarAsync());
+                Assert.Equal("draft/39", await command.ExecuteScalarAsync());
 
                 command.CommandText = """
                     SELECT COUNT(*) FROM sqlite_master
@@ -181,6 +192,23 @@ public sealed class KitaronConnectionApiTests
                     version = 99
                 });
             Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+
+            var price = fields.Single(field =>
+                Equals(field["targetEntity"], "orders") && Equals(field["targetField"], "price"));
+            price["enabled"] = false;
+            using var remapManaged = await client.PutAsJsonAsync(
+                "/api/v1/kitaron/mapping",
+                new
+                {
+                    modelMode = "domain_aligned",
+                    status = "draft",
+                    fields,
+                    notes = "Attempt to disable canonical price.",
+                    version = version + 1
+                });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, remapManaged.StatusCode);
+            Assert.Contains("managed by the canonical Kitaron connector",
+                await remapManaged.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         });
     }
 
@@ -268,20 +296,49 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
-    public void Canonical_order_query_reads_cancelled_rows_without_mutating_kitaron()
+    public void Canonical_order_query_reads_all_delivery_rows_without_mutating_kitaron()
     {
         var query = SqlServerKitaronSourceReader.BuildOrderQuery(
-            "dbo", "VQWorkPlanningForStationF4");
+            "dbo", "VQWorkPlanningForStationF4", "PriceInCurr");
 
         Assert.Contains("so.StopProduction", query, StringComparison.Ordinal);
-        Assert.Contains("WHERE StopProduction = 1", query, StringComparison.Ordinal);
         Assert.Contains("so.RecordID", query, StringComparison.Ordinal);
-        Assert.Contains("FROM dbo.TSubOrder so", query, StringComparison.Ordinal);
-        Assert.DoesNotContain("source_order_groups", query, StringComparison.Ordinal);
+        Assert.Contains("source_details", query, StringComparison.Ordinal);
+        Assert.Contains("work.[DetailNumber]", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("work.[OrderNumber]", query, StringComparison.Ordinal);
+        Assert.Contains("SELECT DISTINCT node.TreeHead", query, StringComparison.Ordinal);
+        Assert.Contains("SELECT DISTINCT node.IDNodeContens", query, StringComparison.Ordinal);
+        Assert.Contains("so.DetailID = source.DetailID", query, StringComparison.Ordinal);
+        Assert.Contains("so.[PriceInCurr] AS Price", query, StringComparison.Ordinal);
+        Assert.Contains("o.OrderNumber)) <> N'הזמנה לדוגמא 1'", query, StringComparison.Ordinal);
+        Assert.Contains("WHERE StopProduction = 1", query, StringComparison.Ordinal);
         Assert.DoesNotContain("TRY_CONVERT", query, StringComparison.Ordinal);
         Assert.DoesNotContain("INSERT", query, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE", query, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DELETE", query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Canonical_order_price_prefers_Kitaron_unit_price_in_order_currency()
+    {
+        var selected = SqlServerKitaronSourceReader.SelectOrderPriceColumn(
+            ["FullCost", "PriceRow", "PriceInCurr", "COOrderUnitPriceBOM"]);
+
+        Assert.Equal("PriceInCurr", selected);
+    }
+
+    [Theory]
+    [InlineData("הזמנה לדוגמא 1")]
+    [InlineData("  הזמנה לדוגמא 1  ")]
+    public void Known_Kitaron_test_order_is_excluded(string orderNumber)
+    {
+        Assert.True(KitaronSyncService.IsIgnoredOrderNumber(orderNumber));
+        var orders = KitaronSyncService.BuildOrders(
+            [new KitaronSourceOrder("1", "TEST", "Test", null, orderNumber, 1,
+                new DateTime(2027, 1, 1), false)],
+            []);
+        Assert.Empty(orders);
+        Assert.False(KitaronSyncService.IsIgnoredOrderNumber("3000030623"));
     }
 
     [Fact]
@@ -305,6 +362,383 @@ public sealed class KitaronConnectionApiTests
         Assert.Equal("3000030679", orders[0].CanonicalOrderNumber);
         Assert.Equal(new DateOnly(2027,3,30), orders[4].WorkFinishDate);
         Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void Canonical_order_status_and_price_follow_Kitaron_facts()
+    {
+        KitaronSourceOrder[] source =
+        [
+            new("open", "PART", "Part", null, "100", 2, new DateTime(2027,1,1), false, false, 12.50m),
+            new("closed", "PART", "Part", null, "101", 3, new DateTime(2027,1,2), false, true, 20m),
+            new("cancelled", "PART", "Part", null, "102", 4, new DateTime(2027,1,3), true, true, 30m)
+        ];
+
+        var result = KitaronSyncService.BuildOrders(source, []);
+
+        Assert.Equal("active", result.Single(item => item.SourceKey == "open").Status);
+        Assert.Equal(12.50m, result.Single(item => item.SourceKey == "open").Price);
+        Assert.Equal("complete", result.Single(item => item.SourceKey == "closed").Status);
+        Assert.Equal("cancelled", result.Single(item => item.SourceKey == "cancelled").Status);
+    }
+
+    [Fact]
+    public async Task Kitaron_managed_case_and_orders_reject_planner_mutations()
+    {
+        await RunAsync(new CapturingTester(), async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO cases (id, part_number, name, working_folder_path)
+                    VALUES ('kit-case', 'KIT-001', 'Kitaron Case', 'C:\Cases\KIT-001');
+                    INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status,
+                        kitaron_status, price)
+                    VALUES ('kit-order', 'kit-case', '100/1', 4, '2027-01-01', 'complete', 'inactive', 12.5);
+                    INSERT INTO kitaron_sync_links
+                        (source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at)
+                    VALUES
+                        ('case', 'KIT-001', 'kit-case', 1, 'case-hash', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z'),
+                        ('order', '1', 'kit-order', 1, 'order-hash', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z');
+                    UPDATE edit_tokens
+                    SET holder_client_id='kitaron-guard-test', holder_user_id='tester', generation=1,
+                        acquired_at='2026-09-01T00:00:00Z', version=version+1,
+                        updated_at='2026-09-01T00:00:00Z'
+                    WHERE id=1;
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "kitaron-guard-test");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+
+            using var casePatch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/cases/kit-case")
+            {
+                Content = JsonContent.Create(new { name = "Changed" })
+            };
+            casePatch.Headers.TryAddWithoutValidation("If-Match", "\"case:kit-case:v1\"");
+            using var casePatchResponse = await client.SendAsync(casePatch);
+            Assert.Equal(HttpStatusCode.Conflict, casePatchResponse.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await casePatchResponse.Content.ReadAsStringAsync());
+
+            using var createOrder = await client.PostAsJsonAsync("/api/v1/orders", new
+            {
+                caseId = "kit-case", orderNumber = "manual", quantity = 1,
+                workFinishDate = "2027-02-01", status = "active"
+            });
+            Assert.Equal(HttpStatusCode.Conflict, createOrder.StatusCode);
+
+            using var orderDelete = await client.DeleteAsync("/api/v1/orders/kit-order");
+            Assert.Equal(HttpStatusCode.Conflict, orderDelete.StatusCode);
+            using var caseDelete = await client.DeleteAsync("/api/v1/cases/kit-case");
+            Assert.Equal(HttpStatusCode.Conflict, caseDelete.StatusCode);
+
+            using var read = await client.GetAsync("/api/v1/orders?caseId=kit-case");
+            using var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+            var item = json.RootElement.GetProperty("items")[0];
+            Assert.True(item.GetProperty("isKitaronManaged").GetBoolean());
+            Assert.Equal("inactive", item.GetProperty("status").GetString());
+            Assert.Equal(12.5m, item.GetProperty("price").GetDecimal());
+        });
+    }
+
+    [Fact]
+    public async Task Exact_duplicate_source_order_rows_do_not_break_snapshot_reconciliation()
+    {
+        await RunAsync(new CapturingTester(), async (application, _) =>
+        {
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var item = new KitaronSyncCase(
+                "PART-DUP", "PART-DUP", "Duplicate source row", null, null, "dup", "case-hash");
+            var order = new KitaronSyncOrder(
+                "same-source", "PART-DUP", "100/same-source", 5,
+                new DateOnly(2027, 1, 1), "active", "order-hash");
+            var plan = new KitaronSyncPlan(
+                2, [item], [order, order], [], [], new HashSet<string>(), [], 1);
+
+            var result = await repository.ApplyAsync(
+                plan, new DateTimeOffset(2026, 9, 1, 18, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM orders WHERE order_reference='100/same-source';";
+            Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
+    public async Task Stale_order_source_link_to_another_case_is_repaired_without_losing_authoritative_row()
+    {
+        await RunAsync(new CapturingTester(), async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO cases (id, part_number, name, working_folder_path)
+                    VALUES ('old-case', 'OLD-PART', 'Old', 'old'),
+                           ('new-case', 'NEW-PART', 'New', 'new');
+                    INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status)
+                    VALUES ('wrong-target', 'old-case', 'OLD/41093', 1, '2026-01-01', 'active');
+                    INSERT INTO kitaron_sync_links
+                        (source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at)
+                    VALUES ('order', '41093', 'wrong-target', 1, 'old-hash',
+                            '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            var cases = new[]
+            {
+                new KitaronSyncCase("OLD-PART", "OLD-PART", "Old", null, null, "old", "old-case-hash"),
+                new KitaronSyncCase("NEW-PART", "NEW-PART", "New", null, null, "new", "new-case-hash")
+            };
+            var order = new KitaronSyncOrder(
+                "41093", "NEW-PART", "3000030627/41093", 8,
+                new DateOnly(2027, 2, 1), "active", "new-order-hash");
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+
+            var result = await repository.ApplyAsync(
+                new KitaronSyncPlan(1, cases, [order], [], [], new HashSet<string>(), [], 1),
+                new DateTimeOffset(2026, 9, 2, 6, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT c.part_number, o.order_reference, o.quantity
+                FROM orders o JOIN cases c ON c.id=o.case_id
+                WHERE o.order_reference='3000030627/41093';
+                """;
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("NEW-PART", reader.GetString(0));
+            Assert.Equal("3000030627/41093", reader.GetString(1));
+            Assert.Equal(8, reader.GetInt32(2));
+        });
+    }
+
+    [Fact]
+    public async Task Canonical_rows_normalize_one_exact_linked_legacy_plain_order_without_double_counting()
+    {
+        await RunAsync(new CapturingTester(), async (application, client) =>
+        {
+            const string part = "30P782531500-001";
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO cases (
+                        id, part_number, name, working_folder_path,
+                        version, created_at, updated_at)
+                    VALUES (
+                        'legacy-case', '30P782531500-001', 'ATS DUCT SUPPORT', 'legacy',
+                        1, '2026-08-17T00:00:00Z', '2026-08-17T00:00:00Z');
+                    INSERT INTO orders (
+                        id, case_id, order_reference, quantity, work_finish_date, status,
+                        version, created_at, updated_at)
+                    VALUES (
+                        'legacy-order', 'legacy-case', '3000030679 ', 24, '2027-03-02', 'active',
+                        1, '2026-08-17T00:00:00Z', '2026-08-17T00:00:00Z');
+                    INSERT INTO orders (
+                        id, case_id, order_reference, quantity, work_finish_date, status,
+                        version, created_at, updated_at)
+                    VALUES (
+                        'stale-order', 'legacy-case', '7000140610/42015', 24, '2028-03-09', 'active',
+                        1, '2026-09-01T15:02:17Z', '2026-09-01T15:02:17Z');
+                    INSERT INTO kitaron_sync_links (
+                        source_entity, source_key, target_id, owns_target, source_hash,
+                        first_seen_at, last_seen_at)
+                    VALUES (
+                        'order', '501', 'legacy-order', 0, 'legacy-hash',
+                        '2026-08-17T00:00:00Z', '2026-08-17T00:00:00Z');
+                    INSERT INTO kitaron_sync_links (
+                        source_entity, source_key, target_id, owns_target, source_hash,
+                        first_seen_at, last_seen_at)
+                    VALUES (
+                        'order', '42015', 'stale-order', 1, 'stale-hash',
+                        '2026-09-01T15:02:17Z', '2026-09-01T15:00:00.0000000+00:00');
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            KitaronSourceOrder[] source =
+            [
+                new("501", part, "ATS DUCT SUPPORT", "NEW", "3000030679", 24, new DateTime(2027,3,2), false),
+                new("502", part, "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,9), false),
+                new("503", part, "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,16), false),
+                new("504", part, "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,23), false),
+                new("505", part, "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,3,30), false)
+            ];
+            var warnings = new List<string>();
+            var orders = KitaronSyncService.BuildOrders(source, warnings);
+            var item = new KitaronSyncCase(part, part, "ATS DUCT SUPPORT", "NEW", null, "legacy", "case-hash");
+            var plan = new KitaronSyncPlan(5, [item], orders, [], [], new HashSet<string>(), warnings, 1);
+
+            // Reproduce an older owned link whose saved hash is already current while its
+            // Planner target still has the plain header OrderNumber. Sync must repair the
+            // displayed row reference instead of treating the target as an unchanged match.
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seedCurrentHash = connection.CreateCommand())
+            {
+                seedCurrentHash.CommandText = """
+                    UPDATE kitaron_sync_links
+                    SET owns_target=1, source_hash=$hash
+                    WHERE source_entity='order' AND source_key='501';
+                    """;
+                seedCurrentHash.Parameters.AddWithValue("$hash", orders[0].SourceHash);
+                await seedCurrentHash.ExecuteNonQueryAsync();
+            }
+
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var result = await repository.ApplyAsync(
+                plan, new DateTimeOffset(2026, 9, 1, 15, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+            Assert.Equal(4, result.OrdersCreated);
+            Assert.Equal(1, result.OrdersUpdated);
+            Assert.Contains("1 non-Kitaron Order(s) removed", result.Message, StringComparison.Ordinal);
+            using var response = await client.GetAsync("/api/v1/orders?caseId=legacy-case");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var imported = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(5, imported.Length);
+            Assert.Equal(72, imported.Sum(order => order.GetProperty("quantity").GetInt32()));
+            Assert.All(imported, order => Assert.StartsWith(
+                "3000030679/", order.GetProperty("orderNumber").GetString(), StringComparison.Ordinal));
+            Assert.Contains(imported, order =>
+                order.GetProperty("orderId").GetString() == "legacy-order"
+                && order.GetProperty("orderNumber").GetString() == "3000030679/501");
+
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seedBlocked = connection.CreateCommand())
+            {
+                seedBlocked.CommandText = """
+                    INSERT INTO orders (
+                        id, case_id, order_reference, quantity, work_finish_date, status)
+                    VALUES ('allocated-stale', 'legacy-case', 'NON-KITARON', 1, '2028-01-01', 'active');
+                    INSERT INTO production_batches (
+                        id, case_id, batch_number, status, planned_quantity)
+                    VALUES ('allocated-batch', 'legacy-case', 'B-1', 'waiting', 1);
+                    INSERT INTO batch_allocations (
+                        id, production_batch_id, allocation_type, order_id, quantity)
+                    VALUES ('allocated-row', 'allocated-batch', 'order', 'allocated-stale', 1);
+                    """;
+                await seedBlocked.ExecuteNonQueryAsync();
+            }
+            var cleaned = await repository.ApplyAsync(
+                plan, new DateTimeOffset(2026, 9, 1, 15, 1, 0, TimeSpan.Zero), CancellationToken.None);
+            Assert.Contains("1 dependent Production Batch(es)", cleaned.Message, StringComparison.Ordinal);
+            Assert.Contains("1 non-Kitaron Order(s) removed", cleaned.Message, StringComparison.Ordinal);
+            await using (var verifyConnection = await database.OpenConnectionAsync())
+            await using (var verify = verifyConnection.CreateCommand())
+            {
+                verify.CommandText = """
+                    SELECT
+                        (SELECT COUNT(*) FROM production_batches WHERE id='allocated-batch'),
+                        (SELECT COUNT(*) FROM orders WHERE id='allocated-stale'),
+                        (SELECT COUNT(*) FROM batch_allocations WHERE id='allocated-row');
+                    """;
+                await using var remaining = await verify.ExecuteReaderAsync();
+                Assert.True(await remaining.ReadAsync());
+                Assert.Equal(0, remaining.GetInt32(0));
+                Assert.Equal(0, remaining.GetInt32(1));
+                Assert.Equal(0, remaining.GetInt32(2));
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Planning_view_order_row_completes_canonical_delivery_rows_for_exact_kitaron_total()
+    {
+        await RunAsync(new CompleteTester(), async (_, client) =>
+        {
+            await ConfigureReadySyncAsync(client);
+            using var sync = await client.PostAsync("/api/v1/kitaron/sync", null);
+            Assert.Equal(HttpStatusCode.OK, sync.StatusCode);
+
+            var cases = await client.GetFromJsonAsync<JsonElement>(
+                "/api/v1/cases?search=30P782531500-001");
+            var caseId = cases.GetProperty("items")[0].GetProperty("caseId").GetString();
+            var response = await client.GetFromJsonAsync<JsonElement>(
+                $"/api/v1/orders?caseId={caseId}");
+            var orders = response.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(5, orders.Length);
+            Assert.Equal(72, orders.Sum(order => order.GetProperty("quantity").GetInt32()));
+            Assert.All(orders, order => Assert.StartsWith(
+                "3000030679/", order.GetProperty("orderNumber").GetString(), StringComparison.Ordinal));
+        }, new WorkFallbackSourceReader());
+    }
+
+    [Fact]
+    public async Task Superseded_order_with_locked_run_is_retained_as_history_without_blocking_sync()
+    {
+        await RunAsync(new CapturingTester(), async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO cases (id,part_number,name,working_folder_path)
+                    VALUES ('history-case','30P647004101-001','Historical part','history');
+                    INSERT INTO orders (id,case_id,order_reference,quantity,work_finish_date,status)
+                    VALUES ('history-order','history-case','3000030662',80,'2027-02-02','complete');
+                    INSERT INTO case_operations
+                        (id,case_id,operation_number,route_position,name)
+                    VALUES ('history-case-operation','history-case',30,0,'Mill');
+                    INSERT INTO production_batches
+                        (id,case_id,batch_number,status,planned_quantity)
+                    VALUES ('history-batch','history-case','1','complete',80);
+                    INSERT INTO batch_allocations
+                        (id,production_batch_id,allocation_type,order_id,quantity)
+                    VALUES ('history-allocation','history-batch','order','history-order',80);
+                    INSERT INTO batch_operations
+                        (id,production_batch_id,source_case_operation_id,operation_number,route_position,name,status)
+                    VALUES ('history-operation','history-batch','history-case-operation',30,0,'Mill','complete');
+                    INSERT INTO production_runs
+                        (id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,
+                         legacy_batch_operation_id,version,created_at,updated_at)
+                    VALUES ('history-run','COMPLETED',0,'{}','2026-08-27T13:00:00Z',
+                            'history-operation',1,'2026-08-27T12:00:00Z','2026-08-27T13:00:00Z');
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            var item = new KitaronSyncCase(
+                "30P647004101-001", "30P647004101-001", "Historical part", null, null,
+                "history", "case-hash");
+            var canonical = new KitaronSyncOrder(
+                "40261", item.SourceKey, "3000030662/40261", 16,
+                new DateOnly(2026, 12, 21), "active", "order-hash")
+            { CanonicalOrderNumber = "3000030662" };
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+
+            var result = await repository.ApplyAsync(
+                new KitaronSyncPlan(1, [item], [canonical], [], [], new HashSet<string>(), [], 1),
+                new DateTimeOffset(2026, 9, 2, 9, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            Assert.Contains("1 superseded Order(s) retained", result.Message, StringComparison.Ordinal);
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT
+                    (SELECT COUNT(*) FROM orders WHERE id='history-order'),
+                    (SELECT COUNT(*) FROM production_batches WHERE id='history-batch'),
+                    (SELECT COUNT(*) FROM orders WHERE order_reference='3000030662/40261');
+                """;
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1, reader.GetInt32(0));
+            Assert.Equal(1, reader.GetInt32(1));
+            Assert.Equal(1, reader.GetInt32(2));
+        });
     }
 
     [Fact]
@@ -443,7 +877,8 @@ public sealed class KitaronConnectionApiTests
             using var syncJson = JsonDocument.Parse(await sync.Content.ReadAsStringAsync());
             Assert.Equal("succeeded", syncJson.RootElement.GetProperty("status").GetString());
             Assert.Equal(1, syncJson.RootElement.GetProperty("casesCreated").GetInt32());
-            Assert.Equal(1, syncJson.RootElement.GetProperty("casesMatched").GetInt32());
+            Assert.Equal(0, syncJson.RootElement.GetProperty("casesMatched").GetInt32());
+            Assert.Equal(1, syncJson.RootElement.GetProperty("casesUpdated").GetInt32());
             Assert.Equal(1, syncJson.RootElement.GetProperty("componentsCreated").GetInt32());
 
             await using var verifyConnection = await database.OpenConnectionAsync();
@@ -689,7 +1124,18 @@ public sealed class KitaronConnectionApiTests
         {
             await application.DisposeAsync();
             SqliteConnection.ClearAllPools();
-            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            for (var attempt = 0; Directory.Exists(directory); attempt++)
+            {
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (IOException) when (attempt < 4)
+                {
+                    await Task.Delay(100 * (attempt + 1));
+                    SqliteConnection.ClearAllPools();
+                }
+            }
         }
     }
 
@@ -779,6 +1225,33 @@ public sealed class KitaronConnectionApiTests
                     "10251:10254",
                     "30P410136000-501", "INTERCOSTAL 1 ASSEMBLY", "NEW",
                     "30P410136100-001", "INTERCOSTAL 1", "NEW", 1, 0)]));
+        }
+    }
+
+    private sealed class WorkFallbackSourceReader : IKitaronSourceReader
+    {
+        public Task<KitaronSourceSnapshot> ReadAsync(
+            StoredKitaronConnectionSettings settings, string password, IReadOnlyList<string> columns,
+            IReadOnlyList<string> materialColumns, CancellationToken cancellationToken)
+        {
+            Assert.Contains("RecordID", columns);
+            var work = new KitaronSourceRow(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["RecordID"] = 41399, ["DetailNumber"] = "30P782531500-001",
+                ["DetailName"] = "ATS DUCT SUPPORT", ["REV"] = "NEW", ["CompanyName"] = "Customer",
+                ["OrderNumber"] = "3000030679", ["OrdAmount"] = 24,
+                ["SupplyDate"] = new DateTime(2027, 3, 2), ["ActionNumber"] = 10,
+                ["ActionDescription"] = "Test", ["Station"] = "MILL",
+                ["RootID"] = "WO-1", ["ProductionAmount"] = 24
+            });
+            KitaronSourceOrder[] canonical =
+            [
+                new("41400", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2026,10,27), false),
+                new("41401", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,4,14), false),
+                new("41402", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,7,21), false),
+                new("41403", "30P782531500-001", "ATS DUCT SUPPORT", "NEW", "3000030679", 12, new DateTime(2027,11,2), false)
+            ];
+            return Task.FromResult(new KitaronSourceSnapshot([work], canonical, [], []));
         }
     }
 

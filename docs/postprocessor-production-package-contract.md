@@ -86,6 +86,20 @@ Initial keys include:
 | `[[MEIMAD:EVENT_CONTEXT]]` | Package Creator | Deterministic DPRNT/event correlation block |
 | `[[MEIMAD:VERIFICATION_HOOK]]` | Package Creator policy transformation | Deterministic verification insertion point |
 
+Protocol v2 multiplicity is explicit: `PART_NAME` and `OPERATION_NAME` are
+repeatable but required at least once. Every other key in the table is required
+exactly once for a canonical CNC template. `EVENT_CONTEXT` and
+`VERIFICATION_HOOK` occupy standalone lines, and `VERIFICATION_HOOK` precedes
+the first executable block. Keys are uppercase and exact; unknown keys,
+malformed delimiters, and invalid duplicates fail closed.
+
+The former `(MEIMAD PACKAGE VERIFY/CYCLE ... V1)` syntax is protocol v1. It is
+parsed only by a separate exact compatibility path so already immutable
+historical releases remain buildable. It is not emitted by current
+postprocessors and is never detected by fuzzy text matching. Protocol v2 NC
+identity is assigned by the Server at immutable release publication; it is not
+postprocessor or CAM input.
+
 The exact key list may evolve with protocol versions. The ownership rule does not: if a value represents Meimad identity, current planning context, package context, verification context, or server master data, the post emits a placeholder and Package Creator resolves it.
 
 ## 4. Where placeholders go in the NC

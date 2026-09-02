@@ -85,6 +85,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string newOrderWorkFinishDate = string.Empty;
     private string newOrderStatus = "active";
     private string newOrderNotes = string.Empty;
+    private string newOrderPrice = string.Empty;
     private string newBatchNumber = string.Empty;
     private string newBatchPlannedQuantity = string.Empty;
     private string newBatchStockQuantity = string.Empty;
@@ -98,6 +99,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private string componentDemandQuantity = "1";
     private bool isParentCase;
     private bool isChildCase;
+    private bool isKitaronManagedCase;
     private PlannerPostprocessorReleaseStatus? selectedReleasePostprocessor;
     private string gcodeFilePath = string.Empty;
     private string toolTableFilePath = string.Empty;
@@ -319,14 +321,21 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool IsCreating => isCreating;
 
-    public bool IsFormReadOnly => !isEditor;
+    public bool IsFormReadOnly => !isEditor || isKitaronManagedCase;
 
-    public bool CanSave => isEditor && HasForm && !IsBusy;
+    public bool CanSave => isEditor && HasForm && (IsCreating || !isKitaronManagedCase) && !IsBusy;
 
     public bool CanBeginCreate => isEditor && apiClient is not null && !IsBusy;
 
-    public bool CanEditForm => isEditor && !IsBusy;
+    public bool CanEditForm => isEditor && (IsCreating || !isKitaronManagedCase) && !IsBusy;
     public bool CanDelete => isEditor && apiClient is not null && !IsBusy;
+    public bool CanDeleteCase => CanDelete && !isKitaronManagedCase;
+    public bool CanDeleteOrder => CanDelete && !isKitaronManagedCase
+        && SelectedOrder is { IsKitaronManaged: false };
+    public bool IsKitaronManagedCase => isKitaronManagedCase;
+    public string CaseAuthorityText => isKitaronManagedCase
+        ? "Kitaron-managed Case: master data and Orders are read-only and refreshed only by Kitaron synchronization."
+        : "Manually created Case: master data and Orders can be edited in Meimad Planner.";
 
     public CaseOperation? SelectedOperation
     {
@@ -446,6 +455,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (SetField(ref selectedOrder, value))
             {
                 OnPropertyChanged(nameof(CanBeginEditOrder));
+                OnPropertyChanged(nameof(CanDeleteOrder));
                 BeginEditOrderCommand.RaiseCanExecuteChanged();
             }
         }
@@ -603,7 +613,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanManageOperations => CanBeginChildCreate && !IsParentCase;
 
-    public bool CanManageDirectOrders => CanBeginChildCreate && (!IsChildCase || IsParentCase);
+    public bool CanManageDirectOrders => CanBeginChildCreate && !isKitaronManagedCase && (!IsChildCase || IsParentCase);
 
     public bool CanManageBatches => CanBeginChildCreate && !IsParentCase;
 
@@ -703,6 +713,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string NewOrderWorkFinishDate { get => newOrderWorkFinishDate; set => SetField(ref newOrderWorkFinishDate, value); }
     public string NewOrderStatus { get => newOrderStatus; set => SetField(ref newOrderStatus, value); }
     public string NewOrderNotes { get => newOrderNotes; set => SetField(ref newOrderNotes, value); }
+    public string NewOrderPrice { get => newOrderPrice; set => SetField(ref newOrderPrice, value); }
     public string NewBatchNumber { get => newBatchNumber; set => SetField(ref newBatchNumber, value); }
     public string NewBatchPlannedQuantity { get => newBatchPlannedQuantity; set => SetField(ref newBatchPlannedQuantity, value); }
     public string NewBatchStockQuantity { get => newBatchStockQuantity; set => SetField(ref newBatchStockQuantity, value); }
@@ -1122,6 +1133,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOrderQuantity = order.Quantity.ToString(CultureInfo.InvariantCulture);
         NewOrderWorkFinishDate = order.WorkFinishDate;
         NewOrderStatus = order.Status;
+        NewOrderPrice = order.Price?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         originalOrderStatus = order.Status;
         editingOrderId = order.OrderId;
         editingOrderEntityTag = $"\"order:{order.OrderId}:v{order.Version}\"";
@@ -1169,6 +1181,18 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             return;
         }
 
+        decimal? price = null;
+        if (!string.IsNullOrWhiteSpace(NewOrderPrice))
+        {
+            if (!decimal.TryParse(NewOrderPrice, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedPrice)
+                || parsedPrice < 0)
+            {
+                StatusMessage = "Price must be a non-negative number or blank.";
+                return;
+            }
+            price = parsedPrice;
+        }
+
         IsBusy = true;
         try
         {
@@ -1194,7 +1218,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                             StringComparison.OrdinalIgnoreCase)
                             ? null
                             : NewOrderStatus,
-                        NullIfBlank(NewOrderNotes)),
+                        NullIfBlank(NewOrderNotes),
+                        price),
                     editingOrderEntityTag,
                     clientId,
                     editGeneration);
@@ -1211,7 +1236,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                         quantity,
                         NewOrderWorkFinishDate,
                         NewOrderStatus,
-                        NullIfBlank(NewOrderNotes)),
+                        NullIfBlank(NewOrderNotes),
+                        price),
                     clientId,
                     editGeneration);
                 Orders.Add(saved);
@@ -1966,7 +1992,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     internal async Task DeleteSelectedCaseAsync()
     {
-        if (!CanDelete || SelectedCase is null || apiClient is null) return;
+        if (!CanDeleteCase || SelectedCase is null || apiClient is null) return;
         var deleted = SelectedCase;
         await DeleteAsync(
             () => apiClient.DeleteCaseAsync(deleted.CaseId, clientId, editGeneration),
@@ -2003,7 +2029,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     internal Task DeleteSelectedOrderAsync()
     {
         var order = SelectedOrder;
-        return order is null || apiClient is null
+        return order is null || apiClient is null || !CanDeleteOrder
             ? Task.CompletedTask
             : DeleteAsync(
                 () => apiClient.DeleteOrderAsync(order.OrderId, clientId, editGeneration),
@@ -2067,6 +2093,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         ActiveStateText = plannerCase.IsActive ? "Active" : "Inactive";
         isParentCase = plannerCase.IsParent;
         isChildCase = plannerCase.IsChild;
+        isKitaronManagedCase = plannerCase.IsKitaronManaged;
         RaiseStateProperties();
     }
 
@@ -2090,6 +2117,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOrderWorkFinishDate = string.Empty;
         NewOrderStatus = "active";
         NewOrderNotes = string.Empty;
+        NewOrderPrice = string.Empty;
         originalOrderStatus = null;
         editingOrderId = null;
         editingOrderEntityTag = null;
@@ -2346,6 +2374,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanBeginCreate));
         OnPropertyChanged(nameof(CanEditForm));
         OnPropertyChanged(nameof(CanDelete));
+        OnPropertyChanged(nameof(CanDeleteCase));
+        OnPropertyChanged(nameof(CanDeleteOrder));
+        OnPropertyChanged(nameof(IsKitaronManagedCase));
+        OnPropertyChanged(nameof(CaseAuthorityText));
         OnPropertyChanged(nameof(FormHeading));
         OnPropertyChanged(nameof(SaveButtonText));
         OnPropertyChanged(nameof(CanOpenWorkingFolder));

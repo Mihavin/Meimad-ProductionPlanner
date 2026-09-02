@@ -86,6 +86,42 @@ public sealed class PlanningDeletionApiTests
     }
 
     [Fact]
+    public async Task Started_batch_delete_returns_controlled_conflict_and_preserves_history()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO production_runs (
+                        id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,
+                        legacy_batch_operation_id,version,created_at,updated_at)
+                    VALUES ('locked-run','IN_PROGRESS',0,'{}','2026-09-02T08:00:00Z',
+                            'batch-op-1',1,'2026-09-02T07:00:00Z','2026-09-02T08:00:00Z');
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.DeleteAsync("/api/v1/batches/batch-1");
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("delete_blocked", body.RootElement.GetProperty("error").GetProperty("code").GetString());
+            Assert.Contains("started or completed Production Run",
+                body.RootElement.GetProperty("error").GetProperty("message").GetString(),
+                StringComparison.Ordinal);
+
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal(1L, await CountAsync(verify, "production_batches", "batch-1"));
+            Assert.Equal(1L, await CountAsync(verify, "production_runs", "locked-run"));
+            Assert.Equal(1L, await CountAsync(verify, "batch_allocations", "allocation-1"));
+        });
+    }
+
+    [Fact]
     public async Task Operation_delete_compacts_route_and_dependency_blocks_delete()
     {
         await RunAsync(async (application, client) =>

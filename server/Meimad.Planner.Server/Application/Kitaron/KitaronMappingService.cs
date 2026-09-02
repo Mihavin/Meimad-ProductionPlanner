@@ -16,7 +16,8 @@ internal sealed partial class KitaronMappingService(
         [
             "direct", "trim", "trim_or_null", "positive_integer", "positive_int",
             "date_only", "ordered_position", "manual_lookup", "generated_working_folder",
-            "seconds", "minutes_to_seconds", "hours_to_seconds", "hours_to_seconds_pending", "unmapped"
+            "seconds", "minutes_to_seconds", "hours_to_seconds", "hours_to_seconds_pending", "unmapped",
+            "canonical_order_status", "canonical_order_price"
         ],
         StringComparer.Ordinal);
 
@@ -39,6 +40,12 @@ internal sealed partial class KitaronMappingService(
             "OrdAmount", "medium", "positive_integer", ["ORDER_QUANTITY", "QUANTITY", "OrdAmount", "Number"], BothModes),
         new("orders", "work_finish_date", "Work Finish Date", "Customer commitment date used by planning.", true,
             "SupplyDate", "medium", "date_only", ["WORK_FINISH_DATE", "SUPPLY_DATE", "SupplyDate"], BothModes),
+        new("orders", "status", "Kitaron Order Status",
+            "Connector-managed projection: cancelled when StopProduction is set, inactive when the delivery row is closed/supplied, otherwise active.",
+            true, null, "high", "canonical_order_status", [], BothModes, true),
+        new("orders", "price", "Unit Price",
+            "Connector-managed unit sales price from TSubOrder.PriceInCurr in the Kitaron order currency; never a row total or manufacturing/BOM cost.",
+            false, "PriceInCurr", "high", "canonical_order_price", ["PriceInCurr"], BothModes, true),
 
         new("case_operations", "operation_number", "Route Operation Number", "Reusable Case-route operation number.", true,
             "ActionNumber", "medium", "positive_int", ["OPER_NUMBER", "OPERATION_NUMBER", "ActionNumber"], BothModes),
@@ -147,6 +154,23 @@ internal sealed partial class KitaronMappingService(
             var transform = NormalizeToken(field.Transform, "transform", Transforms);
             var fieldNotes = NormalizeNotes(field.Notes, "fieldNotes", 1000);
             var applies = catalog.ModelModes.Contains(modelMode, StringComparer.Ordinal);
+            if (catalog.ConnectorManaged)
+            {
+                if (!field.Enabled
+                    || !StringComparer.OrdinalIgnoreCase.Equals(source, catalog.DefaultSourceColumn)
+                    || confidence != catalog.DefaultConfidence
+                    || transform != catalog.DefaultTransform)
+                {
+                    throw new KitaronMappingValidationException(
+                        "fields",
+                        $"{catalog.TargetEntity}.{catalog.TargetField} is managed by the canonical Kitaron connector and cannot be remapped or disabled.");
+                }
+                selections.Add(new KitaronMappingSelection(
+                    catalog.TargetEntity, catalog.TargetField, true,
+                    catalog.DefaultSourceColumn, catalog.DefaultConfidence,
+                    catalog.DefaultTransform, fieldNotes));
+                continue;
+            }
             if (applies && catalog.Required && !field.Enabled)
             {
                 throw new KitaronMappingValidationException(
@@ -207,7 +231,8 @@ internal sealed partial class KitaronMappingService(
             return new KitaronMappingField(
                 catalog.TargetEntity, catalog.TargetField, catalog.DisplayName, catalog.Description,
                 catalog.Required, selection.Enabled, selection.SourceColumn, selection.Confidence,
-                selection.Transform, selection.Notes, catalog.SuggestedSourceColumns, catalog.ModelModes);
+                selection.Transform, selection.Notes, catalog.SuggestedSourceColumns, catalog.ModelModes,
+                catalog.ConnectorManaged);
         }).ToArray();
         return new KitaronMappingSettings(
             stored.ModelMode, stored.Status, fields, DeserializeColumns(stored.DetectedColumnsJson),
@@ -284,5 +309,6 @@ internal sealed partial class KitaronMappingService(
         string DefaultConfidence,
         string DefaultTransform,
         IReadOnlyList<string> SuggestedSourceColumns,
-        IReadOnlyList<string> ModelModes);
+        IReadOnlyList<string> ModelModes,
+        bool ConnectorManaged = false);
 }

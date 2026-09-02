@@ -10,4 +10,7 @@ internal sealed record PlannerOrder(
     string? Notes,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    decimal? Price = null,
+    bool IsKitaronManaged = false,
+    string? KitaronStatus = null);

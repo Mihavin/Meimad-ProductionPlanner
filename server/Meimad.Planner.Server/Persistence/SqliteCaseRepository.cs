@@ -4,6 +4,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.Cases;
 using Microsoft.Data.Sqlite;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -137,7 +138,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                    EXISTS(SELECT 1 FROM case_components
                           WHERE parent_case_id=cases.id AND is_active=1) AS is_parent,
                    EXISTS(SELECT 1 FROM case_components
-                          WHERE child_case_id=cases.id AND is_active=1) AS is_child
+                          WHERE child_case_id=cases.id AND is_active=1) AS is_child,
+                   EXISTS(SELECT 1 FROM kitaron_sync_links
+                          WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed
             FROM cases
             WHERE id = $id;
             """;
@@ -174,6 +177,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                               WHERE parent_case_id=cases.id AND is_active=1) AS is_parent,
                        EXISTS(SELECT 1 FROM case_components
                               WHERE child_case_id=cases.id AND is_active=1) AS is_child,
+                       EXISTS(SELECT 1 FROM kitaron_sync_links
+                              WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed,
                        (SELECT MIN(orders.work_finish_date)
                           FROM orders
                          WHERE orders.case_id = cases.id
@@ -407,7 +412,6 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             transaction,
             editAuthority,
             cancellationToken);
-
         if (await CaseIsParentAsync(connection, transaction, caseId, cancellationToken))
             throw new CaseParentOperationsNotAllowedException();
 
@@ -643,6 +647,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             transaction,
             editAuthority,
             cancellationToken);
+        await ThrowIfKitaronManagedAsync(
+            connection, transaction, "case", plannerCase.CaseId, "Case", cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -677,6 +683,29 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
         await transaction.CommitAsync(cancellationToken);
         return updated;
+    }
+
+    private static async Task ThrowIfKitaronManagedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string sourceEntity,
+        string targetId,
+        string resourceType,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1 FROM kitaron_sync_links
+                WHERE source_entity=$entity AND target_id=$id);
+            """;
+        command.Parameters.AddWithValue("$entity", sourceEntity);
+        command.Parameters.AddWithValue("$id", targetId);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
+        {
+            throw new KitaronManagedResourceException(resourceType, targetId);
+        }
     }
 
     private static async Task EnsureEditAuthorityAsync(
@@ -863,7 +892,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         ParseInstant(reader.GetString(16)),
         ParseInstant(reader.GetString(17)),
         includeActiveProjection && reader.GetBoolean(19),
-        includeActiveProjection && reader.GetBoolean(20));
+        includeActiveProjection && reader.GetBoolean(20),
+        includeActiveProjection && reader.GetBoolean(21));
 
     private static void AddNullableText(SqliteCommand command, string name, string? value)
     {

@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Orders;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Application.Orders;
 
@@ -36,7 +37,8 @@ internal sealed class OrderService
             values.Notes,
             1,
             now,
-            now);
+            now,
+            values.Price);
 
         return await repository.CreateAsync(order, editAuthority, cancellationToken);
     }
@@ -60,6 +62,10 @@ internal sealed class OrderService
     {
         var current = await repository.GetByIdAsync(orderId, cancellationToken)
             ?? throw new OrderNotFoundException(orderId);
+        if (current.IsKitaronManaged)
+        {
+            throw new KitaronManagedResourceException("Order", orderId);
+        }
 
         var values = OrderValidator.ValidateAndNormalize(new OrderValues(
             current.CaseId,
@@ -67,7 +73,8 @@ internal sealed class OrderService
             Select(command.Quantity, current.Quantity) ?? 0,
             Select(command.WorkFinishDate, current.WorkFinishDate.ToString("yyyy-MM-dd")),
             Select(command.Status, current.Status.ToContractToken()),
-            Select(command.Notes, current.Notes)));
+            Select(command.Notes, current.Notes),
+            Select(command.Price, current.Price)));
 
         var updated = current with
         {
@@ -76,6 +83,7 @@ internal sealed class OrderService
             WorkFinishDate = values.WorkFinishDate,
             Status = values.Status,
             Notes = values.Notes,
+            Price = values.Price,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -95,7 +103,8 @@ internal sealed class OrderService
         command.Quantity,
         command.WorkFinishDate,
         command.Status,
-        command.Notes);
+        command.Notes,
+        command.Price);
 
     private static T Select<T>(OrderField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;

@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.Deletion;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Api.Deletion;
 
@@ -26,6 +27,10 @@ internal static class PlanningDeletionEndpoints
         catch (PlanningDeletionBlockedException exception)
         {
             return PlanningHttpSupport.Error(409, "delete_blocked", exception.Message, context);
+        }
+        catch (KitaronManagedResourceException exception)
+        {
+            return PlanningHttpSupport.Error(409, "kitaron_managed_read_only", exception.Message, context);
         }
         catch (EditModeMutationException exception)
         {

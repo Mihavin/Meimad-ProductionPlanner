@@ -23,6 +23,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         command.Transaction = transaction;
         command.CommandText = """
             SELECT assignment.id,machine.id,machine.number,machine.name,machine.execution_mode,
+                   case_record.name,source_operation.name,
                    (SELECT program.production_run_id
                     FROM production_run_programs program
                     JOIN production_run_outputs output
@@ -36,6 +37,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    current.production_package_id,
                    COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)
             FROM batch_operations operation
+            JOIN case_operations source_operation ON source_operation.id=operation.source_case_operation_id
+            JOIN cases case_record ON case_record.id=source_operation.case_id
             JOIN machine_assignments assignment ON assignment.batch_operation_id=operation.id
             JOIN machines machine ON machine.id=assignment.machine_id
             LEFT JOIN cnc_verification_settings settings ON settings.machine_id=machine.id
@@ -53,23 +56,25 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var machineNumber = reader.GetString(2);
         var machineName = reader.GetString(3);
         var executionMode = reader.GetString(4);
-        var runId = Nullable(reader, 5);
+        var partName = reader.GetString(5);
+        var operationName = reader.GetString(6);
+        var runId = Nullable(reader, 7);
         ProductionPackageVerificationConfiguration? verification = null;
-        if (executionMode == "CNC_GCODE" && !reader.IsDBNull(6) && reader.GetBoolean(6))
+        if (executionMode == "CNC_GCODE" && !reader.IsDBNull(8) && reader.GetBoolean(8))
         {
-            if (reader.IsDBNull(11))
+            if (reader.IsDBNull(13))
                 throw new ProductionPackageBuildException(
                     "production_package_verification_configuration_incomplete",
                     "Server Verification is enabled, but its event-sequence variable is not configured.");
-            verification = new(reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(9),
-                reader.GetInt32(10), reader.GetInt32(11));
+            verification = new(reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
+                reader.GetInt32(12), reader.GetInt32(13));
         }
-        var directConfigured = !reader.IsDBNull(12) && reader.GetBoolean(12)
-            && !reader.IsDBNull(13) && reader.GetBoolean(13);
-        var directOnline = directConfigured && !reader.IsDBNull(14)
-            && reader.GetString(14) == "ONLINE";
-        var currentPackageId = Nullable(reader, 15);
-        var manualDummyAllowed = reader.GetBoolean(16);
+        var directConfigured = !reader.IsDBNull(14) && reader.GetBoolean(14)
+            && !reader.IsDBNull(15) && reader.GetBoolean(15);
+        var directOnline = directConfigured && !reader.IsDBNull(16)
+            && reader.GetString(16) == "ONLINE";
+        var currentPackageId = Nullable(reader, 17);
+        var manualDummyAllowed = reader.GetBoolean(18);
         await reader.DisposeAsync();
 
         if (readiness.ActiveToolTableReleaseId is null)
@@ -80,6 +85,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var gcodeId = executionMode == "MANUAL" ? null : evaluated.EffectiveGCodeReleaseId;
         var gcode = gcodeId is null ? null : await ReadReleaseFileAsync(
             connection, transaction, "gcode_releases", gcodeId, cancellationToken);
+        var ncIdentityToken = gcodeId is null ? null : await ReadNcIdentityTokenAsync(
+            connection, transaction, gcodeId, cancellationToken);
         var tool = await ReadReleaseFileAsync(connection, transaction, "tool_table_releases",
             readiness.ActiveToolTableReleaseId, cancellationToken)
             ?? throw new ProductionPackageBuildException(
@@ -88,7 +95,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         await transaction.CommitAsync(cancellationToken);
         return new(
             batchOperationId, runId, assignmentId, machineId, machineNumber, machineName,
-            executionMode, gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash,
+            executionMode, partName, operationName,
+            gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash, ncIdentityToken,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
             verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness);
     }
@@ -374,6 +382,18 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         await using var reader = await command.ExecuteReaderAsync(token);
         return await reader.ReadAsync(token)
             ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2)) : null;
+    }
+
+    private static async Task<int?> ReadNcIdentityTokenAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string releaseId,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT nc_identity_token FROM gcode_release_verification_hooks WHERE gcode_release_id=$id;";
+        command.Parameters.AddWithValue("$id", releaseId);
+        var result = await command.ExecuteScalarAsync(token);
+        return result is null or DBNull ? null : Convert.ToInt32(result, CultureInfo.InvariantCulture);
     }
 
     private static async Task ExecuteAsync(

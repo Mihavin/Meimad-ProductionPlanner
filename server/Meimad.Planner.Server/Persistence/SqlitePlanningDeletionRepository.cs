@@ -2,6 +2,7 @@ using System.Globalization;
 using Meimad.Planner.Server.Application.Deletion;
 using Meimad.Planner.Server.Application.EditMode;
 using Microsoft.Data.Sqlite;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -20,6 +21,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         ExecuteAsync(id, authority, async (c, t) =>
         {
             if (!await ExistsAsync(c, t, "cases", id, token)) return false;
+            await ThrowIfKitaronManagedAsync(c, t, "case", id, "Case", token);
             await BlockIfAnyAsync(c, t, "orders", "case_id", id, "Delete the Case's Orders first.", token);
             await BlockIfAnyAsync(c, t, "production_batches", "case_id", id, "Delete the Case's Production Batches first.", token);
             await BlockIfAnyAsync(c, t, "verified_material_receipts", "case_id", id,
@@ -49,6 +51,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         ExecuteAsync(id, authority, async (c, t) =>
         {
             if (!await ExistsAsync(c, t, "orders", id, token)) return false;
+            await ThrowIfKitaronManagedAsync(c, t, "order", id, "Order", token);
             await BlockIfAnyAsync(c, t, "batch_allocations", "order_id", id, "The Order is allocated to a Production Batch.", token);
             await BlockBySqlAsync(c, t,
                 "SELECT EXISTS(SELECT 1 FROM batch_allocations WHERE allocation_type='derived_order' AND instr(derived_order_key, 'derived:' || $id || ':')=1);",
@@ -76,10 +79,64 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             return await DeleteRowAsync(c, t, "machines", id, token);
         }, token);
 
-    public Task<bool> DeleteBatchAsync(string id, EditAuthority authority, CancellationToken token) =>
-        ExecuteAsync(id, authority, async (c, t) =>
+    private static async Task ThrowIfKitaronManagedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string sourceEntity,
+        string targetId,
+        string resourceType,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1 FROM kitaron_sync_links
+                WHERE source_entity=$entity AND target_id=$id);
+            """;
+        command.Parameters.AddWithValue("$entity", sourceEntity);
+        command.Parameters.AddWithValue("$id", targetId);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
         {
+            throw new KitaronManagedResourceException(resourceType, targetId);
+        }
+    }
+
+    public Task<bool> DeleteBatchAsync(string id, EditAuthority authority, CancellationToken token) =>
+        ExecuteAsync(id, authority, (c, t) =>
+            DeleteBatchGraphAsync(c, t, id, timeProvider.GetUtcNow(), token), token);
+
+    internal static async Task<bool> DeleteBatchGraphAsync(
+        SqliteConnection c,
+        SqliteTransaction t,
+        string id,
+        DateTimeOffset now,
+        CancellationToken token)
+    {
             if (!await ExistsAsync(c, t, "production_batches", id, token)) return false;
+            await BlockBySqlAsync(c, t, """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM production_runs run
+                    WHERE run.structure_locked_at IS NOT NULL
+                      AND (
+                        run.legacy_batch_operation_id IN (
+                            SELECT operation.id
+                            FROM batch_operations operation
+                            WHERE operation.production_batch_id=$id)
+                        OR EXISTS (
+                            SELECT 1
+                            FROM production_run_outputs output
+                            JOIN production_run_programs program
+                              ON program.id=output.production_run_program_id
+                            JOIN batch_operations operation
+                              ON operation.id=output.batch_operation_id
+                            WHERE program.production_run_id=run.id
+                              AND operation.production_batch_id=$id)));
+                """, id,
+                "This Production Batch has a started or completed Production Run and is immutable. " +
+                "Use the supported completion/cancellation workflow; recorded production history cannot be deleted.",
+                token);
             var affectedOrders = await SqliteOrderLifecycle.ReadCandidatesForBatchAsync(
                 c,
                 t,
@@ -114,10 +171,10 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                 c,
                 t,
                 affectedOrders,
-                timeProvider.GetUtcNow(),
+                now,
                 token);
             return true;
-        }, token);
+    }
 
     private static async Task<IReadOnlyList<string>> ReadBatchMachineIdsAsync(SqliteConnection c, SqliteTransaction t, string batchId, CancellationToken token)
     {

@@ -48,6 +48,7 @@ internal sealed class ProductionPackageService(
         try
         {
             var artifacts = new List<ProductionPackageArtifact>();
+            int? placeholderProtocolVersion = null;
             if (context.ExecutionMode == "CNC_GCODE")
             {
                 var sourcePath = releaseStore.ResolveStoredPath(context.GCodeStoredRelativePath!);
@@ -57,15 +58,38 @@ internal sealed class ProductionPackageService(
                         "The immutable NC source artifact is missing; no package was activated.");
                 var sourceBytes = await ReadVerifiedSourceAsync(
                     sourcePath, context.GCodeHash!, "NC", cancellationToken);
-                var transformed = NcPackageTemplateTransformer.Transform(
-                    Encoding.UTF8.GetString(sourceBytes).Split(
-                        ["\r\n", "\n", "\r"], StringSplitOptions.None),
-                    new(
-                        context.Verification is not null,
-                        context.Verification?.VerifyProgramNumber ?? 9002,
-                        context.Verification?.ExpectedMacroVersion ?? 1,
-                        context.Verification?.EventSequenceVariable ?? 10000),
-                    out var ncId);
+                var sourceLines = Encoding.UTF8.GetString(sourceBytes).Split(
+                    ["\r\n", "\n", "\r"], StringSplitOptions.None);
+                var transformOptions = new NcPackageTransformOptions(
+                    context.Verification is not null,
+                    context.Verification?.VerifyProgramNumber ?? 9002,
+                    context.Verification?.ExpectedMacroVersion ?? 1,
+                    context.Verification?.EventSequenceVariable ?? 10000);
+                int ncId;
+                byte[] transformed;
+                if (NcPackagePlaceholderSchema.IsCanonical(sourceLines))
+                {
+                    if (context.ProductionRunId is null)
+                        throw new ProductionPackageBuildException(
+                            "production_package_run_missing",
+                            "Canonical CNC package creation requires a concrete Production Run.");
+                    ncId = context.NcIdentityToken
+                        ?? throw new ProductionPackageBuildException(
+                            "production_package_nc_identity_missing",
+                            "The current immutable NC release has no bound NC identity token.");
+                    transformed = NcPackageTemplateTransformer.TransformCanonical(
+                        sourceLines, transformOptions,
+                        new(context.PartName, context.OperationName, context.ProductionRunId,
+                            packageId, context.MachineId, context.GCodeReleaseId!, offsetLoaderId),
+                        ncId, out var protocol);
+                    placeholderProtocolVersion = protocol;
+                }
+                else
+                {
+                    transformed = NcPackageTemplateTransformer.Transform(
+                        sourceLines, transformOptions, out ncId);
+                    placeholderProtocolVersion = 1;
+                }
                 artifacts.Add(await WriteAsync(
                     staging, packageId, ProductionPackageArtifactTypes.RunnableNc,
                     $"nc/{SafeFileName(context.GCodeOriginalFileName!)}", transformed,
@@ -78,6 +102,11 @@ internal sealed class ProductionPackageService(
                         "%",
                         "O01990 (MEIMAD PACKAGE OFFSET LOADER)",
                         $"(PRODUCTION PACKAGE {packageId})",
+                        $"(PRODUCTION RUN {context.ProductionRunId})",
+                        $"(BATCH OPERATION {context.BatchOperationId})",
+                        $"(MACHINE {context.MachineId})",
+                        $"(NC RELEASE {context.GCodeReleaseId})",
+                        $"(OFFSET LOADER RELEASE {offsetLoaderId})",
                         $"G65 P{context.Verification.ChallengeProgramNumber} A{releaseToken}. B{ncId}.",
                         "M30",
                         "%",
@@ -107,10 +136,13 @@ internal sealed class ProductionPackageService(
             var manifestRelative = $"{packageId}/manifest.json";
             var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
+                placeholderProtocolVersion,
                 productionPackageId = packageId,
                 batchOperationId = context.BatchOperationId,
                 productionRunId = context.ProductionRunId,
+                partName = context.PartName,
+                operationName = context.OperationName,
                 machineAssignmentId = context.MachineAssignmentId,
                 machine = new { id = context.MachineId, number = context.MachineNumber, name = context.MachineName },
                 executionMode = context.ExecutionMode,
@@ -128,6 +160,19 @@ internal sealed class ProductionPackageService(
                 createdAt,
                 createdBy = actor,
                 supersedesProductionPackageId = context.CurrentPackageId,
+                machineCapabilitySnapshot = new
+                {
+                    context.ExecutionMode,
+                    context.ManualDummyToolOffsetsAllowed,
+                    context.DirectTransferConfigured,
+                    context.DirectTransferOnline,
+                    serverVerificationEnabled = context.Verification is not null,
+                    verificationConfigurationVersion = context.Verification?.Version,
+                    challengeProgramNumber = context.Verification?.ChallengeProgramNumber,
+                    verifyProgramNumber = context.Verification?.VerifyProgramNumber,
+                    expectedMacroVersion = context.Verification?.ExpectedMacroVersion,
+                    eventSequenceVariable = context.Verification?.EventSequenceVariable
+                },
                 artifacts = artifacts.Select(value => new
                 {
                     value.ArtifactId,

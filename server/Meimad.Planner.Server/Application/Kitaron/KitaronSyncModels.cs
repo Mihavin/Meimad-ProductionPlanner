@@ -10,7 +10,9 @@ internal sealed record KitaronSourceOrder(
     string OrderNumber,
     double? Quantity,
     DateTime? WorkFinishDate,
-    bool StopProduction);
+    bool StopProduction,
+    bool IsClosed = false,
+    decimal? Price = null);
 
 internal sealed record KitaronSourceComponent(
     string SourceKey,
@@ -58,6 +60,7 @@ internal sealed record KitaronSyncOrder(
     string SourceHash)
 {
     internal string CanonicalOrderNumber { get; init; } = OrderNumber;
+    internal decimal? Price { get; init; }
 }
 
 internal sealed record KitaronSyncComponent(

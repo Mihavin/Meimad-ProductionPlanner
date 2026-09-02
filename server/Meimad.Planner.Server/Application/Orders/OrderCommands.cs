@@ -6,7 +6,8 @@ internal sealed record CreateOrderCommand(
     int Quantity,
     string? WorkFinishDate,
     string? Status,
-    string? Notes);
+    string? Notes,
+    decimal? Price = null);
 
 internal readonly record struct OrderField<T>(bool IsSpecified, T Value)
 {
@@ -20,4 +21,5 @@ internal sealed record UpdateOrderCommand(
     OrderField<int?> Quantity,
     OrderField<string?> WorkFinishDate,
     OrderField<string?> Status,
-    OrderField<string?> Notes);
+    OrderField<string?> Notes,
+    OrderField<decimal?> Price = default);

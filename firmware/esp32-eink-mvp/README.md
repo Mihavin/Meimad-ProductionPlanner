@@ -293,9 +293,11 @@ attempts, then requests `GET /api/tablet/ping?hardwareId=<mac>`. The display
 reports `SERVER CONNECTED` or `SERVER NOT AVAILABLE`. A Wi-Fi failure sleeps
 the MCU after the retries, leaving the E-Ink page visible.
 
-The permanent identity is the station MAC address. `tablet_id` is stored in NVS
-and shown once a Server response supplies it. Before assignment, the screen
-shows `UNREGISTERED TABLET` and the MAC address.
+TabletID is the device identity and is compiled into each uploaded firmware
+image. The station MAC is used only for Server discovery/mapping. TabletID is
+not stored in NVS and cannot be changed through provisioning UI or Server data.
+Firmware automatically removes the obsolete legacy `tablet_id` NVS key without
+erasing retained Wi-Fi or Server configuration.
 
 ## Approved tablet status/event adapter
 
@@ -351,9 +353,21 @@ as Server-generated UTC time plus the echoed identity and event:
 
 Both calls use a 5-second connection timeout and 7-second overall HTTP timeout,
 log the returned HTTP status, and distinguish transport, HTTP, and malformed
-response failures. TabletID is provisioned at firmware upload through
-`MEIMAD_PROVISION_TABLET_ID`; a provisioning build writes it to NVS. Legacy
-`device_token` data is deleted at boot and no authorization header is sent.
+response failures. TabletID is compiled at firmware upload through
+`MEIMAD_PROVISION_TABLET_ID` and the firmware value is authoritative on every
+boot. Legacy `tablet_id` and `device_token` NVS data is deleted at boot and no
+authorization header is sent.
+
+Upload a per-device image from PowerShell like this:
+
+```powershell
+$env:MEIMAD_PROVISION_TABLET_ID = "6710"
+$env:MEIMAD_PROVISION_SERVER_URL = "http://192.168.137.1:5080"
+pio run -e xiao-esp32s3-plus-provision -t upload --upload-port COM6
+```
+
+After this image boots, the service screen must show Tablet ID `6710`. A former
+ID such as `8672` is removed automatically; a full-flash erase is unnecessary.
 
 Build the focused on-device contract test image without changing the normal
 firmware artifact with:

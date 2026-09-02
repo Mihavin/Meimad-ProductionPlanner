@@ -8,6 +8,12 @@ Keep Meimad CNC verification disabled. Run only after the machine is stopped, th
 
 The existing `1500.CNC` is a real machining program and is **not part of this no-motion test pack**.
 
+`CANONICAL-PRODUCTION-PACKAGE-V2.CNC` is the active server-blind postprocessor
+contract fixture. It is not a runnable machine test: upload/release and
+Production Package creation must resolve its `[[MEIMAD:<KEY>]]` tokens first.
+The numbered caller/probe programs below are historical commissioning evidence,
+not examples of current canonical postprocessor output.
+
 ## Files to upload
 
 | File | O-number | Purpose |

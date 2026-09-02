@@ -3,6 +3,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Orders;
 using Meimad.Planner.Server.Domain.Orders;
 using Microsoft.Data.Sqlite;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -19,6 +20,10 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         version,
         created_at,
         updated_at
+        ,price
+        ,EXISTS(SELECT 1 FROM kitaron_sync_links
+                WHERE source_entity='order' AND target_id=orders.id) AS is_kitaron_managed
+        ,kitaron_status
         """;
 
     private readonly SqliteDatabase database;
@@ -40,6 +45,8 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         {
             throw new OrderCaseNotFoundException(order.CaseId);
         }
+        await ThrowIfKitaronManagedAsync(
+            connection, transaction, "case", order.CaseId, "Case", cancellationToken);
 
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -53,6 +60,7 @@ internal sealed class SqliteOrderRepository : IOrderRepository
                 work_finish_date,
                 status,
                 notes,
+                price,
                 version,
                 created_at,
                 updated_at)
@@ -65,6 +73,7 @@ internal sealed class SqliteOrderRepository : IOrderRepository
                 $workFinishDate,
                 $status,
                 $notes,
+                $price,
                 $version,
                 $createdAt,
                 $updatedAt);
@@ -122,6 +131,8 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+        await ThrowIfKitaronManagedAsync(
+            connection, transaction, "order", order.OrderId, "Order", cancellationToken);
 
         await using (var derivedGuard = connection.CreateCommand())
         {
@@ -183,6 +194,7 @@ internal sealed class SqliteOrderRepository : IOrderRepository
                 work_finish_date = $workFinishDate,
                 status = $status,
                 notes = $notes,
+                price = $price,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion
@@ -214,6 +226,29 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         return Convert.ToInt32(
             await command.ExecuteScalarAsync(cancellationToken),
             CultureInfo.InvariantCulture) == 1;
+    }
+
+    private static async Task ThrowIfKitaronManagedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string sourceEntity,
+        string targetId,
+        string resourceType,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1 FROM kitaron_sync_links
+                WHERE source_entity=$entity AND target_id=$id);
+            """;
+        command.Parameters.AddWithValue("$entity", sourceEntity);
+        command.Parameters.AddWithValue("$id", targetId);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
+        {
+            throw new KitaronManagedResourceException(resourceType, targetId);
+        }
     }
 
     private static async Task EnsureEditAuthorityAsync(
@@ -263,6 +298,9 @@ internal sealed class SqliteOrderRepository : IOrderRepository
             order.WorkFinishDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$status", order.Status.ToContractToken());
         command.Parameters.AddWithValue("$notes", order.Notes is null ? DBNull.Value : order.Notes);
+        command.Parameters.AddWithValue("$price", order.Price.HasValue
+            ? order.Price.Value.ToString(CultureInfo.InvariantCulture)
+            : DBNull.Value);
         command.Parameters.AddWithValue("$version", order.Version);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(order.CreatedAt));
         command.Parameters.AddWithValue("$updatedAt", FormatInstant(order.UpdatedAt));
@@ -286,7 +324,10 @@ internal sealed class SqliteOrderRepository : IOrderRepository
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.GetInt32(7),
             ParseInstant(reader.GetString(8)),
-            ParseInstant(reader.GetString(9)));
+            ParseInstant(reader.GetString(9)),
+            reader.IsDBNull(10) ? null : Convert.ToDecimal(reader.GetValue(10), CultureInfo.InvariantCulture),
+            reader.GetBoolean(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12));
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

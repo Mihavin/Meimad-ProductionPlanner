@@ -139,7 +139,7 @@
                 </Grid.RowDefinitions>
                 <DockPanel Margin="0,0,0,12">
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                        <Button Content="Delete Case" Click="DeleteCase_Click" IsEnabled="{Binding CanDelete}" />
+                        <Button Content="Delete Case" Click="DeleteCase_Click" IsEnabled="{Binding CanDeleteCase}" />
                         <Button Content="Open Working Folder" Command="{Binding OpenWorkingFolderCommand}" />
                         <Button Content="Refresh Case" Command="{Binding RefreshDetailsCommand}" Margin="0" />
                     </StackPanel>
@@ -162,6 +162,9 @@
                                       PanningMode="VerticalOnly"
                                       Padding="14">
                             <StackPanel>
+                                <Border Background="#FFF4CE" BorderBrush="#D6B656" BorderThickness="1" Padding="10" Margin="0,0,0,10">
+                                    <TextBlock Text="{Binding CaseAuthorityText}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                </Border>
                                 <Border Height="120" Background="#EEF1F4" BorderBrush="#D4D9DE" BorderThickness="1" Margin="0,0,0,10">
                                     <Grid>
                                         <Image Source="{Binding DetailPreview}" Stretch="Uniform" />
@@ -585,7 +588,7 @@
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" IsEnabled="{Binding CanManageDirectOrders}">
-                                    <Button Content="Delete Selected" Click="DeleteOrder_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Delete Selected" Click="DeleteOrder_Click" IsEnabled="{Binding CanDeleteOrder}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditOrderCommand}" />
                                     <Button Command="{Binding BeginCreateOrderCommand}" Style="{StaticResource TemplateIconButton}"
                                             ToolTip="Add Order" AutomationProperties.Name="Add Order" Margin="0">
@@ -614,6 +617,7 @@
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderQuantity}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Work Finish Date (YYYY-MM-DD)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderWorkFinishDate}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Status" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OrderStatuses}" SelectedItem="{Binding NewOrderStatus}" MinHeight="38" Padding="7"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Price" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderPrice}"/></StackPanel>
                                     </UniformGrid>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderNotes}" AcceptsReturn="True" MinHeight="65" TextWrapping="Wrap"/></StackPanel>
                                     <DockPanel>
@@ -634,7 +638,8 @@
                                     <DataGridTextColumn Header="Order" Binding="{Binding OrderNumber}" Width="*" />
                                     <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90" />
                                     <DataGridTextColumn Header="Work Finish Date" Binding="{Binding WorkFinishDate}" Width="140" />
-                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="110" />
+                                    <DataGridTextColumn Header="Price" Binding="{Binding Price, StringFormat={}{0:N2}}" Width="100" />
                                     <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="2*" />
                                 </DataGrid.Columns>
                             </DataGrid>

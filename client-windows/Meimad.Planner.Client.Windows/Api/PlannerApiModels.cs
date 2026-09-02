@@ -59,7 +59,8 @@ internal sealed record PlannerCase(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     bool IsParent = false,
-    bool IsChild = false);
+    bool IsChild = false,
+    bool IsKitaronManaged = false);
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
@@ -1267,7 +1268,21 @@ internal sealed record PlannerOrder(
     string WorkFinishDate,
     string Status,
     string? Notes,
-    int Version = 1);
+    int Version = 1,
+    decimal? Price = null,
+    bool IsKitaronManaged = false,
+    string? KitaronStatus = null)
+{
+    public string StatusDisplay => Status switch
+    {
+        "active" => "Active",
+        "inactive" => "Inactive",
+        "cancelled" => "Canceled",
+        "in_production" => "In Production",
+        "complete" => "Complete",
+        _ => Status
+    };
+}
 
 internal sealed record OrderCreate(
     string CaseId,
@@ -1275,14 +1290,16 @@ internal sealed record OrderCreate(
     int Quantity,
     string WorkFinishDate,
     string Status,
-    string? Notes);
+    string? Notes,
+    decimal? Price = null);
 
 internal sealed record OrderUpdate(
     string OrderNumber,
     int Quantity,
     string WorkFinishDate,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Status,
-    string? Notes);
+    string? Notes,
+    decimal? Price = null);
 
 internal sealed record ProductionBatch(
     string BatchId,

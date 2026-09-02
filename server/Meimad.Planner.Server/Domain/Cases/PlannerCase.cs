@@ -21,4 +21,5 @@ internal sealed record PlannerCase(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     bool IsParent = false,
-    bool IsChild = false);
+    bool IsChild = false,
+    bool IsKitaronManaged = false);

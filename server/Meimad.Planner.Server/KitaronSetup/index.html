@@ -23,9 +23,12 @@
 
     <section class="notice">
       <strong>One-way boundary:</strong> Kitaron is always opened with <code>ApplicationIntent=ReadOnly</code>.
-      Synchronization may create or update linked Cases, Orders, reusable Case Operations, and Case Components in Meimad only.
+      Synchronization creates or updates linked Cases, canonical delivery-row Orders, reusable Case Operations, and Case Components in Meimad only.
       It also imports raw-material purchase lines and the latest supplier delivery approval into a separate advisory register.
-      Kitaron StopProduction orders become cancelled; component Cases never receive automatic Orders or Batches.
+      Each Order uses <code>OrderNumber/RecordID</code>, imports <code>PriceInCurr</code> as unit Price,
+      and becomes Active, Inactive, or Cancelled from the Kitaron closed/StopProduction facts.
+      Orders absent from the authoritative Kitaron snapshot are removed; dependent test Production Batches are removed atomically first.
+      Component Cases never receive automatic Orders or Batches.
       Imported receipts and approvals never become verified Planner stock, material reservations, or production readiness.
       It never writes to Kitaron, creates Production Batches or assignments, or reorders a Machine backlog.
     </section>
@@ -108,7 +111,7 @@
         <div>
           <p class="step">STEP 3</p>
           <h2>Field mapping</h2>
-          <p class="hint">Required rows cannot be disabled. The material_orders group maps TBuyRow purchase lines and supplier delivery approval fields.</p>
+          <p class="hint">Required rows cannot be disabled. CONNECTOR MANAGED rows are fixed canonical rules for delivery-row status and Price. The material_orders group maps TBuyRow purchase lines and supplier delivery approval fields.</p>
         </div>
         <div class="actions no-margin">
           <button id="suggestButton" type="button" class="secondary">Auto-suggest detected columns</button>
@@ -159,8 +162,8 @@
 
     <section class="notice stop-notice">
       <strong>Planning remains manual.</strong> Synchronization never creates Production Batches, Batch Operations,
-      Machine assignments, backlog entries, or Timeline positions. Existing manually created records that are matched
-      by business key are linked but are not overwritten by later Kitaron refreshes.
+      Machine assignments, backlog entries, or Timeline positions. Kitaron-linked Cases and their complete direct Order
+      set are authoritative and read-only in Planner. Unlinked manually created Cases and Orders remain locally editable.
     </section>
 
     <p id="message" class="message" aria-live="assertive"></p>

@@ -87,10 +87,12 @@ internal sealed class KitaronSyncService
                 var workFields = active.Where(field => field.TargetEntity != "material_orders").ToArray();
                 var materialFields = active.Where(field => field.TargetEntity == "material_orders").ToArray();
                 var columns = workFields
-                    .Where(field => field.SourceColumn is not null
+                    .Where(field => !field.ConnectorManaged
+                        && field.SourceColumn is not null
                         && !StringComparer.OrdinalIgnoreCase.Equals(field.SourceColumn, "auto")
                         && field.Transform != "generated_working_folder")
                     .Select(field => field.SourceColumn!)
+                    .Append("RecordID")
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
                 var materialColumns = materialFields
@@ -138,11 +140,17 @@ internal sealed class KitaronSyncService
             var part = Text(row, Field("cases", "part_number"));
             if (part is null) { AddWarning(warnings, "A source row without a Part Number was skipped."); continue; }
             var name = Text(row, Field("cases", "name")) ?? part;
+            var orderNumber = OptionalText(row, byTarget, "orders.order_reference");
+            if (IsIgnoredOrderNumber(orderNumber))
+            {
+                AddWarning(warnings, $"Known Kitaron test Order {orderNumber} was skipped with its source row.");
+                continue;
+            }
             parsed.Add(new ParsedRow(
-                part, name,
+                RawText(row, "RecordID"), part, name,
                 OptionalText(row, byTarget, "cases.revision"),
                 OptionalText(row, byTarget, "cases.customer"),
-                OptionalText(row, byTarget, "orders.order_reference"),
+                orderNumber,
                 OptionalInt(row, byTarget, "orders.quantity"),
                 OptionalDate(row, byTarget, "orders.work_finish_date"),
                 OptionalInt(row, byTarget, "case_operations.operation_number"),
@@ -196,7 +204,33 @@ internal sealed class KitaronSyncService
                     Hash(group.Key, name, revision, customer, folder));
             }).OrderBy(item => item.PartNumber, StringComparer.OrdinalIgnoreCase).ToArray();
 
-        var orders = BuildOrders(snapshot.Orders, warnings)
+        var canonicalOrders = BuildOrders(snapshot.Orders, warnings);
+        var canonicalFacts = canonicalOrders.Select(OrderFact)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var workOrders = parsed
+            .Where(row => row.SourceRecordId is not null
+                && row.OrderNumber is not null
+                && !IsIgnoredOrderNumber(row.OrderNumber)
+                && row.Quantity is > 0
+                && row.WorkFinishDate is not null)
+            .GroupBy(row => $"{row.Part}\u001f{row.OrderNumber!.Trim()}\u001f{row.Quantity}\u001f{row.WorkFinishDate:yyyy-MM-dd}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(row => row.SourceRecordId, StringComparer.OrdinalIgnoreCase).First())
+            .Where(row => !canonicalFacts.Contains(OrderFact(
+                row.Part, row.OrderNumber!, row.Quantity!.Value, row.WorkFinishDate!.Value, "active")))
+            .Select(row =>
+            {
+                var canonical = row.OrderNumber!.Trim();
+                var sourceKey = $"work:{row.SourceRecordId}";
+                var reference = $"{canonical}/{row.SourceRecordId}";
+                return new KitaronSyncOrder(
+                    sourceKey, row.Part, reference, row.Quantity!.Value, row.WorkFinishDate!.Value,
+                    "active", Hash(sourceKey, reference, row.Quantity.Value, row.WorkFinishDate.Value, "active"))
+                {
+                    CanonicalOrderNumber = canonical
+                };
+            });
+        var orders = canonicalOrders.Concat(workOrders)
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var components = selectedComponents
@@ -331,6 +365,13 @@ internal sealed class KitaronSyncService
     private static object? Value(KitaronSourceRow row, KitaronMappingField field) =>
         field.SourceColumn is not null && row.Values.TryGetValue(field.SourceColumn, out var value) ? value : null;
 
+    private static string? RawText(KitaronSourceRow row, string column)
+    {
+        if (!row.Values.TryGetValue(column, out var value)) return null;
+        var text = Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
     private static string? Text(KitaronSourceRow row, KitaronMappingField field)
     {
         var text = Convert.ToString(Value(row, field), CultureInfo.InvariantCulture)?.Trim();
@@ -363,7 +404,8 @@ internal sealed class KitaronSyncService
         IEnumerable<KitaronSourceOrder> source,
         ICollection<string> warnings)
     {
-        return source.GroupBy(row => row.SourceKey, StringComparer.OrdinalIgnoreCase)
+        return source.Where(row => !IsIgnoredOrderNumber(row.OrderNumber))
+            .GroupBy(row => row.SourceKey, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
                 var valid = group.Where(row => row.Quantity is > 0
@@ -381,18 +423,31 @@ internal sealed class KitaronSyncService
                 var first = valid[0];
                 var quantity = (int)valid.Max(row => row.Quantity!.Value);
                 var date = DateOnly.FromDateTime(valid.Min(row => row.WorkFinishDate!.Value));
-                var status = valid.Any(row => row.StopProduction) ? "cancelled" : "active";
+                var status = valid.Any(row => row.StopProduction)
+                    ? "cancelled"
+                    : valid.Any(row => row.IsClosed) ? "complete" : "active";
                 var reference = $"{first.OrderNumber.Trim()}/{group.Key.Trim()}";
                 return new KitaronSyncOrder(group.Key, first.PartNumber, reference, quantity, date, status,
-                    Hash(group.Key, reference, quantity, date, status))
+                    Hash(group.Key, reference, quantity, date, status, first.Price))
                 {
-                    CanonicalOrderNumber = first.OrderNumber.Trim()
+                    CanonicalOrderNumber = first.OrderNumber.Trim(),
+                    Price = first.Price
                 };
             })
             .Where(item => item is not null)
             .Cast<KitaronSyncOrder>()
             .ToArray();
     }
+
+    internal static bool IsIgnoredOrderNumber(string? orderNumber) =>
+        string.Equals(orderNumber?.Trim(), "הזמנה לדוגמא 1", StringComparison.OrdinalIgnoreCase);
+
+    private static string OrderFact(KitaronSyncOrder order) => OrderFact(
+        order.CaseSourceKey, order.CanonicalOrderNumber, order.Quantity, order.WorkFinishDate, order.Status);
+
+    private static string OrderFact(
+        string part, string orderNumber, int quantity, DateOnly date, string status) =>
+        $"{part.Trim()}\u001f{orderNumber.Trim()}\u001f{quantity}\u001f{date:yyyy-MM-dd}\u001f{status}";
 
     private static string? Consistent(IEnumerable<string?> values, string key, string field, ICollection<string> warnings)
     {
@@ -441,7 +496,7 @@ internal sealed class KitaronSyncService
         return text.Length <= 2000 ? text : text[..2000];
     }
 
-    private sealed record ParsedRow(string Part, string Name, string? Revision, string? Customer,
+    private sealed record ParsedRow(string? SourceRecordId, string Part, string Name, string? Revision, string? Customer,
         string? OrderNumber, int? Quantity, DateOnly? WorkFinishDate, int? OperationNumber,
         int? RoutePosition, string? OperationName, string? RequiredMachineType, int? SetupSeconds, int? CycleSeconds);
 

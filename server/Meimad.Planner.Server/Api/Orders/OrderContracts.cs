@@ -13,7 +13,8 @@ internal sealed record CreateOrderRequest(
     int Quantity,
     string? WorkFinishDate,
     string? Status,
-    string? Notes)
+    string? Notes,
+    decimal? Price = null)
 {
     internal CreateOrderCommand ToCommand() => new(
         CaseId,
@@ -21,7 +22,8 @@ internal sealed record CreateOrderRequest(
         Quantity,
         WorkFinishDate,
         Status,
-        Notes);
+        Notes,
+        Price);
 }
 
 internal sealed class PatchOrderRequest
@@ -38,7 +40,8 @@ internal sealed class PatchOrderRequest
             reader.ReadNullableInt32("quantity"),
             reader.ReadString("workFinishDate"),
             reader.ReadString("status"),
-            reader.ReadString("notes"));
+            reader.ReadString("notes"),
+            reader.ReadNullableDecimal("price"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -51,7 +54,8 @@ internal sealed class PatchOrderRequest
             "quantity",
             "workFinishDate",
             "status",
-            "notes"
+            "notes",
+            "price"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -122,6 +126,27 @@ internal sealed class PatchOrderRequest
             return OrderField<int?>.Unspecified;
         }
 
+        internal OrderField<decimal?> ReadNullableDecimal(string name)
+        {
+            if (!fields.TryGetValue(name, out var element))
+            {
+                return OrderField<decimal?>.Unspecified;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                return OrderField<decimal?>.Specified(null);
+            }
+
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetDecimal(out var value))
+            {
+                return OrderField<decimal?>.Specified(value);
+            }
+
+            AddTypeIssue(name, "decimal number or null");
+            return OrderField<decimal?>.Unspecified;
+        }
+
         internal void ThrowIfInvalid()
         {
             if (issues.Count > 0)
@@ -148,6 +173,8 @@ internal sealed record OrderResponse(
     string WorkFinishDate,
     string Status,
     string? Notes,
+    decimal? Price,
+    bool IsKitaronManaged,
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
@@ -158,8 +185,12 @@ internal sealed record OrderResponse(
         order.OrderNumber,
         order.Quantity,
         order.WorkFinishDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        order.Status.ToContractToken(),
+        order.IsKitaronManaged && order.KitaronStatus is not null
+            ? order.KitaronStatus
+            : order.Status.ToContractToken(),
         order.Notes,
+        order.Price,
+        order.IsKitaronManaged,
         order.Version,
         order.CreatedAt,
         order.UpdatedAt);

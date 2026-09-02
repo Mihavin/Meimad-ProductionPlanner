@@ -400,6 +400,7 @@ internal sealed record CaseResponse(
     bool IsActive,
     bool IsParent,
     bool IsChild,
+    bool IsKitaronManaged,
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
@@ -423,6 +424,7 @@ internal sealed record CaseResponse(
         plannerCase.IsActive,
         plannerCase.IsParent,
         plannerCase.IsChild,
+        plannerCase.IsKitaronManaged,
         plannerCase.Version,
         plannerCase.CreatedAt,
         plannerCase.UpdatedAt);

@@ -5,6 +5,7 @@ using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.Cases;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Api.Cases;
 
@@ -549,6 +550,14 @@ internal static class CaseEndpoints
                 StatusCodes.Status412PreconditionFailed,
                 "resource_version_stale",
                 "The Case changed after it was read.",
+                httpContext);
+        }
+        catch (KitaronManagedResourceException exception)
+        {
+            return Error(
+                StatusCodes.Status409Conflict,
+                "kitaron_managed_read_only",
+                exception.Message,
                 httpContext);
         }
         catch (EditModeMutationException exception)

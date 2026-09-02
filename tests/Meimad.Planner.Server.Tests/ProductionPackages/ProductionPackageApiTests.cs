@@ -87,6 +87,9 @@ public sealed class ProductionPackageApiTests
         {
             await application.StartAsync();
             await SeedAsync(application.Services, releaseRoot, verificationEnabled);
+            var immutableSourcePath = Path.Combine(releaseRoot, "operations", "case-operation-package",
+                "gcode", "gcode-1", "main.nc");
+            var immutableSourceBefore = await File.ReadAllBytesAsync(immutableSourcePath);
             using var client = application.GetTestClient();
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "tool-room-client");
             client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "tool-room-user");
@@ -123,6 +126,9 @@ public sealed class ProductionPackageApiTests
             using var ncDownload = await client.GetAsync(
                 $"/api/v1/batch-operations/operation-package/production-package/artifacts/{nc.GetProperty("artifactId").GetString()}");
             var ncText = await ncDownload.Content.ReadAsStringAsync();
+            Assert.Contains("PART: Package Part", ncText, StringComparison.Ordinal);
+            Assert.Contains("OPERATION: Finish", ncText, StringComparison.Ordinal);
+            Assert.DoesNotContain("[[MEIMAD:", ncText, StringComparison.Ordinal);
             Assert.DoesNotContain("MEIMAD PACKAGE ", ncText, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(verificationEnabled,
                 ncText.Contains("G65 P9002 A483921. (MEIMAD VERIFY V1)", StringComparison.Ordinal));
@@ -140,6 +146,13 @@ public sealed class ProductionPackageApiTests
             Assert.Equal("gcode-1", manifestDocument.RootElement.GetProperty("gCodeReleaseId").GetString());
             Assert.Equal("tools-1", manifestDocument.RootElement.GetProperty("toolTableReleaseId").GetString());
             Assert.Equal("tool-room-user", manifestDocument.RootElement.GetProperty("createdBy").GetString());
+            Assert.Equal(2, manifestDocument.RootElement.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(2, manifestDocument.RootElement.GetProperty("placeholderProtocolVersion").GetInt32());
+            Assert.Equal("Package Part", manifestDocument.RootElement.GetProperty("partName").GetString());
+            Assert.Equal("Finish", manifestDocument.RootElement.GetProperty("operationName").GetString());
+            Assert.Equal(immutableSourceBefore, await File.ReadAllBytesAsync(immutableSourcePath));
+            Assert.NotEqual(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(immutableSourceBefore)),
+                nc.GetProperty("sha256").GetString());
 
             Assert.Empty(await QueueIdsAsync(client, "TOOL_PREPARATION_PENDING"));
             Assert.Equal(["operation-package"], await QueueIdsAsync(client, "SETUP_PENDING"));
@@ -310,8 +323,13 @@ public sealed class ProductionPackageApiTests
         Directory.CreateDirectory(Path.GetDirectoryName(toolPath)!);
         var template = string.Join("\r\n", new[]
         {
-            "%", "O01995", "(MEIMAD PACKAGE VERIFY V1 NCID=483921)",
-            "(MEIMAD PACKAGE CYCLE START V1)", "G90", "(MEIMAD PACKAGE CYCLE END V1)", "M30", "%", ""
+            "%", "O01995",
+            "(PART: [[MEIMAD:PART_NAME]])", "(OPERATION: [[MEIMAD:OPERATION_NAME]])",
+            "(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])", "(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])",
+            "(MACHINE: [[MEIMAD:MACHINE_ID]])", "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])",
+            "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])",
+            "[[MEIMAD:VERIFICATION_HOOK]]", "[[MEIMAD:EVENT_CONTEXT]]",
+            "G90", "M30", "%", ""
         });
         await File.WriteAllTextAsync(gcodePath, template, Encoding.ASCII);
         await File.WriteAllTextAsync(toolPath, "tool,description\n", Encoding.UTF8);
