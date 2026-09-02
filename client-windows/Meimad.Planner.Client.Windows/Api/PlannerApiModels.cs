@@ -1271,7 +1271,8 @@ internal sealed record PlannerOrder(
     int Version = 1,
     decimal? Price = null,
     bool IsKitaronManaged = false,
-    string? KitaronStatus = null)
+    string? KitaronStatus = null,
+    bool IsHistorical = false)
 {
     public string StatusDisplay => Status switch
     {

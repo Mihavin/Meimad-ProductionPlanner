@@ -24,6 +24,7 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         ,EXISTS(SELECT 1 FROM kitaron_sync_links
                 WHERE source_entity='order' AND target_id=orders.id) AS is_kitaron_managed
         ,kitaron_status
+        ,kitaron_history_only
         """;
 
     private readonly SqliteDatabase database;
@@ -107,6 +108,11 @@ internal sealed class SqliteOrderRepository : IOrderRepository
             SELECT {Projection}
             FROM orders
             WHERE case_id = $caseId
+              AND (
+                    NOT EXISTS (
+                        SELECT 1 FROM kitaron_sync_links
+                        WHERE source_entity='case' AND target_id=orders.case_id)
+                    OR kitaron_history_only=0)
             ORDER BY work_finish_date, order_reference, id;
             """;
         command.Parameters.AddWithValue("$caseId", caseId);
@@ -327,7 +333,8 @@ internal sealed class SqliteOrderRepository : IOrderRepository
             ParseInstant(reader.GetString(9)),
             reader.IsDBNull(10) ? null : Convert.ToDecimal(reader.GetValue(10), CultureInfo.InvariantCulture),
             reader.GetBoolean(11),
-            reader.IsDBNull(12) ? null : reader.GetString(12));
+            reader.IsDBNull(12) ? null : reader.GetString(12),
+            reader.GetBoolean(13));
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

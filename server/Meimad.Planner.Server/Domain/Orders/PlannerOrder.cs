@@ -13,4 +13,5 @@ internal sealed record PlannerOrder(
     DateTimeOffset UpdatedAt,
     decimal? Price = null,
     bool IsKitaronManaged = false,
-    string? KitaronStatus = null);
+    string? KitaronStatus = null,
+    bool IsHistorical = false);

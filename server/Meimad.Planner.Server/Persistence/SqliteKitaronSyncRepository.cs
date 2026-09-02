@@ -238,6 +238,23 @@ internal sealed class SqliteKitaronSyncRepository(
             await insert.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await using (var restoreCurrentDemand = connection.CreateCommand())
+        {
+            restoreCurrentDemand.Transaction = transaction;
+            restoreCurrentDemand.CommandText = """
+                UPDATE orders
+                SET kitaron_history_only=0, version=version+1, updated_at=$now
+                WHERE kitaron_history_only=1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM current_kitaron_orders expected
+                      WHERE expected.case_id=orders.case_id
+                        AND expected.order_reference=orders.order_reference COLLATE NOCASE);
+                """;
+            Add(restoreCurrentDemand, "$now", now.ToString("O"));
+            await restoreCurrentDemand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         await using (var retainHistorical = connection.CreateCommand())
         {
             retainHistorical.Transaction = transaction;
@@ -252,16 +269,40 @@ internal sealed class SqliteKitaronSyncRepository(
                       AND instr(allocation.derived_order_key, 'derived:' || o.id || ':')=1)
                 JOIN batch_operations operation
                   ON operation.production_batch_id=allocation.production_batch_id
-                JOIN production_runs run
-                  ON run.legacy_batch_operation_id=operation.id
-                 AND run.structure_locked_at IS NOT NULL
                 WHERE NOT EXISTS (
                     SELECT 1 FROM current_kitaron_orders expected
                     WHERE expected.case_id=o.case_id
-                      AND expected.order_reference=o.order_reference COLLATE NOCASE);
+                      AND expected.order_reference=o.order_reference COLLATE NOCASE)
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM production_runs legacy_run
+                        WHERE legacy_run.legacy_batch_operation_id=operation.id
+                          AND legacy_run.structure_locked_at IS NOT NULL)
+                    OR EXISTS (
+                        SELECT 1
+                        FROM production_run_outputs output
+                        JOIN production_run_programs program
+                          ON program.id=output.production_run_program_id
+                        JOIN production_runs output_run
+                          ON output_run.id=program.production_run_id
+                        WHERE output.batch_operation_id=operation.id
+                          AND output_run.structure_locked_at IS NOT NULL));
                 """;
             counts.HistoricalOrdersRetained += await retainHistorical.ExecuteNonQueryAsync(cancellationToken);
             counts.Warnings += counts.HistoricalOrdersRetained;
+        }
+
+        await using (var markHistorical = connection.CreateCommand())
+        {
+            markHistorical.Transaction = transaction;
+            markHistorical.CommandText = """
+                UPDATE orders
+                SET kitaron_history_only=1, version=version+1, updated_at=$now
+                WHERE kitaron_history_only=0
+                  AND id IN (SELECT id FROM protected_historical_orders);
+                """;
+            Add(markHistorical, "$now", now.ToString("O"));
+            await markHistorical.ExecuteNonQueryAsync(cancellationToken);
         }
 
         // Repair targets retained by an old source link before comparing the exact
@@ -335,10 +376,21 @@ internal sealed class SqliteKitaronSyncRepository(
                   AND NOT EXISTS (
                     SELECT 1
                     FROM batch_operations protected_operation
-                    JOIN production_runs protected_run
-                      ON protected_run.legacy_batch_operation_id=protected_operation.id
-                     AND protected_run.structure_locked_at IS NOT NULL
-                    WHERE protected_operation.production_batch_id=allocation.production_batch_id)
+                    WHERE protected_operation.production_batch_id=allocation.production_batch_id
+                      AND (
+                        EXISTS (
+                            SELECT 1 FROM production_runs protected_run
+                            WHERE protected_run.legacy_batch_operation_id=protected_operation.id
+                              AND protected_run.structure_locked_at IS NOT NULL)
+                        OR EXISTS (
+                            SELECT 1
+                            FROM production_run_outputs protected_output
+                            JOIN production_run_programs protected_program
+                              ON protected_program.id=protected_output.production_run_program_id
+                            JOIN production_runs protected_output_run
+                              ON protected_output_run.id=protected_program.production_run_id
+                            WHERE protected_output.batch_operation_id=protected_operation.id
+                              AND protected_output_run.structure_locked_at IS NOT NULL)))
                 UNION
                 SELECT DISTINCT allocation.production_batch_id
                 FROM batch_allocations allocation
@@ -353,10 +405,21 @@ internal sealed class SqliteKitaronSyncRepository(
                   AND NOT EXISTS (
                     SELECT 1
                     FROM batch_operations protected_operation
-                    JOIN production_runs protected_run
-                      ON protected_run.legacy_batch_operation_id=protected_operation.id
-                     AND protected_run.structure_locked_at IS NOT NULL
-                    WHERE protected_operation.production_batch_id=allocation.production_batch_id)
+                    WHERE protected_operation.production_batch_id=allocation.production_batch_id
+                      AND (
+                        EXISTS (
+                            SELECT 1 FROM production_runs protected_run
+                            WHERE protected_run.legacy_batch_operation_id=protected_operation.id
+                              AND protected_run.structure_locked_at IS NOT NULL)
+                        OR EXISTS (
+                            SELECT 1
+                            FROM production_run_outputs protected_output
+                            JOIN production_run_programs protected_program
+                              ON protected_program.id=protected_output.production_run_program_id
+                            JOIN production_runs protected_output_run
+                              ON protected_output_run.id=protected_program.production_run_id
+                            WHERE protected_output.batch_operation_id=protected_operation.id
+                              AND protected_output_run.structure_locked_at IS NOT NULL)))
                 ORDER BY 1;
                 """;
             await using var reader = await readBatches.ExecuteReaderAsync(cancellationToken);

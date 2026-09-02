@@ -336,6 +336,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string CaseAuthorityText => isKitaronManagedCase
         ? "Kitaron-managed Case: master data and Orders are read-only and refreshed only by Kitaron synchronization."
         : "Manually created Case: master data and Orders can be edited in Meimad Planner.";
+    public string OrderListAuthorityText => isKitaronManagedCase
+        ? "Current demand records from Kitaron; superseded Orders retained for production history are not shown here."
+        : "Demand records for this Case; Orders are never assigned to Machines.";
 
     public CaseOperation? SelectedOperation
     {
@@ -2378,6 +2381,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanDeleteOrder));
         OnPropertyChanged(nameof(IsKitaronManagedCase));
         OnPropertyChanged(nameof(CaseAuthorityText));
+        OnPropertyChanged(nameof(OrderListAuthorityText));
         OnPropertyChanged(nameof(FormHeading));
         OnPropertyChanged(nameof(SaveButtonText));
         OnPropertyChanged(nameof(CanOpenWorkingFolder));

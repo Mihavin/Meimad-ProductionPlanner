@@ -70,7 +70,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(66L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(67L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -218,6 +218,16 @@ public sealed class MigrationTests
         Assert.Equal("cnc_verification_persistent_variable_mappings", await migrationCommand.ExecuteScalarAsync());
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 63;";
         Assert.Equal("secretless_armed_cnc_verification", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 66;";
+        Assert.Equal("Kitaron Case and Order authority with Order price", await migrationCommand.ExecuteScalarAsync());
+        migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 67;";
+        Assert.Equal("Kitaron current demand and retained historical Orders", await migrationCommand.ExecuteScalarAsync());
+
+        migrationCommand.CommandText = """
+            SELECT COUNT(*) FROM pragma_table_info('orders')
+            WHERE name='kitaron_history_only' AND "notnull"=1 AND dflt_value='0';
+            """;
+        Assert.Equal(1L, (long)(await migrationCommand.ExecuteScalarAsync())!);
 
         migrationCommand.CommandText = """
             SELECT COUNT(*) FROM pragma_table_info('cnc_verification_settings')
@@ -346,7 +356,84 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(66L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(67L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Version_67_backfills_only_unlinked_locked_history_for_Kitaron_Cases()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            "Data Source=:memory:;Foreign Keys=False");
+        await connection.OpenAsync();
+        await using (var setup = connection.CreateCommand())
+        {
+            setup.CommandText = """
+                CREATE TABLE orders (id TEXT PRIMARY KEY, case_id TEXT NOT NULL);
+                CREATE TABLE kitaron_sync_links (
+                    source_entity TEXT NOT NULL, source_key TEXT NOT NULL,
+                    target_id TEXT NOT NULL);
+                CREATE TABLE batch_allocations (
+                    production_batch_id TEXT NOT NULL, allocation_type TEXT NOT NULL,
+                    order_id TEXT, derived_order_key TEXT);
+                CREATE TABLE batch_operations (
+                    id TEXT PRIMARY KEY, production_batch_id TEXT NOT NULL);
+                CREATE TABLE production_runs (
+                    id TEXT PRIMARY KEY, legacy_batch_operation_id TEXT,
+                    structure_locked_at TEXT);
+                CREATE TABLE production_run_programs (
+                    id TEXT PRIMARY KEY, production_run_id TEXT NOT NULL);
+                CREATE TABLE production_run_outputs (
+                    production_run_program_id TEXT NOT NULL, batch_operation_id TEXT NOT NULL);
+
+                INSERT INTO orders VALUES
+                    ('current-order','kit-case'),
+                    ('legacy-history','kit-case'),
+                    ('derived-history','kit-case'),
+                    ('manual-history','manual-case');
+                INSERT INTO kitaron_sync_links VALUES
+                    ('case','kit-case-source','kit-case'),
+                    ('order','current-order-source','current-order');
+
+                INSERT INTO batch_operations VALUES
+                    ('legacy-operation','legacy-batch'),
+                    ('output-operation','output-batch'),
+                    ('manual-operation','manual-batch');
+                INSERT INTO batch_allocations VALUES
+                    ('legacy-batch','order','current-order',NULL),
+                    ('legacy-batch','order','legacy-history',NULL),
+                    ('output-batch','derived_order',NULL,'derived:derived-history:path'),
+                    ('manual-batch','order','manual-history',NULL);
+                INSERT INTO production_runs VALUES
+                    ('legacy-run','legacy-operation','2026-09-02T08:00:00Z'),
+                    ('output-run',NULL,'2026-09-02T08:00:00Z'),
+                    ('manual-run','manual-operation','2026-09-02T08:00:00Z');
+                INSERT INTO production_run_programs VALUES ('output-program','output-run');
+                INSERT INTO production_run_outputs VALUES ('output-program','output-operation');
+                """;
+            await setup.ExecuteNonQueryAsync();
+        }
+
+        await using (var transaction = connection.BeginTransaction())
+        {
+            await new SchemaV67KitaronHistoricalOrdersMigration().ApplyAsync(
+                connection, transaction, default);
+            await transaction.CommitAsync();
+        }
+
+        await using var verify = connection.CreateCommand();
+        verify.CommandText = """
+            SELECT id, kitaron_history_only
+            FROM orders
+            ORDER BY id;
+            """;
+        var states = new Dictionary<string, bool>(StringComparer.Ordinal);
+        await using var reader = await verify.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) states.Add(reader.GetString(0), reader.GetBoolean(1));
+
+        Assert.False(states["current-order"]);
+        Assert.True(states["legacy-history"]);
+        Assert.True(states["derived-history"]);
+        Assert.False(states["manual-history"]);
     }
 
     [Fact]
@@ -1559,7 +1646,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 67;";
+            command.CommandText = "PRAGMA user_version = 68;";
             await command.ExecuteNonQueryAsync();
         }
 

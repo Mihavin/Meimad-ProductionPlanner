@@ -175,6 +175,7 @@ internal sealed record OrderResponse(
     string? Notes,
     decimal? Price,
     bool IsKitaronManaged,
+    bool IsHistorical,
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
@@ -191,6 +192,7 @@ internal sealed record OrderResponse(
         order.Notes,
         order.Price,
         order.IsKitaronManaged,
+        order.IsHistorical,
         order.Version,
         order.CreatedAt,
         order.UpdatedAt);

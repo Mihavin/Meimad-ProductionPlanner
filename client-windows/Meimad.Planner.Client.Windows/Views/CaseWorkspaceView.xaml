@@ -595,7 +595,7 @@
                                         <Image Source="{StaticResource OrdersButtonIcon}" Width="24" Height="24" />
                                     </Button>
                                 </StackPanel>
-                                <TextBlock Text="Demand records for this Case; Orders are never assigned to Machines."
+                                <TextBlock Text="{Binding OrderListAuthorityText}" TextWrapping="Wrap"
                                            Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                             </DockPanel>
                             <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"

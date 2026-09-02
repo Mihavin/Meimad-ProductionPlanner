@@ -678,7 +678,7 @@ public sealed class KitaronConnectionApiTests
     [Fact]
     public async Task Superseded_order_with_locked_run_is_retained_as_history_without_blocking_sync()
     {
-        await RunAsync(new CapturingTester(), async (application, _) =>
+        await RunAsync(new CapturingTester(), async (application, client) =>
         {
             var database = application.Services.GetRequiredService<SqliteDatabase>();
             await using (var connection = await database.OpenConnectionAsync())
@@ -687,8 +687,11 @@ public sealed class KitaronConnectionApiTests
                 seed.CommandText = """
                     INSERT INTO cases (id,part_number,name,working_folder_path)
                     VALUES ('history-case','30P647004101-001','Historical part','history');
-                    INSERT INTO orders (id,case_id,order_reference,quantity,work_finish_date,status)
-                    VALUES ('history-order','history-case','3000030662',80,'2027-02-02','complete');
+                    INSERT INTO orders (
+                        id,case_id,order_reference,quantity,work_finish_date,status,kitaron_status)
+                    VALUES (
+                        'history-order','history-case','3000030662',80,'2027-02-02',
+                        'complete','inactive');
                     INSERT INTO case_operations
                         (id,case_id,operation_number,route_position,name)
                     VALUES ('history-case-operation','history-case',30,0,'Mill');
@@ -706,6 +709,12 @@ public sealed class KitaronConnectionApiTests
                          legacy_batch_operation_id,version,created_at,updated_at)
                     VALUES ('history-run','COMPLETED',0,'{}','2026-08-27T13:00:00Z',
                             'history-operation',1,'2026-08-27T12:00:00Z','2026-08-27T13:00:00Z');
+                    INSERT INTO kitaron_sync_links (
+                        source_entity,source_key,target_id,owns_target,source_hash,
+                        first_seen_at,last_seen_at)
+                    VALUES (
+                        'order','obsolete-history-source','history-order',1,'old-hash',
+                        '2026-08-27T12:00:00Z','2026-08-27T13:00:00Z');
                     """;
                 await seed.ExecuteNonQueryAsync();
             }
@@ -725,13 +734,126 @@ public sealed class KitaronConnectionApiTests
 
             Assert.Equal("succeeded", result.Status);
             Assert.Contains("1 superseded Order(s) retained", result.Message, StringComparison.Ordinal);
+
+            using var currentResponse = await client.GetAsync("/api/v1/orders?caseId=history-case");
+            Assert.Equal(HttpStatusCode.OK, currentResponse.StatusCode);
+            using var currentJson = JsonDocument.Parse(await currentResponse.Content.ReadAsStringAsync());
+            var currentOrders = currentJson.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            var currentOrder = Assert.Single(currentOrders);
+            Assert.Equal("3000030662/40261", currentOrder.GetProperty("orderNumber").GetString());
+            Assert.False(currentOrder.GetProperty("isHistorical").GetBoolean());
+
+            using var historicalResponse = await client.GetAsync("/api/v1/orders/history-order");
+            Assert.Equal(HttpStatusCode.OK, historicalResponse.StatusCode);
+            using var historicalJson = JsonDocument.Parse(await historicalResponse.Content.ReadAsStringAsync());
+            Assert.True(historicalJson.RootElement.GetProperty("isHistorical").GetBoolean());
+            Assert.True(historicalJson.RootElement.GetProperty("isKitaronManaged").GetBoolean());
+            Assert.Equal("inactive", historicalJson.RootElement.GetProperty("status").GetString());
+
             await using var verifyConnection = await database.OpenConnectionAsync();
             await using var verify = verifyConnection.CreateCommand();
             verify.CommandText = """
                 SELECT
                     (SELECT COUNT(*) FROM orders WHERE id='history-order'),
                     (SELECT COUNT(*) FROM production_batches WHERE id='history-batch'),
-                    (SELECT COUNT(*) FROM orders WHERE order_reference='3000030662/40261');
+                    (SELECT COUNT(*) FROM orders WHERE order_reference='3000030662/40261'),
+                    (SELECT kitaron_history_only FROM orders WHERE id='history-order');
+                """;
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1, reader.GetInt32(0));
+            Assert.Equal(1, reader.GetInt32(1));
+            Assert.Equal(1, reader.GetInt32(2));
+            Assert.Equal(1, reader.GetInt32(3));
+        });
+    }
+
+    [Fact]
+    public async Task Superseded_derived_order_with_locked_multi_output_run_is_retained_as_history()
+    {
+        await RunAsync(new CapturingTester(), async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO cases (id,part_number,name,working_folder_path)
+                    VALUES ('output-history-case','30P647004102-001','Output history part','history');
+                    INSERT INTO orders (id,case_id,order_reference,quantity,work_finish_date,status)
+                    VALUES ('output-history-order','output-history-case','3000030777',8,'2027-02-02','complete');
+                    INSERT INTO case_operations
+                        (id,case_id,operation_number,route_position,name)
+                    VALUES ('output-history-case-operation','output-history-case',30,0,'Mill');
+                    INSERT INTO production_batches
+                        (id,case_id,batch_number,status,planned_quantity)
+                    VALUES ('output-history-batch','output-history-case','1','in_production',8);
+                    INSERT INTO batch_allocations
+                        (id,production_batch_id,allocation_type,derived_order_key,quantity)
+                    VALUES (
+                        'output-history-allocation','output-history-batch','derived_order',
+                        'derived:output-history-order:path',8);
+                    INSERT INTO batch_operations
+                        (id,production_batch_id,source_case_operation_id,operation_number,route_position,name,status)
+                    VALUES (
+                        'output-history-operation','output-history-batch',
+                        'output-history-case-operation',30,0,'Mill','started');
+                    INSERT INTO production_runs
+                        (id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,
+                         version,created_at,updated_at)
+                    VALUES (
+                        'output-history-run','PLANNED',0,'{}',NULL,1,
+                        '2026-08-27T12:00:00Z','2026-08-27T12:00:00Z');
+                    INSERT INTO production_run_programs (
+                        id,production_run_id,manufacturing_program_id,sequence_position,
+                        target_cycle_count,completed_cycle_count,status,legacy_unmanaged,
+                        version,created_at,updated_at)
+                    VALUES (
+                        'output-history-program','output-history-run',
+                        'case-operation:output-history-case-operation',0,8,0,'ACTIVE',1,1,
+                        '2026-08-27T12:00:00Z','2026-08-27T12:00:00Z');
+                    INSERT INTO production_run_outputs (
+                        id,production_run_program_id,batch_operation_id,quantity_per_cycle,
+                        target_quantity,produced_quantity,status,version,created_at,updated_at)
+                    VALUES (
+                        'output-history-output','output-history-program','output-history-operation',
+                        1,8,0,'ALLOCATED',1,'2026-08-27T12:00:00Z','2026-08-27T12:00:00Z');
+                    UPDATE production_runs
+                    SET status='IN_PROGRESS', structure_locked_at='2026-08-27T13:00:00Z'
+                    WHERE id='output-history-run';
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            var item = new KitaronSyncCase(
+                "30P647004102-001", "30P647004102-001", "Output history part", null, null,
+                "history", "case-hash");
+            var canonical = new KitaronSyncOrder(
+                "50101", item.SourceKey, "3000030777/50101", 8,
+                new DateOnly(2027, 3, 2), "active", "order-hash")
+            { CanonicalOrderNumber = "3000030777" };
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+
+            var result = await repository.ApplyAsync(
+                new KitaronSyncPlan(1, [item], [canonical], [], [], new HashSet<string>(), [], 1),
+                new DateTimeOffset(2026, 9, 2, 9, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            Assert.Contains("1 superseded Order(s) retained", result.Message, StringComparison.Ordinal);
+            var current = await client.GetFromJsonAsync<JsonElement>(
+                "/api/v1/orders?caseId=output-history-case");
+            Assert.Equal(
+                "3000030777/50101",
+                Assert.Single(current.GetProperty("items").EnumerateArray().ToArray())
+                    .GetProperty("orderNumber").GetString());
+
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT
+                    (SELECT kitaron_history_only FROM orders WHERE id='output-history-order'),
+                    (SELECT COUNT(*) FROM production_batches WHERE id='output-history-batch'),
+                    (SELECT COUNT(*) FROM production_runs WHERE id='output-history-run');
                 """;
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
