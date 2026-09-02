@@ -62,7 +62,7 @@ internal sealed class OrderService
     {
         var current = await repository.GetByIdAsync(orderId, cancellationToken)
             ?? throw new OrderNotFoundException(orderId);
-        if (current.IsKitaronManaged)
+        if (current.IsKitaronManaged || current.IsHistorical)
         {
             throw new KitaronManagedResourceException("Order", orderId);
         }

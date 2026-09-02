@@ -159,10 +159,19 @@ if ([string]$service.StartType -ne 'Automatic') {
 }
 
 $failureText = (& sc.exe qfailure $ServiceName 2>&1 | Out-String)
+$restartActions = @([regex]::Matches(
+    $failureText,
+    'RESTART[^\r\n]*Delay\s*=\s*(?<delay>\d+)',
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase))
+$incorrectRestartDelay = @($restartActions | Where-Object {
+    $_.Groups['delay'].Value -ne '60000'
+}).Count -gt 0
+$hasUnexpectedFailureAction = $failureText -match '(?im)^\s*(REBOOT|RUN COMMAND)\b'
 if ($LASTEXITCODE -ne 0 -or
     $failureText -notmatch 'RESET_PERIOD[^\r\n]*86400' -or
-    @([regex]::Matches($failureText, 'RESTART[^\r\n]*60000')).Count -lt 2 -or
-    $failureText -notmatch 'NONE[^\r\n]*0') {
+    $restartActions.Count -ne 2 -or
+    $incorrectRestartDelay -or
+    $hasUnexpectedFailureAction) {
     throw "Installed service recovery policy does not match the bounded 60s/60s/none policy.`n$failureText"
 }
 

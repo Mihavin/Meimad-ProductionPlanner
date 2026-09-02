@@ -1318,9 +1318,12 @@ internal sealed record ProductionBatch(
         "waiting" => "Waiting",
         "in_production" => "In Production",
         "complete" => "Complete",
+        "cancelled" => "Cancelled",
         _ => Status.Replace('_', ' ')
     };
 }
+
+internal sealed record CancelProductionBatchRequest(string? Reason);
 
 internal sealed record BatchAllocation(
     string AllocationId,

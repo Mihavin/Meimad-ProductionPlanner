@@ -95,6 +95,13 @@ internal static class ProductionBatchValidator
                     "cross_case_order",
                     $"Order '{reference.OrderId}' does not belong to the Batch Case."));
             }
+            else if (!reference.IsCurrentAuthoritativeDemand)
+            {
+                issues.Add(new ProductionBatchValidationIssue(
+                    "allocations.orderId",
+                    "noncurrent_kitaron_order",
+                    $"Order '{reference.OrderId}' is not current authoritative Kitaron demand and cannot receive a new Production Batch allocation."));
+            }
             else if (reference.IsCancelled)
             {
                 issues.Add(new ProductionBatchValidationIssue(
@@ -279,7 +286,8 @@ internal sealed record ValidatedBatchAllocationValue(
 internal sealed record OrderAllocationReference(
     string OrderId,
     string? OrderCaseId,
-    bool IsCancelled = false);
+    bool IsCancelled = false,
+    bool IsCurrentAuthoritativeDemand = true);
 
 internal sealed record ProductionBatchValidationIssue(string Field, string Code, string Message);
 

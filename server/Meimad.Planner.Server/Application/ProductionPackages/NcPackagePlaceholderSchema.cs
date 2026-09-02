@@ -55,6 +55,45 @@ internal static partial class NcPackagePlaceholderSchema
     internal static bool IsCanonical(IEnumerable<string> lines) =>
         lines.Any(line => (line ?? string.Empty).Contains("[[MEIMAD:", StringComparison.Ordinal));
 
+    /// <summary>
+    /// The immutable-release gate validates only the verification insertion point. Other
+    /// package metadata is resolved and validated later, when a concrete package is built.
+    /// Ordinary O/G/M codes and unrelated macro calls are deliberately outside this check.
+    /// </summary>
+    internal static NcPackageTemplateValidation ValidateReleaseTemplate(
+        IEnumerable<string> sourceLines)
+    {
+        var lines = sourceLines.ToArray();
+        var hookLines = new List<int>();
+        int? firstExecutable = null;
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var text = lines[index] ?? string.Empty;
+            var lineNumber = index + 1;
+            var matches = StandaloneToken(NcPackagePlaceholderKeys.VerificationHook)
+                .Matches(text);
+            if (matches.Count == 1) hookLines.Add(lineNumber);
+            if (firstExecutable is null && !IsHeaderOrCommentOrPlaceholder(text))
+                firstExecutable = lineNumber;
+        }
+
+        if (hookLines.Count == 0)
+            throw Invalid("verification_placeholder_required",
+                "The NC source template must contain exactly one standalone [[MEIMAD:VERIFICATION_HOOK]].");
+        if (hookLines.Count != 1)
+            throw Invalid("verification_placeholder_duplicate",
+                "The NC source template must contain exactly one standalone [[MEIMAD:VERIFICATION_HOOK]].");
+        if (firstExecutable is not null && firstExecutable < hookLines[0])
+            throw Invalid("verification_placeholder_not_first",
+                "[[MEIMAD:VERIFICATION_HOOK]] must precede the first executable NC block.");
+
+        return new(CurrentProtocolVersion, hookLines[0],
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                [NcPackagePlaceholderKeys.VerificationHook] = 1
+            });
+    }
+
     internal static NcPackageTemplateValidation ValidateCanonical(IEnumerable<string> sourceLines)
     {
         var lines = sourceLines.ToArray();

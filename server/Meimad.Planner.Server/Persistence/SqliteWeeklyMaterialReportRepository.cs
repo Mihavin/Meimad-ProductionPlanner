@@ -24,7 +24,7 @@ internal sealed class SqliteWeeklyMaterialReportRepository(SqliteDatabase databa
                 WHERE orders.work_finish_date >= $weekStart
                   AND orders.work_finish_date < $weekEnd
                   AND orders.status IN ('active', 'in_production')
-                  AND production_batches.status <> 'complete'
+                  AND production_batches.status NOT IN ('complete', 'cancelled')
             )
             SELECT cases.id, cases.part_number, SUM(due_batches.planned_quantity)
             FROM due_batches

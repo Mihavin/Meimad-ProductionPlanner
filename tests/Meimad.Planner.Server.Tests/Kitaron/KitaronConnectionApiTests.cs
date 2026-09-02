@@ -327,6 +327,32 @@ public sealed class KitaronConnectionApiTests
         Assert.Equal("PriceInCurr", selected);
     }
 
+    [Fact]
+    public void Canonical_order_query_combines_row_and_header_closure_facts()
+    {
+        var query = SqlServerKitaronSourceReader.BuildOrderQuery(
+            "dbo",
+            "VQWorkPlanningForStationF4",
+            "PriceInCurr",
+            ["OrderClosed", "RecordClosed", "RowClosed"],
+            ["OrderClosed", "Closed"]);
+
+        Assert.Contains("COALESCE(TRY_CONVERT(int, so.[OrderClosed]), 0) = 2", query, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(TRY_CONVERT(int, so.[RecordClosed]), 0) <> 0", query, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(TRY_CONVERT(int, so.[RowClosed]), 0) <> 0", query, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(TRY_CONVERT(int, o.[OrderClosed]), 0) = 2", query, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(TRY_CONVERT(int, o.[Closed]), 0) <> 0", query, StringComparison.Ordinal);
+        Assert.Contains("AS IsClosed", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Canonical_order_row_identity_suppresses_stale_work_view_status_for_same_record()
+    {
+        Assert.Equal(
+            KitaronSyncService.OrderRowIdentity("30P410178702-501", "33269"),
+            KitaronSyncService.OrderRowIdentity(" 30P410178702-501 ", " 33269 "));
+    }
+
     [Theory]
     [InlineData("הזמנה לדוגמא 1")]
     [InlineData("  הזמנה לדוגמא 1  ")]
@@ -395,8 +421,11 @@ public sealed class KitaronConnectionApiTests
                     INSERT INTO cases (id, part_number, name, working_folder_path)
                     VALUES ('kit-case', 'KIT-001', 'Kitaron Case', 'C:\Cases\KIT-001');
                     INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status,
-                        kitaron_status, price)
-                    VALUES ('kit-order', 'kit-case', '100/1', 4, '2027-01-01', 'complete', 'inactive', 12.5);
+                        kitaron_status, price, kitaron_history_only)
+                    VALUES
+                        ('kit-order', 'kit-case', '100/1', 4, '2027-01-01', 'complete', 'inactive', 12.5, 0),
+                        ('kit-history', 'kit-case', '100', 4, '2026-01-01', 'active', 'inactive', 12.5, 1),
+                        ('kit-unlinked', 'kit-case', '100-OLD', 4, '2026-02-01', 'active', 'active', 12.5, 0);
                     INSERT INTO kitaron_sync_links
                         (source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at)
                     VALUES
@@ -432,15 +461,60 @@ public sealed class KitaronConnectionApiTests
 
             using var orderDelete = await client.DeleteAsync("/api/v1/orders/kit-order");
             Assert.Equal(HttpStatusCode.Conflict, orderDelete.StatusCode);
+
+            using var historyPatch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/orders/kit-history")
+            {
+                Content = JsonContent.Create(new { notes = "Changed" })
+            };
+            historyPatch.Headers.TryAddWithoutValidation("If-Match", "\"order:kit-history:v1\"");
+            using var historyPatchResponse = await client.SendAsync(historyPatch);
+            Assert.Equal(HttpStatusCode.Conflict, historyPatchResponse.StatusCode);
+            Assert.Contains(
+                "kitaron_managed_read_only",
+                await historyPatchResponse.Content.ReadAsStringAsync(),
+                StringComparison.Ordinal);
+
+            using var historyDelete = await client.DeleteAsync("/api/v1/orders/kit-history");
+            Assert.Equal(HttpStatusCode.Conflict, historyDelete.StatusCode);
+
+            using var unlinkedPatch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/orders/kit-unlinked")
+            {
+                Content = JsonContent.Create(new { notes = "Changed" })
+            };
+            unlinkedPatch.Headers.TryAddWithoutValidation("If-Match", "\"order:kit-unlinked:v1\"");
+            using var unlinkedPatchResponse = await client.SendAsync(unlinkedPatch);
+            Assert.Equal(HttpStatusCode.Conflict, unlinkedPatchResponse.StatusCode);
+
+            using var unlinkedDelete = await client.DeleteAsync("/api/v1/orders/kit-unlinked");
+            Assert.Equal(HttpStatusCode.Conflict, unlinkedDelete.StatusCode);
+
             using var caseDelete = await client.DeleteAsync("/api/v1/cases/kit-case");
             Assert.Equal(HttpStatusCode.Conflict, caseDelete.StatusCode);
 
             using var read = await client.GetAsync("/api/v1/orders?caseId=kit-case");
             using var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
-            var item = json.RootElement.GetProperty("items")[0];
+            var items = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            var item = Assert.Single(items);
+            Assert.Equal("kit-order", item.GetProperty("orderId").GetString());
             Assert.True(item.GetProperty("isKitaronManaged").GetBoolean());
             Assert.Equal("inactive", item.GetProperty("status").GetString());
             Assert.Equal(12.5m, item.GetProperty("price").GetDecimal());
+
+            using var historyRead = await client.GetAsync("/api/v1/orders/kit-history");
+            historyRead.EnsureSuccessStatusCode();
+            using var historyJson = JsonDocument.Parse(await historyRead.Content.ReadAsStringAsync());
+            Assert.True(historyJson.RootElement.GetProperty("isHistorical").GetBoolean());
+            Assert.True(historyJson.RootElement.GetProperty("isKitaronManaged").GetBoolean());
+
+            using var unlinkedRead = await client.GetAsync("/api/v1/orders/kit-unlinked");
+            unlinkedRead.EnsureSuccessStatusCode();
+            using var unlinkedJson = JsonDocument.Parse(await unlinkedRead.Content.ReadAsStringAsync());
+            Assert.True(unlinkedJson.RootElement.GetProperty("isKitaronManaged").GetBoolean());
+            Assert.False(unlinkedJson.RootElement.GetProperty("isHistorical").GetBoolean());
+
+            var activeCases = await client.GetFromJsonAsync<JsonElement>(
+                "/api/v1/cases?search=KIT-001&isActive=true");
+            Assert.Empty(activeCases.GetProperty("items").EnumerateArray().ToArray());
         });
     }
 
@@ -735,6 +809,25 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal("succeeded", result.Status);
             Assert.Contains("1 superseded Order(s) retained", result.Message, StringComparison.Ordinal);
 
+            await using (var duplicateConnection = await database.OpenConnectionAsync())
+            await using (var duplicate = duplicateConnection.CreateCommand())
+            {
+                duplicate.CommandText = """
+                    INSERT INTO orders (
+                        id,case_id,order_reference,quantity,work_finish_date,status,kitaron_status)
+                    VALUES (
+                        'duplicate-current-reference','history-case','3000030662/40261',16,
+                        '2026-12-21','active','active');
+                    """;
+                await duplicate.ExecuteNonQueryAsync();
+            }
+
+            var reconciled = await repository.ApplyAsync(
+                new KitaronSyncPlan(1, [item], [canonical], [], [], new HashSet<string>(), [], 1),
+                new DateTimeOffset(2026, 9, 2, 9, 1, 0, TimeSpan.Zero), CancellationToken.None);
+            Assert.Equal("succeeded", reconciled.Status);
+            Assert.Contains("1 non-Kitaron Order(s) removed", reconciled.Message, StringComparison.Ordinal);
+
             using var currentResponse = await client.GetAsync("/api/v1/orders?caseId=history-case");
             Assert.Equal(HttpStatusCode.OK, currentResponse.StatusCode);
             using var currentJson = JsonDocument.Parse(await currentResponse.Content.ReadAsStringAsync());
@@ -757,7 +850,8 @@ public sealed class KitaronConnectionApiTests
                     (SELECT COUNT(*) FROM orders WHERE id='history-order'),
                     (SELECT COUNT(*) FROM production_batches WHERE id='history-batch'),
                     (SELECT COUNT(*) FROM orders WHERE order_reference='3000030662/40261'),
-                    (SELECT kitaron_history_only FROM orders WHERE id='history-order');
+                    (SELECT kitaron_history_only FROM orders WHERE id='history-order'),
+                    (SELECT COUNT(*) FROM orders WHERE id='duplicate-current-reference');
                 """;
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
@@ -765,6 +859,7 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(1, reader.GetInt32(1));
             Assert.Equal(1, reader.GetInt32(2));
             Assert.Equal(1, reader.GetInt32(3));
+            Assert.Equal(0, reader.GetInt32(4));
         });
     }
 

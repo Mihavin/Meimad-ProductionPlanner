@@ -20,6 +20,25 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         "RowPrice",
         "PriceRow"
     ];
+    private static readonly string[] OrderRowClosedColumnCandidates =
+    [
+        "OrderClosed",
+        "RecordClosed",
+        "RowClosed",
+        "Closed",
+        "IsClosed",
+        "Completed",
+        "IsCompleted"
+    ];
+    private static readonly string[] OrderHeaderClosedColumnCandidates =
+    [
+        "OrderClosed",
+        "RecordClosed",
+        "Closed",
+        "IsClosed",
+        "Completed",
+        "IsCompleted"
+    ];
 
     public async Task<KitaronSourceSnapshot> ReadAsync(
         StoredKitaronConnectionSettings settings,
@@ -91,18 +110,25 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             "TSubOrder",
             OrderPriceColumnCandidates,
             cancellationToken);
-        var closedColumn = await FindFirstColumnAsync(
+        var rowClosedColumns = await FindColumnsAsync(
             connection,
             "dbo",
             "TSubOrder",
-            ["RecordClosed", "RowClosed", "Closed"],
+            OrderRowClosedColumnCandidates,
+            cancellationToken);
+        var headerClosedColumns = await FindColumnsAsync(
+            connection,
+            "dbo",
+            "TOrder",
+            OrderHeaderClosedColumnCandidates,
             cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = BuildOrderQuery(
             settings.ViewSchema,
             settings.ViewName,
             priceColumn,
-            closedColumn);
+            rowClosedColumns,
+            headerClosedColumns);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceOrder>();
         while (await reader.ReadAsync(cancellationToken))
@@ -191,10 +217,18 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         string schema,
         string view,
         string? priceColumn = null,
-        string? closedColumn = null)
+        IReadOnlyList<string>? rowClosedColumns = null,
+        IReadOnlyList<string>? headerClosedColumns = null)
     {
         var price = priceColumn is null ? "CAST(NULL AS decimal(19,4))" : $"so.{Quote(priceColumn)}";
-        var closed = closedColumn is null ? "CAST(0 AS bit)" : $"so.{Quote(closedColumn)}";
+        var closedChecks = (rowClosedColumns ?? [])
+            .Select(column => ClosedCheck("so", column))
+            .Concat((headerClosedColumns ?? [])
+                .Select(column => ClosedCheck("o", column)))
+            .ToArray();
+        var closed = closedChecks.Length == 0
+            ? "CAST(0 AS bit)"
+            : $"CONVERT(bit, CASE WHEN {string.Join(" OR ", closedChecks)} THEN 1 ELSE 0 END)";
         return $$"""
         WITH source_details AS (
             SELECT DISTINCT detail.DetailID
@@ -252,6 +286,29 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) available.Add(reader.GetString(0));
         return candidates.FirstOrDefault(available.Contains);
+    }
+
+    private static async Task<IReadOnlyList<string>> FindColumnsAsync(
+        SqlConnection connection,
+        string schema,
+        string table,
+        IReadOnlyList<string> candidates,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT c.name
+            FROM sys.columns c
+            JOIN sys.tables t ON t.object_id=c.object_id
+            JOIN sys.schemas s ON s.schema_id=t.schema_id
+            WHERE s.name=@schema AND t.name=@table;
+            """;
+        command.Parameters.AddWithValue("@schema", schema);
+        command.Parameters.AddWithValue("@table", table);
+        var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) available.Add(reader.GetString(0));
+        return candidates.Where(available.Contains).ToArray();
     }
 
     internal static string? SelectOrderPriceColumn(IEnumerable<string> availableColumns)
@@ -327,4 +384,12 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     private static string Quote(string value) =>
         $"[{value.Replace("]", "]]", StringComparison.Ordinal)}]";
+
+    private static string ClosedCheck(string alias, string column)
+    {
+        var comparison = column.Equals("OrderClosed", StringComparison.OrdinalIgnoreCase)
+            ? "= 2"
+            : "<> 0";
+        return $"COALESCE(TRY_CONVERT(int, {alias}.{Quote(column)}), 0) {comparison}";
+    }
 }

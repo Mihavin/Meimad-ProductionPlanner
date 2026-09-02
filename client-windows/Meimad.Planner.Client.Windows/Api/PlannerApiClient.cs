@@ -159,6 +159,15 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ProductionBatch> CancelBatchProductionAsync(
+        string batchId,
+        CancelProductionBatchRequest request,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
         string batchId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -1246,6 +1255,27 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Headers.TryAddWithoutValidation("If-Match", entityTag);
         request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
+    }
+
+    public async Task<ProductionBatch> CancelBatchProductionAsync(
+        string batchId,
+        CancelProductionBatchRequest cancel,
+        string entityTag,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/cancel-production",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(cancel);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
     }

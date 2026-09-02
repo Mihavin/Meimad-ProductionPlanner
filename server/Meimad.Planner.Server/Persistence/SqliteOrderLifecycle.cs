@@ -54,23 +54,30 @@ internal static class SqliteOrderLifecycle
         command.Transaction = transaction;
         command.CommandText = """
             SELECT
-                (SELECT COALESCE(SUM(quantity), 0)
-                 FROM batch_allocations
-                 WHERE order_id = $orderId),
+                (SELECT COALESCE(SUM(allocation.quantity), 0)
+                 FROM batch_allocations allocation
+                 JOIN production_batches batch ON batch.id=allocation.production_batch_id
+                 WHERE allocation.order_id = $orderId AND batch.status<>'cancelled'),
                 EXISTS(
-                    SELECT 1 FROM batch_allocations
-                    WHERE order_id = $orderId),
+                    SELECT 1 FROM batch_allocations allocation
+                    JOIN production_batches batch ON batch.id=allocation.production_batch_id
+                    WHERE allocation.order_id = $orderId AND batch.status<>'cancelled'),
                 EXISTS(
                     SELECT 1
                     FROM batch_allocations
+                    JOIN production_batches batch
+                      ON batch.id=batch_allocations.production_batch_id
                     JOIN batch_operations
                       ON batch_operations.production_batch_id = batch_allocations.production_batch_id
                     WHERE batch_allocations.order_id = $orderId
+                      AND batch.status<>'cancelled'
                       AND batch_operations.status <> 'not_started'),
                 NOT EXISTS(
                     SELECT 1
                     FROM batch_allocations allocation
+                    JOIN production_batches batch ON batch.id=allocation.production_batch_id
                     WHERE allocation.order_id = $orderId
+                      AND batch.status<>'cancelled'
                       AND NOT EXISTS(
                           SELECT 1
                           FROM batch_operations operation
@@ -78,9 +85,11 @@ internal static class SqliteOrderLifecycle
                 NOT EXISTS(
                     SELECT 1
                     FROM batch_allocations allocation
+                    JOIN production_batches batch ON batch.id=allocation.production_batch_id
                     JOIN batch_operations operation
                       ON operation.production_batch_id = allocation.production_batch_id
                     WHERE allocation.order_id = $orderId
+                      AND batch.status<>'cancelled'
                       AND operation.status <> 'completed');
             """;
         command.Parameters.AddWithValue("$orderId", orderId);

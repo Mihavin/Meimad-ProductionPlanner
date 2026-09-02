@@ -94,6 +94,141 @@ public sealed class ProductionBatchApiTests
     }
 
     [Fact]
+    public async Task Cancel_production_resets_done_parts_releases_resources_and_preserves_cycle_evidence()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningDataAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            using var created = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId = "case-1",
+                batchNumber = "B-CANCEL-PRODUCTION",
+                status = "waiting",
+                plannedQuantity = 5,
+                allocations = new[] { new { allocationType = "order", orderId = "order-1", quantity = 5 } }
+            });
+            created.EnsureSuccessStatusCode();
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var batchId = createdJson.RootElement.GetProperty("batchId").GetString()!;
+            var operationId = (await ReadOperationIdsAsync(client, batchId))[0];
+
+            using var remainingCreated = await client.PostAsJsonAsync(
+                "/api/v1/batches", StockBatchBody("B-REMAINS", 1, 1));
+            remainingCreated.EnsureSuccessStatusCode();
+            using var remainingJson = JsonDocument.Parse(await remainingCreated.Content.ReadAsStringAsync());
+            var remainingOperationId = (await ReadOperationIdsAsync(
+                client, remainingJson.RootElement.GetProperty("batchId").GetString()!))[0];
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO working_calendars(id,name,time_zone_id) VALUES('calendar-cancel','Day','UTC');
+                    INSERT INTO machines(id,number,name,machine_type,working_calendar_id,status)
+                    VALUES('machine-cancel','10','Mill','mill','calendar-cancel','active');
+                    INSERT INTO production_runs(id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,created_at,updated_at)
+                    VALUES('run-cancel','PLANNED',0,'{}',NULL,$at,$at);
+                    INSERT INTO production_run_programs(
+                        id,production_run_id,manufacturing_program_id,sequence_position,target_cycle_count,
+                        completed_cycle_count,status,legacy_unmanaged,created_at,updated_at)
+                    VALUES('run-program-cancel','run-cancel','case-operation:case-op-10',0,5,3,'ACTIVE',1,$at,$at);
+                    INSERT INTO production_run_outputs(
+                        id,production_run_program_id,batch_operation_id,quantity_per_cycle,target_quantity,
+                        produced_quantity,status,created_at,updated_at)
+                    VALUES('run-output-cancel','run-program-cancel',$operationId,1,5,3,'IN_PRODUCTION',$at,$at);
+                    UPDATE production_runs SET status='IN_PROGRESS',structure_locked_at=$at WHERE id='run-cancel';
+                    INSERT INTO production_run_cycle_events(
+                        id,production_run_id,production_run_program_id,source,source_event_id,observed_at,
+                        completed_cycle_count,created_at,updated_at)
+                    VALUES('cycle-evidence-cancel','run-cancel','run-program-cancel','test','cycle-3',$at,3,$at,$at);
+                    INSERT INTO machine_assignments(
+                        id,batch_operation_id,machine_id,backlog_position,planning_mode,production_run_id)
+                    VALUES('assignment-cancel',$operationId,'machine-cancel',4,'manual','run-cancel');
+                    INSERT INTO machine_assignments(
+                        id,batch_operation_id,machine_id,backlog_position,planning_mode)
+                    VALUES('assignment-remains',$remainingOperationId,'machine-cancel',9,'manual');
+                    INSERT INTO verified_material_receipts(
+                        id,case_id,quantity,received_at,verified_at,verified_by,created_at,updated_at)
+                    VALUES('receipt-cancel','case-1',5,$at,$at,'planner',$at,$at);
+                    INSERT INTO batch_material_reservations(
+                        id,receipt_id,production_batch_id,quantity,reserved_at,reserved_by,created_at,updated_at)
+                    VALUES('reservation-cancel','receipt-cancel',$batchId,5,$at,'planner',$at,$at);
+                    INSERT INTO haas_bench_sessions(
+                        id,batch_operation_id,machine_id,state,auto_start_source,machine_program_number,
+                        machine_part_name,setup_started_at,production_started_at,part_counting_enabled,
+                        produced_quantity,created_at,updated_at)
+                    VALUES('bench-cancel',$operationId,'machine-cancel','PRODUCTION','CNC_HEADER','O1000',
+                           'PART',$at,$at,1,3,$at,$at);
+                    INSERT INTO haas_bench_state_intervals(id,bench_id,state,started_at,source)
+                    VALUES('bench-interval-cancel','bench-cancel','PRODUCTION',$at,'test');
+                    UPDATE production_batches SET status='in_production' WHERE id=$batchId;
+                    UPDATE batch_operations SET status='in_progress',actual_start=$at WHERE id=$operationId;
+                    """;
+                seed.Parameters.AddWithValue("$at", "2026-09-02T08:00:00.0000000+00:00");
+                seed.Parameters.AddWithValue("$batchId", batchId);
+                seed.Parameters.AddWithValue("$operationId", operationId);
+                seed.Parameters.AddWithValue("$remainingOperationId", remainingOperationId);
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            using var cancel = new HttpRequestMessage(
+                HttpMethod.Post, $"/api/v1/batches/{batchId}/cancel-production")
+            {
+                Content = JsonContent.Create(new { reason = "Test plan cancelled." })
+            };
+            cancel.Headers.TryAddWithoutValidation("If-Match", created.Headers.ETag!.ToString());
+            using var response = await client.SendAsync(cancel);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var responseJson = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("cancelled", responseJson.RootElement.GetProperty("status").GetString());
+
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal("cancelled", await ScalarStringAsync(verify,
+                "SELECT status FROM production_batches WHERE id=$id", batchId));
+            Assert.Equal("cancelled", await ScalarStringAsync(verify,
+                "SELECT status FROM batch_operations WHERE id=$id", operationId));
+            Assert.Equal("CANCELLED|0", await ScalarStringAsync(verify,
+                "SELECT status||'|'||completed_cycle_count FROM production_run_programs WHERE id=$id", "run-program-cancel"));
+            Assert.Equal("ABORTED_REMAINDER_RELEASED|0", await ScalarStringAsync(verify,
+                "SELECT status||'|'||produced_quantity FROM production_run_outputs WHERE id=$id", "run-output-cancel"));
+            Assert.Equal("COMPLETED|0|0", await ScalarStringAsync(verify,
+                "SELECT state||'|'||part_counting_enabled||'|'||produced_quantity FROM haas_bench_sessions WHERE id=$id", "bench-cancel"));
+            Assert.Equal(1L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM production_run_cycle_events WHERE id=$id", "cycle-evidence-cancel"));
+            Assert.Equal(0L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id", "assignment-cancel"));
+            Assert.Equal(0L, await ScalarInt64Async(verify,
+                "SELECT backlog_position FROM machine_assignments WHERE id=$id", "assignment-remains"));
+            Assert.Equal(0L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM batch_material_reservations WHERE production_batch_id=$id", batchId));
+            Assert.Equal("active", (await ReadOrderStatusAndVersionAsync(client, "order-1")).Status);
+        });
+    }
+
+    private static async Task<string> ScalarStringAsync(
+        SqliteConnection connection, string sql, string id)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        return Convert.ToString(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task<long> ScalarInt64Async(
+        SqliteConnection connection, string sql, string id)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
+    [Fact]
     public async Task Patch_updates_batch_and_allocations_without_recreating_route()
     {
         await RunWithServerAsync(async (application, client) =>

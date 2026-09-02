@@ -123,6 +123,20 @@ public sealed class ProductionBatchValidationTests
         Assert.Contains(exception.Issues, issue => issue.Code == "cancelled_order");
     }
 
+    [Fact]
+    public void Rejects_noncurrent_Kitaron_order_reference()
+    {
+        var exception = Assert.Throws<ProductionBatchValidationException>(() =>
+            ProductionBatchValidator.ValidateOrderCaseOwnership(
+                "case-1",
+                [new OrderAllocationReference(
+                    "superseded-order",
+                    "case-1",
+                    IsCurrentAuthoritativeDemand: false)]));
+
+        Assert.Contains(exception.Issues, issue => issue.Code == "noncurrent_kitaron_order");
+    }
+
     private static void AssertValid(int plannedQuantity, params BatchAllocationValue[] allocations)
     {
         var values = Validate(plannedQuantity, allocations);

@@ -140,6 +140,7 @@ internal sealed partial class KitaronConnectionService
         }
     }
 
+
     private async Task<KitaronConnectionTestResult> RecordFailureAsync(
         string message,
         CancellationToken cancellationToken)
@@ -208,6 +209,7 @@ internal sealed partial class KitaronConnectionService
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_$#@]*$", RegexOptions.CultureInvariant)]
     private static partial Regex SqlIdentifier();
+
 }
 
 internal sealed class KitaronConnectionValidationException(

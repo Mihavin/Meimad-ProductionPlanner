@@ -128,7 +128,18 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                        SELECT 1
                        FROM orders
                        WHERE orders.case_id = cases.id
-                          AND orders.status IN ('active', 'in_production'))
+                         AND orders.status IN ('active', 'in_production')
+                         AND (
+                             NOT EXISTS (
+                                 SELECT 1 FROM kitaron_sync_links case_link
+                                 WHERE case_link.source_entity='case'
+                                   AND case_link.target_id=orders.case_id)
+                             OR (
+                                 orders.kitaron_history_only=0
+                                 AND EXISTS (
+                                     SELECT 1 FROM kitaron_sync_links order_link
+                                     WHERE order_link.source_entity='order'
+                                       AND order_link.target_id=orders.id))))
                    OR EXISTS(
                        SELECT 1
                         FROM production_batches
@@ -167,7 +178,18 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                        EXISTS(
                            SELECT 1 FROM orders
                             WHERE orders.case_id = cases.id
-                              AND orders.status IN ('active', 'in_production'))
+                              AND orders.status IN ('active', 'in_production')
+                              AND (
+                                  NOT EXISTS (
+                                      SELECT 1 FROM kitaron_sync_links case_link
+                                      WHERE case_link.source_entity='case'
+                                        AND case_link.target_id=orders.case_id)
+                                  OR (
+                                      orders.kitaron_history_only=0
+                                      AND EXISTS (
+                                          SELECT 1 FROM kitaron_sync_links order_link
+                                          WHERE order_link.source_entity='order'
+                                            AND order_link.target_id=orders.id))))
                        OR EXISTS(
                             SELECT 1 FROM production_batches
                             WHERE production_batches.case_id = cases.id
@@ -180,9 +202,20 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                        EXISTS(SELECT 1 FROM kitaron_sync_links
                               WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed,
                        (SELECT MIN(orders.work_finish_date)
-                          FROM orders
+                         FROM orders
                          WHERE orders.case_id = cases.id
-                           AND orders.status IN ('active', 'in_production')) AS closest_order_delivery_date
+                           AND orders.status IN ('active', 'in_production')
+                           AND (
+                               NOT EXISTS (
+                                   SELECT 1 FROM kitaron_sync_links case_link
+                                   WHERE case_link.source_entity='case'
+                                     AND case_link.target_id=orders.case_id)
+                               OR (
+                                   orders.kitaron_history_only=0
+                                   AND EXISTS (
+                                       SELECT 1 FROM kitaron_sync_links order_link
+                                       WHERE order_link.source_entity='order'
+                                         AND order_link.target_id=orders.id)))) AS closest_order_delivery_date
                 FROM cases
             )
             SELECT *

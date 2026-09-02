@@ -174,6 +174,55 @@ public sealed class ProductionBatchPersistenceTests
         await AssertTableCountAsync(fixture.Database, "batch_operations", 2);
     }
 
+    [Fact]
+    public async Task Kitaron_case_accepts_only_current_linked_Order_allocations_on_create_and_update()
+    {
+        await using var fixture = await Persistence.TemporaryDatabase.CreateAsync();
+        await SeedPlanningDataAsync(fixture.Database);
+        await MarkCaseAsKitaronManagedAsync(fixture.Database);
+        var authority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+
+        var createException = await Assert.ThrowsAsync<ProductionBatchValidationException>(() =>
+            service.CreateAsync(
+                Command("case-1", "B-STALE-CREATE", 5, Allocation("order", "order-1", 5)),
+                authority));
+        Assert.Contains(createException.Issues, issue => issue.Code == "noncurrent_kitaron_order");
+
+        var created = await service.CreateAsync(
+            Command("case-1", "B-CURRENT", 5, Allocation("order", "order-2", 5)),
+            authority);
+
+        var updateException = await Assert.ThrowsAsync<ProductionBatchValidationException>(() =>
+            service.UpdateAsync(
+                created.BatchId,
+                created.Version,
+                new UpdateProductionBatchCommand(
+                    "B-CURRENT",
+                    5,
+                    [Allocation("order", "order-1", 5)]),
+                authority));
+        Assert.Contains(updateException.Issues, issue => issue.Code == "noncurrent_kitaron_order");
+
+        var retained = await service.GetByIdAsync(created.BatchId);
+        Assert.NotNull(retained);
+        Assert.Equal("order-2", Assert.Single(retained.Allocations).OrderId);
+    }
+
+    [Fact]
+    public async Task Manual_case_keeps_accepting_unlinked_Order_allocations()
+    {
+        await using var fixture = await Persistence.TemporaryDatabase.CreateAsync();
+        await SeedPlanningDataAsync(fixture.Database);
+        var authority = await GrantEditModeAsync(fixture.Database);
+
+        var created = await CreateService(fixture.Database).CreateAsync(
+            Command("case-2", "B-MANUAL", 5, Allocation("order", "foreign-order", 5)),
+            authority);
+
+        Assert.Equal("foreign-order", Assert.Single(created.Allocations).OrderId);
+    }
+
     private static ProductionBatchService CreateService(SqliteDatabase database) =>
         new(new SqliteProductionBatchRepository(database), TimeProvider.System);
 
@@ -221,6 +270,23 @@ public sealed class ProductionBatchPersistenceTests
                  'sequential', 'case-op-10'),
                 ('case-op-stock', 'case-2', 10, 0, 'Stock route', 'mill', 60, 30,
                  'independent', NULL);
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task MarkCaseAsKitaronManagedAsync(SqliteDatabase database)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO kitaron_sync_links (
+                source_entity, source_key, target_id, owns_target,
+                source_hash, first_seen_at, last_seen_at)
+            VALUES
+                ('case', 'case-source-1', 'case-1', 1,
+                 'case-hash-1', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z'),
+                ('order', 'order-source-2', 'order-2', 1,
+                 'order-hash-2', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
             """;
         await command.ExecuteNonQueryAsync();
     }

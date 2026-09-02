@@ -115,7 +115,7 @@ internal sealed class GCodeService
             {
                 try
                 {
-                    var canonical = NcPackagePlaceholderSchema.ValidateCanonical(sourceLines);
+                    var canonical = NcPackagePlaceholderSchema.ValidateReleaseTemplate(sourceLines);
                     verificationHook = new(
                         canonical.ProtocolVersion,
                         NcVerificationHookInvocationKinds.G65,

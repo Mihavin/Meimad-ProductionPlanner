@@ -187,7 +187,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             LEFT JOIN operation_pause_events
               ON operation_pause_events.batch_operation_id = batch_operations.id
              AND operation_pause_events.status = 'active'
-            WHERE batch_operations.status <> 'completed';
+            WHERE batch_operations.status NOT IN ('completed','cancelled')
+              AND production_batches.status <> 'cancelled';
             """;
         var operations = new List<PlanningBoardOperation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

@@ -276,6 +276,36 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
+    public async Task Canonical_release_checks_only_verification_placeholder_not_ordinary_g65_or_package_metadata()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var nc = Encoding.UTF8.GetBytes(string.Join("\n", new[]
+            {
+                "%", "O02000 (PART)",
+                "(POSTPROCESSOR_ID: [[MEIMAD:POSTPROCESSOR_ID]])",
+                "[[MEIMAD:VERIFICATION_HOOK]]",
+                "G17 G94 G90 G80 G40",
+                "G65 P9013 X0 Y0 Z-34.5 I54. A0 B0",
+                "M30", "%", ""
+            }));
+            var tools = Encoding.UTF8.GetBytes("tool,position\nT1,1\n");
+
+            using var response = await SendReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Verification insertion only",
+                nc, tools, confirmNewProcess: true, reuseActiveTools: false,
+                confirmTools: true, includeVerificationHook: false);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(2, document.RootElement.GetProperty("verificationHook")
+                .GetProperty("hookVersion").GetInt32());
+        });
+    }
+
+    [Fact]
     public async Task Task8_end_to_end_workflow_preserves_history_recalculates_readiness_and_audits_changes()
     {
         await RunAsync(async (application, client, _) =>

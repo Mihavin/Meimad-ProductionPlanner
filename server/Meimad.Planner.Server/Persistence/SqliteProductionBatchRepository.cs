@@ -235,6 +235,257 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         return batch;
     }
 
+    public async Task<ProductionBatch?> CancelProductionAsync(
+        string batchId,
+        int expectedVersion,
+        string reason,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(
+            connection, transaction, editAuthority, cancellationToken);
+
+        string status;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT status,version FROM production_batches WHERE id=$id;";
+            read.Parameters.AddWithValue("$id", batchId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            status = reader.GetString(0);
+            if (reader.GetInt32(1) != expectedVersion) return null;
+        }
+        if (status == "cancelled")
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return await GetByIdAsync(batchId, cancellationToken);
+        }
+
+        await using (var shared = connection.CreateCommand())
+        {
+            shared.Transaction = transaction;
+            shared.CommandText = """
+                SELECT run.id
+                FROM production_runs run
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM production_run_programs program
+                    JOIN production_run_outputs output
+                      ON output.production_run_program_id=program.id
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    WHERE program.production_run_id=run.id
+                      AND operation.production_batch_id=$batchId)
+                  AND EXISTS (
+                    SELECT 1
+                    FROM production_run_programs program
+                    JOIN production_run_outputs output
+                      ON output.production_run_program_id=program.id
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    WHERE program.production_run_id=run.id
+                      AND operation.production_batch_id<>$batchId)
+                LIMIT 1;
+                """;
+            shared.Parameters.AddWithValue("$batchId", batchId);
+            if (await shared.ExecuteScalarAsync(cancellationToken) is string sharedRunId)
+                throw new ProductionBatchCancellationException(
+                    "coupled_run_requires_joint_cancellation",
+                    $"Production Run '{sharedRunId}' also produces another Batch. Cancel the coupled production through an explicit joint action.");
+        }
+
+        var affectedOrders = await SqliteOrderLifecycle.ReadCandidatesForBatchAsync(
+            connection, transaction, batchId, cancellationToken);
+        var machineIds = new List<string>();
+        await using (var machines = connection.CreateCommand())
+        {
+            machines.Transaction = transaction;
+            machines.CommandText = """
+                SELECT DISTINCT assignment.machine_id
+                FROM machine_assignments assignment
+                LEFT JOIN batch_operations operation
+                  ON operation.id=assignment.batch_operation_id
+                WHERE operation.production_batch_id=$batchId
+                   OR assignment.production_run_id IN (
+                       SELECT DISTINCT program.production_run_id
+                       FROM production_run_programs program
+                       JOIN production_run_outputs output
+                         ON output.production_run_program_id=program.id
+                       JOIN batch_operations linked_operation
+                         ON linked_operation.id=output.batch_operation_id
+                       WHERE linked_operation.production_batch_id=$batchId)
+                ORDER BY assignment.machine_id;
+                """;
+            machines.Parameters.AddWithValue("$batchId", batchId);
+            await using var reader = await machines.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) machineIds.Add(reader.GetString(0));
+        }
+
+        long completedCycles;
+        long producedParts;
+        int runCount;
+        await using (var counts = connection.CreateCommand())
+        {
+            counts.Transaction = transaction;
+            counts.CommandText = """
+                SELECT
+                    (SELECT COALESCE(SUM(program.completed_cycle_count),0)
+                     FROM production_run_programs program
+                     WHERE EXISTS (
+                         SELECT 1 FROM production_run_outputs output
+                         JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                         WHERE output.production_run_program_id=program.id
+                           AND operation.production_batch_id=$batchId)),
+                    (SELECT COALESCE(SUM(output.produced_quantity),0)
+                     FROM production_run_outputs output
+                     JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                     WHERE operation.production_batch_id=$batchId),
+                    (SELECT COUNT(DISTINCT program.production_run_id)
+                     FROM production_run_programs program
+                     WHERE EXISTS (
+                         SELECT 1 FROM production_run_outputs output
+                         JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                         WHERE output.production_run_program_id=program.id
+                           AND operation.production_batch_id=$batchId));
+                """;
+            counts.Parameters.AddWithValue("$batchId", batchId);
+            await using var reader = await counts.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            completedCycles = reader.GetInt64(0);
+            producedParts = reader.GetInt64(1);
+            runCount = reader.GetInt32(2);
+        }
+
+        var at = FormatInstant(now);
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE operation_pause_events
+                SET status='closed',pause_ended_at=$at,updated_at=$at,version=version+1
+                WHERE status='active' AND batch_operation_id IN (
+                    SELECT id FROM batch_operations WHERE production_batch_id=$batchId);
+
+                UPDATE haas_bench_state_intervals
+                SET ended_at=$at
+                WHERE ended_at IS NULL AND bench_id IN (
+                    SELECT bench.id FROM haas_bench_sessions bench
+                    JOIN batch_operations operation ON operation.id=bench.batch_operation_id
+                    WHERE operation.production_batch_id=$batchId);
+
+                UPDATE haas_bench_sessions
+                SET state='COMPLETED',part_counting_enabled=0,produced_quantity=0,
+                    completed_at=COALESCE(completed_at,$at),version=version+1,updated_at=$at
+                WHERE batch_operation_id IN (
+                    SELECT id FROM batch_operations WHERE production_batch_id=$batchId);
+
+                DELETE FROM machine_assignments
+                WHERE batch_operation_id IN (
+                    SELECT id FROM batch_operations WHERE production_batch_id=$batchId)
+                   OR production_run_id IN (
+                       SELECT DISTINCT program.production_run_id
+                       FROM production_run_programs program
+                       JOIN production_run_outputs output
+                         ON output.production_run_program_id=program.id
+                       JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                       WHERE operation.production_batch_id=$batchId);
+
+                UPDATE production_run_outputs
+                SET status=CASE WHEN produced_quantity>0
+                                THEN 'ABORTED_REMAINDER_RELEASED' ELSE 'RELEASED' END,
+                    produced_quantity=0,version=version+1,updated_at=$at
+                WHERE production_run_program_id IN (
+                    SELECT DISTINCT program.id
+                    FROM production_run_programs program
+                    JOIN production_run_outputs output
+                      ON output.production_run_program_id=program.id
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    WHERE operation.production_batch_id=$batchId);
+
+                UPDATE production_run_programs
+                SET status='CANCELLED',completed_cycle_count=0,
+                    version=version+1,updated_at=$at
+                WHERE production_run_id IN (
+                    SELECT DISTINCT program.production_run_id
+                    FROM production_run_programs program
+                    JOIN production_run_outputs output
+                      ON output.production_run_program_id=program.id
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    WHERE operation.production_batch_id=$batchId);
+
+                UPDATE production_runs
+                SET status='CANCELLED',version=version+1,updated_at=$at
+                WHERE id IN (
+                    SELECT DISTINCT program.production_run_id
+                    FROM production_run_programs program
+                    JOIN production_run_outputs output
+                      ON output.production_run_program_id=program.id
+                    JOIN batch_operations operation ON operation.id=output.batch_operation_id
+                    WHERE operation.production_batch_id=$batchId);
+
+                UPDATE batch_operations
+                SET status='cancelled',actual_end=CASE WHEN actual_start IS NULL THEN actual_end
+                                                       ELSE COALESCE(actual_end,$at) END,
+                    version=version+1,updated_at=$at
+                WHERE production_batch_id=$batchId;
+
+                DELETE FROM batch_material_reservations WHERE production_batch_id=$batchId;
+
+                UPDATE production_batches
+                SET status='cancelled',version=version+1,updated_at=$at
+                WHERE id=$batchId AND version=$expectedVersion;
+                """;
+            update.Parameters.AddWithValue("$batchId", batchId);
+            update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
+            update.Parameters.AddWithValue("$at", at);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var machineId in machineIds)
+            await CompactMachineBacklogAsync(
+                connection, transaction, machineId, now, cancellationToken);
+
+        await SqliteOrderLifecycle.RecomputeAsync(
+            connection, transaction, affectedOrders, now, cancellationToken);
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection, transaction,
+            new("production_batch_cancelled", now, actor,
+                new Dictionary<string, string> { ["productionBatchId"] = batchId },
+                "PLANNER_CANCELLED", reason,
+                new { status, completedCycles, producedParts },
+                new { status = "cancelled", completedCycles = 0, producedParts = 0, runCount }),
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return await GetByIdAsync(batchId, cancellationToken);
+    }
+
+    private static async Task CompactMachineBacklogAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE machine_assignments
+            SET backlog_position=backlog_position+1000000
+            WHERE machine_id=$machineId;
+            WITH ranked AS (
+                SELECT id,ROW_NUMBER() OVER(ORDER BY backlog_position,id)-1 AS position
+                FROM machine_assignments WHERE machine_id=$machineId)
+            UPDATE machine_assignments
+            SET backlog_position=(SELECT position FROM ranked WHERE ranked.id=machine_assignments.id),
+                version=version+1,updated_at=$at
+            WHERE machine_id=$machineId;
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        command.Parameters.AddWithValue("$at", FormatInstant(now));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task<bool> CaseHasOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -544,14 +795,33 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = "SELECT case_id, status = 'cancelled' FROM orders WHERE id = $orderId;";
+            command.CommandText = """
+                SELECT orders.case_id,
+                       orders.status = 'cancelled',
+                       NOT EXISTS (
+                           SELECT 1
+                           FROM kitaron_sync_links case_link
+                           WHERE case_link.source_entity = 'case'
+                             AND case_link.target_id = orders.case_id)
+                       OR (
+                           orders.kitaron_history_only = 0
+                           AND EXISTS (
+                               SELECT 1
+                               FROM kitaron_sync_links order_link
+                               WHERE order_link.source_entity = 'order'
+                                 AND order_link.target_id = orders.id))
+                           AS is_current_authoritative_demand
+                FROM orders
+                WHERE orders.id = $orderId;
+                """;
             command.Parameters.AddWithValue("$orderId", allocation.OrderId!);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             references.Add(await reader.ReadAsync(cancellationToken)
                 ? new OrderAllocationReference(
                     allocation.OrderId!,
                     reader.GetString(0),
-                    reader.GetBoolean(1))
+                    reader.GetBoolean(1),
+                    reader.GetBoolean(2))
                 : new OrderAllocationReference(allocation.OrderId!, null));
         }
 

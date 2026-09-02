@@ -97,6 +97,13 @@ internal sealed class SqliteMaterialReconciliationRepository(SqliteDatabase data
         var actor = await EnsureEditAuthorityAsync(connection, transaction, authority, cancellationToken);
         var before = await ReadBatchAsync(connection, transaction, batchId, cancellationToken);
         if (before is null) return null;
+        if (await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM production_batches WHERE id=$id AND status='cancelled');",
+                batchId, cancellationToken))
+            throw new MaterialReconciliationValidationException(
+                "batchId", "batch_cancelled",
+                "Material cannot be reserved for a cancelled Production Batch.");
         var beforeReadiness = await ReadReadinessAsync(
             connection, transaction, before.CaseId, batchId, cancellationToken);
         if (reservations.Sum(item => (long)item.Quantity) > before.PlannedQuantity)

@@ -19,6 +19,50 @@ internal static class ProductionBatchEndpoints
         batches.MapGet(string.Empty, ListAsync);
         batches.MapGet("/{batchId}", GetByIdAsync);
         batches.MapGet("/{batchId}/operations", GetOperationsAsync);
+        batches.MapPost("/{batchId}/cancel-production", CancelProductionAsync);
+    }
+
+    private static async Task<IResult> CancelProductionAsync(
+        string batchId,
+        CancelProductionBatchRequest request,
+        HttpContext httpContext,
+        ProductionBatchService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var editAuthority, out var accessError))
+            return accessError!;
+        if (!TryReadExpectedVersion(httpContext.Request.Headers.IfMatch, batchId, out var expectedVersion))
+        {
+            var missing = StringValues.IsNullOrEmpty(httpContext.Request.Headers.IfMatch);
+            return Error(
+                missing ? StatusCodes.Status428PreconditionRequired : StatusCodes.Status412PreconditionFailed,
+                missing ? "precondition_required" : "resource_version_stale",
+                "A matching Production Batch If-Match header is required.", httpContext);
+        }
+        try
+        {
+            var cancelled = await service.CancelProductionAsync(
+                batchId, expectedVersion, request.Reason, editAuthority!, cancellationToken);
+            SetEntityTag(httpContext.Response, cancelled);
+            return Results.Ok(ProductionBatchResponse.FromDomain(cancelled));
+        }
+        catch (ProductionBatchNotFoundException)
+        {
+            return NotFound(httpContext);
+        }
+        catch (ProductionBatchVersionConflictException)
+        {
+            return Error(StatusCodes.Status412PreconditionFailed, "resource_version_stale",
+                "The Production Batch changed after it was read.", httpContext);
+        }
+        catch (ProductionBatchCancellationException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
+        catch (EditModeMutationException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
     }
 
     private static async Task<IResult> UpdateAsync(
@@ -279,3 +323,5 @@ internal static class ProductionBatchEndpoints
         },
         statusCode: status);
 }
+
+internal sealed record CancelProductionBatchRequest(string? Reason);

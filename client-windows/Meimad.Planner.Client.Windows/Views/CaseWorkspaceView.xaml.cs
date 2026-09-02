@@ -305,7 +305,16 @@ public partial class CaseWorkspaceView : UserControl
             await viewModel.DeleteSelectedBatchAsync();
     }
 
-    private static bool Confirm(string message) => MessageBox.Show(
-        message, "Confirm deletion", MessageBoxButton.YesNo,
+    private async void CancelBatchProduction_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is CaseWorkspaceViewModel viewModel
+            && Confirm(
+                "Cancel production for the selected Batch? The Batch, its Operations, Runs, and Programs will be cancelled; active Machine assignments and material reservations will be released; and Done parts will be reset to 0. Immutable CNC cycle and workflow history is retained. This cannot resume the same Production Run.",
+                "Confirm production cancellation"))
+            await viewModel.CancelSelectedBatchProductionAsync();
+    }
+
+    private static bool Confirm(string message, string title = "Confirm deletion") => MessageBox.Show(
+        message, title, MessageBoxButton.YesNo,
         MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 }

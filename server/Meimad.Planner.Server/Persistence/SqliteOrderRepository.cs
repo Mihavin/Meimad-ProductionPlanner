@@ -21,8 +21,12 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         created_at,
         updated_at
         ,price
-        ,EXISTS(SELECT 1 FROM kitaron_sync_links
-                WHERE source_entity='order' AND target_id=orders.id) AS is_kitaron_managed
+        ,EXISTS(
+            SELECT 1
+            FROM kitaron_sync_links
+            WHERE (source_entity='order' AND target_id=orders.id)
+               OR (source_entity='case' AND target_id=orders.case_id)
+        ) AS is_kitaron_managed
         ,kitaron_status
         ,kitaron_history_only
         """;
@@ -112,7 +116,11 @@ internal sealed class SqliteOrderRepository : IOrderRepository
                     NOT EXISTS (
                         SELECT 1 FROM kitaron_sync_links
                         WHERE source_entity='case' AND target_id=orders.case_id)
-                    OR kitaron_history_only=0)
+                    OR (
+                        kitaron_history_only=0
+                        AND EXISTS (
+                            SELECT 1 FROM kitaron_sync_links
+                            WHERE source_entity='order' AND target_id=orders.id)))
             ORDER BY work_finish_date, order_reference, id;
             """;
         command.Parameters.AddWithValue("$caseId", caseId);
@@ -247,7 +255,17 @@ internal sealed class SqliteOrderRepository : IOrderRepository
         command.CommandText = """
             SELECT EXISTS(
                 SELECT 1 FROM kitaron_sync_links
-                WHERE source_entity=$entity AND target_id=$id);
+                WHERE source_entity=$entity AND target_id=$id
+                UNION ALL
+                SELECT 1 FROM orders
+                WHERE $entity='order' AND id=$id AND kitaron_history_only=1
+                UNION ALL
+                SELECT 1
+                FROM orders
+                JOIN kitaron_sync_links case_link
+                  ON case_link.source_entity='case'
+                 AND case_link.target_id=orders.case_id
+                WHERE $entity='order' AND orders.id=$id);
             """;
         command.Parameters.AddWithValue("$entity", sourceEntity);
         command.Parameters.AddWithValue("$id", targetId);

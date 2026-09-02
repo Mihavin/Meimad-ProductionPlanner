@@ -383,6 +383,26 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task Editor_cancels_batch_production_and_disables_repeat_or_edit()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(25));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedBatch = viewModel.Batches.Single();
+
+        Assert.True(viewModel.CanCancelBatchProduction);
+        await viewModel.CancelSelectedBatchProductionAsync();
+
+        Assert.Equal("batch-1", api.LastCancelledBatchId);
+        Assert.Equal("\"batch:batch-1:v1\"", api.LastBatchEntityTag);
+        Assert.Equal(25, api.LastGeneration);
+        Assert.Equal("cancelled", viewModel.SelectedBatch?.Status);
+        Assert.False(viewModel.CanCancelBatchProduction);
+        Assert.False(viewModel.CanBeginEditBatch);
+    }
+
+    [Fact]
     public async Task Order_edit_omits_unchanged_status_so_server_can_rederive_it_after_quantity_changes()
     {
         var api = new FakeApiClient(CreateCase());
@@ -617,6 +637,7 @@ public sealed class CaseWorkspaceViewModelTests
         internal string? LastOrderEntityTag { get; private set; }
         internal ProductionBatchCreate? LastBatchCreate { get; private set; }
         internal ProductionBatchUpdate? LastBatchUpdate { get; private set; }
+        internal string? LastCancelledBatchId { get; private set; }
         internal string? LastBatchEntityTag { get; private set; }
         internal CaseOperationCreate? LastOperationCreate { get; private set; }
         internal CaseOperationUpdate? LastOperationUpdate { get; private set; }
@@ -929,6 +950,23 @@ public sealed class CaseWorkspaceViewModelTests
                 null, 1, 2,
                 update.Allocations.Select((value, index) => new BatchAllocation(
                     $"allocation-{index}", value.AllocationType, value.OrderId, value.Quantity)).ToArray()));
+        }
+
+        public Task<ProductionBatch> CancelBatchProductionAsync(
+            string batchId,
+            CancelProductionBatchRequest request,
+            string entityTag,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastCancelledBatchId = batchId;
+            LastBatchEntityTag = entityTag;
+            LastClientId = clientId;
+            LastGeneration = editGeneration;
+            return Task.FromResult(new ProductionBatch(
+                batchId, plannerCase.CaseId, "B-1", "cancelled", 5, null, 1, 2,
+                [new("allocation-1", "order", "order-1", 5)]));
         }
 
         public Task<BatchMaterialReconciliation> GetBatchMaterialAsync(

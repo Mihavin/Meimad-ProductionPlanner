@@ -205,6 +205,9 @@ internal sealed class KitaronSyncService
             }).OrderBy(item => item.PartNumber, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var canonicalOrders = BuildOrders(snapshot.Orders, warnings);
+        var canonicalSourceRows = canonicalOrders
+            .Select(order => OrderRowIdentity(order.CaseSourceKey, order.SourceKey))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var canonicalFacts = canonicalOrders.Select(OrderFact)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var workOrders = parsed
@@ -216,7 +219,8 @@ internal sealed class KitaronSyncService
             .GroupBy(row => $"{row.Part}\u001f{row.OrderNumber!.Trim()}\u001f{row.Quantity}\u001f{row.WorkFinishDate:yyyy-MM-dd}",
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderBy(row => row.SourceRecordId, StringComparer.OrdinalIgnoreCase).First())
-            .Where(row => !canonicalFacts.Contains(OrderFact(
+            .Where(row => !canonicalSourceRows.Contains(OrderRowIdentity(row.Part, row.SourceRecordId!))
+                && !canonicalFacts.Contains(OrderFact(
                 row.Part, row.OrderNumber!, row.Quantity!.Value, row.WorkFinishDate!.Value, "active")))
             .Select(row =>
             {
@@ -448,6 +452,9 @@ internal sealed class KitaronSyncService
     private static string OrderFact(
         string part, string orderNumber, int quantity, DateOnly date, string status) =>
         $"{part.Trim()}\u001f{orderNumber.Trim()}\u001f{quantity}\u001f{date:yyyy-MM-dd}\u001f{status}";
+
+    internal static string OrderRowIdentity(string part, string sourceRecordId) =>
+        $"{part.Trim()}\u001f{sourceRecordId.Trim()}";
 
     private static string? Consistent(IEnumerable<string?> values, string key, string field, ICollection<string> warnings)
     {

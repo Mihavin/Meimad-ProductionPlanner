@@ -138,7 +138,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         RecordMaterialReceiptCommand = new AsyncCommand(RecordMaterialReceiptAsync,
             () => isEditor && SelectedCase is not null && SelectedBatch is not null && apiClient is not null && !IsBusy);
         SaveMaterialReservationsCommand = new AsyncCommand(SaveMaterialReservationsAsync,
-            () => isEditor && SelectedBatch is not null && apiClient is not null && !IsBusy);
+            () => isEditor && SelectedBatch is not null
+                && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
+                && apiClient is not null && !IsBusy);
         SaveComponentCommand = new AsyncCommand(SaveComponentAsync,
             () => CanBeginChildCreate && (SelectedComponent is not null || SelectedComponentCase is not null));
         RemoveComponentCommand = new AsyncCommand(RemoveComponentAsync,
@@ -337,7 +339,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         ? "Kitaron-managed Case: master data and Orders are read-only and refreshed only by Kitaron synchronization."
         : "Manually created Case: master data and Orders can be edited in Meimad Planner.";
     public string OrderListAuthorityText => isKitaronManagedCase
-        ? "Current demand records from Kitaron; superseded Orders retained for production history are not shown here."
+        ? "Current Orders from the last successful Kitaron synchronization; historical and unlinked legacy rows are not shown here."
         : "Demand records for this Case; Orders are never assigned to Machines.";
 
     public CaseOperation? SelectedOperation
@@ -477,6 +479,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (SetField(ref selectedBatch, value))
             {
                 OnPropertyChanged(nameof(CanBeginEditBatch));
+                OnPropertyChanged(nameof(CanCancelBatchProduction));
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
                 BatchMaterial = null;
                 MaterialReceiptReservations.Clear();
@@ -627,7 +630,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanCreateBatch => IsCreatingBatch && CanManageBatches;
 
-    public bool CanBeginEditBatch => CanManageBatches && SelectedBatch is not null && !IsCreatingBatch;
+    public bool CanBeginEditBatch => CanManageBatches
+        && SelectedBatch is not null
+        && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
+        && !IsCreatingBatch;
+
+    public bool CanCancelBatchProduction => CanManageBatches
+        && SelectedBatch is not null
+        && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
+        && !IsCreatingBatch;
 
     public bool CanCreateOperation => IsCreatingOperation && CanManageOperations;
 
@@ -2056,6 +2067,39 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 });
     }
 
+    internal async Task CancelSelectedBatchProductionAsync()
+    {
+        var batch = SelectedBatch;
+        if (batch is null || apiClient is null || !CanCancelBatchProduction) return;
+
+        IsBusy = true;
+        try
+        {
+            var cancelled = await apiClient.CancelBatchProductionAsync(
+                batch.BatchId,
+                new CancelProductionBatchRequest("Cancelled from the Case Batch workspace."),
+                $"\"batch:{batch.BatchId}:v{batch.Version}\"",
+                clientId,
+                editGeneration);
+            var index = Batches.IndexOf(batch);
+            if (index >= 0) Batches[index] = cancelled;
+            SelectedBatch = cancelled;
+            Replace(Orders, await apiClient.ListOrdersAsync(cancelled.CaseId));
+            Replace(DerivedOrders, await apiClient.ListDerivedCaseOrdersAsync(cancelled.CaseId));
+            StatusMessage = $"Production Batch {cancelled.BatchNumber} cancelled. Done parts were reset to 0 and active production resources were released.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
     private async Task DeleteAsync(Func<Task> delete, string successMessage, Action apply)
     {
         if (!CanDelete) return;
@@ -2412,6 +2456,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanBeginEditOrder));
         OnPropertyChanged(nameof(CanCreateBatch));
         OnPropertyChanged(nameof(CanBeginEditBatch));
+        OnPropertyChanged(nameof(CanCancelBatchProduction));
         OnPropertyChanged(nameof(CanCreateOperation));
         OnPropertyChanged(nameof(CanBeginEditOperation));
         OnPropertyChanged(nameof(CanReleaseGCode));

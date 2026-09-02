@@ -229,6 +229,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
              AND batch_allocations.allocation_type = 'order'
             JOIN orders ON orders.id = batch_allocations.order_id
             WHERE orders.status IN ('active', 'in_production')
+              AND production_batches.status <> 'cancelled'
             ORDER BY orders.work_finish_date, production_batches.id;
             """;
         var values = new List<TvSourceBatchDueDate>();

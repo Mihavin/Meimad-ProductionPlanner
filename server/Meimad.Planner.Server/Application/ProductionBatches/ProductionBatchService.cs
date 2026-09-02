@@ -127,6 +127,27 @@ internal sealed class ProductionBatchService
         CancellationToken cancellationToken = default) =>
         repository.ListOperationsAsync(batchId, cancellationToken);
 
+    internal async Task<ProductionBatch> CancelProductionAsync(
+        string batchId,
+        int expectedVersion,
+        string? reason,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        _ = await repository.GetByIdAsync(batchId, cancellationToken)
+            ?? throw new ProductionBatchNotFoundException(batchId);
+        var normalizedReason = string.IsNullOrWhiteSpace(reason)
+            ? "Production cancelled by the planner."
+            : reason.Trim();
+        if (normalizedReason.Length > 1000)
+            throw new ProductionBatchCancellationException(
+                "reason_too_long", "Cancellation reason must contain at most 1000 characters.");
+        return await repository.CancelProductionAsync(
+                batchId, expectedVersion, normalizedReason, timeProvider.GetUtcNow(),
+                editAuthority, cancellationToken)
+            ?? throw new ProductionBatchVersionConflictException(batchId);
+    }
+
     private async Task EnsureCaseCanOwnBatchesAsync(string caseId, CancellationToken cancellationToken)
     {
         if (componentRepository is not null
@@ -208,4 +229,9 @@ internal sealed class ProductionBatchNotFoundException : Exception
 internal sealed class ProductionBatchVersionConflictException : Exception
 {
     internal ProductionBatchVersionConflictException(string batchId) : base($"Production Batch '{batchId}' changed after it was read.") { }
+}
+
+internal sealed class ProductionBatchCancellationException(string code, string message) : Exception(message)
+{
+    internal string Code { get; } = code;
 }

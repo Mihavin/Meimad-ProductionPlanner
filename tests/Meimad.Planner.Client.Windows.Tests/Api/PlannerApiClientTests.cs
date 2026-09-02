@@ -1613,6 +1613,29 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Batch_cancel_production_posts_reason_with_etag_and_edit_authority()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {"batchId":"batch-1","caseId":"case-1","batchNumber":"B-1","status":"cancelled","plannedQuantity":7,"routeRevision":1,"allocations":[],"batchOperationCount":2,"version":2}
+            """));
+        using var api = CreateClient(handler);
+
+        var cancelled = await api.CancelBatchProductionAsync(
+            "batch-1",
+            new CancelProductionBatchRequest("Prototype plan cancelled."),
+            "\"batch:batch-1:v1\"",
+            "windows-01",
+            32);
+
+        Assert.Equal("cancelled", cancelled.Status);
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/batches/batch-1/cancel-production", handler.Requests[0].Path);
+        Assert.Equal("\"batch:batch-1:v1\"", handler.Requests[0].IfMatch);
+        Assert.Equal("32", handler.Requests[0].Generation);
+        Assert.Contains("\"reason\":\"Prototype plan cancelled.\"", handler.Requests[0].Body);
+    }
+
+    [Fact]
     public async Task Machine_update_and_guarded_delete_commands_use_server_api()
     {
         var handler = new RecordingHandler(

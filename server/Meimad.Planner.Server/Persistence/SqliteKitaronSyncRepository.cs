@@ -196,18 +196,25 @@ internal sealed class SqliteKitaronSyncRepository(
         {
             create.Transaction = transaction;
             create.CommandText = """
-                CREATE TEMP TABLE IF NOT EXISTS current_kitaron_cases (id TEXT PRIMARY KEY);
-                DELETE FROM current_kitaron_cases;
-                CREATE TEMP TABLE IF NOT EXISTS current_kitaron_orders (
+                DROP TABLE IF EXISTS current_kitaron_cases;
+                CREATE TEMP TABLE current_kitaron_cases (id TEXT PRIMARY KEY);
+                DROP TABLE IF EXISTS current_kitaron_orders;
+                CREATE TEMP TABLE current_kitaron_orders (
                     source_key TEXT NOT NULL,
                     link_key TEXT NOT NULL,
+                    target_id TEXT NOT NULL UNIQUE,
                     case_id TEXT NOT NULL,
                     order_reference TEXT NOT NULL,
                     UNIQUE(case_id, order_reference COLLATE NOCASE));
-                DELETE FROM current_kitaron_orders;
-                CREATE TEMP TABLE IF NOT EXISTS protected_historical_orders (
+                DROP TABLE IF EXISTS protected_historical_orders;
+                CREATE TEMP TABLE protected_historical_orders (
                     id TEXT PRIMARY KEY);
-                DELETE FROM protected_historical_orders;
+                DROP TABLE IF EXISTS durable_kitaron_cases;
+                CREATE TEMP TABLE durable_kitaron_cases (
+                    id TEXT PRIMARY KEY);
+                DROP TABLE IF EXISTS obsolete_kitaron_orders;
+                CREATE TEMP TABLE obsolete_kitaron_orders (
+                    id TEXT PRIMARY KEY);
                 """;
             await create.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -228,14 +235,72 @@ internal sealed class SqliteKitaronSyncRepository(
             await using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
-                INSERT OR IGNORE INTO current_kitaron_orders(source_key,link_key,case_id,order_reference)
-                VALUES($sourceKey,$linkKey,$caseId,$reference);
+                INSERT OR IGNORE INTO current_kitaron_orders(
+                    source_key,link_key,target_id,case_id,order_reference)
+                SELECT $sourceKey,$linkKey,link.target_id,$caseId,$reference
+                FROM kitaron_sync_links link
+                WHERE link.source_entity='order' AND link.source_key=$linkKey;
                 """;
             Add(insert, "$sourceKey", order.SourceKey);
             Add(insert, "$linkKey", OrderSourceKey(order));
             Add(insert, "$caseId", caseId);
             Add(insert, "$reference", order.OrderNumber);
             await insert.ExecuteNonQueryAsync(cancellationToken);
+            insert.CommandText = """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM current_kitaron_orders expected
+                    JOIN kitaron_sync_links link
+                      ON link.source_entity='order'
+                     AND link.source_key=$linkKey
+                     AND link.target_id=expected.target_id
+                    WHERE expected.case_id=$caseId
+                      AND expected.order_reference=$reference COLLATE NOCASE);
+                """;
+            if (Convert.ToInt32(
+                    await insert.ExecuteScalarAsync(cancellationToken),
+                    CultureInfo.InvariantCulture) != 1)
+                throw new KitaronSyncDataException(
+                    $"Kitaron Order {order.OrderNumber} has no resolved Planner target.");
+        }
+
+        // A source snapshot can intentionally cover only part of Kitaron. Current
+        // rows are authoritative only for Cases present in that snapshot. The
+        // durable Case links are nevertheless authoritative enough to remove an
+        // unlinked Planner Order that could only have been added outside Kitaron.
+        // Never infer that a linked Order is obsolete for a Case absent from this
+        // snapshot; its link is retained until that Case is synchronized again.
+        await using (var identifyObsolete = connection.CreateCommand())
+        {
+            identifyObsolete.Transaction = transaction;
+            identifyObsolete.CommandText = """
+                INSERT OR IGNORE INTO durable_kitaron_cases(id)
+                SELECT DISTINCT link.target_id
+                FROM kitaron_sync_links link
+                JOIN cases target ON target.id=link.target_id
+                WHERE link.source_entity='case';
+
+                INSERT OR IGNORE INTO obsolete_kitaron_orders(id)
+                SELECT o.id
+                FROM orders o
+                JOIN durable_kitaron_cases managed_case ON managed_case.id=o.case_id
+                WHERE (
+                    EXISTS (
+                        SELECT 1 FROM current_kitaron_cases current_case
+                        WHERE current_case.id=o.case_id)
+                    AND NOT EXISTS (
+                        SELECT 1 FROM current_kitaron_orders expected
+                        WHERE expected.target_id=o.id))
+                  OR (
+                    NOT EXISTS (
+                        SELECT 1 FROM current_kitaron_cases current_case
+                        WHERE current_case.id=o.case_id)
+                    AND NOT EXISTS (
+                        SELECT 1 FROM kitaron_sync_links order_link
+                        WHERE order_link.source_entity='order'
+                          AND order_link.target_id=o.id));
+                """;
+            await identifyObsolete.ExecuteNonQueryAsync(cancellationToken);
         }
 
         await using (var restoreCurrentDemand = connection.CreateCommand())
@@ -248,8 +313,7 @@ internal sealed class SqliteKitaronSyncRepository(
                   AND EXISTS (
                       SELECT 1
                       FROM current_kitaron_orders expected
-                      WHERE expected.case_id=orders.case_id
-                        AND expected.order_reference=orders.order_reference COLLATE NOCASE);
+                      WHERE expected.target_id=orders.id);
                 """;
             Add(restoreCurrentDemand, "$now", now.ToString("O"));
             await restoreCurrentDemand.ExecuteNonQueryAsync(cancellationToken);
@@ -262,18 +326,14 @@ internal sealed class SqliteKitaronSyncRepository(
                 INSERT OR IGNORE INTO protected_historical_orders(id)
                 SELECT DISTINCT o.id
                 FROM orders o
-                JOIN current_kitaron_cases current_case ON current_case.id=o.case_id
+                JOIN obsolete_kitaron_orders obsolete ON obsolete.id=o.id
                 JOIN batch_allocations allocation
                   ON allocation.order_id=o.id
                   OR (allocation.allocation_type='derived_order'
                       AND instr(allocation.derived_order_key, 'derived:' || o.id || ':')=1)
                 JOIN batch_operations operation
                   ON operation.production_batch_id=allocation.production_batch_id
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM current_kitaron_orders expected
-                    WHERE expected.case_id=o.case_id
-                      AND expected.order_reference=o.order_reference COLLATE NOCASE)
-                  AND (
+                WHERE (
                     EXISTS (
                         SELECT 1 FROM production_runs legacy_run
                         WHERE legacy_run.legacy_batch_operation_id=operation.id
@@ -317,6 +377,7 @@ internal sealed class SqliteKitaronSyncRepository(
                         FROM kitaron_sync_links link
                         JOIN current_kitaron_orders expected ON expected.link_key=link.source_key
                         WHERE link.source_entity='order' AND link.target_id=target.id
+                          AND expected.target_id=target.id
                           AND expected.case_id=target.case_id
                         ORDER BY expected.source_key LIMIT 1),
                     version=version+1,
@@ -326,17 +387,9 @@ internal sealed class SqliteKitaronSyncRepository(
                         FROM kitaron_sync_links link
                         JOIN current_kitaron_orders expected ON expected.link_key=link.source_key
                         WHERE link.source_entity='order' AND link.target_id=target.id
+                          AND expected.target_id=target.id
                           AND target.case_id=expected.case_id
-                          AND target.order_reference<>expected.order_reference COLLATE NOCASE)
-                  AND NOT EXISTS (
-                        SELECT 1
-                        FROM kitaron_sync_links link
-                        JOIN current_kitaron_orders expected ON expected.link_key=link.source_key
-                        JOIN orders duplicate
-                          ON duplicate.case_id=expected.case_id
-                         AND duplicate.order_reference=expected.order_reference COLLATE NOCASE
-                        WHERE link.source_entity='order' AND link.target_id=target.id
-                          AND duplicate.id<>target.id);
+                          AND target.order_reference<>expected.order_reference COLLATE NOCASE);
                 """;
             Add(repair, "$now", now.ToString("O"));
             counts.OrdersUpdated += await repair.ExecuteNonQueryAsync(cancellationToken);
@@ -350,7 +403,8 @@ internal sealed class SqliteKitaronSyncRepository(
                 FROM current_kitaron_orders expected
                 WHERE NOT EXISTS (
                     SELECT 1 FROM orders actual
-                    WHERE actual.case_id=expected.case_id
+                    WHERE actual.id=expected.target_id
+                      AND actual.case_id=expected.case_id
                       AND actual.order_reference=expected.order_reference COLLATE NOCASE)
                 ORDER BY expected.order_reference LIMIT 1;
                 """;
@@ -368,12 +422,8 @@ internal sealed class SqliteKitaronSyncRepository(
                 SELECT DISTINCT allocation.production_batch_id
                 FROM batch_allocations allocation
                 JOIN orders o ON allocation.order_id=o.id
-                JOIN current_kitaron_cases current_case ON current_case.id=o.case_id
+                JOIN obsolete_kitaron_orders obsolete ON obsolete.id=o.id
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM current_kitaron_orders expected
-                    WHERE expected.case_id=o.case_id
-                      AND expected.order_reference=o.order_reference COLLATE NOCASE)
-                  AND NOT EXISTS (
                     SELECT 1
                     FROM batch_operations protected_operation
                     WHERE protected_operation.production_batch_id=allocation.production_batch_id
@@ -397,12 +447,8 @@ internal sealed class SqliteKitaronSyncRepository(
                 JOIN orders o
                   ON allocation.allocation_type='derived_order'
                  AND instr(allocation.derived_order_key, 'derived:' || o.id || ':')=1
-                JOIN current_kitaron_cases current_case ON current_case.id=o.case_id
+                JOIN obsolete_kitaron_orders obsolete ON obsolete.id=o.id
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM current_kitaron_orders expected
-                    WHERE expected.case_id=o.case_id
-                      AND expected.order_reference=o.order_reference COLLATE NOCASE)
-                  AND NOT EXISTS (
                     SELECT 1
                     FROM batch_operations protected_operation
                     WHERE protected_operation.production_batch_id=allocation.production_batch_id
@@ -438,12 +484,8 @@ internal sealed class SqliteKitaronSyncRepository(
             blocked.CommandText = """
                 SELECT o.order_reference
                 FROM orders o
-                JOIN current_kitaron_cases current_case ON current_case.id=o.case_id
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM current_kitaron_orders expected
-                    WHERE expected.case_id=o.case_id
-                      AND expected.order_reference=o.order_reference COLLATE NOCASE)
-                  AND (
+                JOIN obsolete_kitaron_orders obsolete ON obsolete.id=o.id
+                WHERE (
                     EXISTS (SELECT 1 FROM batch_allocations allocation WHERE allocation.order_id=o.id)
                     OR EXISTS (
                         SELECT 1 FROM batch_allocations allocation
@@ -465,14 +507,9 @@ internal sealed class SqliteKitaronSyncRepository(
             unlink.CommandText = """
                 DELETE FROM kitaron_sync_links
                 WHERE source_entity='order' AND target_id IN (
-                    SELECT o.id
-                    FROM orders o
-                    JOIN current_kitaron_cases current_case ON current_case.id=o.case_id
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM current_kitaron_orders expected
-                        WHERE expected.case_id=o.case_id
-                          AND expected.order_reference=o.order_reference COLLATE NOCASE)
-                      AND o.id NOT IN (SELECT id FROM protected_historical_orders));
+                    SELECT obsolete.id
+                    FROM obsolete_kitaron_orders obsolete
+                    WHERE obsolete.id NOT IN (SELECT id FROM protected_historical_orders));
                 """;
             await unlink.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -481,11 +518,7 @@ internal sealed class SqliteKitaronSyncRepository(
             remove.Transaction = transaction;
             remove.CommandText = """
                 DELETE FROM orders
-                WHERE case_id IN (SELECT id FROM current_kitaron_cases)
-                  AND NOT EXISTS (
-                    SELECT 1 FROM current_kitaron_orders expected
-                    WHERE expected.case_id=orders.case_id
-                      AND expected.order_reference=orders.order_reference COLLATE NOCASE)
+                WHERE id IN (SELECT id FROM obsolete_kitaron_orders)
                   AND id NOT IN (SELECT id FROM protected_historical_orders);
                 """;
             counts.OrdersDeleted += await remove.ExecuteNonQueryAsync(cancellationToken);

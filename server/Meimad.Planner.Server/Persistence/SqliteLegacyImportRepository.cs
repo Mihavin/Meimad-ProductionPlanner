@@ -563,6 +563,20 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             issues.Add(SourceIssue("case_not_found", $"Case '{caseId}' was not found.", source, "existingCaseId"));
             return null;
         }
+        if (await ExistsAsync(
+                connection,
+                transaction,
+                "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'case' AND target_id = $value);",
+                caseId,
+                cancellationToken))
+        {
+            issues.Add(SourceIssue(
+                "kitaron_managed_read_only",
+                $"Case '{caseId}' is managed by Kitaron; legacy Excel import cannot add an Order to its authoritative demand set.",
+                source,
+                "existingCaseId"));
+            return null;
+        }
         await using (var duplicate = connection.CreateCommand())
         {
             duplicate.Transaction = transaction;
@@ -656,7 +670,25 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         {
             await using var order = connection.CreateCommand();
             order.Transaction = transaction;
-            order.CommandText = "SELECT case_id, status FROM orders WHERE id = $id;";
+            order.CommandText = """
+                SELECT orders.case_id,
+                       orders.status,
+                       NOT EXISTS (
+                           SELECT 1
+                           FROM kitaron_sync_links case_link
+                           WHERE case_link.source_entity = 'case'
+                             AND case_link.target_id = orders.case_id)
+                       OR (
+                           orders.kitaron_history_only = 0
+                           AND EXISTS (
+                               SELECT 1
+                               FROM kitaron_sync_links order_link
+                               WHERE order_link.source_entity = 'order'
+                                 AND order_link.target_id = orders.id))
+                           AS is_current_authoritative_demand
+                FROM orders
+                WHERE orders.id = $id;
+                """;
             order.Parameters.AddWithValue("$id", allocation.OrderId!);
             await using var reader = await order.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)
@@ -664,6 +696,14 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
                 || reader.GetString(1) == "cancelled")
             {
                 issues.Add(SourceIssue("allocation_order_invalid", $"Order '{allocation.OrderId}' is missing, cancelled, or belongs to another Case.", source, "allocations.orderId"));
+            }
+            else if (!reader.GetBoolean(2))
+            {
+                issues.Add(SourceIssue(
+                    "noncurrent_kitaron_order",
+                    $"Order '{allocation.OrderId}' is not current authoritative Kitaron demand and cannot receive a new Production Batch allocation.",
+                    source,
+                    "allocations.orderId"));
             }
         }
 

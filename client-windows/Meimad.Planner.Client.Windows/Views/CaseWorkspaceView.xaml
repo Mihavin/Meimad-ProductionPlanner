@@ -423,7 +423,7 @@
                                     </DataGrid>
 
                                     <TextBlock Text="Release G-code" FontWeight="SemiBold" Margin="0,14,0,6"/>
-                                    <TextBlock Text="The NC file must contain exactly one generic verification hook as its first executable block: G65 P9xxx Axxxxxx. (MEIMAD VERIFY V1), or the approved custom G-code equivalent. The six-digit NC identity must be unique. Meimad validates the file but never edits it."
+                                    <TextBlock Text="The source NC template must contain exactly one standalone [[MEIMAD:VERIFICATION_HOOK]] before its first executable block. Release does not require or validate a G65 P... call; the Server inserts the configured verification call only when it builds a Machine-specific Production Package."
                                                TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <UniformGrid Columns="2">
                                         <StackPanel Style="{StaticResource FormField}">
@@ -684,6 +684,9 @@
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                     <Button Content="Delete Selected" Click="DeleteBatch_Click" IsEnabled="{Binding CanDelete}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditBatchCommand}" />
+                                    <Button Content="Cancel production" Click="CancelBatchProduction_Click"
+                                            IsEnabled="{Binding CanCancelBatchProduction}"
+                                            ToolTip="Cancel this Batch, release active production resources, and reset Done parts to zero." />
                                     <Button Content="Add Production Batch" Command="{Binding BeginCreateBatchCommand}" Margin="0"
                                             ToolTip="Requires at least one defined Case Operation; the Server never invents a route." />
                                 </StackPanel>

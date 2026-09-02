@@ -73,13 +73,13 @@ An operation can be blocked by missing material, an unassigned machine, incompat
 For a released G-code revision:
 
 1. Select the postprocessor and change scope.
-2. Confirm the postprocessor generated exactly one `(MEIMAD PACKAGE VERIFY V1 NCID=xxxxxx)` placeholder before the first executable block. The six-digit identity must be new for this exact release. Do not upload a new source template containing an active `G65` Meimad verification call.
+2. Confirm the postprocessor generated exactly one standalone `[[MEIMAD:VERIFICATION_HOOK]]` before the first executable block. G-code release checks only this insertion point; ordinary `G65 P...` machining calls are unrelated. The Server assigns the six-digit identity and inserts the configured verification call only in the generated Machine-specific package.
 3. Choose the released G-code and the exact physical tool table supplied to the machine.
 4. Enter the release comment and process-change description.
 5. Confirm the physical tool table and the creation of the new manufacturing-process revision.
 6. Release the G-code and review the recorded verification identity in revision history.
 
-Releasing a new manufacturing-process revision makes other postprocessor releases non-current for that revision until they are regenerated. Meimad validates and stores the hook identity but never inserts it or overwrites original NC files. Historical releases created before schema v51 remain downloadable, show the hook as unavailable, and cannot support protected NC verification until intentionally re-released with a valid hook.
+Releasing a new manufacturing-process revision makes other postprocessor releases non-current for that revision until they are regenerated. Meimad validates the insertion placeholder and stores the Server-assigned hook identity but never overwrites original NC files. Historical releases created before schema v51 remain downloadable, show the hook as unavailable, and cannot support protected NC verification until intentionally re-released with a valid placeholder.
 
 ## 5. Haas NGC connection and part identity
 

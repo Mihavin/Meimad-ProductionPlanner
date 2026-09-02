@@ -216,6 +216,61 @@ public sealed class LegacyImportApiTests
     }
 
     [Fact]
+    public async Task Create_order_commit_rejects_a_Kitaron_managed_existing_case()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            await ExecuteAsync(application.Services, """
+                INSERT INTO kitaron_sync_links (
+                    source_entity, source_key, target_id, owns_target,
+                    source_hash, first_seen_at, last_seen_at)
+                VALUES (
+                    'case', 'PN-1', 'case-1', 1,
+                    'case-hash', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z');
+                """);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.CreateFlatOpenOrders(
+                partNumber: "PN-1",
+                orderNumber: "LEGACY-ORDER"));
+            var body = new
+            {
+                schemaVersion = 1,
+                importToken = preview.RootElement.GetProperty("importToken").GetString(),
+                workbookSha256 = preview.RootElement.GetProperty("workbookSha256").GetString(),
+                planningSheet = (string?)null,
+                openOrdersSheet = "Orders",
+                columnMappings = Array.Empty<object>(),
+                machineMappings = Array.Empty<object>(),
+                openOrderSelections = new object[]
+                {
+                    new
+                    {
+                        rowKey = "Orders!2",
+                        action = "create_order",
+                        existingCaseId = "case-1",
+                        order = new { orderNumber = "LEGACY-ORDER", quantity = 50, workFinishDate = "2026-09-10" }
+                    }
+                },
+                planningSelections = Array.Empty<object>()
+            };
+
+            using var response = await client.PostAsJsonAsync("/api/v1/imports/legacy-working-plan/commit", body);
+
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var issue = Assert.Single(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray());
+            Assert.Equal("kitaron_managed_read_only", issue.GetProperty("code").GetString());
+            Assert.Equal("existingCaseId", issue.GetProperty("field").GetString());
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM orders WHERE case_id = 'case-1' AND order_reference = 'LEGACY-ORDER';"));
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM legacy_working_plan_imports WHERE workbook_sha256 = '"
+                + preview.RootElement.GetProperty("workbookSha256").GetString() + "';"));
+        });
+    }
+
+    [Fact]
     public async Task Case_order_only_import_can_resume_same_workbook_with_a_new_audited_selection()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -961,6 +1016,53 @@ public sealed class LegacyImportApiTests
             Assert.Equal(2, replay.RootElement.GetProperty("poolBatchOperationIds").GetArrayLength());
             Assert.Equal(1, await ScalarAsync(application.Services,
                 "SELECT COUNT(*) FROM production_batches WHERE batch_number = 'B-POOL';"));
+        });
+    }
+
+    [Fact]
+    public async Task Batch_import_rejects_unlinked_Order_under_a_Kitaron_managed_case()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningAsync(application.Services);
+            await ExecuteAsync(application.Services, """
+                INSERT INTO orders (
+                    id, case_id, order_reference, quantity, work_finish_date, status)
+                VALUES (
+                    'order-1', 'case-1', 'ORDER-1', 10, '2026-09-30', 'active');
+                INSERT INTO kitaron_sync_links (
+                    source_entity, source_key, target_id, owns_target,
+                    source_hash, first_seen_at, last_seen_at)
+                VALUES (
+                    'case', 'case-source-1', 'case-1', 1,
+                    'case-hash', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z');
+                """);
+            AddEditHeaders(client);
+            using var preview = await PreviewAsync(client, LegacyWorkbookFixture.Create(marker: "kitaron-stale-allocation"));
+            var body = CommitBody(
+                preview.RootElement.GetProperty("importToken").GetString()!,
+                preview.RootElement.GetProperty("workbookSha256").GetString()!,
+                [new
+                {
+                    rowKey = $"{LegacyWorkbookFixture.PlanningSheet}!3",
+                    action = "create_batch_to_pool",
+                    caseId = "case-1",
+                    batchNumber = "B-KITARON-STALE",
+                    expectedCaseRoute = ExpectedRoute("case-operation-1"),
+                    allocations = new[] { new { type = "order", orderId = "order-1", quantity = 2 } }
+                }]);
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/v1/imports/legacy-working-plan/commit",
+                body);
+
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains(error.RootElement.GetProperty("error").GetProperty("details").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "noncurrent_kitaron_order"
+                && issue.GetProperty("field").GetString() == "allocations.orderId");
+            Assert.Equal(0, await ScalarAsync(application.Services,
+                "SELECT COUNT(*) FROM production_batches WHERE batch_number = 'B-KITARON-STALE';"));
         });
     }
 
