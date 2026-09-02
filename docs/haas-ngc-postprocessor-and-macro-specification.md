@@ -1,347 +1,432 @@
-# Meimad Haas NGC postprocessor guide
+# Haas NGC PostProcessor guide for Meimad Production Planner
 
-This is the complete postprocessor-facing specification for Meimad Production
-Planner. It is written for SolidCAM and Cimatron post writers who do not need to
-know the Server database, tablet, or verification mathematics.
+**Audience:** Haas NGC post writers, especially SolidCAM GPPL and Cimatron GPP/GPP2 developers  
+**Contract status:** Authoritative target contract for new canonical NC releases  
+**Updated:** 2026-09-02
 
-## The three lines a post may write
+> **PostProcessor = deterministic Haas NC + stable placeholders.**  
+> **Production Package Creator = authoritative placeholder resolution + Machine-specific transformation.**
 
-The released NC is a **source template**, not the final Machine file. Write the
-following verification placeholder exactly once, before the first executable
-block:
+The PostProcessor is server-blind. It must generate ordinary Haas cutting code and
+stable Meimad tokens, but it must never read Planner data or write authoritative
+Part, Operation, Machine, Run, Package, release, verification, creator, or timestamp
+values.
 
-```gcode
-(MEIMAD PACKAGE VERIFY V1 NCID=817426)
-```
+This guide explains both sides of the boundary:
 
-`817426` is an example. Supply a new Server-approved six-digit NC identity from
-`100000` through `999999` for every changed release.
+1. what the PostProcessor must emit in the immutable canonical NC release;
+2. what the Server-generated runnable Haas file must contain for NC verification and
+   cycle-based part counting.
 
-If Meimad cycle counting is enabled for this post, also write exactly one pair:
+The PostProcessor owns only item 1. The Production Package Creator owns item 2.
 
-```gcode
-(MEIMAD PACKAGE CYCLE START V1)
-...
-(MEIMAD PACKAGE CYCLE END V1)
-```
+## 1. The three artifacts are different
 
-The START marker belongs immediately before the physical machining cycle. The
-END marker belongs only on the common successful path after that whole physical
-cycle has completed. The markers are comments in the released template. The
-Server resolves them when it creates a Machine-specific Production Package.
+| Artifact | Created by | Purpose |
+|---|---|---|
+| Canonical NC release | CAM PostProcessor | Immutable cutting program with stable Meimad placeholders. |
+| Runnable package NC | Production Package Creator | Machine-specific copy with authoritative values and required verification/counting code. |
+| Offset Loader | Production Package Creator | Package-specific setup/verification artifact when the assigned Machine requires it. |
 
-## What the post must not write
+Never edit the canonical release to make a package. Its exact bytes and SHA-256 remain
+immutable; the runnable NC and Offset Loader receive their own artifact identities and
+hashes.
 
-The normal CAM post must not write:
+## 2. Canonical placeholder grammar
 
-- `G65 P9001` or an Offset Loader;
-- `G65 P9002` or another active Server-verification call;
-- `(MEIMAD VERIFY V1)`;
-- `OLC`, `SVS`, or `SVF` DPRNT records;
-- raw `CST` or `CEN` DPRNT records;
-- a Machine-specific macro number, protected-variable number, nonce, response,
-  Offset Loader token, Machine credential, or tablet value.
-
-The Server owns those values. A verification-enabled CNC package receives the
-currently configured verification call, commissioned cycle-event blocks, and a
-unique package-specific Offset Loader. A verification-disabled CNC package has
-all three package markers removed and receives no active verification code. A
-Manual Machine package receives no CNC executable.
-
-## Exact marker grammar
-
-The verification line is a full-line Haas comment with this exact structure:
+Every Meimad token uses this exact grammar:
 
 ```text
-(MEIMAD PACKAGE VERIFY V1 NCID=dddddd)
+[[MEIMAD:<KEY>]]
 ```
 
-Rules:
+Token formatting rules:
 
-1. `dddddd` is exactly six decimal digits from `100000` through `999999`.
-2. There is exactly one ASCII space between words.
-3. There are no spaces around `=`.
-4. There is no decimal point after the identity.
-5. The marker occurs before the first executable block. `%`, an `O` header,
-   blank lines, and full-line comments may precede it.
-6. Do not put an `N` sequence word on a marker line.
-7. Do not split a marker across output lines.
-8. Each separately released main NC file has its own identity and marker.
+- ASCII characters only inside the token.
+- Use uppercase key names exactly as documented.
+- Do not add spaces inside the token.
+- Do not split a token across lines.
+- Do not prefix a standalone executable insertion token with an `N` sequence number.
+- Do not invent default values such as `UNKNOWN`, the CAM Part Name, the O-number, or
+  the file name.
+- Do not use fuzzy comments for integration. Package Creator parses exact tokens.
+- A token is not a macro variable and is not valid runnable Haas code. It must be
+  resolved or deliberately removed before package activation.
 
-Cycle markers are optional as a pair, but never individually:
+## 3. Required Haas source-template layout
 
-```text
-(MEIMAD PACKAGE CYCLE START V1)
-(MEIMAD PACKAGE CYCLE END V1)
-```
-
-START must precede END. There may be ordinary G-code between them. Neither may
-occur more than once in one released file.
-
-## Correct and incorrect NC templates
-
-Correct minimum template:
+A new Haas canonical release must use the following structure:
 
 ```gcode
 %
-O01995 (PART-100 OP10)
-(PART: PART-100)
-(CASE: CASE-100)
-(OPERATION: OP10)
-(REVISION: A)
-(MEIMAD PACKAGE VERIFY V1 NCID=817426)
-G17 G40 G49 G80 G90
-M30
-%
-```
+O01500
+(PART: [[MEIMAD:PART_NAME]])
+(OPERATION: [[MEIMAD:OPERATION_NAME]])
+(MACHINE_ID: [[MEIMAD:MACHINE_ID]])
+(POSTPROCESSOR_ID: [[MEIMAD:POSTPROCESSOR_ID]])
+(PRODUCTION_RUN_ID: [[MEIMAD:PRODUCTION_RUN_ID]])
+(PRODUCTION_PACKAGE_ID: [[MEIMAD:PRODUCTION_PACKAGE_ID]])
+(NC_RELEASE_ID: [[MEIMAD:NC_RELEASE_ID]])
+[[MEIMAD:VERIFICATION_HOOK]]
 
-Correct template with one physical cycle:
-
-```gcode
-%
-O01995 (PART-100 OP10)
-(PART: PART-100)
-(OPERATION: OP10)
-(MEIMAD PACKAGE VERIFY V1 NCID=817426)
 G17 G40 G49 G80 G90
 T1 M06
 G54
-(MEIMAD PACKAGE CYCLE START V1)
+
+[[MEIMAD:EVENT_CONTEXT]]
 M03 S2500
 G00 X0. Y0.
 G01 Z-2. F100.
 G00 Z50.
 M05
-(MEIMAD PACKAGE CYCLE END V1)
+[[MEIMAD:EVENT_CONTEXT]]
+
 M30
 %
 ```
 
-Wrong because executable code precedes the identity marker:
+The first `EVENT_CONTEXT` occurrence is the physical-cycle start insertion point.
+The second is the successful physical-cycle end insertion point. Version 1 uses their
+order to define the roles.
+
+### Multiplicity
+
+| Token | Canonical Haas rule |
+|---|---|
+| `PART_NAME` | Exactly once in the Meimad header. |
+| `OPERATION_NAME` | Exactly once in the Meimad header. |
+| `MACHINE_ID` | Exactly once. |
+| `POSTPROCESSOR_ID` | Exactly once. |
+| `PRODUCTION_RUN_ID` | Exactly once. |
+| `PRODUCTION_PACKAGE_ID` | Exactly once. |
+| `NC_RELEASE_ID` | Exactly once. |
+| `VERIFICATION_HOOK` | Exactly once, before the first executable Haas block. |
+| `EVENT_CONTEXT` | Either absent as a pair-disabled mode, or exactly twice in start/end order. |
+
+`OFFSET_LOADER_RELEASE_ID`, the six-digit NC verification identity, nonce, macro
+version, response code, event sequence variable, and protected program numbers belong
+to the concrete package. The Haas post does not place or calculate them independently;
+Package Creator inserts them through the verification/event expansions and generated
+Offset Loader.
+
+## 4. Part Name and Operation Name are always placeholders
+
+Do not output a CAM or programmer-entered value in a Meimad identity field, even when
+it appears correct:
+
+```gcode
+(PART: 30P450025601-001)       (WRONG IN CANONICAL RELEASE)
+(OPERATION: OP20 FINISH)       (WRONG IN CANONICAL RELEASE)
+```
+
+Use:
+
+```gcode
+(PART: [[MEIMAD:PART_NAME]])
+(OPERATION: [[MEIMAD:OPERATION_NAME]])
+```
+
+Package Creator resolves both from Meimad master data. This prevents a typo, stale CAM
+property, renamed Operation, or copied CAM project from disagreeing with the Server.
+
+The O-number and file name are locators only. They never identify the Part.
+
+## 5. Verification insertion point
+
+`[[MEIMAD:VERIFICATION_HOOK]]` must be before the first executable block. Only these
+items may precede it:
+
+- `%`;
+- the `O` program header;
+- blank lines;
+- full-line comments containing placeholders or human-readable non-authoritative notes.
+
+Safety codes, tool calls, macro calls, spindle commands, and motion are executable and
+must not precede the token.
+
+The PostProcessor must not emit any of the following:
+
+```gcode
+G65 P9001 ...
+G65 P9002 ...
+(MEIMAD VERIFY V1)
+DPRNT[MEIMAD/V/1/EVENT/...]
+```
+
+It must also not output an Offset Loader, protected variable number, verification
+timeout, Machine IP/MAC, tablet value, nonce, response, release token, or sequence
+counter.
+
+For a verification-enabled Machine, Package Creator currently expands the insertion
+point into a call equivalent to:
+
+```gcode
+G65 P9002 A483921. (MEIMAD VERIFY V1)
+```
+
+The program number and six-digit identity above are examples only. They are selected
+and bound by the Server for the exact package; the post must not hard-code them.
+
+For a verification-disabled Machine, Package Creator removes the insertion token and
+must leave no active Meimad verification code. Temporary network loss must not silently
+change this policy.
+
+## 6. Verification lifecycle the generated NC must support
+
+The Server accepts verification only for the exact current binding of Production Run,
+Machine, NC release/identity, Offset Loader release, nonce, and macro version.
+
+```text
+Offset Loader completed -> ARMED -> first main NC start -> PENDING -> SUCCEEDED
+```
+
+- `ARMED` has no timeout.
+- The first intended main NC start emits the verification-request evidence and starts
+  the configured pending timeout. The accepted product requirement is 120 seconds.
+- Successful verification is reused for later starts of the same exact setup binding.
+- A newly completed Offset Loader supersedes an earlier armed, pending, or successful
+  binding.
+- Event sequence numbers are diagnostic evidence. A gap, reset, wrap, duplicate, or
+  out-of-order value is retained as an anomaly but is not identity authority.
+- Machine recognition by configured Planner Machine ID, fixed IP, and MAC does not by
+  itself prove that the NC or Offset Loader is valid.
+
+## 7. Physical-cycle markers and part counting
+
+The two `EVENT_CONTEXT` tokens must surround exactly one complete physical program
+cycle:
+
+```gcode
+[[MEIMAD:EVENT_CONTEXT]]
+(ALL CUTTING REQUIRED FOR ONE PHYSICAL CYCLE)
+[[MEIMAD:EVENT_CONTEXT]]
+```
+
+Placement rules:
+
+1. START belongs immediately before work that begins one physical cycle.
+2. END belongs only on the common successful path after the entire physical cycle has
+   completed.
+3. END must execute before `M30`, `M99`, or any successful return that leaves the
+   main cycle.
+4. Alarm, reset, optional-stop, restart, or failure paths must not reach END as though a
+   part completed.
+5. Do not put a pair around every tool, CAM procedure, operation, or subprogram.
+6. A restart that reaches a new START before a valid END interrupts the previous
+   attempt; it does not count a part.
+7. An END without a matching START is retained as an anomaly and does not increment
+   production.
+8. If one NC cycle produces several outputs, use one START/END pair around the atomic
+   cycle. The Server increments each declared output by its immutable
+   `quantityPerCycle`; do not emit one pair per output part.
+
+Package Creator expands the first and second tokens into commissioned V10 `CST` and
+`CEN` DPRNT blocks. The Server increments the completed-cycle count only after a
+matched accepted `CEN`. A duplicate event identity is idempotent and cannot count the
+same cycle twice.
+
+Illustrative generated event lines are:
+
+```text
+MEIMAD/V/1/EVENT/CST/ID/NC-483921-S-12345/SEQ/41/MACROVERSION/10/PROGRAM/483921
+MEIMAD/V/1/EVENT/CEN/ID/NC-483921-E-67890/SEQ/42/MACROVERSION/10/PROGRAM/483921
+```
+
+The Package Creator, not the post, produces these values.
+
+## 8. Server wire-format constraints
+
+Generated DPRNT records are strict:
+
+```text
+MEIMAD/V/1/EVENT/<CODE>/ID/<EVENT_ID>/SEQ/<N>/MACROVERSION/<N>
+[/RUN/<RUN_ID>][/PROGRAM/<PROGRAM_ID>][/OFFSETRELEASE/<TOKEN>][/NONCE/<NONCE>]
+```
+
+Rules enforced by the Server:
+
+- maximum line length: 512 ASCII bytes;
+- only uppercase `A-Z`, digits, `/`, and `-` in the wire record;
+- required field order: `V`, `EVENT`, `ID`, `SEQ`, `MACROVERSION`;
+- optional order: `RUN`, `PROGRAM`, `OFFSETRELEASE`, `NONCE`;
+- event IDs contain 1–128 characters and start with an uppercase letter or digit;
+- verification evidence requires both six-digit `OFFSETRELEASE` and `NONCE`;
+- cycle events must carry a resolvable `PROGRAM` identity;
+- final package NC is ASCII with CRLF line endings.
+
+These are Package Creator/macro-generation rules. The post writer preserves the
+placeholder locations and must not duplicate the wire protocol.
+
+## 9. Complete examples
+
+### Correct canonical NC
+
+```gcode
+%
+O01500
+(PART: [[MEIMAD:PART_NAME]])
+(OPERATION: [[MEIMAD:OPERATION_NAME]])
+(MACHINE_ID: [[MEIMAD:MACHINE_ID]])
+(POSTPROCESSOR_ID: [[MEIMAD:POSTPROCESSOR_ID]])
+(PRODUCTION_RUN_ID: [[MEIMAD:PRODUCTION_RUN_ID]])
+(PRODUCTION_PACKAGE_ID: [[MEIMAD:PRODUCTION_PACKAGE_ID]])
+(NC_RELEASE_ID: [[MEIMAD:NC_RELEASE_ID]])
+[[MEIMAD:VERIFICATION_HOOK]]
+G17 G40 G49 G80 G90
+T1 M06
+G54
+[[MEIMAD:EVENT_CONTEXT]]
+M03 S2500
+G01 X10. Y20. F300.
+M05
+[[MEIMAD:EVENT_CONTEXT]]
+M30
+%
+```
+
+### Wrong: CAM identity leaked into the canonical release
+
+```gcode
+(PART: PART-100)
+(OPERATION: OP10)
+```
+
+### Wrong: verification insertion is late
 
 ```gcode
 G90
-(MEIMAD PACKAGE VERIFY V1 NCID=817426)
+[[MEIMAD:VERIFICATION_HOOK]]
 ```
 
-Wrong because this is an active Machine-specific call in a source template:
+### Wrong: permanently active Machine-specific code
 
 ```gcode
-G65 P9002 A817426. (MEIMAD VERIFY V1)
+G65 P9002 A483921. (MEIMAD VERIFY V1)
 ```
 
-Wrong because only one cycle marker is present:
+### Wrong: only one cycle boundary
 
 ```gcode
-(MEIMAD PACKAGE CYCLE START V1)
+[[MEIMAD:EVENT_CONTEXT]]
 M30
 ```
 
-## Required post inputs
+### Wrong: one count per tool
 
-| Input | Requirement |
-|---|---|
-| Meimad template enabled | Required for a Meimad production release. |
-| NC identity | Exactly six digits; new for each exact release. |
-| Cycle markers enabled | Default `No`; enable only when the physical cycle boundary is known. |
-| Part / Case / Operation / Revision | Human-readable header comments when available. |
-
-The post does **not** need a verify-program number, challenge-program number,
-Offset Loader token, macro version, sequence variable, Machine IP, or Machine
-name. Those are resolved by the Server from the assigned Machine configuration.
-
-Stop posting with a clear error when Meimad mode is enabled and the NC identity
-is missing or outside the valid range. Do not derive the identity from the
-O-number, date, part, file name, or operation; those values can repeat.
-
-## Generic implementation logic
-
-```text
-begin main output file
-    write percent and O-number
-    write full-line identification comments
-
-    if Meimad mode is not enabled
-        stop: this output is not a Meimad release template
-    end if
-
-    if NC identity is not an integer from 100000 through 999999
-        stop with a clear error
-    end if
-
-    write "(MEIMAD PACKAGE VERIFY V1 NCID=" + NC identity + ")"
-
-    write normal Haas initialization and machining
-
-    if cycle markers are enabled
-        write START once before the physical cycle
-        write END once on the common successful completion path
-    end if
-end main output file
+```gcode
+[[MEIMAD:EVENT_CONTEXT]]
+T1 M06
+[[MEIMAD:EVENT_CONTEXT]]
+[[MEIMAD:EVENT_CONTEXT]]
+T2 M06
+[[MEIMAD:EVENT_CONTEXT]]
 ```
 
-Call the marker-writing routine once per **output file**, not once per CAM job,
-procedure, operation, tool, or subprogram.
+## 10. SolidCAM GPPL pattern
 
-## SolidCAM GPPL example
-
-Names differ between customer posts. Keep the existing file-open and validation
-procedures and add one shared marker routine after header comments but before
-the normal start codes.
+Use the installed post family's existing fatal-error mechanism. Emit the header tokens
+from the main-file opening path, after `%`/`O` output and before normal start codes.
 
 ```text
 @start_of_file
     call @usr_sof_character
     call @usr_sof_progname
-    call @usr_sof_commentsbeforecodes
-
-    call @usr_meimad_package_marker
-
+    call @usr_meimad_header_and_hooks
     call @usr_sof_gmcodes
-    call @usr_sof_commentsaftercodes
 endp
 
-@usr_meimad_package_marker
-    if iVMID_MEIMAD_ENABLED ne 1
-        {message,'Meimad template mode must be enabled'}
-        exit
-    endif
-
-    if iVMID_MEIMAD_NC_ID lt 100000 or iVMID_MEIMAD_NC_ID gt 999999
-        {message,'Meimad NC ID must contain six digits'}
-        exit
-    endif
-
-    {nl,'(MEIMAD PACKAGE VERIFY V1 NCID='iVMID_MEIMAD_NC_ID')'}
+@usr_meimad_header_and_hooks
+    {nl,'(PART: [[MEIMAD:PART_NAME]])'}
+    {nl,'(OPERATION: [[MEIMAD:OPERATION_NAME]])'}
+    {nl,'(MACHINE_ID: [[MEIMAD:MACHINE_ID]])'}
+    {nl,'(POSTPROCESSOR_ID: [[MEIMAD:POSTPROCESSOR_ID]])'}
+    {nl,'(PRODUCTION_RUN_ID: [[MEIMAD:PRODUCTION_RUN_ID]])'}
+    {nl,'(PRODUCTION_PACKAGE_ID: [[MEIMAD:PRODUCTION_PACKAGE_ID]])'}
+    {nl,'(NC_RELEASE_ID: [[MEIMAD:NC_RELEASE_ID]])'}
+    {nl,'[[MEIMAD:VERIFICATION_HOOK]]'}
 endp
 ```
 
-The exact error/abort statement is post-family dependent; use the customer
-post's existing fatal-validation pattern. Ensure numeric formatting adds no
-sign, grouping separator, spaces, or decimals.
-
-If one SolidCAM project generates three separately released main files, call
-the routine once in each file-open path and require three different identities.
-Do not emit the marker from `@start_of_job`, tool-change, or technology-cycle
-procedures that can run more than once.
-
-For optional cycle markers, call these only at the approved whole-part boundary:
+At the approved whole-cycle boundary:
 
 ```text
-{nl,'(MEIMAD PACKAGE CYCLE START V1)'}
-    ; existing physical cycle output
-{nl,'(MEIMAD PACKAGE CYCLE END V1)'}
+{nl,'[[MEIMAD:EVENT_CONTEXT]]'}
+    ; existing output for one complete physical cycle
+{nl,'[[MEIMAD:EVENT_CONTEXT]]'}
 ```
 
-## Cimatron original GPP example
+Call the header routine once per output file, not once per job, tool, procedure, or
+subprogram. If one CAM project creates three separately released main programs, each
+file receives the complete deterministic placeholder layout. Do not request a
+Server-generated NC identity from the programmer.
 
-Declare one sequencing input and validate it using the customer's existing GPP
-fatal-error convention. Write the marker inside `BEGINNING OF TAPE`, after
-header comments and before any Haas command.
+## 11. Cimatron GPP/GPP2 pattern
+
+Write literal tokens in `BEGINNING OF TAPE`, after the `O` header and before the
+first Haas command:
 
 ```text
-FORMAT (SEQUENCING) MEIMAD_NC_ID ;
-
-INTERACTION (SEQUENCING)
-    "MEIMAD NC ID - SIX DIGITS"
-    MEIMAD_NC_ID = 0 ;
-
 BEGINNING OF TAPE:
-    * Use the installed post's fatal-stop convention here when invalid.
     OUTPUT "% " \J "O" PGN ;
-    * Existing full-line PART/CASE/OPERATION/REVISION comments.
-
-    OUTPUT $ " (MEIMAD PACKAGE VERIFY V1 NCID="
-        MEIMAD_NC_ID ")" ;
-
-    * The existing first executable Haas block follows.
-    OUTPUT $ " G17 G40 G49 G80 G90" ;
+    OUTPUT $ " (PART: [[MEIMAD:PART_NAME]])" ;
+    OUTPUT $ " (OPERATION: [[MEIMAD:OPERATION_NAME]])" ;
+    OUTPUT $ " (MACHINE_ID: [[MEIMAD:MACHINE_ID]])" ;
+    OUTPUT $ " (POSTPROCESSOR_ID: [[MEIMAD:POSTPROCESSOR_ID]])" ;
+    OUTPUT $ " (PRODUCTION_RUN_ID: [[MEIMAD:PRODUCTION_RUN_ID]])" ;
+    OUTPUT $ " (PRODUCTION_PACKAGE_ID: [[MEIMAD:PRODUCTION_PACKAGE_ID]])" ;
+    OUTPUT $ " (NC_RELEASE_ID: [[MEIMAD:NC_RELEASE_ID]])" ;
+    OUTPUT $ " [[MEIMAD:VERIFICATION_HOOK]]" ;
 ```
 
-Do not put the marker in `BEGINNING OF PROC`, beginning-of-toolpath, milling,
-drilling, or tool-change blocks. Those blocks may run many times.
+Do not place these lines in beginning-of-procedure, beginning-of-toolpath, drilling,
+milling, or tool-change blocks.
 
-## Cimatron GPP2 example
+## 12. PostProcessor validation checklist
+
+- [ ] The post works without Meimad Server access.
+- [ ] Same CAM/post inputs produce the same canonical placeholder layout.
+- [ ] Part and Operation Meimad fields contain tokens, never CAM-entered values.
+- [ ] Every required unique token occurs exactly once.
+- [ ] `VERIFICATION_HOOK` precedes the first executable Haas block.
+- [ ] `EVENT_CONTEXT` is absent as a complete pair-disabled mode or occurs exactly
+      twice around one complete physical cycle.
+- [ ] The source contains no active Meimad `G65`, DPRNT verification, or Offset Loader.
+- [ ] No package, Machine, Run, release, nonce, response, timeout, timestamp, creator,
+      or hash value is invented by the post.
+- [ ] Split output emits the complete token layout once in every separately released
+      main file.
+- [ ] The final posted bytes—not an earlier preview—are submitted as the immutable
+      canonical release.
+
+## 13. Current implementation rollout warning
+
+The authoritative placeholder contract is
+[postprocessor-production-package-contract.md](postprocessor-production-package-contract.md),
+and the implementation task is
+[../TASKS_FOR_CODEX_PRODUCTION_PACKAGE.md](../TASKS_FOR_CODEX_PRODUCTION_PACKAGE.md).
+
+At the time of this update, the current Server parser/transformer still accepts the
+legacy source marker:
 
 ```text
-FORMAT (SEQUENCING) MEIMAD_NC_ID ;
-
-INTERACTION (SEQUENCING)
-    "Meimad NC ID - six digits"
-    MEIMAD_NC_ID = 0 ;
-
-BEGINNING OF TAPE:
-    IF (MEIMAD_NC_ID < 100000 || MEIMAD_NC_ID > 999999)
-        GPP_STOP "Meimad NC ID must be 100000 through 999999" ;
-    END_IF;
-
-    OUTPUT "% " \J "O" PGN ;
-    // Existing full-line header comments.
-    OUTPUT $ " (MEIMAD PACKAGE VERIFY V1 NCID="
-        MEIMAD_NC_ID ")" ;
-    OUTPUT $ " G17 G40 G49 G80 G90" ;
+(MEIMAD PACKAGE VERIFY V1 NCID=dddddd)
 ```
 
-If split output can create several main files, the post must request/receive one
-new identity per file. If the current interaction supplies only one identity,
-stop the release or disable split output; never reuse it silently.
+and the legacy cycle START/END comments. It does not yet implement the complete
+`[[MEIMAD:<KEY>]]` schema in this guide. Therefore:
 
-### Cimatron cycle-marker example
-
-Only after the shop has identified one true physical cycle boundary:
-
-```text
-OUTPUT $ " (MEIMAD PACKAGE CYCLE START V1)" ;
-* Existing blocks that produce one complete physical cycle.
-OUTPUT $ " (MEIMAD PACKAGE CYCLE END V1)" ;
-```
-
-Do not use one pair per Cimatron procedure unless one procedure is proven to
-equal one physical completed part cycle. For a multi-output coupled NC cycle,
-write one pair around the complete atomic cycle, not one pair per output part.
-
-## What the Server produces
-
-The post writer does not generate these files, but understanding the boundary
-prevents duplicated code:
-
-| Assigned Machine | Runnable package NC | Offset Loader |
-|---|---|---|
-| CNC, verification enabled | Verification marker becomes the configured active hook; cycle pair becomes commissioned V10 CST/CEN blocks. | Server creates a fresh package-specific loader. |
-| CNC, verification disabled | Verification and cycle markers are removed; no active Meimad verification remains. | None. |
-| Manual | No CNC runnable NC is required. | None. |
-
-The immutable source-template hash and every generated artifact hash are stored
-separately. Package generation never edits the approved source release.
-
-## Release validation checklist
-
-- [ ] Exactly one verification placeholder is present.
-- [ ] It is before the first executable block.
-- [ ] Its identity contains exactly six digits and has no decimal point.
-- [ ] The identity is new for this exact release.
-- [ ] There is no active `(MEIMAD VERIFY V1)` or `G65 P9001/P9002` content.
-- [ ] Cycle placeholders are either both absent or exactly one ordered pair.
-- [ ] START/END surround one complete successful physical cycle.
-- [ ] The post does not write OLC/SVS/SVF/CST/CEN DPRNT records.
-- [ ] A split-output job uses a distinct identity in each released main file.
-- [ ] The final posted bytes—not an earlier preview—pass Server publication.
-
-## Troubleshooting publication errors
-
-| Symptom | Correction |
-|---|---|
-| Verification marker missing | Call the shared marker routine once in the main-file opening path. |
-| Marker is late | Move it before all safety codes, tool calls, macro calls, and motion. |
-| Marker appears twice | Remove calls from job/tool/procedure paths; keep only the file-level call. |
-| Identity rejected | Supply a new integer from `100000` through `999999`. |
-| Active verification rejected | Remove `G65`/`(MEIMAD VERIFY V1)` from the source post. |
-| Cycle structure rejected | Emit no cycle markers, or one START followed by one END. |
-| Disabled package still contains marker | This is a Server package-build failure, not something to repair in the post output. |
+- this document defines the new PostProcessor target;
+- do not deploy a post that emits the new schema against the old package builder;
+- complete and verify the Production Package Creator task first;
+- do not restore CAM Part/Operation values or hard-coded verification as a temporary
+  workaround;
+- old released files remain historical/compatibility input under an explicit migration
+  policy, not the format for new canonical releases.
 
 ## References
 
-- [Functional specification](functional-spec.md)
-- [API contract](api-contract.md)
+- [PostProcessor -> Production Package Creator contract](postprocessor-production-package-contract.md)
+- [Production Package implementation task](../TASKS_FOR_CODEX_PRODUCTION_PACKAGE.md)
 - [Production Run architecture](production-run-architecture.md)
-- [Haas verification response architecture](haas-verification-response-algorithm.md)
+- [Haas verification response algorithm](haas-verification-response-algorithm.md)
+- [CNC commissioning checklist](cnc-commissioning-checklist.md)
