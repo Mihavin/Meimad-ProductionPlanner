@@ -473,7 +473,7 @@ It changes route order only; it does not silently rewrite dependencies. Missing,
 
 No endpoint assigns an Order to a Machine.
 
-**Implemented now:** all four routes above. The current list route requires `caseId` and returns all matching Orders ordered by Work Finish Date and Order Number with `nextCursor: null`. The additional `status`, `workFinishFrom`, `workFinishTo`, `search`, `cursor`, and `limit` filters remain Proposed.
+**Implemented now:** all four routes above. The current list route requires `caseId` and returns current demand Orders ordered by Work Finish Date and Order Number with `nextCursor: null`. For a Kitaron-managed Case it excludes retained `isHistorical: true` rows, because those rows are immutable production evidence rather than current Kitaron demand. Manual Cases are unaffected. A retained row remains readable by its stable `GET /api/v1/orders/{orderId}` URL and through the Batch/Run history that references it. The additional `status`, `workFinishFrom`, `workFinishTo`, `search`, `cursor`, and `limit` filters remain Proposed.
 
 Implemented Order create request and representation:
 
@@ -497,6 +497,9 @@ Implemented Order create request and representation:
   "workFinishDate": "2026-08-20",
   "status": "active",
   "notes": "Customer demand",
+  "price": null,
+  "isKitaronManaged": false,
+  "isHistorical": false,
   "version": 2,
   "createdAt": "2026-08-11T09:30:00Z",
   "updatedAt": "2026-08-11T10:30:00Z"
@@ -1073,7 +1076,7 @@ The mapping PUT body contains `modelMode` (`domain_aligned` or `flat_requested`)
 
 The canonical Order query is scoped by Kitaron parts (`DetailNumber`/`DetailID`) discovered through the planning view or imported `TTreeNodes` BOM, not by an exact planning-view Order-number match. It returns all `TSubOrder` rows for those parts, including rows absent from the planning view and Orders for BOM-only child Cases. The exact known test Order number `הזמנה לדוגמא 1` is excluded from the entire mapped work row as well as canonical Order materialization; it cannot create or claim a Case, Order, or Case Operation.
 
-If an absent/superseded Order is referenced by a Production Run with non-null `structure_locked_at`, synchronization excludes its Batch from deletion and retains the Order as historical evidence while applying all current canonical rows. The result message reports the retained count and `warningCount` includes it. This exception preserves production history; it does not make the retained row current Kitaron demand or unlock deletion of an `in_production`/completed Batch.
+If an absent/superseded Order is referenced by a Production Run with non-null `structure_locked_at`, synchronization excludes its Batch from deletion and retains the Order as historical evidence while applying all current canonical rows. This applies to both legacy one-operation Runs and locked multi-output Runs. The result message reports the retained count and `warningCount` includes it. The retained Order returns `isHistorical: true` when read by ID and is excluded from `GET /api/v1/orders?caseId=...`; the current Case demand list therefore matches the Kitaron snapshot exactly. This exception preserves production history; it does not make the retained row current Kitaron demand or unlock deletion of an `in_production`/completed Batch.
 
 Mapping responses mark `orders.status` and `orders.price` with `connectorManaged: true`. A mapping PUT must submit their fixed enabled/source/confidence/transform values unchanged; attempts to disable or remap either field return `422 validation_failed`.
 

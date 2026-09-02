@@ -2,7 +2,7 @@
   <Package
     Name="Meimad Production Planner Client"
     Manufacturer="Meimad"
-        Version="0.1.77"
+        Version="0.1.78"
     UpgradeCode="{C5B1B980-8EBD-4290-8F55-B4685932C9CA}"
     Scope="perMachine">
 
