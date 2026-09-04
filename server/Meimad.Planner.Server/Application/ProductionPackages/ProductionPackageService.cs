@@ -107,6 +107,9 @@ internal sealed class ProductionPackageService(
                         $"(MACHINE {context.MachineId})",
                         $"(NC RELEASE {context.GCodeReleaseId})",
                         $"(OFFSET LOADER RELEASE {offsetLoaderId})",
+                        offsetMode == "MANUAL_DUMMY"
+                            ? "(MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY)"
+                            : "(MEASURED TOOL OFFSETS - VERIFICATION AND RELEASE BINDING)",
                         $"G65 P{context.Verification.ChallengeProgramNumber} A{releaseToken}. B{ncId}.",
                         "M30",
                         "%",
@@ -266,6 +269,11 @@ internal sealed class ProductionPackageService(
             throw new ProductionPackageBuildException(
                 "production_package_run_missing",
                 "Server Verification requires a concrete Production Run for exact Run/Machine/NC/Offset Loader binding.");
+        if (offsetMode == "MANUAL_DUMMY" && context.ExecutionMode == "CNC_GCODE"
+            && context.Verification is null)
+            throw new ProductionPackageBuildException(
+                "manual_dummy_verification_required",
+                "Manual / Dummy Tool Offsets requires Server Verification so the package contains its verification-only Offset Loader.");
         if (offsetMode == "MANUAL_DUMMY" && !context.ManualDummyToolOffsetsAllowed)
             throw new ProductionPackageBuildException(
                 "manual_dummy_tool_offsets_not_enabled",

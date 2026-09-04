@@ -51,6 +51,7 @@ public sealed class ProductionPackageApiTests
             var loaderBytes=await client.GetByteArrayAsync($"/api/v1/batch-operations/operation-package/production-package/artifacts/{loader.GetProperty("artifactId").GetString()}");
             var loaderText=Encoding.ASCII.GetString(loaderBytes);
             Assert.Contains("PRODUCTION PACKAGE",loaderText,StringComparison.Ordinal);
+            Assert.Contains("MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY",loaderText,StringComparison.Ordinal);
             Assert.Contains("G65 P9001",loaderText,StringComparison.Ordinal);
             Assert.DoesNotContain("G10",loaderText,StringComparison.OrdinalIgnoreCase);
             var manifest=artifacts.Single(value=>value.GetProperty("artifactType").GetString()=="MANIFEST");
@@ -161,6 +162,22 @@ public sealed class ProductionPackageApiTests
                 "/api/v1/batch-operations/operation-package/production-package");
             Assert.Equal(HttpStatusCode.OK, opened.StatusCode);
             Assert.Equal(["operation-package"], await QueueIdsAsync(client, "SETUP_PENDING"));
+
+            if (!verificationEnabled)
+            {
+                await using var capabilityConnection = await application.Services
+                    .GetRequiredService<SqliteDatabase>().OpenConnectionAsync();
+                await using var capability = capabilityConnection.CreateCommand();
+                capability.CommandText = "INSERT INTO machine_package_capabilities(machine_id,allow_manual_dummy_tool_offsets,updated_at,updated_by) VALUES('machine-package',1,'2026-09-01T08:00:00Z','test');";
+                await capability.ExecuteNonQueryAsync();
+                using var manual = await client.PostAsync(
+                    "/api/v1/batch-operations/operation-package/production-package?toolOffsetMode=MANUAL_DUMMY",
+                    new StringContent("{}", Encoding.UTF8, "application/json"));
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, manual.StatusCode);
+                using var manualError = JsonDocument.Parse(await manual.Content.ReadAsStringAsync());
+                Assert.Equal("manual_dummy_verification_required",
+                    manualError.RootElement.GetProperty("error").GetProperty("code").GetString());
+            }
 
             if (verificationEnabled)
             {

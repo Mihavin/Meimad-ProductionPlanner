@@ -130,7 +130,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
                 Selected.BatchOperationId, clientId, userId, toolOffsetMode);
             ActionRequested?.Invoke(this, new("PRODUCTION_PACKAGE_CREATED", Selected, package));
             Status = package.ToolOffsetMode == "MANUAL_DUMMY"
-                ? $"Production Package {package.ProductionPackageId} created. Setupist must enter real tool offsets manually."
+                ? $"Production Package {package.ProductionPackageId} created with a verification-only Offset Loader. Setupist must enter real tool offsets manually."
                 : $"Production Package {package.ProductionPackageId} created and made current.";
         });
         await RefreshAsync();
