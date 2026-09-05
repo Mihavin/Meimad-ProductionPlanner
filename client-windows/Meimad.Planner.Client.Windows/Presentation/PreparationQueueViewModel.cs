@@ -133,7 +133,9 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
                 ? $"Production Package {package.ProductionPackageId} created with a verification-only Offset Loader. Setupist must enter real tool offsets manually."
                 : $"Production Package {package.ProductionPackageId} created and made current.";
         });
+        var resultMessage = Status;
         await RefreshAsync();
+        Status = resultMessage;
     }
 
     private async Task OpenProductionPackageAsync()
@@ -206,8 +208,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         try
         {
             var values = await api.ListPreparationQueueAsync(Stage);
-            Items.Clear();
-            foreach (var value in values) Items.Add(value);
+            MergeItems(values);
             Selected = selectedId is null
                 ? null
                 : Items.FirstOrDefault(value => value.BatchOperationId == selectedId);
@@ -225,6 +226,44 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
             RefreshCommand.RaiseCanExecuteChanged();
         }
     }
+
+    // Updates Items in place (Move/Replace/Insert/Remove) instead of Clear()+re-Add so an
+    // unrelated row's DataGridRow container survives a poll tick — a Clear() raises a Reset
+    // notification that tears down every row, which silently closes any open right-click
+    // context menu and drops the current selection every 5 seconds.
+    private void MergeItems(IReadOnlyList<PreparationQueueItem> values)
+    {
+        for (var i = Items.Count - 1; i >= 0; i--)
+        {
+            if (!values.Any(value => value.BatchOperationId == Items[i].BatchOperationId))
+                Items.RemoveAt(i);
+        }
+        for (var i = 0; i < values.Count; i++)
+        {
+            var value = values[i];
+            var existingIndex = IndexOf(value.BatchOperationId);
+            if (existingIndex < 0)
+            {
+                Items.Insert(Math.Min(i, Items.Count), value);
+            }
+            else
+            {
+                if (existingIndex != i) Items.Move(existingIndex, i);
+                if (!ContentEquals(Items[i], value)) Items[i] = value;
+            }
+        }
+    }
+
+    private int IndexOf(string batchOperationId)
+    {
+        for (var i = 0; i < Items.Count; i++)
+            if (Items[i].BatchOperationId == batchOperationId) return i;
+        return -1;
+    }
+
+    private static bool ContentEquals(PreparationQueueItem a, PreparationQueueItem b)
+        => a == b with { ReadinessFacts = a.ReadinessFacts }
+           && a.ReadinessFacts.SequenceEqual(b.ReadinessFacts);
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? property = null)
     {

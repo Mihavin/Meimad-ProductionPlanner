@@ -28,6 +28,11 @@
       <DataGrid Grid.Row="2" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}"
                 AutoGenerateColumns="False" IsReadOnly="True" MinHeight="300"
                 HorizontalScrollBarVisibility="Auto" FrozenColumnCount="1" Tag="{Binding}">
+        <DataGrid.Resources>
+          <Style TargetType="DataGridRow">
+            <EventSetter Event="PreviewMouseRightButtonDown" Handler="DataGridRow_PreviewMouseRightButtonDown" />
+          </Style>
+        </DataGrid.Resources>
         <DataGrid.ContextMenu>
           <ContextMenu>
             <MenuItem Header="Open Case"

@@ -84,8 +84,7 @@ internal sealed class QcQueueViewModel : INotifyPropertyChanged
         try
         {
             var values = await api.ListQcQueueAsync();
-            Items.Clear();
-            foreach (var value in values) Items.Add(value);
+            MergeItems(values);
             Selected = selectedId is null
                 ? null
                 : Items.FirstOrDefault(value => value.ProductionRunId == selectedId);
@@ -102,6 +101,38 @@ internal sealed class QcQueueViewModel : INotifyPropertyChanged
             isBusy = false;
             RaiseCommandStates();
         }
+    }
+
+    // Updates Items in place instead of Clear()+re-Add so a poll tick doesn't tear down the
+    // selected row's container and reset the in-progress Reason/selection every 5 seconds.
+    private void MergeItems(IReadOnlyList<QcQueueItem> values)
+    {
+        for (var i = Items.Count - 1; i >= 0; i--)
+        {
+            if (!values.Any(value => value.ProductionRunId == Items[i].ProductionRunId))
+                Items.RemoveAt(i);
+        }
+        for (var i = 0; i < values.Count; i++)
+        {
+            var value = values[i];
+            var existingIndex = IndexOf(value.ProductionRunId);
+            if (existingIndex < 0)
+            {
+                Items.Insert(Math.Min(i, Items.Count), value);
+            }
+            else
+            {
+                if (existingIndex != i) Items.Move(existingIndex, i);
+                if (Items[i] != value) Items[i] = value;
+            }
+        }
+    }
+
+    private int IndexOf(string productionRunId)
+    {
+        for (var i = 0; i < Items.Count; i++)
+            if (Items[i].ProductionRunId == productionRunId) return i;
+        return -1;
     }
 
     private bool CanDecide() =>
