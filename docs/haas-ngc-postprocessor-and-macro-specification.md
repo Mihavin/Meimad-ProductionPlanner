@@ -56,6 +56,37 @@ call. The Server owns all of those values.
 by hand at the control (e.g. `483921`), not to the Server's internal identifiers. Do not
 assume these resolved values are the same length or format as any internal ID string.
 
+## Part counting (optional)
+
+Two additional keys enable automated part counting for an Operation:
+
+```gcode
+[[MEIMAD:CYCLE_START]]
+(normal CAM-generated tools, motion, feeds, speeds and cycles for one complete
+physical part cycle)
+[[MEIMAD:CYCLE_END]]
+```
+
+Unlike every other key in this document, `CYCLE_START`/`CYCLE_END` are **optional** — an
+Operation with no automated part counting omits both. If used, both must be present
+exactly once, `CYCLE_START` must precede `CYCLE_END`, and each occupies its own standalone
+line. One without the other, or out of order, fails Production Package creation
+(`production_package_cycle_marker_unpaired` / `production_package_cycle_marker_order_invalid`).
+
+Placement, unlike `VERIFICATION_HOOK`, is *inside* the executable body: `CYCLE_START`
+immediately before the work that begins one physical cycle, `CYCLE_END` only on the common
+successful path after that cycle fully completes — before `M30`/`M99`/any successful
+return, never on an alarm/reset/optional-stop/failure path. Do not wrap every tool, CAM
+procedure, or subprogram in its own pair; use one pair around the atomic cycle the Server
+should count.
+
+Package Creator expands the pair into the same wire-format part-counting `DPRNT` events
+(`MEIMAD/V/1/EVENT/CST/...` / `.../CEN/...`) as the legacy `(MEIMAD PACKAGE CYCLE
+START/END V1)` markers, and only when the assigned Machine has **Server Verification
+enabled** — on a verification-disabled Machine both markers are silently removed and no
+count-affecting event is emitted. There is currently no non-verification path for
+automated part counting.
+
 ## SolidCAM example
 
 In the SolidCAM post, print the literal strings; do not bind them to job fields:
@@ -123,7 +154,9 @@ Package/release validation rejects:
 - duplicate unique keys;
 - a hook not on a standalone line or after executable code;
 - active Meimad verification logic embedded in the source;
-- any unresolved required token in generated runnable NC.
+- any unresolved required token in generated runnable NC;
+- `CYCLE_START` without a matching `CYCLE_END` (or the reverse), or `CYCLE_END` before
+  `CYCLE_START`.
 
 ## Compatibility and commissioning
 

@@ -85,13 +85,32 @@ Initial keys include:
 | `[[MEIMAD:OFFSET_LOADER_RELEASE_ID]]` | Generated package Offset Loader release | Verification binding when applicable |
 | `[[MEIMAD:EVENT_CONTEXT]]` | Package Creator | Deterministic DPRNT/event correlation block |
 | `[[MEIMAD:VERIFICATION_HOOK]]` | Package Creator policy transformation | Deterministic verification insertion point |
+| `[[MEIMAD:CYCLE_START]]` | Package Creator | Optional physical-cycle-start part-counting event |
+| `[[MEIMAD:CYCLE_END]]` | Package Creator | Optional physical-cycle-end part-counting event |
 
 Protocol v2 multiplicity is explicit: `PART_NAME` and `OPERATION_NAME` are
-repeatable but required at least once. Every other key in the table is required
-exactly once for a canonical CNC template. `EVENT_CONTEXT` and
-`VERIFICATION_HOOK` occupy standalone lines, and `VERIFICATION_HOOK` precedes
-the first executable block. Keys are uppercase and exact; unknown keys,
-malformed delimiters, and invalid duplicates fail closed.
+repeatable but required at least once. `CYCLE_START` and `CYCLE_END` are the
+only optional keys — an Operation with no automated part counting may omit
+both. Every other key in the table is required exactly once for a canonical
+CNC template. `EVENT_CONTEXT` and `VERIFICATION_HOOK` occupy standalone lines,
+and `VERIFICATION_HOOK` precedes the first executable block. Keys are
+uppercase and exact; unknown keys, malformed delimiters, and invalid
+duplicates fail closed.
+
+`CYCLE_START` and `CYCLE_END` must both be present or both be absent — one
+without the other fails closed with `production_package_cycle_marker_unpaired`.
+When present, each occupies its own standalone line, `CYCLE_START` must
+precede `CYCLE_END` (`production_package_cycle_marker_order_invalid`
+otherwise), and each may appear at most once. Unlike `VERIFICATION_HOOK`, the
+pair belongs *inside* the executable body, surrounding exactly one complete
+physical cutting cycle — not before the first executable block. Package
+Creator expands the pair into the same wire-format `DPRNT[MEIMAD/V/1/EVENT/
+CST/...]` / `.../CEN/...]` part-counting events used by the legacy
+`(MEIMAD PACKAGE CYCLE START/END V1)` markers, and — matching that same legacy
+behavior — only when the assigned Machine has Server Verification enabled; on
+a verification-disabled Machine both markers are silently removed and no
+count-affecting DPRNT is emitted. There is currently no non-verification path
+for automated part counting.
 
 `MACHINE_ID`, `NC_RELEASE_ID`, `PRODUCTION_RUN_ID`, and `PRODUCTION_PACKAGE_ID`
 resolve to short unique 6-digit numbers meant to be read and typed by hand at
@@ -138,6 +157,21 @@ DPRNT[OP=[[MEIMAD:OPERATION_NAME]]]
 ```
 
 If a control family uses another equivalent event output mechanism, use that mechanism with the same ownership model.
+
+### Part counting (optional)
+
+```text
+[[MEIMAD:CYCLE_START]]
+(normal CAM-generated tools, motion, feeds, speeds and cycles for one complete
+physical part cycle)
+[[MEIMAD:CYCLE_END]]
+```
+
+Place `CYCLE_START` immediately before the work that begins one physical cycle and
+`CYCLE_END` only on the common successful path after that cycle fully completes —
+before `M30`/`M99`/any successful return, never on an alarm/reset/optional-stop/
+failure path. Omit the pair entirely for an Operation that does not need automated
+part counting.
 
 ### Verification insertion point
 
@@ -212,6 +246,7 @@ Network connectivity controls available delivery methods. It does not decide whe
 - Token/grammar-based parsing only; no fuzzy matching.
 - Unknown required placeholders fail closed unless a protocol version explicitly declares them optional.
 - Placeholders declared unique must occur exactly once; repeatable placeholders must have declared multiplicity.
+- `CYCLE_START`/`CYCLE_END` must occur together (both absent or both present exactly once, in that order); one without the other or out of order fails closed.
 - All required placeholders must be resolved or intentionally removed by a named transformation before a runnable CNC artifact can be activated.
 - Verification-disabled runnable NC must contain no unresolved verification marker and no active Server-verification code.
 - Verification-enabled runnable NC must contain the approved hook/version and exact current package correlation.

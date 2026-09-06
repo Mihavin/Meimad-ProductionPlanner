@@ -70,7 +70,7 @@ public sealed class MigrationTests
 
         await using var versionCommand = connection.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
-        Assert.Equal(67L, (long)(await versionCommand.ExecuteScalarAsync())!);
+        Assert.Equal(68L, (long)(await versionCommand.ExecuteScalarAsync())!);
 
         await using var migrationCommand = connection.CreateCommand();
         migrationCommand.CommandText = "SELECT name FROM schema_migrations WHERE version = 1;";
@@ -356,7 +356,7 @@ public sealed class MigrationTests
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM schema_migrations;";
-        Assert.Equal(67L, (long)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(68L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1646,7 +1646,7 @@ public sealed class MigrationTests
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version = 68;";
+            command.CommandText = "PRAGMA user_version = 69;";
             await command.ExecuteNonQueryAsync();
         }
 

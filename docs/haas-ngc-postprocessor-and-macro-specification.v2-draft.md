@@ -10,6 +10,12 @@
 > postprocessor ended up emitting `POSTPROCESSOR_ID` and breaking Production Package
 > creation for 30P410173701-001 op20. Resolve this draft into the live doc (and remove
 > this file) once the Production Package Creator actually implements it.
+>
+> **Part counting note (2026-09-06):** §7 below's dual-`EVENT_CONTEXT` CST/CEN design was
+> NOT what got implemented. The live doc now has real, working `[[MEIMAD:CYCLE_START]]`/
+> `[[MEIMAD:CYCLE_END]]` placeholders instead — a single-purpose pair, leaving
+> `EVENT_CONTEXT` as the one-time identity stamp it already was. Do not reuse `EVENT_CONTEXT`
+> for cycle boundaries; use the live doc's `CYCLE_START`/`CYCLE_END` section.
 
 # Haas NGC PostProcessor guide for Meimad Production Planner
 

@@ -61,6 +61,23 @@ internal static class NcPackageTemplateTransformer
                 output.Add($"DPRNT[MEIMAD/V/2/CONTEXT/PACKAGE/{NcText(values.ProductionPackageId)}/RUN/{NcText(values.ProductionRunId)}/MACHINE/{NcText(values.MachineId)}/NCRELEASE/{NcText(values.NcReleaseId)}/MACROVERSION/{options.MacroVersion}/PROGRAM/{ncIdentityToken}]");
                 continue;
             }
+            if (line.Contains($"[[MEIMAD:{NcPackagePlaceholderKeys.CycleStart}]]",
+                    StringComparison.Ordinal))
+            {
+                // Real part counting (SqliteProductionRunCycleAccounting) only understands the
+                // wire-format V=1 CST/CEN events emitted here — identical mechanism to the legacy
+                // Transform() path below, gated the same way on Server Verification being enabled.
+                if (options.VerificationEnabled)
+                    AppendCycle(output, "CST", "S", ncIdentityToken, options);
+                continue;
+            }
+            if (line.Contains($"[[MEIMAD:{NcPackagePlaceholderKeys.CycleEnd}]]",
+                    StringComparison.Ordinal))
+            {
+                if (options.VerificationEnabled)
+                    AppendCycle(output, "CEN", "E", ncIdentityToken, options);
+                continue;
+            }
 
             foreach (var replacement in replacements)
                 line = line.Replace($"[[MEIMAD:{replacement.Key}]]", replacement.Value,
