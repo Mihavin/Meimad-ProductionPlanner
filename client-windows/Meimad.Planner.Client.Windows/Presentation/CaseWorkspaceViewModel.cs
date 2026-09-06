@@ -325,7 +325,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool IsFormReadOnly => !isEditor || isKitaronManagedCase;
 
-    public bool CanSave => isEditor && HasForm && (IsCreating || !isKitaronManagedCase) && !IsBusy;
+    // The working folder and picture path are local/client-side references, not Kitaron master
+    // data, so they stay editable (and saveable) even on an otherwise Kitaron-managed Case. The
+    // Server enforces the same split — it rejects a save only if a Kitaron-owned field actually
+    // changed.
+    public bool CanEditLocalPathFields => isEditor && !IsBusy;
+    public bool IsLocalPathFieldsReadOnly => !CanEditLocalPathFields;
+
+    public bool CanSave => isEditor && HasForm && !IsBusy;
 
     public bool CanBeginCreate => isEditor && apiClient is not null && !IsBusy;
 
@@ -2420,6 +2427,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanSave));
         OnPropertyChanged(nameof(CanBeginCreate));
         OnPropertyChanged(nameof(CanEditForm));
+        OnPropertyChanged(nameof(CanEditLocalPathFields));
+        OnPropertyChanged(nameof(IsLocalPathFieldsReadOnly));
         OnPropertyChanged(nameof(CanDelete));
         OnPropertyChanged(nameof(CanDeleteCase));
         OnPropertyChanged(nameof(CanDeleteOrder));

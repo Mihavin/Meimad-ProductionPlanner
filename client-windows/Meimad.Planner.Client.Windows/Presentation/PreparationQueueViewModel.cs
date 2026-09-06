@@ -156,6 +156,11 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         CancellationToken cancellationToken = default)
     {
         if (api is null) throw new InvalidOperationException("Connect to the Server first.");
+        // Re-fetch immediately before exporting: the snapshot passed in can be several seconds
+        // stale (folder-picker dialog time), and if a newer Production Package has superseded it
+        // since, every artifact ID below would 404 and no file would be written at all.
+        package = await api.GetCurrentProductionPackageAsync(package.BatchOperationId)
+            ?? throw new InvalidOperationException("No current valid Production Package exists.");
         var root = Path.GetFullPath(selectedDirectory).TrimEnd(Path.DirectorySeparatorChar);
         Directory.CreateDirectory(root);
         foreach (var artifact in package.Artifacts)

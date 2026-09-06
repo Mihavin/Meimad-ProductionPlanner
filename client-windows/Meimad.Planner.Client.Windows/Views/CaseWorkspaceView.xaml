@@ -200,16 +200,16 @@
                                     <TextBlock Text="Case Working Folder (external path)" Style="{StaticResource FieldLabel}"/>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Browse Folder…" Click="BrowseFolder_Click"
-                                                IsEnabled="{Binding CanEditForm}" Margin="8,0,0,0" />
-                                        <TextBox Text="{Binding WorkingFolderPath}" IsReadOnly="{Binding IsFormReadOnly}"/>
+                                                IsEnabled="{Binding CanEditLocalPathFields}" Margin="8,0,0,0" />
+                                        <TextBox Text="{Binding WorkingFolderPath}" IsReadOnly="{Binding IsLocalPathFieldsReadOnly}"/>
                                     </DockPanel>
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}">
                                     <TextBlock Text="Picture Path (server-readable path only)" Style="{StaticResource FieldLabel}"/>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Browse Picture…" Click="BrowsePicture_Click"
-                                                IsEnabled="{Binding CanEditForm}" Margin="8,0,0,0" />
-                                        <TextBox Text="{Binding PreviewPath}" IsReadOnly="{Binding IsFormReadOnly}"/>
+                                                IsEnabled="{Binding CanEditLocalPathFields}" Margin="8,0,0,0" />
+                                        <TextBox Text="{Binding PreviewPath}" IsReadOnly="{Binding IsLocalPathFieldsReadOnly}"/>
                                     </DockPanel>
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsFormReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>

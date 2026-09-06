@@ -165,10 +165,6 @@ internal sealed class CaseService
     {
         var current = await repository.GetByIdAsync(caseId, cancellationToken)
             ?? throw new CaseNotFoundException(caseId);
-        if (current.IsKitaronManaged)
-        {
-            throw new KitaronManagedResourceException("Case", caseId);
-        }
 
         var values = CaseValidator.ValidateAndNormalize(new CaseValues(
             Select(command.PartNumber, current.PartNumber),
@@ -183,6 +179,14 @@ internal sealed class CaseService
             Select(command.RawMaterialForm, current.RawMaterialForm),
             Select(command.RawMaterialDimensions, current.RawMaterialDimensions),
             Select(command.Notes, current.Notes)));
+
+        // Kitaron owns everything except the two local/client-side path fields: an operator may
+        // still point a synced Case at a local working folder or picture without Kitaron's data
+        // being touched.
+        if (current.IsKitaronManaged && HasKitaronOwnedChanges(current, values))
+        {
+            throw new KitaronManagedResourceException("Case", caseId);
+        }
 
         var updated = current with
         {
@@ -226,6 +230,18 @@ internal sealed class CaseService
 
     private static T Select<T>(OptionalField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;
+
+    private static bool HasKitaronOwnedChanges(PlannerCase current, ValidatedCaseValues values) =>
+        values.PartNumber != current.PartNumber
+        || values.Name != current.Name
+        || values.Revision != current.Revision
+        || values.Customer != current.Customer
+        || values.CustomerReference != current.CustomerReference
+        || values.MaterialType != current.MaterialType
+        || values.MaterialSpecification != current.MaterialSpecification
+        || values.RawMaterialForm != current.RawMaterialForm
+        || values.RawMaterialDimensions != current.RawMaterialDimensions
+        || values.Notes != current.Notes;
 }
 
 internal sealed class CaseNotFoundException : Exception
