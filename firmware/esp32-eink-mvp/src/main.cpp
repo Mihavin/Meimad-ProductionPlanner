@@ -62,6 +62,11 @@ constexpr char kBatteryLowKey[] = "battery_low";
 constexpr char kDemoScenarioKey[] = "demo_scene";
 constexpr uint32_t kRetainedSleepStateMagic = 0x4D534C50;
 constexpr uint32_t kPendingAwakeActionMagic = 0x4D414354;
+// A pending awake action (e.g. SEND_TO_QC) survives a failed post-reboot WiFi
+// reconnect/status-fetch for up to this many wake attempts before it is given
+// up on, so a transient cold-reconnect failure doesn't silently discard an
+// operator's button press with no on-screen feedback.
+constexpr uint8_t kPendingAwakeActionMaxAttempts = 3;
 constexpr time_t kMinimumValidWakeTime = 1704067200;  // 2024-01-01T00:00:00Z
 constexpr float kLowBatteryThresholdVolts = 3.30f;
 
@@ -74,6 +79,7 @@ RTC_DATA_ATTR uint32_t gRetainedTimerSeconds;
 RTC_DATA_ATTR uint32_t gPendingAwakeActionMarker;
 RTC_DATA_ATTR int32_t gPendingAwakeAction;
 RTC_DATA_ATTR int32_t gPendingAwakeOriginStatus;
+RTC_DATA_ATTR uint8_t gPendingAwakeActionAttempts;
 
 struct DeviceConfiguration {
   String hardwareId;
@@ -99,6 +105,7 @@ struct PendingAwakeAction {
       meimad::button_input::ButtonAction::None;
   meimad::tablet_api::TabletStatus originStatus =
       meimad::tablet_api::TabletStatus::Unknown;
+  uint8_t attempts = 0;
 };
 
 struct AwakeRuntime {
@@ -570,6 +577,10 @@ PreviousSleepState loadPreviousSleepState() {
   return state;
 }
 
+// Peeks the retained action without clearing it — the caller decides whether
+// the attempt was actually resolved (clearPendingAwakeAction) or must survive
+// for another retry (retainAwakeActionForRestart with an incremented attempt
+// count), so a failed post-reboot reconnect no longer silently loses it.
 PendingAwakeAction consumePendingAwakeAction() {
   PendingAwakeAction pending;
   const int32_t minimumAction = static_cast<int32_t>(
@@ -590,17 +601,24 @@ PendingAwakeAction consumePendingAwakeAction() {
         gPendingAwakeAction);
     pending.originStatus = static_cast<meimad::tablet_api::TabletStatus>(
         gPendingAwakeOriginStatus);
+    pending.attempts = gPendingAwakeActionAttempts;
   }
-  gPendingAwakeActionMarker = 0;
   return pending;
+}
+
+void clearPendingAwakeAction() {
+  gPendingAwakeActionMarker = 0;
+  gPendingAwakeActionAttempts = 0;
 }
 
 void retainAwakeActionForRestart(
     meimad::button_input::ButtonAction action,
-    meimad::tablet_api::TabletStatus originStatus) {
+    meimad::tablet_api::TabletStatus originStatus,
+    uint8_t attempts) {
   gPendingAwakeActionMarker = 0;
   gPendingAwakeAction = static_cast<int32_t>(action);
   gPendingAwakeOriginStatus = static_cast<int32_t>(originStatus);
+  gPendingAwakeActionAttempts = attempts;
   gPendingAwakeActionMarker = kPendingAwakeActionMagic;
 }
 
@@ -1250,6 +1268,13 @@ void setup() {
           }
         }
       }
+      // The Server was reached, so this pending action is resolved one way or
+      // another (sent, explicitly rejected, or found no-longer-applicable by
+      // canSendToQc above) — none of those are the cold-reconnect failure this
+      // retry mechanism exists for, so stop retrying it.
+      if (pendingAwakeAction.available) {
+        clearPendingAwakeAction();
+      }
     } else {
       lastHttpResult = apiDiagnosticText("STATUS", statusApiResult);
       const bool retainedVerificationCodeCouldBeVisible =
@@ -1319,7 +1344,35 @@ void setup() {
 
   if (wakeButton.action == meimad::button_input::ButtonAction::SendToQc
       && !receivedServerRevision) {
-    Serial.println("SEND_TO_QC ignored: no valid Server state is available.");
+    if (pendingAwakeAction.available) {
+      // Cold-reconnect-after-reboot failure: the operator's press was captured
+      // fine, but WiFi/status-fetch didn't come back in time to actually send
+      // it. Keep retrying (bounded) instead of silently discarding it, and
+      // tell the operator on-screen rather than only logging to serial.
+      const uint8_t nextAttempt = pendingAwakeAction.attempts + 1;
+      if (nextAttempt <= kPendingAwakeActionMaxAttempts) {
+        retainAwakeActionForRestart(
+            pendingAwakeAction.action, pendingAwakeAction.originStatus, nextAttempt);
+        productionScreen.notice = "SEND TO QC - RETRYING (" +
+            String(nextAttempt) + "/" +
+            String(kPendingAwakeActionMaxAttempts) + ")";
+        MEIMAD_LOG(
+            "BUTTON",
+            "SEND_TO_QC retry scheduled attempt=%u reason=no_server_state",
+            static_cast<unsigned>(nextAttempt));
+      } else {
+        clearPendingAwakeAction();
+        productionScreen.notice = "SEND TO QC FAILED - PRESS AGAIN";
+        MEIMAD_LOG(
+            "BUTTON",
+            "SEND_TO_QC abandoned after %u attempts reason=no_server_state",
+            static_cast<unsigned>(pendingAwakeAction.attempts));
+      }
+      confirmationDisplayed = true;
+      refreshScreen = true;
+    } else {
+      Serial.println("SEND_TO_QC ignored: no valid Server state is available.");
+    }
   }
 
   if (wakeButton.action == meimad::button_input::ButtonAction::PreviousToolPage
@@ -1470,7 +1523,7 @@ void loop() {
           }
         }
       } else if (event.action != meimad::button_input::ButtonAction::None) {
-        retainAwakeActionForRestart(event.action, gAwakeRuntime.status);
+        retainAwakeActionForRestart(event.action, gAwakeRuntime.status, 1);
         MEIMAD_LOG(
             "BUTTON", "awake_action=%s network_session=%s restarting=true",
             meimad::button_input::toText(event.action),

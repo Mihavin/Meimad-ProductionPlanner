@@ -398,7 +398,7 @@ Display resolution, minimum font size, viewing distance, lighting range, localiz
 | Checksum mismatch | Reject the new file/revision and retain the previous verified package. |
 | New revision | Make the revision change explicit. |
 | Display refresh failure | Retry once; persist an error indication for a later successful refresh. Exact presentation is TBD. |
-| `SEND_TO_QC` timeout/connection loss | Do not optimistically show `IN_QC`; show send-pending/unknown and perform a bounded idempotent retry. |
+| `SEND_TO_QC` timeout/connection loss | Do not optimistically show `IN_QC`; show send-pending/unknown and perform a bounded idempotent retry. Implemented as: the pending action survives the reboot the button press triggers (retained in RTC memory across up to 3 total attempts) instead of being discarded the moment it's read; each retry shows "SEND TO QC - RETRYING (n/3)" on screen, and exhausting all 3 shows "SEND TO QC FAILED - PRESS AGAIN" so the operator knows to retry manually rather than assuming it's stuck. |
 | `SEND_TO_QC` rejected | Keep the last confirmed status and show the Server error in operator-readable text. |
 
 Retry limits, backoff/jitter, corrupted configuration, invalid token, clock loss, oversized files, mid-download battery loss, and rollback details must be added to the firmware acceptance suite.
