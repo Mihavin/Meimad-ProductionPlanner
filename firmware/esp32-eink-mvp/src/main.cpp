@@ -60,12 +60,18 @@ constexpr char kToolPageKey[] = "tool_page";
 constexpr char kConfirmationPendingKey[] = "confirm_clear";
 constexpr char kBatteryLowKey[] = "battery_low";
 constexpr char kDemoScenarioKey[] = "demo_scene";
+constexpr char kPendingActionKey[] = "pend_action";
+constexpr char kPendingOriginKey[] = "pend_origin";
+constexpr char kPendingAttemptsKey[] = "pend_tries";
 constexpr uint32_t kRetainedSleepStateMagic = 0x4D534C50;
-constexpr uint32_t kPendingAwakeActionMagic = 0x4D414354;
 // A pending awake action (e.g. SEND_TO_QC) survives a failed post-reboot WiFi
 // reconnect/status-fetch for up to this many wake attempts before it is given
 // up on, so a transient cold-reconnect failure doesn't silently discard an
-// operator's button press with no on-screen feedback.
+// operator's button press with no on-screen feedback. Persisted in NVS
+// (Preferences), not RTC memory: RTC_DATA_ATTR values were not observed to
+// survive the ESP.restart() this mechanism relies on, on this board/SDK
+// combination, which was the actual root cause of SEND_TO_QC never reaching
+// the Server via the physical button at all.
 constexpr uint8_t kPendingAwakeActionMaxAttempts = 3;
 constexpr time_t kMinimumValidWakeTime = 1704067200;  // 2024-01-01T00:00:00Z
 constexpr float kLowBatteryThresholdVolts = 3.30f;
@@ -76,10 +82,6 @@ RTC_DATA_ATTR uint8_t gRetainedServerStateAvailable;
 RTC_DATA_ATTR uint8_t gRetainedButtonWakeEnabled;
 RTC_DATA_ATTR uint8_t gRetainedTimerWakeEnabled;
 RTC_DATA_ATTR uint32_t gRetainedTimerSeconds;
-RTC_DATA_ATTR uint32_t gPendingAwakeActionMarker;
-RTC_DATA_ATTR int32_t gPendingAwakeAction;
-RTC_DATA_ATTR int32_t gPendingAwakeOriginStatus;
-RTC_DATA_ATTR uint8_t gPendingAwakeActionAttempts;
 
 struct DeviceConfiguration {
   String hardwareId;
@@ -581,8 +583,22 @@ PreviousSleepState loadPreviousSleepState() {
 // the attempt was actually resolved (clearPendingAwakeAction) or must survive
 // for another retry (retainAwakeActionForRestart with an incremented attempt
 // count), so a failed post-reboot reconnect no longer silently loses it.
+//
+// Persisted via NVS (Preferences), not RTC_DATA_ATTR: RTC memory was found not
+// to reliably survive the ESP.restart() this mechanism depends on (confirmed
+// via serial log — the action was always None after reboot), which meant
+// SEND_TO_QC never reached the Server via the physical button at all. NVS
+// flash writes are already the proven pattern for every other cross-boot
+// value in this file (tool page, service-screen state, diagnostics) and are
+// unaffected by whatever RTC-domain behavior this reset path has.
 PendingAwakeAction consumePendingAwakeAction() {
   PendingAwakeAction pending;
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, true)) return pending;
+  if (!preferences.isKey(kPendingActionKey)) {
+    preferences.end();
+    return pending;
+  }
   const int32_t minimumAction = static_cast<int32_t>(
       meimad::button_input::ButtonAction::None);
   const int32_t maximumAction = static_cast<int32_t>(
@@ -591,35 +607,44 @@ PendingAwakeAction consumePendingAwakeAction() {
       meimad::tablet_api::TabletStatus::ReadyForSetup);
   const int32_t maximumStatus = static_cast<int32_t>(
       meimad::tablet_api::TabletStatus::Unknown);
-  if (gPendingAwakeActionMarker == kPendingAwakeActionMagic
-      && gPendingAwakeAction >= minimumAction
-      && gPendingAwakeAction <= maximumAction
-      && gPendingAwakeOriginStatus >= minimumStatus
-      && gPendingAwakeOriginStatus <= maximumStatus) {
+  const int32_t action = preferences.getInt(kPendingActionKey, minimumAction);
+  const int32_t originStatus = preferences.getInt(
+      kPendingOriginKey, maximumStatus);
+  const uint8_t attempts = preferences.getUChar(kPendingAttemptsKey, 0);
+  preferences.end();
+  if (action >= minimumAction && action <= maximumAction
+      && originStatus >= minimumStatus && originStatus <= maximumStatus) {
     pending.available = true;
-    pending.action = static_cast<meimad::button_input::ButtonAction>(
-        gPendingAwakeAction);
-    pending.originStatus = static_cast<meimad::tablet_api::TabletStatus>(
-        gPendingAwakeOriginStatus);
-    pending.attempts = gPendingAwakeActionAttempts;
+    pending.action = static_cast<meimad::button_input::ButtonAction>(action);
+    pending.originStatus =
+        static_cast<meimad::tablet_api::TabletStatus>(originStatus);
+    pending.attempts = attempts;
   }
   return pending;
 }
 
 void clearPendingAwakeAction() {
-  gPendingAwakeActionMarker = 0;
-  gPendingAwakeActionAttempts = 0;
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) return;
+  preferences.remove(kPendingActionKey);
+  preferences.remove(kPendingOriginKey);
+  preferences.remove(kPendingAttemptsKey);
+  preferences.end();
 }
 
 void retainAwakeActionForRestart(
     meimad::button_input::ButtonAction action,
     meimad::tablet_api::TabletStatus originStatus,
     uint8_t attempts) {
-  gPendingAwakeActionMarker = 0;
-  gPendingAwakeAction = static_cast<int32_t>(action);
-  gPendingAwakeOriginStatus = static_cast<int32_t>(originStatus);
-  gPendingAwakeActionAttempts = attempts;
-  gPendingAwakeActionMarker = kPendingAwakeActionMagic;
+  Preferences preferences;
+  if (!preferences.begin(kPreferencesNamespace, false)) {
+    Serial.println("Pending-action NVS write failed.");
+    return;
+  }
+  preferences.putInt(kPendingActionKey, static_cast<int32_t>(action));
+  preferences.putInt(kPendingOriginKey, static_cast<int32_t>(originStatus));
+  preferences.putUChar(kPendingAttemptsKey, attempts);
+  preferences.end();
 }
 
 void printPreviousSleepState(const PreviousSleepState& state) {
