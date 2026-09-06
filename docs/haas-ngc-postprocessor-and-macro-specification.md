@@ -136,6 +136,30 @@ Generated Haas verification and Offset Loader code still requires the existing
 Machine-specific review and bounded no-motion commissioning. This document does
 not declare any protected macro or controller interlock commissioned.
 
+## Troubleshooting failures seen in practice
+
+These two mistakes have each broken real Production Package creation for a released
+postprocessor; check for them first when a release is rejected.
+
+- **`production_package_placeholder_unknown: Unknown Meimad placeholder '<KEY>' on line
+  N.`** — the source template contains a `[[MEIMAD:<KEY>]]` token that is not in the
+  9-key set at the top of this document (most commonly `POSTPROCESSOR_ID`, which is not
+  and has never been a valid key — see the draft-contract warning above). Fix the
+  postprocessor macro to stop emitting it, then release a corrected NC. There is no
+  server-side allow-list update that will make an invented key valid; the fix is always
+  in the source template.
+- **`production_package_placeholder_duplicate: Canonical NC template must contain
+  exactly one [[MEIMAD:EVENT_CONTEXT]].`** — the template emits `EVENT_CONTEXT` twice
+  (e.g. a start/end pair for cycle-boundary marking). The currently implemented protocol
+  requires exactly one occurrence; it does not yet implement start/end cycle-boundary
+  semantics (see the draft contract for that future design). Remove the extra
+  occurrence — keeping either one is equivalent for the currently implemented protocol.
+
+If a release keeps failing after a fix, use "View NC File (read-only)" or download the
+release directly and `grep`/search for `[[MEIMAD:` to see every token and line number
+actually present, rather than assuming the macro emits what its source code says — a
+stale CAM export or wrong output folder can silently ship an older file.
+
 ## References
 
 - [PostProcessor -> Production Package Creator contract](postprocessor-production-package-contract.md)

@@ -93,6 +93,15 @@ exactly once for a canonical CNC template. `EVENT_CONTEXT` and
 the first executable block. Keys are uppercase and exact; unknown keys,
 malformed delimiters, and invalid duplicates fail closed.
 
+`MACHINE_ID`, `NC_RELEASE_ID`, `PRODUCTION_RUN_ID`, and `PRODUCTION_PACKAGE_ID`
+resolve to short unique 6-digit numbers meant to be read and typed by hand at
+the control, not to any internal identifier string. `NC_RELEASE_ID` reuses the
+release's existing verification identity token; `MACHINE_ID` reuses the
+Machine's existing short number; `PRODUCTION_RUN_ID` and
+`PRODUCTION_PACKAGE_ID` get their own dedicated 6-digit numbers generated the
+same way. Do not assume any of these four match the length or format of the
+Server's internal GUID identifiers.
+
 The former `(MEIMAD PACKAGE VERIFY/CYCLE ... V1)` syntax is protocol v1. It is
 parsed only by a separate exact compatibility path so already immutable
 historical releases remain buildable. It is not emitted by current
