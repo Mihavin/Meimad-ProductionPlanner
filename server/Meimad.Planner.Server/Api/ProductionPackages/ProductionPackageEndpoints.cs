@@ -68,6 +68,7 @@ internal static class ProductionPackageEndpoints
 
 internal sealed record ProductionPackageResponse(
     string ProductionPackageId,
+    int PackageNumber,
     string BatchOperationId,
     string? ProductionRunId,
     string MachineAssignmentId,
@@ -90,7 +91,7 @@ internal sealed record ProductionPackageResponse(
     IReadOnlyList<ProductionPackageArtifactResponse> Artifacts)
 {
     internal static ProductionPackageResponse FromDomain(ProductionPackageRecord value) => new(
-        value.ProductionPackageId, value.BatchOperationId, value.ProductionRunId,
+        value.ProductionPackageId, value.PackageNumber, value.BatchOperationId, value.ProductionRunId,
         value.MachineAssignmentId, value.MachineId, value.GCodeReleaseId,
         value.ToolTableReleaseId, value.OffsetLoaderReleaseId, value.ExecutionMode,
         value.ToolOffsetMode,

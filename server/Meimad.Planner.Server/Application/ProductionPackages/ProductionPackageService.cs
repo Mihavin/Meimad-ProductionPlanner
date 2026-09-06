@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -34,6 +35,7 @@ internal sealed class ProductionPackageService(
         ValidatePrerequisites(context, offsetMode);
 
         var packageId = Guid.NewGuid().ToString("N");
+        var packageNumber = await repository.AllocatePackageNumberAsync(cancellationToken);
         var offsetLoaderId = context.Verification is null ? null : Guid.NewGuid().ToString("N");
         var releaseToken = context.Verification is null
             ? (int?)null
@@ -77,10 +79,16 @@ internal sealed class ProductionPackageService(
                         ?? throw new ProductionPackageBuildException(
                             "production_package_nc_identity_missing",
                             "The current immutable NC release has no bound NC identity token.");
+                    var runNumber = context.RunNumber
+                        ?? throw new ProductionPackageBuildException(
+                            "production_package_run_number_missing",
+                            "The current Production Run has no bound Run number.");
                     transformed = NcPackageTemplateTransformer.TransformCanonical(
                         sourceLines, transformOptions,
-                        new(context.PartName, context.OperationName, context.ProductionRunId,
-                            packageId, context.MachineId, context.GCodeReleaseId!, offsetLoaderId),
+                        new(context.PartName, context.OperationName,
+                            runNumber.ToString(CultureInfo.InvariantCulture),
+                            packageNumber.ToString(CultureInfo.InvariantCulture),
+                            context.MachineNumber, ncId.ToString(CultureInfo.InvariantCulture), offsetLoaderId),
                         ncId, out var protocol);
                     placeholderProtocolVersion = protocol;
                 }
@@ -101,11 +109,11 @@ internal sealed class ProductionPackageService(
                     {
                         "%",
                         "O01990 (MEIMAD PACKAGE OFFSET LOADER)",
-                        $"(PRODUCTION PACKAGE {packageId})",
-                        $"(PRODUCTION RUN {context.ProductionRunId})",
+                        $"(PRODUCTION PACKAGE {packageNumber})",
+                        $"(PRODUCTION RUN {context.RunNumber!.Value})",
                         $"(BATCH OPERATION {context.BatchOperationId})",
-                        $"(MACHINE {context.MachineId})",
-                        $"(NC RELEASE {context.GCodeReleaseId})",
+                        $"(MACHINE {context.MachineNumber})",
+                        $"(NC RELEASE {ncId})",
                         $"(OFFSET LOADER RELEASE {offsetLoaderId})",
                         offsetMode == "MANUAL_DUMMY"
                             ? "(MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY)"
@@ -142,8 +150,10 @@ internal sealed class ProductionPackageService(
                 schemaVersion = 2,
                 placeholderProtocolVersion,
                 productionPackageId = packageId,
+                productionPackageNumber = packageNumber,
                 batchOperationId = context.BatchOperationId,
                 productionRunId = context.ProductionRunId,
+                productionRunNumber = context.RunNumber,
                 partName = context.PartName,
                 operationName = context.OperationName,
                 machineAssignmentId = context.MachineAssignmentId,
@@ -155,6 +165,7 @@ internal sealed class ProductionPackageService(
                 verificationConfigurationVersion = context.Verification?.Version,
                 verificationMacroVersion = context.Verification?.ExpectedMacroVersion,
                 gCodeReleaseId = context.GCodeReleaseId,
+                ncIdentityToken = context.NcIdentityToken,
                 gCodeSourceHash = context.GCodeHash,
                 toolTableReleaseId = context.ToolTableReleaseId,
                 toolTableSourceHash = offsetMode == "MEASURED" ? context.ToolTableHash : null,
@@ -194,7 +205,7 @@ internal sealed class ProductionPackageService(
             Directory.Move(staging, final);
             moved = true;
             var record = new ProductionPackageRecord(
-                packageId, context.BatchOperationId, context.ProductionRunId,
+                packageId, packageNumber, context.BatchOperationId, context.ProductionRunId,
                 context.MachineAssignmentId, context.MachineId, context.GCodeReleaseId,
                 context.ToolTableReleaseId, offsetLoaderId, context.ExecutionMode,
                 offsetMode,

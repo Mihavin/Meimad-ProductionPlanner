@@ -51,6 +51,11 @@ Do not emit a real Part name, Operation name, Planner Machine ID, Run ID,
 Package ID, release ID, user, timestamp, challenge, response, or verification
 call. The Server owns all of those values.
 
+`MACHINE_ID`, `NC_RELEASE_ID`, `RUN_ID` (via `PRODUCTION_RUN_ID`), and `PACKAGE_ID` (via
+`PRODUCTION_PACKAGE_ID`) resolve to short unique 6-digit numbers meant to be read and typed
+by hand at the control (e.g. `483921`), not to the Server's internal identifiers. Do not
+assume these resolved values are the same length or format as any internal ID string.
+
 ## SolidCAM example
 
 In the SolidCAM post, print the literal strings; do not bind them to job fields:

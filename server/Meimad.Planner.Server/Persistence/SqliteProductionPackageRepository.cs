@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using Meimad.Planner.Server.Application.ProductionPackages;
 using Meimad.Planner.Server.Domain.Readiness;
 using Microsoft.Data.Sqlite;
@@ -77,6 +78,9 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var manualDummyAllowed = reader.GetBoolean(18);
         await reader.DisposeAsync();
 
+        var runNumber = runId is null ? null : (int?)await EnsureRunNumberAsync(
+            connection, transaction, runId, cancellationToken);
+
         if (readiness.ActiveToolTableReleaseId is null)
             throw new ProductionPackageBuildException(
                 "production_package_tool_table_missing",
@@ -94,11 +98,71 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                 "The current Tool Table release artifact could not be resolved.");
         await transaction.CommitAsync(cancellationToken);
         return new(
-            batchOperationId, runId, assignmentId, machineId, machineNumber, machineName,
+            batchOperationId, runId, runNumber, assignmentId, machineId, machineNumber, machineName,
             executionMode, partName, operationName,
             gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash, ncIdentityToken,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
             verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness);
+    }
+
+    public async Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        for (var attempt = 0; attempt < 25; attempt++)
+        {
+            var candidate = RandomNumberGenerator.GetInt32(100000, 1_000_000);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT NOT EXISTS(SELECT 1 FROM production_packages WHERE package_number=$number);";
+            command.Parameters.AddWithValue("$number", candidate);
+            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken),
+                    CultureInfo.InvariantCulture) == 1)
+                return candidate;
+        }
+        throw new ProductionPackageBuildException(
+            "production_package_number_exhausted",
+            "Could not allocate a unique Production Package number.");
+    }
+
+    private static async Task<int> EnsureRunNumberAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string runId,
+        CancellationToken token)
+    {
+        await using (var select = connection.CreateCommand())
+        {
+            select.Transaction = transaction;
+            select.CommandText = "SELECT run_number FROM production_runs WHERE id=$id;";
+            select.Parameters.AddWithValue("$id", runId);
+            var existing = await select.ExecuteScalarAsync(token);
+            if (existing is int existingNumber) return existingNumber;
+            if (existing is long existingLong) return (int)existingLong;
+        }
+
+        for (var attempt = 0; attempt < 25; attempt++)
+        {
+            var candidate = RandomNumberGenerator.GetInt32(100000, 1_000_000);
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE production_runs SET run_number=$number
+                WHERE id=$id AND run_number IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM production_runs WHERE run_number=$number);
+                """;
+            update.Parameters.AddWithValue("$number", candidate);
+            update.Parameters.AddWithValue("$id", runId);
+            if (await update.ExecuteNonQueryAsync(token) == 1) return candidate;
+
+            await using var recheck = connection.CreateCommand();
+            recheck.Transaction = transaction;
+            recheck.CommandText = "SELECT run_number FROM production_runs WHERE id=$id;";
+            recheck.Parameters.AddWithValue("$id", runId);
+            var value = await recheck.ExecuteScalarAsync(token);
+            if (value is int number) return number;
+            if (value is long numberLong) return (int)numberLong;
+        }
+        throw new ProductionPackageBuildException(
+            "production_package_run_number_exhausted",
+            "Could not allocate a unique Production Run number.");
     }
 
     public async Task ActivateAsync(
@@ -130,15 +194,16 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
 
         await ExecuteAsync(connection, transaction, """
             INSERT INTO production_packages (
-                id,batch_operation_id,production_run_id,machine_assignment_id,machine_id,
+                id,package_number,batch_operation_id,production_run_id,machine_assignment_id,machine_id,
                 gcode_release_id,tool_table_release_id,offset_loader_release_id,execution_mode,
                 verification_enabled,verification_configuration_version,verification_macro_version,tool_offset_mode,
                 manifest_relative_path,manifest_hash,created_at,created_by,supersedes_package_id)
-            VALUES ($id,$operationId,$runId,$assignmentId,$machineId,$gcodeId,$toolId,$loaderId,
+            VALUES ($id,$number,$operationId,$runId,$assignmentId,$machineId,$gcodeId,$toolId,$loaderId,
                     $mode,$verification,$configVersion,$macroVersion,$offsetMode,$manifestPath,$manifestHash,
                     $at,$by,$supersedes);
             """, cancellationToken,
-            ("$id", package.ProductionPackageId), ("$operationId", package.BatchOperationId),
+            ("$id", package.ProductionPackageId), ("$number", package.PackageNumber),
+            ("$operationId", package.BatchOperationId),
             ("$runId", Db(package.ProductionRunId)), ("$assignmentId", package.MachineAssignmentId),
             ("$machineId", package.MachineId), ("$gcodeId", Db(package.GCodeReleaseId)),
             ("$toolId", package.ToolTableReleaseId), ("$loaderId", Db(package.OffsetLoaderReleaseId)),
@@ -221,7 +286,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    package.verification_configuration_version,package.verification_macro_version,
                    package.manifest_relative_path,package.manifest_hash,package.created_at,
                    package.created_by,package.supersedes_package_id,package.tool_offset_mode,
-                   connection.enabled,connection.allow_write,connection.connection_status
+                   connection.enabled,connection.allow_write,connection.connection_status,
+                   package.package_number
             FROM production_package_current current
             JOIN production_packages package ON package.id=current.production_package_id
             JOIN machine_assignments assignment
@@ -346,7 +412,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var configured = !reader.IsDBNull(18) && reader.GetBoolean(18)
             && !reader.IsDBNull(19) && reader.GetBoolean(19);
         return new(
-            reader.GetString(0), reader.GetString(1), Nullable(reader, 2), reader.GetString(3),
+            reader.GetString(0), reader.GetInt32(21), reader.GetString(1), Nullable(reader, 2), reader.GetString(3),
             reader.GetString(4), Nullable(reader, 5), reader.GetString(6), Nullable(reader, 7),
             reader.GetString(8), reader.GetString(17), reader.GetBoolean(9), NullableInt(reader, 10), NullableInt(reader, 11),
             reader.GetString(12), reader.GetString(13), Parse(reader.GetString(14)), reader.GetString(15),

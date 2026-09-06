@@ -1872,6 +1872,7 @@ internal sealed record ProductionPackageArtifactInfo(
 
 internal sealed record ProductionPackageInfo(
     string ProductionPackageId,
+    int PackageNumber,
     string BatchOperationId,
     string? ProductionRunId,
     string MachineAssignmentId,

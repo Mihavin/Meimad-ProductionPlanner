@@ -130,8 +130,8 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
                 Selected.BatchOperationId, clientId, userId, toolOffsetMode);
             ActionRequested?.Invoke(this, new("PRODUCTION_PACKAGE_CREATED", Selected, package));
             Status = package.ToolOffsetMode == "MANUAL_DUMMY"
-                ? $"Production Package {package.ProductionPackageId} created with a verification-only Offset Loader. Setupist must enter real tool offsets manually."
-                : $"Production Package {package.ProductionPackageId} created and made current.";
+                ? $"Production Package #{package.PackageNumber} created with a verification-only Offset Loader. Setupist must enter real tool offsets manually."
+                : $"Production Package #{package.PackageNumber} created and made current.";
         });
         var resultMessage = Status;
         await RefreshAsync();
@@ -146,7 +146,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
             var package = await api.GetCurrentProductionPackageAsync(Selected.BatchOperationId)
                 ?? throw new InvalidOperationException("No current valid Production Package exists.");
             ActionRequested?.Invoke(this, new("OPEN_PRODUCTION_PACKAGE", Selected, package));
-            Status = $"Opened current Production Package {package.ProductionPackageId}. No workflow state changed.";
+            Status = $"Opened current Production Package #{package.PackageNumber}. No workflow state changed.";
         });
     }
 
@@ -174,7 +174,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
                     $"Package artifact '{artifact.LogicalPath}' failed checksum verification.");
             await File.WriteAllBytesAsync(destination, bytes, cancellationToken);
         }
-        Status = $"Exported Production Package {package.ProductionPackageId}. No workflow state changed.";
+        Status = $"Exported Production Package #{package.PackageNumber}. No workflow state changed.";
     }
 
     private async Task RunActionAsync(Func<Task> action)

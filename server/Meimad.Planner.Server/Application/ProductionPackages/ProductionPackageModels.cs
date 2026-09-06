@@ -21,6 +21,7 @@ internal sealed record ProductionPackageVerificationConfiguration(
 internal sealed record ProductionPackageBuildContext(
     string BatchOperationId,
     string? ProductionRunId,
+    int? RunNumber,
     string MachineAssignmentId,
     string MachineId,
     string MachineNumber,
@@ -55,6 +56,7 @@ internal sealed record ProductionPackageArtifact(
 
 internal sealed record ProductionPackageRecord(
     string ProductionPackageId,
+    int PackageNumber,
     string BatchOperationId,
     string? ProductionRunId,
     string MachineAssignmentId,
@@ -86,6 +88,8 @@ internal interface IProductionPackageRepository
     Task<ProductionPackageBuildContext?> ReadBuildContextAsync(
         string batchOperationId,
         CancellationToken cancellationToken);
+
+    Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken);
 
     Task ActivateAsync(
         ProductionPackageRecord package,
