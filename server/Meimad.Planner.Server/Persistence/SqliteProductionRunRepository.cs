@@ -326,19 +326,86 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         var state = await ReadRunStateAsync(connection, transaction, runId, token)
             ?? throw new ProductionRunNotFoundException(runId);
         if (state.Version != expectedVersion) throw new ProductionRunVersionConflictException(runId, expectedVersion);
-        if (state.Status is not ("DRAFT" or "PLANNED"))
-            throw new ProductionRunStateException("started_run_immutable", "Only a not-started Production Run can be cancelled.");
-        await RemoveAssignmentAsync(connection, transaction, runId, token);
+        if (state.Status is "COMPLETED" or "CANCELLED" or "ABORTED")
+            throw new ProductionRunStateException(
+                "run_already_terminal", $"Production Run is already {state.Status}.");
+        var wasStarted = state.Status is "IN_PROGRESS" or "SUSPENDED";
         var now = timeProvider.GetUtcNow();
+        if (wasStarted)
+        {
+            // Stopping an already-started run: unwind active machine-side state (mirrors
+            // ProductionBatchService.CancelProductionAsync's proven unwind sequence, scoped to
+            // this one run) and return the Batch Operation to 'not_started' so it can be
+            // reassigned/re-run, instead of leaving it stranded on a cancelled run. Produced
+            // quantity/cycle counts are preserved rather than zeroed — this is stopping one run
+            // attempt, not voiding the whole Batch, so work already done still counts.
+            await using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = """
+                    UPDATE operation_pause_events
+                    SET status='closed',pause_ended_at=$at,updated_at=$at,version=version+1
+                    WHERE status='active' AND batch_operation_id IN (
+                        SELECT DISTINCT output.batch_operation_id
+                        FROM production_run_outputs output
+                        JOIN production_run_programs program ON program.id=output.production_run_program_id
+                        WHERE program.production_run_id=$id);
+
+                    UPDATE haas_bench_state_intervals
+                    SET ended_at=$at
+                    WHERE ended_at IS NULL AND bench_id IN (
+                        SELECT bench.id FROM haas_bench_sessions bench
+                        WHERE bench.batch_operation_id IN (
+                            SELECT DISTINCT output.batch_operation_id
+                            FROM production_run_outputs output
+                            JOIN production_run_programs program ON program.id=output.production_run_program_id
+                            WHERE program.production_run_id=$id));
+
+                    UPDATE haas_bench_sessions
+                    SET state='COMPLETED',part_counting_enabled=0,
+                        completed_at=COALESCE(completed_at,$at),version=version+1,updated_at=$at
+                    WHERE batch_operation_id IN (
+                        SELECT DISTINCT output.batch_operation_id
+                        FROM production_run_outputs output
+                        JOIN production_run_programs program ON program.id=output.production_run_program_id
+                        WHERE program.production_run_id=$id);
+
+                    UPDATE production_run_outputs
+                    SET status=CASE WHEN produced_quantity>0
+                                    THEN 'ABORTED_REMAINDER_RELEASED' ELSE 'RELEASED' END,
+                        version=version+1,updated_at=$at
+                    WHERE production_run_program_id IN (
+                        SELECT id FROM production_run_programs WHERE production_run_id=$id);
+
+                    UPDATE production_run_programs
+                    SET status='CANCELLED',version=version+1,updated_at=$at
+                    WHERE production_run_id=$id;
+
+                    UPDATE batch_operations
+                    SET status='not_started',actual_start=NULL,actual_machine_id=NULL,
+                        version=version+1,updated_at=$at
+                    WHERE id IN (
+                        SELECT DISTINCT output.batch_operation_id
+                        FROM production_run_outputs output
+                        JOIN production_run_programs program ON program.id=output.production_run_program_id
+                        WHERE program.production_run_id=$id);
+                    """;
+                update.Parameters.AddWithValue("$id", runId);
+                update.Parameters.AddWithValue("$at", Format(now));
+                await update.ExecuteNonQueryAsync(token);
+            }
+        }
+        await RemoveAssignmentAsync(connection, transaction, runId, token);
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
             update.CommandText = """
                 UPDATE production_runs SET status='CANCELLED',version=version+1,updated_at=$at WHERE id=$id;
+                """ + (wasStarted ? "" : """
                 UPDATE production_run_programs SET status='CANCELLED',version=version+1,updated_at=$at WHERE production_run_id=$id;
                 UPDATE production_run_outputs SET status='RELEASED',version=version+1,updated_at=$at
                 WHERE production_run_program_id IN (SELECT id FROM production_run_programs WHERE production_run_id=$id);
-                """;
+                """);
             update.Parameters.AddWithValue("$id", runId);
             update.Parameters.AddWithValue("$at", Format(now));
             await update.ExecuteNonQueryAsync(token);
@@ -346,7 +413,8 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
             new("production_run_cancelled", now, actor,
                 new Dictionary<string, string> { ["productionRunId"] = runId },
-                "PLANNER_CANCELLED", reason, new { state.Status }, new { status = "CANCELLED" }), token);
+                "PLANNER_CANCELLED", reason, new { state.Status },
+                new { status = "CANCELLED", wasStarted }), token);
         await transaction.CommitAsync(token);
         return (await GetAsync(runId, token))!;
     }
