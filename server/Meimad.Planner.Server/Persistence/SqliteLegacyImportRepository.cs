@@ -426,6 +426,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             INNER JOIN production_batches ON production_batches.id = batch_operations.production_batch_id
             INNER JOIN cases ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments ON machine_assignments.batch_operation_id = batch_operations.id
+             AND machine_assignments.released_at IS NULL
             ORDER BY batch_operations.production_batch_id, batch_operations.route_position, batch_operations.id
             LIMIT 50000;
             """;
@@ -899,7 +900,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
             issues.Add(SourceIssue("operation_not_assignable", $"Batch Operation '{batchOperationId}' status '{status}' cannot be imported into a backlog.", source, "batchOperationId"));
             return null;
         }
-        if (await ExistsAsync(connection, transaction, "SELECT EXISTS(SELECT 1 FROM machine_assignments WHERE batch_operation_id = $value);", batchOperationId, cancellationToken))
+        if (await ExistsAsync(connection, transaction, "SELECT EXISTS(SELECT 1 FROM machine_assignments WHERE batch_operation_id = $value AND released_at IS NULL);", batchOperationId, cancellationToken))
         {
             issues.Add(SourceIssue("operation_already_assigned", $"Batch Operation '{batchOperationId}' is already assigned; resolve it on the Planning Board.", source, "batchOperationId"));
             return null;
@@ -957,7 +958,7 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         await using (var backlog = connection.CreateCommand())
         {
             backlog.Transaction = transaction;
-            backlog.CommandText = "SELECT COALESCE(MAX(backlog_position), -1) + 1 FROM machine_assignments WHERE machine_id = $machineId;";
+            backlog.CommandText = "SELECT COALESCE(MAX(backlog_position), -1) + 1 FROM machine_assignments WHERE machine_id = $machineId AND released_at IS NULL;";
             backlog.Parameters.AddWithValue("$machineId", machineId);
             position = Convert.ToInt32(await backlog.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
         }

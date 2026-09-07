@@ -1689,7 +1689,7 @@ public sealed class TimelineApiTests
                             WHERE event_type = 'manual_backlog_reorder'
                               AND json_extract(related_entity_ids_json, '$.batchOperationId') = 'op-1')
                     FROM machine_assignments
-                    WHERE batch_operation_id = 'op-1';
+                    WHERE batch_operation_id = 'op-1' AND released_at IS NULL;
                     """;
                 await using var reader = await command.ExecuteReaderAsync();
                 Assert.True(await reader.ReadAsync());

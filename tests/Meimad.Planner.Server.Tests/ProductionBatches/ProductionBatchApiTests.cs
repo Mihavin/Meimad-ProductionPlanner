@@ -201,12 +201,98 @@ public sealed class ProductionBatchApiTests
             Assert.Equal(1L, await ScalarInt64Async(verify,
                 "SELECT COUNT(*) FROM production_run_cycle_events WHERE id=$id", "cycle-evidence-cancel"));
             Assert.Equal(0L, await ScalarInt64Async(verify,
-                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id", "assignment-cancel"));
+                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id AND released_at IS NULL", "assignment-cancel"));
             Assert.Equal(0L, await ScalarInt64Async(verify,
                 "SELECT backlog_position FROM machine_assignments WHERE id=$id", "assignment-remains"));
             Assert.Equal(0L, await ScalarInt64Async(verify,
                 "SELECT COUNT(*) FROM batch_material_reservations WHERE production_batch_id=$id", batchId));
             Assert.Equal("active", (await ReadOrderStatusAndVersionAsync(client, "order-1")).Status);
+        });
+    }
+
+    [Fact]
+    public async Task Cancel_production_soft_releases_an_assignment_with_a_published_production_package()
+    {
+        // Regression test: a Production Package has an immutable, NOT NULL, ON DELETE RESTRICT
+        // foreign key to machine_assignments, so cancelling a batch whose assignment already has a
+        // published package used to fail the whole request with a raw FOREIGN KEY constraint error.
+        // The assignment must now be soft-released (kept, marked released_at) instead of deleted.
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningDataAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            using var created = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId = "case-1",
+                batchNumber = "B-CANCEL-PACKAGE",
+                status = "waiting",
+                plannedQuantity = 5,
+                allocations = new[] { new { allocationType = "order", orderId = "order-1", quantity = 5 } }
+            });
+            created.EnsureSuccessStatusCode();
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var batchId = createdJson.RootElement.GetProperty("batchId").GetString()!;
+            var operationId = (await ReadOperationIdsAsync(client, batchId))[0];
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO working_calendars(id,name,time_zone_id) VALUES('calendar-pkg','Day','UTC');
+                    INSERT INTO machines(id,number,name,machine_type,working_calendar_id,status)
+                    VALUES('machine-pkg','11','Mill','mill','calendar-pkg','active');
+                    INSERT INTO machine_assignments(
+                        id,batch_operation_id,machine_id,backlog_position,planning_mode)
+                    VALUES('assignment-pkg',$operationId,'machine-pkg',0,'manual');
+                    INSERT INTO tool_table_releases(
+                        id,case_operation_id,revision_number,original_file_name,stored_relative_path,
+                        file_size,file_hash,released_at,released_by,release_comment,created_at,updated_at)
+                    VALUES('tool-pkg','case-op-10',1,'tool.csv','tool-pkg.csv',10,
+                           '0000000000000000000000000000000000000000000000000000000000000000',
+                           $at,'planner','initial release',$at,$at);
+                    INSERT INTO production_packages(
+                        id,batch_operation_id,machine_assignment_id,machine_id,tool_table_release_id,
+                        execution_mode,verification_enabled,manifest_relative_path,manifest_hash,
+                        created_at,created_by)
+                    VALUES('package-pkg',$operationId,'assignment-pkg','machine-pkg','tool-pkg',
+                           'MANUAL',0,'packages/cancel-package/manifest.json',
+                           '0000000000000000000000000000000000000000000000000000000000000000',
+                           $at,'planner');
+                    UPDATE production_batches SET status='in_production' WHERE id=$batchId;
+                    UPDATE batch_operations SET status='not_started' WHERE id=$operationId;
+                    """;
+                seed.Parameters.AddWithValue("$at", "2026-09-02T08:00:00.0000000+00:00");
+                seed.Parameters.AddWithValue("$batchId", batchId);
+                seed.Parameters.AddWithValue("$operationId", operationId);
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            using var cancel = new HttpRequestMessage(
+                HttpMethod.Post, $"/api/v1/batches/{batchId}/cancel-production")
+            {
+                Content = JsonContent.Create(new { reason = "Test plan cancelled." })
+            };
+            cancel.Headers.TryAddWithoutValidation("If-Match", created.Headers.ETag!.ToString());
+            using var response = await client.SendAsync(cancel);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal("cancelled", await ScalarStringAsync(verify,
+                "SELECT status FROM production_batches WHERE id=$id", batchId));
+            Assert.Equal(1L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id", "assignment-pkg"));
+            Assert.Equal(1L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id AND released_at IS NOT NULL",
+                "assignment-pkg"));
+            Assert.Equal(0L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id AND released_at IS NULL",
+                "assignment-pkg"));
+            Assert.Equal(1L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM production_packages WHERE id=$id", "package-pkg"));
         });
     }
 

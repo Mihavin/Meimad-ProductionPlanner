@@ -41,6 +41,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             JOIN case_operations source_operation ON source_operation.id=operation.source_case_operation_id
             JOIN cases case_record ON case_record.id=source_operation.case_id
             JOIN machine_assignments assignment ON assignment.batch_operation_id=operation.id
+             AND assignment.released_at IS NULL
             JOIN machines machine ON machine.id=assignment.machine_id
             LEFT JOIN cnc_verification_settings settings ON settings.machine_id=machine.id
             LEFT JOIN machine_connections connection ON connection.machine_id=machine.id
@@ -294,6 +295,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
               ON assignment.id=package.machine_assignment_id
              AND assignment.batch_operation_id=package.batch_operation_id
              AND assignment.machine_id=package.machine_id
+             AND assignment.released_at IS NULL
             JOIN batch_operations operation ON operation.id=package.batch_operation_id
             JOIN machines machine ON machine.id=package.machine_id
             JOIN process_revisions process
@@ -352,6 +354,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                   ON assignment.batch_operation_id=operation.id
                  AND assignment.id=$assignmentId
                  AND assignment.machine_id=$machineId
+                 AND assignment.released_at IS NULL
                 JOIN machines machine
                   ON machine.id=assignment.machine_id
                  AND machine.execution_mode=$mode

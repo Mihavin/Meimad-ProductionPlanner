@@ -329,6 +329,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
             JOIN production_batches batch ON batch.id = operation.production_batch_id
             JOIN cases part ON part.id = batch.case_id
             WHERE assignment.machine_id = $machineId
+              AND assignment.released_at IS NULL
               AND operation.status NOT IN ('completed', 'cancelled')
               AND (
                     lower(trim(part.part_number)) = lower(trim($partName))

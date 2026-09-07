@@ -52,6 +52,7 @@ internal static class SqliteProductionReadinessContextReader
                 JOIN production_batches batch ON batch.id = operation.production_batch_id
                 LEFT JOIN machine_assignments assignment
                   ON assignment.batch_operation_id = operation.id
+                 AND assignment.released_at IS NULL
                 LEFT JOIN machines machine ON machine.id = assignment.machine_id
                 LEFT JOIN process_revisions active_process
                   ON active_process.case_operation_id = operation.source_case_operation_id

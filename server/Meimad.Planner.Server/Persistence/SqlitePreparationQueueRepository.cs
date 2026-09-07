@@ -66,6 +66,7 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
             JOIN production_batches batch ON batch.id=operation.production_batch_id
             JOIN cases ON cases.id=batch.case_id
             JOIN machine_assignments assignment ON assignment.batch_operation_id=operation.id
+             AND assignment.released_at IS NULL
             JOIN machines machine ON machine.id=assignment.machine_id
             LEFT JOIN production_runs run ON run.id=(
                 SELECT program.production_run_id
@@ -110,6 +111,7 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
                   ON assignment.id=package.machine_assignment_id
                  AND assignment.batch_operation_id=package.batch_operation_id
                  AND assignment.machine_id=package.machine_id
+                 AND assignment.released_at IS NULL
                 JOIN batch_operations operation ON operation.id=package.batch_operation_id
                 JOIN process_revisions process
                   ON process.case_operation_id=operation.source_case_operation_id

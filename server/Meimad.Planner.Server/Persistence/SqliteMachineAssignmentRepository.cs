@@ -232,12 +232,21 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             transaction,
             current.MachineId,
             cancellationToken);
-        await using (var deleteCommand = connection.CreateCommand())
+        await using (var releaseCommand = connection.CreateCommand())
         {
-            deleteCommand.Transaction = transaction;
-            deleteCommand.CommandText = "DELETE FROM machine_assignments WHERE id = $id;";
-            deleteCommand.Parameters.AddWithValue("$id", current.MachineAssignmentId);
-            await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+            releaseCommand.Transaction = transaction;
+            // Soft-release, never hard-delete: production_packages.machine_assignment_id is a
+            // NOT NULL, ON DELETE RESTRICT FK to an immutable table, so once a Production
+            // Package has ever been built against this assignment it can never be hard-deleted.
+            releaseCommand.CommandText = """
+                UPDATE machine_assignments
+                SET released_at=$at,backlog_position=1000000000+rowid,production_run_id=NULL,
+                    version=version+1,updated_at=$at
+                WHERE id=$id AND released_at IS NULL;
+                """;
+            releaseCommand.Parameters.AddWithValue("$id", current.MachineAssignmentId);
+            releaseCommand.Parameters.AddWithValue("$at", FormatInstant(now));
+            await releaseCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
         var remaining = original
@@ -287,6 +296,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             JOIN batch_operations
               ON batch_operations.id = machine_assignments.batch_operation_id
             WHERE machine_assignments.machine_id = $machineId
+              AND machine_assignments.released_at IS NULL
             ORDER BY machine_assignments.backlog_position;
             """;
         command.Parameters.AddWithValue("$machineId", machineId);
@@ -340,7 +350,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 FROM machine_assignments
                 JOIN batch_operations
                   ON batch_operations.id = machine_assignments.batch_operation_id
-                WHERE machine_assignments.id = $assignmentId;
+                WHERE machine_assignments.id = $assignmentId
+                  AND machine_assignments.released_at IS NULL;
                 """;
             read.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
             await using var reader = await read.ExecuteReaderAsync(cancellationToken);
@@ -555,12 +566,20 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         {
             var original = await ReadAssignmentsForMachineAsync(
                 connection, transaction, execution.MachineId, cancellationToken);
-            await using (var delete = connection.CreateCommand())
+            await using (var release = connection.CreateCommand())
             {
-                delete.Transaction = transaction;
-                delete.CommandText = "DELETE FROM machine_assignments WHERE id = $id;";
-                delete.Parameters.AddWithValue("$id", execution.AssignmentId);
-                await delete.ExecuteNonQueryAsync(cancellationToken);
+                release.Transaction = transaction;
+                // Soft-release, never hard-delete: production_packages.machine_assignment_id is a
+                // NOT NULL, ON DELETE RESTRICT FK to an immutable table.
+                release.CommandText = """
+                    UPDATE machine_assignments
+                    SET released_at=$at,backlog_position=1000000000+rowid,production_run_id=NULL,
+                        version=version+1,updated_at=$at
+                    WHERE id=$id AND released_at IS NULL;
+                    """;
+                release.Parameters.AddWithValue("$id", execution.AssignmentId);
+                release.Parameters.AddWithValue("$at", FormatInstant(now));
+                await release.ExecuteNonQueryAsync(cancellationToken);
             }
 
             var remaining = original
@@ -827,6 +846,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             FROM batch_operations
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
+             AND machine_assignments.released_at IS NULL
             WHERE batch_operations.id = $id;
             """;
         command.Parameters.AddWithValue("$id", batchOperationId);
@@ -1019,6 +1039,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 JOIN batch_operations
                   ON batch_operations.id = machine_assignments.batch_operation_id
                 WHERE machine_assignments.machine_id = $machineId
+                  AND machine_assignments.released_at IS NULL
                   AND batch_operations.id <> $exceptOperationId
                   AND batch_operations.status = 'in_progress');
             """;
@@ -1251,6 +1272,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             INNER JOIN batch_operations
                 ON batch_operations.id = machine_assignments.batch_operation_id
             WHERE machine_assignments.machine_id = $machineId
+              AND machine_assignments.released_at IS NULL
               AND batch_operations.status = 'in_progress'
               AND batch_operations.id <> $firstBatchOperationId
             LIMIT 1;
@@ -1324,7 +1346,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             SELECT id, batch_operation_id, machine_id, backlog_position,
                    version, created_at, updated_at, planning_mode, production_run_id
             FROM machine_assignments
-            WHERE batch_operation_id = $operationId;
+            WHERE batch_operation_id = $operationId AND released_at IS NULL;
             """;
         command.Parameters.AddWithValue("$operationId", batchOperationId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1343,7 +1365,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             SELECT id, batch_operation_id, machine_id, backlog_position,
                    version, created_at, updated_at, planning_mode, production_run_id
             FROM machine_assignments
-            WHERE machine_id = $machineId
+            WHERE machine_id = $machineId AND released_at IS NULL
             ORDER BY backlog_position;
             """;
         command.Parameters.AddWithValue("$machineId", machineId);

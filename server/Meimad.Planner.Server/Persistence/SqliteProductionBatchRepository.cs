@@ -307,7 +307,8 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                 FROM machine_assignments assignment
                 LEFT JOIN batch_operations operation
                   ON operation.id=assignment.batch_operation_id
-                WHERE operation.production_batch_id=$batchId
+                WHERE assignment.released_at IS NULL
+                  AND (operation.production_batch_id=$batchId
                    OR assignment.production_run_id IN (
                        SELECT DISTINCT program.production_run_id
                        FROM production_run_programs program
@@ -315,7 +316,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                          ON output.production_run_program_id=program.id
                        JOIN batch_operations linked_operation
                          ON linked_operation.id=output.batch_operation_id
-                       WHERE linked_operation.production_batch_id=$batchId)
+                       WHERE linked_operation.production_batch_id=$batchId))
                 ORDER BY assignment.machine_id;
                 """;
             machines.Parameters.AddWithValue("$batchId", batchId);
@@ -381,8 +382,11 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                 WHERE batch_operation_id IN (
                     SELECT id FROM batch_operations WHERE production_batch_id=$batchId);
 
-                DELETE FROM machine_assignments
-                WHERE batch_operation_id IN (
+                UPDATE machine_assignments
+                SET released_at=$at,backlog_position=1000000000+rowid,production_run_id=NULL,
+                    version=version+1,updated_at=$at
+                WHERE released_at IS NULL
+                  AND (batch_operation_id IN (
                     SELECT id FROM batch_operations WHERE production_batch_id=$batchId)
                    OR production_run_id IN (
                        SELECT DISTINCT program.production_run_id
@@ -390,7 +394,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                        JOIN production_run_outputs output
                          ON output.production_run_program_id=program.id
                        JOIN batch_operations operation ON operation.id=output.batch_operation_id
-                       WHERE operation.production_batch_id=$batchId);
+                       WHERE operation.production_batch_id=$batchId));
 
                 UPDATE production_run_outputs
                 SET status=CASE WHEN produced_quantity>0
@@ -472,14 +476,14 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         command.CommandText = """
             UPDATE machine_assignments
             SET backlog_position=backlog_position+1000000
-            WHERE machine_id=$machineId;
+            WHERE machine_id=$machineId AND released_at IS NULL;
             WITH ranked AS (
                 SELECT id,ROW_NUMBER() OVER(ORDER BY backlog_position,id)-1 AS position
-                FROM machine_assignments WHERE machine_id=$machineId)
+                FROM machine_assignments WHERE machine_id=$machineId AND released_at IS NULL)
             UPDATE machine_assignments
             SET backlog_position=(SELECT position FROM ranked WHERE ranked.id=machine_assignments.id),
                 version=version+1,updated_at=$at
-            WHERE machine_id=$machineId;
+            WHERE machine_id=$machineId AND released_at IS NULL;
             """;
         command.Parameters.AddWithValue("$machineId", machineId);
         command.Parameters.AddWithValue("$at", FormatInstant(now));

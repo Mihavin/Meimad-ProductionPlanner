@@ -167,6 +167,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 FROM batch_operations
                 LEFT JOIN machine_assignments
                   ON machine_assignments.batch_operation_id = batch_operations.id
+                 AND machine_assignments.released_at IS NULL
                 LEFT JOIN latest_machine_moves
                   ON latest_machine_moves.operation_id = batch_operations.id
             ),
@@ -303,6 +304,7 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             JOIN cases ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
+             AND machine_assignments.released_at IS NULL
             LEFT JOIN effective_batch_operation_nc_estimates nc_estimate
               ON nc_estimate.batch_operation_id = batch_operations.id
             LEFT JOIN process_revisions active_process

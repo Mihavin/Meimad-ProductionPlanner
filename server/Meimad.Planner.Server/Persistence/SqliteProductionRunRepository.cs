@@ -199,8 +199,8 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         if (state.Status is not ("DRAFT" or "PLANNED"))
             throw new ProductionRunStateException("started_run_immutable", "A started or historical Production Run cannot be reassigned.");
         var owner = await ReadFirstOutputOperationAsync(connection, transaction, runId, token);
-        await RemoveAssignmentAsync(connection, transaction, runId, token);
         var now = timeProvider.GetUtcNow();
+        await RemoveAssignmentAsync(connection, transaction, runId, now, token);
         await WriteAssignmentAsync(connection, transaction, runId, owner, command, actor, now, token);
         await IncrementRunVersionAsync(connection, transaction, runId, now, token);
         await transaction.CommitAsync(token);
@@ -219,7 +219,7 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         if (state.Status is not ("DRAFT" or "PLANNED"))
             throw new ProductionRunStateException("started_run_immutable", "A started Production Run cannot be unassigned.");
         var now = timeProvider.GetUtcNow();
-        await RemoveAssignmentAsync(connection, transaction, runId, token);
+        await RemoveAssignmentAsync(connection, transaction, runId, now, token);
         await IncrementRunVersionAsync(connection, transaction, runId, now, token);
         await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction,
             new("production_run_unassigned", now, actor,
@@ -395,7 +395,7 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
                 await update.ExecuteNonQueryAsync(token);
             }
         }
-        await RemoveAssignmentAsync(connection, transaction, runId, token);
+        await RemoveAssignmentAsync(connection, transaction, runId, now, token);
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
@@ -517,7 +517,7 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         await using (var read = connection.CreateCommand())
         {
             read.Transaction = transaction;
-            read.CommandText = "SELECT id FROM machine_assignments WHERE machine_id=$id ORDER BY backlog_position,id;";
+            read.CommandText = "SELECT id FROM machine_assignments WHERE machine_id=$id AND released_at IS NULL ORDER BY backlog_position,id;";
             read.Parameters.AddWithValue("$id", command.MachineId);
             await using var reader = await read.ExecuteReaderAsync(token);
             while (await reader.ReadAsync(token)) assignments.Add(reader.GetString(0));
@@ -527,7 +527,7 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         await using (var stage = connection.CreateCommand())
         {
             stage.Transaction = transaction;
-            stage.CommandText = "UPDATE machine_assignments SET backlog_position=backlog_position+1000000 WHERE machine_id=$id;";
+            stage.CommandText = "UPDATE machine_assignments SET backlog_position=backlog_position+1000000 WHERE machine_id=$id AND released_at IS NULL;";
             stage.Parameters.AddWithValue("$id", command.MachineId);
             await stage.ExecuteNonQueryAsync(token);
         }
@@ -571,32 +571,46 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
     }
 
     private static async Task RemoveAssignmentAsync(
-        SqliteConnection connection, SqliteTransaction transaction, string runId, CancellationToken token)
+        SqliteConnection connection, SqliteTransaction transaction, string runId,
+        DateTimeOffset now, CancellationToken token)
     {
         string? machineId = null;
         await using (var read = connection.CreateCommand())
         {
             read.Transaction = transaction;
-            read.CommandText = "SELECT machine_id FROM machine_assignments WHERE production_run_id=$id;";
+            read.CommandText = "SELECT machine_id FROM machine_assignments WHERE production_run_id=$id AND released_at IS NULL;";
             read.Parameters.AddWithValue("$id", runId);
             machineId = await read.ExecuteScalarAsync(token) as string;
         }
         if (machineId is null) return;
-        await using (var delete = connection.CreateCommand())
+        await using (var release = connection.CreateCommand())
         {
-            delete.Transaction = transaction;
-            delete.CommandText = "DELETE FROM machine_assignments WHERE production_run_id=$id;";
-            delete.Parameters.AddWithValue("$id", runId);
-            await delete.ExecuteNonQueryAsync(token);
+            release.Transaction = transaction;
+            // Soft-release, never hard-delete: production_packages.machine_assignment_id is a
+            // NOT NULL, ON DELETE RESTRICT FK to an immutable table, so once a Production
+            // Package has ever been built against this assignment it can never be hard-deleted.
+            // backlog_position is bumped to a rowid-based offset and production_run_id cleared
+            // so the existing UNIQUE(machine_id,backlog_position)/UNIQUE(production_run_id)
+            // constraints are never violated by a released row colliding with a live one.
+            release.CommandText = """
+                UPDATE machine_assignments
+                SET released_at=$at,backlog_position=1000000000+rowid,production_run_id=NULL,
+                    version=version+1,updated_at=$at
+                WHERE production_run_id=$id AND released_at IS NULL;
+                """;
+            release.Parameters.AddWithValue("$id", runId);
+            release.Parameters.AddWithValue("$at", Format(now));
+            await release.ExecuteNonQueryAsync(token);
         }
         await using var compact = connection.CreateCommand();
         compact.Transaction = transaction;
         compact.CommandText = """
-            UPDATE machine_assignments SET backlog_position=backlog_position+1000000 WHERE machine_id=$machineId;
+            UPDATE machine_assignments SET backlog_position=backlog_position+1000000
+            WHERE machine_id=$machineId AND released_at IS NULL;
             WITH ranked AS (SELECT id,ROW_NUMBER() OVER(ORDER BY backlog_position,id)-1 position
-                            FROM machine_assignments WHERE machine_id=$machineId)
+                            FROM machine_assignments WHERE machine_id=$machineId AND released_at IS NULL)
             UPDATE machine_assignments SET backlog_position=(SELECT position FROM ranked WHERE ranked.id=machine_assignments.id)
-            WHERE machine_id=$machineId;
+            WHERE machine_id=$machineId AND released_at IS NULL;
             """;
         compact.Parameters.AddWithValue("$machineId", machineId);
         await compact.ExecuteNonQueryAsync(token);
@@ -670,7 +684,7 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
         await using (var read=connection.CreateCommand())
         {
             read.Transaction=transaction;
-            read.CommandText="SELECT id,machine_id,backlog_position,planning_mode,version FROM machine_assignments WHERE production_run_id=$id;";
+            read.CommandText="SELECT id,machine_id,backlog_position,planning_mode,version FROM machine_assignments WHERE production_run_id=$id AND released_at IS NULL;";
             read.Parameters.AddWithValue("$id",runId);
             await using var reader=await read.ExecuteReaderAsync(token);
             if(await reader.ReadAsync(token)) assignment=new(reader.GetString(0),reader.GetString(1),reader.GetInt32(2),reader.GetString(3),reader.GetInt32(4));

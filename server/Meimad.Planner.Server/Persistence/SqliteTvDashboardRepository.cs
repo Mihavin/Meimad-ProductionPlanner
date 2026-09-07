@@ -150,6 +150,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
               ON production_batches.id = batch_operations.production_batch_id
             JOIN cases ON cases.id = production_batches.case_id
             WHERE machines.is_active = 1 AND machines.display_enabled = 1
+              AND machine_assignments.released_at IS NULL
             ORDER BY machine_assignments.machine_id, machine_assignments.backlog_position;
             """;
         var values = new List<AssignedOperation>();

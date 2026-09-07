@@ -35,6 +35,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             SELECT COUNT(*)
             FROM machine_assignments
             WHERE machine_assignments.machine_id = machines.id
+              AND machine_assignments.released_at IS NULL
         ) AS backlog_count,
         machines.version,
         machines.created_at,
@@ -292,7 +293,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             FROM machine_assignments
             JOIN batch_operations
               ON batch_operations.id = machine_assignments.batch_operation_id
-            WHERE machine_assignments.machine_id = $machineId;
+            WHERE machine_assignments.machine_id = $machineId
+              AND machine_assignments.released_at IS NULL;
             """;
         command.Parameters.AddWithValue("$machineId", machine.MachineId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

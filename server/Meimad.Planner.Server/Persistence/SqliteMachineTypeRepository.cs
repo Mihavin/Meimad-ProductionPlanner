@@ -225,7 +225,8 @@ internal sealed class SqliteMachineTypeRepository : IMachineTypeRepository
                 SELECT batch_operations.id, batch_operations.required_machine_type
                 FROM machine_assignments
                 JOIN batch_operations ON batch_operations.id = machine_assignments.batch_operation_id
-                WHERE machine_assignments.machine_id = $machineId;
+                WHERE machine_assignments.machine_id = $machineId
+                  AND machine_assignments.released_at IS NULL;
                 """;
             assigned.Parameters.AddWithValue("$machineId", machine.MachineId);
             await using var reader = await assigned.ExecuteReaderAsync(token);

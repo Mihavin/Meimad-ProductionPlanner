@@ -121,6 +121,7 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
             JOIN cases ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
+             AND machine_assignments.released_at IS NULL
             LEFT JOIN machines ON machines.id = machine_assignments.machine_id
             WHERE batch_operations.id = $batchOperationId;
             """;

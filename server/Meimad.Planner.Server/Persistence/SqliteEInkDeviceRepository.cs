@@ -165,6 +165,7 @@ internal sealed class SqliteEInkDeviceRepository : IEInkDeviceRepository
               ON production_batches.id = batch_operations.production_batch_id
             JOIN cases ON cases.id = production_batches.case_id
             WHERE machine_assignments.machine_id = $machineId
+              AND machine_assignments.released_at IS NULL
             ORDER BY machine_assignments.backlog_position;
             """;
         command.Parameters.AddWithValue("$machineId", machineId);

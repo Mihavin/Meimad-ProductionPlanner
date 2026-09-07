@@ -63,7 +63,9 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         ExecuteAsync(id, authority, async (c, t) =>
         {
             if (!await ExistsAsync(c, t, "machines", id, token)) return false;
-            await BlockIfAnyAsync(c, t, "machine_assignments", "machine_id", id, "Unassign all Machine backlog operations first.", token);
+            await BlockBySqlAsync(c, t,
+                "SELECT EXISTS(SELECT 1 FROM machine_assignments WHERE machine_id = $id AND released_at IS NULL);",
+                id, "Unassign all Machine backlog operations first.", token);
             await BlockIfAnyAsync(c, t, "downtimes", "machine_id", id, "Delete the Machine's Downtime records first.", token);
             await BlockIfAnyAsync(c, t, "device_registry", "machine_id", id, "Unbind or delete the Machine's registered device first.", token);
             await BlockIfAnyAsync(c, t, "eink_package_revisions", "machine_id", id, "The Machine is referenced by an official job package.", token);
@@ -147,6 +149,12 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                 "This Production Batch has a started or completed Production Run and is immutable. " +
                 "Use the supported completion/cancellation workflow; recorded production history cannot be deleted.",
                 token);
+            await BlockBySqlAsync(c, t,
+                "SELECT EXISTS(SELECT 1 FROM production_packages WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id=$id));",
+                id,
+                "This Production Batch has published Production Packages and cannot be deleted. " +
+                "Production Packages are permanent audit/QC records.",
+                token);
             var affectedOrders = await SqliteOrderLifecycle.ReadCandidatesForBatchAsync(
                 c,
                 t,
@@ -166,6 +174,10 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                 """, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM operation_pause_events WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM machine_assignment_overrides WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
+            // A full Batch deletion owns its whole graph outright: the block above already
+            // guarantees no Production Package (immutable, RESTRICT to machine_assignments and to
+            // batch_operations) was ever built against any operation in this Batch, so hard-deleting
+            // the assignments here is safe.
             await ExecuteDeleteAsync(c, t, "DELETE FROM machine_assignments WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM production_run_outputs WHERE batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id);", id, token);
             await ExecuteDeleteAsync(c, t, "DELETE FROM production_run_programs WHERE production_run_id IN (SELECT id FROM production_runs WHERE legacy_batch_operation_id IN (SELECT id FROM batch_operations WHERE production_batch_id = $id));", id, token);
@@ -189,7 +201,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
     private static async Task<IReadOnlyList<string>> ReadBatchMachineIdsAsync(SqliteConnection c, SqliteTransaction t, string batchId, CancellationToken token)
     {
         await using var command = c.CreateCommand(); command.Transaction = t;
-        command.CommandText = "SELECT DISTINCT machine_assignments.machine_id FROM machine_assignments JOIN batch_operations ON batch_operations.id = machine_assignments.batch_operation_id WHERE batch_operations.production_batch_id = $id ORDER BY machine_assignments.machine_id;";
+        command.CommandText = "SELECT DISTINCT machine_assignments.machine_id FROM machine_assignments JOIN batch_operations ON batch_operations.id = machine_assignments.batch_operation_id WHERE batch_operations.production_batch_id = $id AND machine_assignments.released_at IS NULL ORDER BY machine_assignments.machine_id;";
         command.Parameters.AddWithValue("$id", batchId);
         var ids = new List<string>();
         await using var reader = await command.ExecuteReaderAsync(token);
@@ -201,13 +213,13 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
     {
         await using var command = c.CreateCommand(); command.Transaction = t;
         command.CommandText = """
-            UPDATE machine_assignments SET backlog_position = backlog_position + 1000000 WHERE machine_id = $machineId;
+            UPDATE machine_assignments SET backlog_position = backlog_position + 1000000 WHERE machine_id = $machineId AND released_at IS NULL;
             WITH ranked AS (
                 SELECT id, ROW_NUMBER() OVER (ORDER BY backlog_position, id) - 1 AS position
-                FROM machine_assignments WHERE machine_id = $machineId)
+                FROM machine_assignments WHERE machine_id = $machineId AND released_at IS NULL)
             UPDATE machine_assignments
             SET backlog_position = (SELECT position FROM ranked WHERE ranked.id = machine_assignments.id)
-            WHERE machine_id = $machineId;
+            WHERE machine_id = $machineId AND released_at IS NULL;
             """;
         command.Parameters.AddWithValue("$machineId", machineId);
         await command.ExecuteNonQueryAsync(token);
@@ -288,6 +300,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         var command = c.CreateCommand(); command.Transaction = t; command.CommandText = sql; command.Parameters.AddWithValue("$id", id);
         return ExecuteAndDisposeAsync(command, token);
     }
+
 
     private static async Task<int> ExecuteAndDisposeAsync(SqliteCommand command, CancellationToken token)
     { await using (command) return await command.ExecuteNonQueryAsync(token); }

@@ -100,7 +100,7 @@ public sealed class MachineOperationExecutionApiTests
             Assert.Equal("completed", await ScalarAsync(
                 connection, "SELECT status FROM batch_operations WHERE id = 'op-1';"));
             Assert.Equal(0L, (long)(await ScalarAsync(
-                connection, "SELECT COUNT(*) FROM machine_assignments WHERE batch_operation_id = 'op-1';"))!);
+                connection, "SELECT COUNT(*) FROM machine_assignments WHERE batch_operation_id = 'op-1' AND released_at IS NULL;"))!);
             Assert.Equal("complete", await ScalarAsync(
                 connection, "SELECT status FROM production_batches WHERE id = 'batch-1';"));
             Assert.Equal("waiting", await ScalarAsync(

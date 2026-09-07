@@ -173,6 +173,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
               ON cases.id = production_batches.case_id
             LEFT JOIN machine_assignments
               ON machine_assignments.batch_operation_id = batch_operations.id
+             AND machine_assignments.released_at IS NULL
             LEFT JOIN machines assigned_machine
               ON assigned_machine.id = machine_assignments.machine_id
             LEFT JOIN effective_batch_operation_nc_estimates nc_estimate
