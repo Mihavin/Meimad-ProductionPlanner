@@ -712,76 +712,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         foreach (var snapshot in snapshots)
         {
             var operation = snapshot.Operation;
-            await using var insertCommand = connection.CreateCommand();
-            insertCommand.Transaction = transaction;
-            insertCommand.CommandText = """
-                INSERT INTO batch_operations (
-                    id, production_batch_id, source_case_operation_id,
-                    operation_number, route_position, name, required_machine_type,
-                    setup_seconds, cycle_seconds, status, version, created_at, updated_at,
-                    dependency_type, predecessor_source_case_operation_id,
-                    simultaneous_group_key,
-                    qa_seconds, load_unload_seconds, load_unload_requires_worker,
-                    automatic_loading, load_unload_every_n_parts, day_shift_only,
-                    has_external_delay, external_delay_description, external_delay_duration,
-                    external_delay_duration_unit, external_delay_calendar_id,
-                    external_delay_respect_master_calendar)
-                VALUES (
-                    $id, $batchId, $sourceId,
-                    $operationNumber, $routePosition, $name, $requiredMachineType,
-                    $setupSeconds, $cycleSeconds, $status, $version, $createdAt, $updatedAt,
-                    $dependencyType, $predecessorSourceId, $simultaneousGroupKey,
-                    $qaSeconds, $loadUnloadSeconds, $loadUnloadRequiresWorker,
-                    $automaticLoading, $loadUnloadEveryNParts, $dayShiftOnly,
-                    $hasExternalDelay, $externalDelayDescription, $externalDelayDuration,
-                    $externalDelayDurationUnit, $externalDelayCalendarId,
-                    $externalDelayRespectMasterCalendar);
-                """;
-            insertCommand.Parameters.AddWithValue("$id", operation.BatchOperationId);
-            insertCommand.Parameters.AddWithValue("$batchId", operation.BatchId);
-            insertCommand.Parameters.AddWithValue("$sourceId", operation.SourceCaseOperationId);
-            insertCommand.Parameters.AddWithValue("$operationNumber", operation.OperationNumber);
-            insertCommand.Parameters.AddWithValue("$routePosition", operation.RoutePosition);
-            insertCommand.Parameters.AddWithValue("$name", operation.Name);
-            insertCommand.Parameters.AddWithValue(
-                "$requiredMachineType",
-                operation.RequiredMachineType is null ? DBNull.Value : operation.RequiredMachineType);
-            insertCommand.Parameters.AddWithValue(
-                "$setupSeconds",
-                operation.SetupTimeSeconds.HasValue ? operation.SetupTimeSeconds.Value : DBNull.Value);
-            insertCommand.Parameters.AddWithValue(
-                "$cycleSeconds",
-                operation.CycleTimePerPartSeconds.HasValue
-                    ? operation.CycleTimePerPartSeconds.Value
-                    : DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$status", operation.Status);
-            insertCommand.Parameters.AddWithValue("$version", operation.Version);
-            insertCommand.Parameters.AddWithValue("$createdAt", FormatInstant(operation.CreatedAt));
-            insertCommand.Parameters.AddWithValue("$updatedAt", FormatInstant(operation.UpdatedAt));
-            insertCommand.Parameters.AddWithValue("$qaSeconds", operation.QaTimeAfterSetupSeconds);
-            insertCommand.Parameters.AddWithValue("$loadUnloadSeconds", operation.LoadUnloadTimeSeconds);
-            insertCommand.Parameters.AddWithValue("$loadUnloadRequiresWorker", operation.LoadUnloadRequiresWorker ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$automaticLoading", operation.AutomaticLoading ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$loadUnloadEveryNParts", operation.LoadUnloadEveryNParts.HasValue ? operation.LoadUnloadEveryNParts.Value : DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$dayShiftOnly", operation.DayShiftOnly ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$hasExternalDelay", operation.HasExternalDelay ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$externalDelayDescription", operation.ExternalDelayDescription is null ? DBNull.Value : operation.ExternalDelayDescription);
-            insertCommand.Parameters.AddWithValue("$externalDelayDuration", operation.ExternalDelayDuration);
-            insertCommand.Parameters.AddWithValue("$externalDelayDurationUnit", operation.ExternalDelayDurationUnit);
-            insertCommand.Parameters.AddWithValue("$externalDelayCalendarId", operation.ExternalDelayCalendarId is null ? DBNull.Value : operation.ExternalDelayCalendarId);
-            insertCommand.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", operation.RespectMasterCalendar ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$dependencyType", snapshot.DependencyType);
-            insertCommand.Parameters.AddWithValue(
-                "$predecessorSourceId",
-                snapshot.PredecessorSourceCaseOperationId is null
-                    ? DBNull.Value
-                    : snapshot.PredecessorSourceCaseOperationId);
-            insertCommand.Parameters.AddWithValue(
-                "$simultaneousGroupKey",
-                snapshot.SimultaneousGroupKey is null
-                    ? DBNull.Value
-                    : snapshot.SimultaneousGroupKey);
-            await insertCommand.ExecuteNonQueryAsync(cancellationToken);
+            await SqliteBatchOperationRows.InsertAsync(
+                connection, transaction, operation, snapshot.DependencyType,
+                snapshot.PredecessorSourceCaseOperationId, snapshot.SimultaneousGroupKey,
+                cancellationToken);
         }
 
         return snapshots.Select(snapshot => snapshot.Operation).ToArray();

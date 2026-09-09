@@ -313,7 +313,7 @@ Unless explicitly marked implemented, paths in this section are **Proposed**. Mu
 | `PATCH` | `/api/v1/cases/{caseId}` | Change approved current master fields. |
 | `GET` | `/api/v1/cases/{caseId}/operations` | Read ordered route template and dependencies. |
 | `GET` | `/api/v1/cases/{caseId}/preview` | Stream the Case preview image to a Windows planning caller. Configured drive-to-UNC mappings tolerate multihomed file-server DNS by trying resolved IPv4 paths. |
-| `POST` | `/api/v1/cases/{caseId}/operations` | Add a Case Operation. |
+| `POST` | `/api/v1/cases/{caseId}/operations` | Add a Case Operation; it is also appended as a `not_started` Batch Operation to every Batch of the Case that is not complete or cancelled. `422 validation_failed` with `batch_operation_number_in_use` when an open Batch snapshot still uses that number. |
 | `PATCH` | `/api/v1/cases/{caseId}/operations/{operationId}` | Edit one route operation. |
 | `GET` | `/api/v1/cases/{caseId}/components` | List child Case Component relationships. |
 | `GET` | `/api/v1/cases/{caseId}/where-used` | List parent Cases that use this Case. |

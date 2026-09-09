@@ -576,7 +576,7 @@
     "Case Operation \u0027{id}\u0027 was not found.":  "פעולת מקרה \u0027{id}\u0027 לא נמצאה.",
     "Case Operation \u0027{operationId}\u0027 is no longer at version {expectedVersion}.":  "פעולת מקרה \u0027{operationId}\u0027 כבר אינה בגרסה {expectedVersion}.",
     "Case Operation \u0027{operationId}\u0027 was not found under Case \u0027{caseId}\u0027.":  "פעולת מקרה \u0027{operationId}\u0027 לא נמצאה תחת מקרה \u0027{caseId}\u0027.",
-    "Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. Existing Production Batches were not changed.":  "מבצע מקרה {saved.OperationNumber} ({saved.Name}) נוצר במיקום המסלול {saved.RoutePosition + 1}. קבוצות ייצור קיימות לא שונו.",
+    "Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. It was appended as a not-started operation to every open Production Batch of this Case.":  "מבצע מקרה {saved.OperationNumber} ({saved.Name}) נוצר במיקום המסלול {saved.RoutePosition + 1}. הוא נוסף כפעולה שטרם התחילה לכל קבוצת ייצור פתוחה של מקרה זה.",
     "Case Operation {saved.OperationNumber} ({saved.Name}) updated. Not-started Production Batch operations received the revised times.":  "פעולת מקרה {saved.OperationNumber} ({saved.Name}) עודכנה. פעולות ייצור לא התחילו קיבלו את הזמנים המתוקנים.",
     "Case Operation edit cancelled.":  "עריכת התיק בוטלה.",
     "Case Operation graph validation failed.":  "אימות גרף הפעלת מקרה נכשל.",

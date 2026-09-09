@@ -296,6 +296,189 @@ public sealed class ProductionBatchApiTests
         });
     }
 
+    [Fact]
+    public async Task Cancel_production_soft_releases_an_assignment_with_a_selected_gcode_release()
+    {
+        // Regression test: the v46 trigger machine_assignment_selected_release_matches_operation_update
+        // fires on every UPDATE of production_run_id and requires the selected G-code release to belong
+        // to the assignment's Production Run. The v69 soft-release clears production_run_id on the
+        // released row, so cancelling a batch whose live assignment had a selected G-code release used
+        // to fail the whole request with "selected G-code release must belong to the assigned
+        // Production Run". The release must succeed and keep the selected release as history, while
+        // the guard still protects live rows.
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningDataAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            using var created = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId = "case-1",
+                batchNumber = "B-CANCEL-GCODE",
+                status = "waiting",
+                plannedQuantity = 5,
+                allocations = new[] { new { allocationType = "order", orderId = "order-1", quantity = 5 } }
+            });
+            created.EnsureSuccessStatusCode();
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var batchId = createdJson.RootElement.GetProperty("batchId").GetString()!;
+            var operationId = (await ReadOperationIdsAsync(client, batchId))[0];
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                await using (var seed = connection.CreateCommand())
+                {
+                    seed.CommandText = """
+                        INSERT INTO working_calendars(id,name,time_zone_id) VALUES('calendar-gcode','Day','UTC');
+                        INSERT INTO machines(id,number,name,machine_type,working_calendar_id,status)
+                        VALUES('machine-gcode','12','Mill','mill','calendar-gcode','active');
+                        INSERT INTO tool_table_releases(
+                            id,case_operation_id,revision_number,original_file_name,stored_relative_path,
+                            file_size,file_hash,released_at,released_by,release_comment,created_at,updated_at)
+                        VALUES('tool-gcode','case-op-10',1,'tool.csv','tool-gcode.csv',10,$hash,
+                               $at,'planner','initial release',$at,$at);
+                        INSERT INTO postprocessors(id,name,is_active,version,created_at,updated_at)
+                        VALUES('post-gcode','Haas4x',1,1,$at,$at);
+                        INSERT INTO process_revisions(
+                            id,case_operation_id,revision_number,is_active,tool_table_release_id,created_at,
+                            created_by,change_description,version,updated_at,manufacturing_program_id)
+                        VALUES('process-gcode','case-op-10',1,1,'tool-gcode',$at,'planner','Initial',1,$at,
+                               'case-operation:case-op-10'),
+                              ('process-other','case-op-10',2,0,'tool-gcode',$at,'planner','Other',1,$at,
+                               'case-operation:case-op-10');
+                        INSERT INTO gcode_releases(
+                            id,case_operation_id,process_revision_id,postprocessor_id,post_specific_revision,
+                            original_file_name,stored_relative_path,file_size,file_hash,released_at,released_by,
+                            change_scope,release_comment,tool_table_release_id,created_at,updated_at)
+                        VALUES('gcode-cancel','case-op-10','process-gcode','post-gcode',1,'main.nc',
+                               'gcode/cancel-main.nc',100,$hash,$at,'planner','NEW_PROCESS_REVISION','Initial',
+                               'tool-gcode',$at,$at),
+                              ('gcode-other','case-op-10','process-other','post-gcode',1,'other.nc',
+                               'gcode/cancel-other.nc',100,$hash,$at,'planner','NEW_PROCESS_REVISION','Other',
+                               'tool-gcode',$at,$at);
+                        INSERT INTO production_runs(
+                            id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,created_at,updated_at)
+                        VALUES('run-gcode','PLANNED',0,'{}',NULL,$at,$at);
+                        INSERT INTO production_run_programs(
+                            id,production_run_id,manufacturing_program_id,process_revision_id,
+                            selected_gcode_release_id,sequence_position,target_cycle_count,completed_cycle_count,
+                            status,legacy_unmanaged,created_at,updated_at)
+                        VALUES('run-program-gcode','run-gcode','case-operation:case-op-10','process-gcode',
+                               'gcode-cancel',0,5,0,'PLANNED',0,$at,$at);
+                        INSERT INTO production_run_outputs(
+                            id,production_run_program_id,batch_operation_id,quantity_per_cycle,target_quantity,
+                            produced_quantity,status,created_at,updated_at)
+                        VALUES('run-output-gcode','run-program-gcode',$operationId,1,5,0,'ALLOCATED',$at,$at);
+                        INSERT INTO machine_assignments(
+                            id,batch_operation_id,machine_id,backlog_position,planning_mode,production_run_id,
+                            selected_gcode_release_id)
+                        VALUES('assignment-gcode',$operationId,'machine-gcode',0,'manual','run-gcode','gcode-cancel');
+                        UPDATE production_batches SET status='in_production' WHERE id=$batchId;
+                        UPDATE batch_operations SET status='in_progress',actual_start=$at WHERE id=$operationId;
+                        """;
+                    seed.Parameters.AddWithValue("$at", "2026-09-02T08:00:00.0000000+00:00");
+                    seed.Parameters.AddWithValue("$hash",
+                        "0000000000000000000000000000000000000000000000000000000000000000");
+                    seed.Parameters.AddWithValue("$batchId", batchId);
+                    seed.Parameters.AddWithValue("$operationId", operationId);
+                    await seed.ExecuteNonQueryAsync();
+                }
+
+                // The guard must still reject an ordinary mutation of a live assignment.
+                await using (var guard = connection.CreateCommand())
+                {
+                    guard.CommandText = """
+                        UPDATE machine_assignments SET selected_gcode_release_id='gcode-other'
+                        WHERE id='assignment-gcode';
+                        """;
+                    var rejected = await Assert.ThrowsAsync<SqliteException>(
+                        () => guard.ExecuteNonQueryAsync());
+                    Assert.Contains("selected G-code release must belong to the assigned Production Run",
+                        rejected.Message, StringComparison.Ordinal);
+                }
+            }
+
+            using var cancel = new HttpRequestMessage(
+                HttpMethod.Post, $"/api/v1/batches/{batchId}/cancel-production")
+            {
+                Content = JsonContent.Create(new { reason = "Test plan cancelled." })
+            };
+            cancel.Headers.TryAddWithoutValidation("If-Match", created.Headers.ETag!.ToString());
+            using var response = await client.SendAsync(cancel);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal("cancelled", await ScalarStringAsync(verify,
+                "SELECT status FROM production_batches WHERE id=$id", batchId));
+            Assert.Equal("CANCELLED", await ScalarStringAsync(verify,
+                "SELECT status FROM production_runs WHERE id=$id", "run-gcode"));
+            Assert.Equal(1L, await ScalarInt64Async(verify,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id=$id AND released_at IS NOT NULL AND production_run_id IS NULL",
+                "assignment-gcode"));
+            Assert.Equal("gcode-cancel", await ScalarStringAsync(verify,
+                "SELECT selected_gcode_release_id FROM machine_assignments WHERE id=$id", "assignment-gcode"));
+        });
+    }
+
+    [Fact]
+    public async Task Creating_a_case_operation_appends_it_to_open_batches_and_the_planning_board_pool()
+    {
+        // A Case Operation added after a Batch exists must become a not-started Batch Operation of
+        // every open Batch of that Case, so it shows up in the Planning Board pool.
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedPlanningDataAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            using var created = await client.PostAsJsonAsync("/api/v1/batches", StockBatchBody("B-APPEND", 4, 4));
+            created.EnsureSuccessStatusCode();
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var batchId = createdJson.RootElement.GetProperty("batchId").GetString()!;
+            Assert.Equal(2, (await ReadOperationIdsAsync(client, batchId)).Length);
+
+            using var operationResponse = await client.PostAsJsonAsync("/api/v1/cases/case-1/operations", new
+            {
+                operationNumber = 30,
+                name = "Deburr",
+                requiredMachineType = "bench",
+                setupTimeSeconds = 60,
+                cycleTimePerPartSeconds = 20,
+                dependencyType = "SEQUENTIAL",
+                predecessorCaseOperationId = "case-op-20"
+            });
+            var operationBody = await operationResponse.Content.ReadAsStringAsync();
+            Assert.True(operationResponse.StatusCode == HttpStatusCode.Created, operationBody);
+            using var operationJson = JsonDocument.Parse(operationBody);
+            var caseOperationId = operationJson.RootElement.GetProperty("caseOperationId").GetString()!;
+
+            using var operations = await client.GetAsync($"/api/v1/batches/{batchId}/operations");
+            operations.EnsureSuccessStatusCode();
+            using var operationsJson = JsonDocument.Parse(await operations.Content.ReadAsStringAsync());
+            var items = operationsJson.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(3, items.Length);
+            var appended = Assert.Single(items, item => item.GetProperty("operationNumber").GetInt32() == 30);
+            Assert.Equal("not_started", appended.GetProperty("status").GetString());
+            Assert.Equal(2, appended.GetProperty("routePosition").GetInt32());
+            Assert.Equal(caseOperationId, appended.GetProperty("sourceCaseOperationId").GetString());
+
+            using var batch = await client.GetAsync($"/api/v1/batches/{batchId}");
+            batch.EnsureSuccessStatusCode();
+            using var batchJson = JsonDocument.Parse(await batch.Content.ReadAsStringAsync());
+            Assert.Equal(2, batchJson.RootElement.GetProperty("version").GetInt32());
+
+            using var board = await client.GetAsync("/api/v1/planning-board");
+            board.EnsureSuccessStatusCode();
+            using var boardJson = JsonDocument.Parse(await board.Content.ReadAsStringAsync());
+            Assert.Contains(boardJson.RootElement.GetProperty("pool").EnumerateArray(), item =>
+                item.GetProperty("batchId").GetString() == batchId
+                && item.GetProperty("operationNumber").GetInt32() == 30);
+        });
+    }
+
     private static async Task<string> ScalarStringAsync(
         SqliteConnection connection, string sql, string id)
     {

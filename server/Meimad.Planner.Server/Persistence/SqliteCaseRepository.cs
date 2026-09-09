@@ -317,7 +317,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(
+        var actor = await EnsureEditAuthorityAsync(
             connection,
             transaction,
             editAuthority,
@@ -425,6 +425,14 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         command.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", candidate.RespectMasterCalendar ? 1 : 0);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(candidate.CreatedAt));
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await SqliteBatchOperationRows.AppendToOpenBatchesAsync(
+            connection,
+            transaction,
+            candidate,
+            ToDependencyStorageToken(operation.DependencyType),
+            actor,
+            candidate.CreatedAt,
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return candidate;
     }
@@ -741,7 +749,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         }
     }
 
-    private static async Task EnsureEditAuthorityAsync(
+    private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         EditAuthority editAuthority,
@@ -755,7 +763,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT holder_client_id, generation
+            SELECT holder_client_id, holder_user_id, generation
             FROM edit_tokens
             WHERE id = 1;
             """;
@@ -769,12 +777,13 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         }
 
         if (!string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != editAuthority.Generation)
+            || reader.GetInt64(2) != editAuthority.Generation)
         {
             throw new EditModeMutationException(
                 "edit_generation_stale",
                 "This client does not hold the active Edit Mode generation.");
         }
+        return reader.IsDBNull(1) ? editAuthority.ClientId : reader.GetString(1);
     }
 
     private static async Task<bool> CaseExistsAsync(

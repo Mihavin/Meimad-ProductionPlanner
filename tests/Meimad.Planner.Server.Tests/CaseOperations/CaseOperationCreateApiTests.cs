@@ -103,7 +103,7 @@ public sealed class CaseOperationCreateApiTests
     }
 
     [Fact]
-    public async Task Creates_ordered_route_and_does_not_retrofit_existing_batch_snapshot()
+    public async Task Creates_ordered_route_and_appends_new_operations_to_existing_open_batch_snapshot()
     {
         await RunWithServerAsync(async (application, client) =>
         {
@@ -198,10 +198,19 @@ public sealed class CaseOperationCreateApiTests
             using var snapshotResponse = await client.GetAsync($"/api/v1/batches/{batchId}/operations");
             using var snapshotDocument = JsonDocument.Parse(
                 await snapshotResponse.Content.ReadAsStringAsync());
-            var snapshotted = Assert.Single(
-                snapshotDocument.RootElement.GetProperty("items").EnumerateArray());
-            Assert.Equal("Saw", snapshotted.GetProperty("name").GetString());
-            Assert.Equal(90, snapshotted.GetProperty("setupTimeSeconds").GetInt32());
+            var snapshots = snapshotDocument.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(2, snapshots.Length);
+            // The original snapshot keeps its name and receives only the propagated timing edit.
+            Assert.Equal("Saw", snapshots[0].GetProperty("name").GetString());
+            Assert.Equal(90, snapshots[0].GetProperty("setupTimeSeconds").GetInt32());
+            // The Case Operation created after the Batch was appended as a not-started snapshot.
+            Assert.Equal(
+                second.GetProperty("caseOperationId").GetString(),
+                snapshots[1].GetProperty("sourceCaseOperationId").GetString());
+            Assert.Equal(20, snapshots[1].GetProperty("operationNumber").GetInt32());
+            Assert.Equal(1, snapshots[1].GetProperty("routePosition").GetInt32());
+            Assert.Equal("not_started", snapshots[1].GetProperty("status").GetString());
+            Assert.Equal("Finish mill", snapshots[1].GetProperty("name").GetString());
 
             using var caseResponse = await client.GetAsync($"/api/v1/cases/{caseId}");
             using var caseDocument = JsonDocument.Parse(

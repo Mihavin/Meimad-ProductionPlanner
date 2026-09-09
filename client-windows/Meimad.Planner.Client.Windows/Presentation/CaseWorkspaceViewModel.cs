@@ -1061,8 +1061,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     clientId,
                     editGeneration);
                 Operations.Add(saved);
+                Replace(Batches, await apiClient.ListBatchesAsync(SelectedCase.CaseId));
                 SelectedOperation = saved;
-                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. Existing Production Batches were not changed.";
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. It was appended as a not-started operation to every open Production Batch of this Case.";
             }
 
             isCreatingOperation = false;

@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Configuration;
+using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.Cases;
 using Meimad.Planner.Server.Persistence;
 using Meimad.Planner.Server.Tests.Persistence;
@@ -179,6 +180,170 @@ public sealed class CaseServicePersistenceTests
         Assert.Equal(150, reader.GetInt32(1));
         Assert.Equal(75, reader.GetInt32(2));
         Assert.False(await reader.ReadAsync());
+    }
+
+    [Fact]
+    public async Task Creating_case_operation_appends_it_to_open_batches_only()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var editAuthority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+        var created = await service.CreateAsync(
+            CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "external-case-route-append")),
+            editAuthority);
+        var first = await service.CreateOperationAsync(
+            created.CaseId,
+            new CreateCaseOperationCommand(10, "Mill", "mill", 60, 30, "INDEPENDENT", null, null),
+            editAuthority);
+
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.CommandText = """
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                VALUES ('batch-waiting', $caseId, 'B-W', 'waiting', 4),
+                       ('batch-in-production', $caseId, 'B-P', 'in_production', 4),
+                       ('batch-complete', $caseId, 'B-C', 'complete', 4),
+                       ('batch-cancelled', $caseId, 'B-X', 'cancelled', 4);
+                INSERT INTO batch_operations (
+                    id, production_batch_id, source_case_operation_id, operation_number,
+                    route_position, name, setup_seconds, cycle_seconds, status)
+                VALUES
+                    ('op-waiting', 'batch-waiting', $operationId, 10, 0, 'Mill', 60, 30, 'not_started'),
+                    ('op-in-production', 'batch-in-production', $operationId, 10, 0, 'Mill', 60, 30, 'in_progress'),
+                    ('op-complete', 'batch-complete', $operationId, 10, 0, 'Mill', 60, 30, 'completed'),
+                    ('op-cancelled', 'batch-cancelled', $operationId, 10, 0, 'Mill', 60, 30, 'cancelled');
+                """;
+            insert.Parameters.AddWithValue("$caseId", created.CaseId);
+            insert.Parameters.AddWithValue("$operationId", first.CaseOperationId);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var second = await service.CreateOperationAsync(
+            created.CaseId,
+            new CreateCaseOperationCommand(
+                20, "Deburr", "bench", 120, 45, "SEQUENTIAL", first.CaseOperationId, null,
+                QaTimeAfterSetupSeconds: 15, LoadUnloadTimeSeconds: 20, LoadUnloadRequiresWorker: true),
+            editAuthority);
+
+        await using var assertionConnection = await fixture.Database.OpenConnectionAsync();
+        await using (var appended = assertionConnection.CreateCommand())
+        {
+            appended.CommandText = """
+                SELECT production_batch_id, operation_number, route_position, status, dependency_type,
+                       predecessor_source_case_operation_id, name, required_machine_type,
+                       setup_seconds, cycle_seconds, qa_seconds, load_unload_seconds,
+                       load_unload_requires_worker
+                FROM batch_operations
+                WHERE source_case_operation_id = $secondId
+                ORDER BY production_batch_id;
+                """;
+            appended.Parameters.AddWithValue("$secondId", second.CaseOperationId);
+            await using var reader = await appended.ExecuteReaderAsync();
+            foreach (var batchId in new[] { "batch-in-production", "batch-waiting" })
+            {
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(batchId, reader.GetString(0));
+                Assert.Equal(20, reader.GetInt32(1));
+                Assert.Equal(1, reader.GetInt32(2));
+                Assert.Equal("not_started", reader.GetString(3));
+                Assert.Equal("sequential", reader.GetString(4));
+                Assert.Equal(first.CaseOperationId, reader.GetString(5));
+                Assert.Equal("Deburr", reader.GetString(6));
+                Assert.Equal("bench", reader.GetString(7));
+                Assert.Equal(120, reader.GetInt32(8));
+                Assert.Equal(45, reader.GetInt32(9));
+                Assert.Equal(15, reader.GetInt32(10));
+                Assert.Equal(20, reader.GetInt32(11));
+                Assert.Equal(1, reader.GetInt32(12));
+            }
+
+            Assert.False(await reader.ReadAsync());
+        }
+
+        await using (var versions = assertionConnection.CreateCommand())
+        {
+            versions.CommandText = """
+                SELECT group_concat(id || ':' || version, ',')
+                FROM (SELECT id, version FROM production_batches ORDER BY id);
+                """;
+            Assert.Equal(
+                "batch-cancelled:1,batch-complete:1,batch-in-production:2,batch-waiting:2",
+                (string)(await versions.ExecuteScalarAsync())!);
+        }
+
+        await using (var events = assertionConnection.CreateCommand())
+        {
+            events.CommandText = """
+                SELECT COUNT(*) FROM structured_event_log
+                WHERE event_type = 'production_batch_route_appended';
+                """;
+            Assert.Equal(2L, (long)(await events.ExecuteScalarAsync())!);
+        }
+    }
+
+    [Fact]
+    public async Task Creating_case_operation_rejects_a_number_still_used_by_an_open_batch_snapshot()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var editAuthority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+        var created = await service.CreateAsync(
+            CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "external-case-route-number-conflict")),
+            editAuthority);
+        var first = await service.CreateOperationAsync(
+            created.CaseId,
+            new CreateCaseOperationCommand(10, "Mill", "mill", 60, 30, "INDEPENDENT", null, null),
+            editAuthority);
+
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.CommandText = """
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                VALUES ('batch-open', $caseId, 'B-OPEN', 'waiting', 4);
+                INSERT INTO batch_operations (
+                    id, production_batch_id, source_case_operation_id, operation_number,
+                    route_position, name, setup_seconds, cycle_seconds, status)
+                VALUES ('op-open', 'batch-open', $operationId, 10, 0, 'Mill', 60, 30, 'not_started');
+                """;
+            insert.Parameters.AddWithValue("$caseId", created.CaseId);
+            insert.Parameters.AddWithValue("$operationId", first.CaseOperationId);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        // Renumbering the source operation leaves the open Batch snapshot at number 10.
+        await service.UpdateOperationAsync(
+            created.CaseId,
+            first.CaseOperationId,
+            first.Version,
+            new UpdateCaseOperationCommand(
+                OptionalField<int>.Specified(15),
+                OptionalField<string?>.Unspecified,
+                OptionalField<string?>.Unspecified,
+                OptionalField<int?>.Unspecified,
+                OptionalField<int?>.Unspecified,
+                OptionalField<string?>.Unspecified,
+                OptionalField<string?>.Unspecified,
+                OptionalField<string?>.Unspecified),
+            editAuthority);
+
+        var exception = await Assert.ThrowsAsync<CaseOperationValidationException>(() =>
+            service.CreateOperationAsync(
+                created.CaseId,
+                new CreateCaseOperationCommand(10, "Deburr", "bench", 60, 30, "INDEPENDENT", null, null),
+                editAuthority));
+        Assert.Contains(exception.Issues, issue => issue.Code == "batch_operation_number_in_use");
+
+        // The whole creation rolled back: one Case Operation and one Batch snapshot remain.
+        await using var assertionConnection = await fixture.Database.OpenConnectionAsync();
+        await using var counts = assertionConnection.CreateCommand();
+        counts.CommandText = """
+            SELECT (SELECT COUNT(*) FROM case_operations WHERE case_id = $caseId)
+                   || '/' || (SELECT COUNT(*) FROM batch_operations);
+            """;
+        counts.Parameters.AddWithValue("$caseId", created.CaseId);
+        Assert.Equal("1/1", (string)(await counts.ExecuteScalarAsync())!);
     }
 
     [Fact]

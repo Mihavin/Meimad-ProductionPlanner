@@ -75,11 +75,12 @@ public sealed class PreparationQueueViewModelTests
             "artifact-1", "RUNNABLE_NC", "nc/main.nc", bytes.Length,
             Convert.ToHexStringLower(SHA256.HashData(bytes)), "gcode-1");
         var package = new ProductionPackageInfo(
-            "package-1", "operation-1", "run-1", "assignment-1", "machine-1",
+            "package-1", 1, "operation-1", "run-1", "assignment-1", "machine-1",
             "gcode-1", "tools-1", null, "CNC_GCODE", false, null, null,
             new string('a', 64), DateTimeOffset.Parse("2026-09-01T10:00:00Z"),
             "tool-room-user", null, true, false, false, [artifact]);
         var api = new FakeApiClient([Item()], bytes);
+        api.CurrentPackage = package;
         var viewModel = new PreparationQueueViewModel("SETUP_PENDING", "Setup", "Ready");
         viewModel.AttachSession(api);
         var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.PackageExport.Tests", Guid.NewGuid().ToString("N"));
@@ -109,6 +110,11 @@ public sealed class PreparationQueueViewModelTests
     {
         internal string? RequestedStage { get; private set; }
         internal string? RequestedArtifactId { get; private set; }
+        internal ProductionPackageInfo? CurrentPackage { get; set; }
+
+        public Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
+            string batchOperationId,
+            CancellationToken cancellationToken = default) => Task.FromResult(CurrentPackage);
 
         public Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
             string stage,
