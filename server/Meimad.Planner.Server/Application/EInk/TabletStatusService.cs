@@ -66,6 +66,14 @@ internal sealed class TabletStatusService
         }
 
         var output = source.Outputs[0];
+        var tools = source.Tools
+            .Select(tool => new TabletStatusToolResponse(
+                tool.ToolIdentifier,
+                tool.Description,
+                string.IsNullOrWhiteSpace(tool.MagazinePosition)
+                    ? null
+                    : tool.MagazinePosition.Trim()))
+            .ToArray();
         var status = Status(source.Machine, source.Run, source.Workflow);
         var verification = Verification(source, status, contactedAt);
         var diagnostics = Diagnostics(source.VerificationSession, verification);
@@ -75,6 +83,7 @@ internal sealed class TabletStatusService
             machine = source.Machine,
             run = source.Run.RunId,
             output,
+            tools,
             status,
             workflowEvent = source.Workflow?.EventId,
             verification,
@@ -90,6 +99,7 @@ internal sealed class TabletStatusService
             new TabletStatusRunResponse(source.Run.RunId),
             new TabletStatusPartResponse(output.PartNumber, output.PartName),
             new TabletStatusOperationResponse(output.OperationNumber, output.OperationName),
+            tools,
             status,
             verification,
             diagnostics);
@@ -178,6 +188,7 @@ internal sealed record TabletStatusResponse(
     TabletStatusRunResponse NcRun,
     TabletStatusPartResponse Part,
     TabletStatusOperationResponse Operation,
+    IReadOnlyList<TabletStatusToolResponse> Tools,
     string Status,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     TabletStatusVerificationResponse? Verification,
@@ -190,6 +201,14 @@ internal sealed record TabletStatusRunResponse(string Id);
 internal sealed record TabletStatusPartResponse(string Number, string Name);
 
 internal sealed record TabletStatusOperationResponse(int Number, string Name);
+
+// Active rows of the Run's resolved released tool table, in released row order.
+// `position` is the magazine pocket label and is omitted when the release names none.
+internal sealed record TabletStatusToolResponse(
+    string Tool,
+    string Description,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Position);
 
 internal sealed record TabletStatusVerificationResponse(
     bool Required,

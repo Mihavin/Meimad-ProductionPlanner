@@ -24,6 +24,10 @@ void check(bool condition, const char* expression, int line) {
   Serial.printf("FAIL line %d: %s\n", line, expression);
 }
 
+constexpr char kToolsFragment[] =
+    R"("tools":[{"tool":"T1","description":"FLAYCAT 80"},)"
+    R"({"tool":"T3","description":"DRILL 8.4 VIDIA","position":"12"}],)";
+
 #define CHECK(expression) check((expression), #expression, __LINE__)
 #define CHECK_STRING(expected, actual) \
   check(String(expected) == String(actual), #actual " equals " #expected, __LINE__)
@@ -34,6 +38,7 @@ String validStatusPayload(const char* status = "IN_SETUP_RUN") {
         "\"state\":\"WAITING_FOR_OPERATOR\",\"response_code\":\"0388\"}"
       : "";
   return String("{")
+      + kToolsFragment
       + "\"revision\":17,"
       + "\"tablet_id\":\"3041\","
       + "\"machine\":{\"id\":10,\"name\":\"DMG MORI 10\"},"
@@ -185,6 +190,60 @@ void testRejectsUnsafeVerificationPayloads() {
   CHECK_STRING("verification is allowed only for IN_SETUP", error);
 }
 
+void testParsesProjectedToolRowsAndToleratesTheirAbsence() {
+  TabletStatusResponse response;
+  String error;
+  CHECK(parseStatusPayload(validStatusPayload(), "3041", response, error));
+  CHECK(response.tools.size() == 2);
+  CHECK_STRING("T1", response.tools[0].tool);
+  CHECK_STRING("FLAYCAT 80", response.tools[0].description);
+  CHECK(response.tools[0].position.isEmpty());
+  CHECK_STRING("T3", response.tools[1].tool);
+  CHECK_STRING("12", response.tools[1].position);
+
+  // A Server that omits the field is "no tool data", never a parse failure.
+  String withoutTools = validStatusPayload();
+  withoutTools.replace(kToolsFragment, "");
+  error = "";
+  CHECK(parseStatusPayload(withoutTools, "3041", response, error));
+  CHECK(response.tools.empty());
+
+  String notArray = validStatusPayload();
+  notArray.replace(kToolsFragment, R"("tools":{},)");
+  error = "";
+  CHECK(!parseStatusPayload(notArray, "3041", response, error));
+  CHECK_STRING("tools must be an array", error);
+
+  String missingDescription = validStatusPayload();
+  missingDescription.replace(kToolsFragment, R"("tools":[{"tool":"T1"}],)");
+  error = "";
+  CHECK(!parseStatusPayload(missingDescription, "3041", response, error));
+  CHECK_STRING("tools[].description must be a string", error);
+
+  String numericTool = validStatusPayload();
+  numericTool.replace(kToolsFragment, R"("tools":[{"tool":1,"description":"D10"}],)");
+  error = "";
+  CHECK(!parseStatusPayload(numericTool, "3041", response, error));
+  CHECK_STRING("tools[].tool must be a string", error);
+
+  String oversized = R"("tools":[)";
+  for (size_t index = 0; index < kMaximumTools + 3; ++index) {
+    if (index > 0) oversized += ",";
+    oversized += R"({"tool":"T)" + String(index + 1) + R"(","description":"D"})";
+  }
+  oversized += "],";
+  String tooMany = validStatusPayload();
+  tooMany.replace(kToolsFragment, oversized);
+  error = "";
+  CHECK(parseStatusPayload(tooMany, "3041", response, error));
+  CHECK(response.tools.size() == kMaximumTools);
+  CHECK_STRING("T64", response.tools[kMaximumTools - 1].tool);
+
+  // Re-parsing replaces the previous rows instead of appending to them.
+  CHECK(parseStatusPayload(validStatusPayload(), "3041", response, error));
+  CHECK(response.tools.size() == 2);
+}
+
 void testRejectsMalformedJsonWithoutChangingPreviousResponse() {
   TabletStatusResponse response;
   response.revision = 99;
@@ -264,6 +323,7 @@ void testProductionStatusLabelsAndToolPages() {
   CHECK(toolPageCount(3) == 1);
   CHECK(toolPageCount(4) == 2);
   CHECK(toolPageCount(7) == 3);
+  CHECK(toolPageCount(13) == 5);
   CHECK(normalizedToolPage(9, 7) == 2);
   CHECK(previousToolPage(0, 7) == 0);
   CHECK(previousToolPage(2, 7) == 1);
@@ -282,6 +342,8 @@ void testProductionScreenUsesStatusAndExplicitMachineNumber() {
   status.operation.number = 30;
   status.operation.name = "Finish Milling";
   status.status = TabletStatus::InQc;
+  status.tools.push_back({"T1", "FLAYCAT 80", ""});
+  status.tools.push_back({"T3", "DRILL 8.4 VIDIA", "12"});
   const ProductionScreenModel screen = makeProductionScreen(status);
   CHECK_STRING("DMG MORI", screen.machineName);
   CHECK_STRING("M10", screen.machineNumber);
@@ -289,7 +351,15 @@ void testProductionScreenUsesStatusAndExplicitMachineNumber() {
   CHECK_STRING("P-12345", screen.partNumber);
   CHECK(screen.operationNumber == 30);
   CHECK(screen.status == TabletStatus::InQc);
-  CHECK(screen.toolCount == 0);
+  CHECK(screen.toolCount() == 2);
+  CHECK_STRING("T1", screen.tools[0].tool);
+  CHECK_STRING("FLAYCAT 80", screen.tools[0].description);
+  CHECK_STRING("-", screen.tools[0].position);
+  CHECK_STRING("12", screen.tools[1].position);
+
+  TabletStatusResponse withoutTools;
+  withoutTools.tabletId = "3041";
+  CHECK(makeProductionScreen(withoutTools).toolCount() == 0);
 }
 
 void testProductionScreenCarriesOnlyProjectedVerificationDisplayData() {
@@ -327,10 +397,10 @@ void testDevelopmentFixtureIsPagedAndClearlyIdentifiedByCaller() {
   CHECK_STRING("DMG MORI", screen.machineName);
   CHECK_STRING("M10", screen.machineNumber);
   CHECK_STRING("T3041", screen.tabletId);
-  CHECK(screen.toolCount == 7);
-  CHECK(toolPageCount(screen.toolCount) == 3);
+  CHECK(screen.toolCount() == 7);
+  CHECK(toolPageCount(screen.toolCount()) == 3);
   CHECK_STRING("T01", screen.tools[0].tool);
-  CHECK_STRING("H99", screen.tools[2].offset);
+  CHECK_STRING("-", screen.tools[2].position);
 }
 
 void testRevisionGateSkipsOnlyMatchingTabletAndRevision() {
@@ -524,6 +594,7 @@ void setup() {
   testParsesArmedVerificationAndDisplaysItsCode();
   testAcceptsBlockingVerificationStatesWithoutAResponseCode();
   testRejectsUnsafeVerificationPayloads();
+  testParsesProjectedToolRowsAndToleratesTheirAbsence();
   testRejectsMalformedJsonWithoutChangingPreviousResponse();
   testRejectsMissingFieldsAndUnsupportedStatus();
   testRejectsMismatchedTabletIdentity();

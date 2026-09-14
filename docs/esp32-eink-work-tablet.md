@@ -341,10 +341,14 @@ text-only and orders the page as Machine Name/Number with a small tablet ID,
 part, Operation, a prominent framed status, then a fixed three-row tool table.
 Tool rows use numbered pages and never scroll. All eight approved status tokens
 have operator-readable labels. A successful status response populates the
-official identity/part/Operation/status fields; because that compatibility
-response does not contain tools, the live layout shows `NO TOOL DATA AVAILABLE`
-instead of example rows. The development-only seven-tool fixture is visibly
-marked `LAYOUT DEMO`.
+official identity/part/Operation/status fields and the tool rows: the Server
+projects the active rows of the released tool table resolved for the Run (the
+table pinned at Run start, otherwise the active process revision's table), and
+the tablet lists tool identifier, description, and magazine pocket, printing
+`-` when the release names no pocket. The layout shows `NO TOOL DATA AVAILABLE`
+only when the Server projects no released tool table; it never fabricates rows.
+Firmware 0.1.6 keeps up to 64 projected rows and paginates them three per page.
+The development-only seven-tool fixture is visibly marked `LAYOUT DEMO`.
 
 For `IN_SETUP`, the ordinary status/tool region becomes a setup-verification
 panel. Both `ARMED` and `WAITING_FOR_OPERATOR` display the fixed-width response
@@ -370,9 +374,9 @@ numeric status revision is unchanged.
 The layout model, pagination, same/different/missing/reassigned revision
 decisions, button mapping, page-boundary behavior, single-attempt guard, and
 `IN_SETUP_RUN` send eligibility compile in the focused firmware contract-test
-image. The official package-to-tool-row binding, on-device execution of those
-assertions, and physical button/readability/clipping/contrast validation remain
-pending; the implementation therefore does not yet satisfy the prototype
+image. On-device execution of those assertions and physical
+button/readability/clipping/contrast validation of the projected tool pages
+remain pending; the implementation therefore does not yet satisfy the prototype
 acceptance gate below.
 
 A separate compile-time demo image (`xiao-esp32s3-plus-demo`) makes UI work

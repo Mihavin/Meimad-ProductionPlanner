@@ -1616,7 +1616,7 @@ For the trusted-LAN MVP, tablet authentication is intentionally absent. TabletID
 | `GET` | `/api/v1/eink/tablets/{tablet_id}/packages/{packageId}/revisions/{revision}/manifest` | Read an exact authorized revision manifest. |
 | `GET` | `/api/v1/eink/tablets/{tablet_id}/packages/{packageId}/revisions/{revision}/files/{fileId}` | Download one authorized manifest file or preview. |
 | `GET` | `/api/v1/eink/tablets/{tablet_id}/time-config` | Read workday, shift-window, and polling configuration. |
-| `GET` | `/api/tablets/{tablet_id}/status` | Implemented TabletID-identified physical-firmware status projection. |
+| `GET` | `/api/tablets/{tablet_id}/status` | Implemented TabletID-identified physical-firmware status projection, including the Run's released tool rows. |
 | `POST` | `/api/tablets/{tablet_id}/events` | Implemented idempotent `SEND_TO_QC` operational command. |
 
 E-Ink planning/package routes remain GET-only. The implemented POST event route is the sole scoped exception. TabletID is accepted only on tablet routes and grants no Windows planning or Edit Mode authority. A missing, unknown, or disabled TabletID returns `404`. Tablet requests cannot supply Machine, package, run, or event timestamps.
@@ -1885,6 +1885,25 @@ forces refresh even if its numeric revision is equal. A malformed or unavailable
 response never changes the stored revision or replaces the retained screen,
 except for the documented firmware fail-safe that clears a possibly stale
 setup-verification code.
+
+Every successful status response also contains `tools`: the active rows of the
+released tool table resolved for the projected Run, in released row order. A
+started Run projects the tool table pinned at Run start; an unstarted Run
+projects the active process revision's table for the output's source Case
+Operation. The array is empty when no released tool table exists. Each row
+carries `tool` (the released identifier), `description`, and `position` (the
+released magazine-pocket label); `position` is omitted when the release names
+none. Inactive history rows are never projected, no offset values are included,
+and the rows participate in `revision`:
+
+```json
+{
+  "tools": [
+    { "tool": "T1", "description": "FLAYCAT 80" },
+    { "tool": "T3", "description": "DRILL 8.4 VIDIA", "position": "12" }
+  ]
+}
+```
 
 While status is `IN_SETUP`, the response also contains:
 

@@ -34,6 +34,10 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             ? []
             : await ReadOutputsAsync(
                 connection, transaction, run.ProgramId, cancellationToken);
+        var tools = run is null
+            ? []
+            : await ReadToolsAsync(
+                connection, transaction, run.ProgramId, cancellationToken);
         var workflow = run is null
             ? null
             : await ReadWorkflowAsync(
@@ -50,6 +54,7 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             device.Machine,
             run,
             outputs,
+            tools,
             workflow,
             verificationSession);
     }
@@ -148,6 +153,53 @@ internal sealed class SqliteTabletStatusRepository : ITabletStatusRepository
             values.Add(new TabletStatusOutputSource(
                 reader.GetString(0), reader.GetString(1),
                 reader.GetInt32(2), reader.GetString(3)));
+        }
+
+        return values;
+    }
+
+    // Mirrors the readiness resolution: a started Run shows the tool table pinned
+    // at start; an unstarted Run shows the active process revision's table for the
+    // single output's source Case Operation. Only active rows are projected.
+    private static async Task<IReadOnlyList<TabletStatusToolSource>> ReadToolsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string programId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            WITH resolved AS (
+                SELECT COALESCE(
+                           program.production_tool_table_release_id,
+                           (SELECT active_process.tool_table_release_id
+                            FROM production_run_outputs output
+                            JOIN batch_operations operation
+                              ON operation.id = output.batch_operation_id
+                            JOIN process_revisions active_process
+                              ON active_process.case_operation_id = operation.source_case_operation_id
+                             AND active_process.is_active = 1
+                            WHERE output.production_run_program_id = program.id
+                            ORDER BY operation.operation_number, output.id
+                            LIMIT 1)) AS tool_table_release_id
+                FROM production_run_programs program
+                WHERE program.id = $programId
+            )
+            SELECT tool.tool_identifier, tool.description, tool.magazine_position
+            FROM tool_table_release_tools tool
+            JOIN resolved ON resolved.tool_table_release_id = tool.tool_table_release_id
+            WHERE tool.is_active = 1
+            ORDER BY tool.row_number, tool.id;
+            """;
+        command.Parameters.AddWithValue("$programId", programId);
+        var values = new List<TabletStatusToolSource>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(new TabletStatusToolSource(
+                reader.GetString(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2)));
         }
 
         return values;

@@ -272,6 +272,46 @@ bool isUtcTimestamp(const String& value) {
       && twoDigitsAt(value, 17) <= 59;
 }
 
+bool parseTools(
+    JsonObjectConst root,
+    std::vector<TabletTool>& tools,
+    String& error) {
+  tools.clear();
+  JsonVariantConst value = root["tools"];
+  // A Server without the field simply has no tool data to show.
+  if (value.isNull()) return true;
+  if (!value.is<JsonArrayConst>()) {
+    error = "tools must be an array";
+    return false;
+  }
+  for (JsonVariantConst item : value.as<JsonArrayConst>()) {
+    if (!item.is<JsonObjectConst>()) {
+      error = "tools entries must be objects";
+      return false;
+    }
+    if (tools.size() >= kMaximumTools) {
+      Serial.printf(
+          "Tool rows beyond %u dropped; the Server projected more.\n",
+          static_cast<unsigned>(kMaximumTools));
+      return true;
+    }
+    JsonObjectConst row = item.as<JsonObjectConst>();
+    TabletTool tool;
+    if (!readRequiredString(row["tool"], "tools[].tool", tool.tool, error)
+        || !readRequiredString(
+            row["description"], "tools[].description", tool.description, error)) {
+      return false;
+    }
+    if (!row["position"].isNull()
+        && !readRequiredString(
+            row["position"], "tools[].position", tool.position, error)) {
+      return false;
+    }
+    tools.push_back(tool);
+  }
+  return true;
+}
+
 bool parseStatusResponse(
     const String& payload,
     const String& requestedTabletId,
@@ -347,6 +387,7 @@ bool parseStatusResponse(
     return false;
   }
   if (!parseDiagnostics(root, parsed.diagnostics, error)) return false;
+  if (!parseTools(root, parsed.tools, error)) return false;
 
   response = parsed;
   return true;

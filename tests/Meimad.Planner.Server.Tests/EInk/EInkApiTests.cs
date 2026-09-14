@@ -249,6 +249,82 @@ public sealed class EInkApiTests
     }
 
     [Fact]
+    public async Task Physical_tablet_status_projects_active_tool_rows_of_the_resolved_tool_table()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+
+            using var withoutToolsResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            Assert.Equal(HttpStatusCode.OK, withoutToolsResponse.StatusCode);
+            using var withoutTools = JsonDocument.Parse(await withoutToolsResponse.Content.ReadAsStringAsync());
+            Assert.Equal(0, withoutTools.RootElement.GetProperty("tools").GetArrayLength());
+            var revisionWithoutTools = withoutTools.RootElement.GetProperty("revision").GetUInt32();
+
+            await ExecuteAsync(application.Services, """
+                INSERT INTO tool_table_releases(
+                    id,case_operation_id,revision_number,original_file_name,stored_relative_path,
+                    file_size,file_hash,released_at,released_by,release_comment,created_at,updated_at,
+                    required_tool_count)
+                VALUES
+                    ('tools-eink-active','case-op-eink-1',1,'OPER_1.TOOLS.mht','tools/active.mht',
+                     1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','2026-08-25T09:00:00Z','test','active',
+                     '2026-08-25T09:00:00Z','2026-08-25T09:00:00Z',1),
+                    ('tools-eink-pinned','case-op-eink-1',2,'OPER_1.TOOLS.csv','tools/pinned.csv',
+                     1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','2026-08-25T09:30:00Z','test','pinned',
+                     '2026-08-25T09:30:00Z','2026-08-25T09:30:00Z',1);
+                INSERT INTO tool_table_release_tools(
+                    id,tool_table_release_id,row_number,tool_identifier,description,is_required,
+                    requires_magazine_position,is_active,magazine_position,created_at,updated_at)
+                VALUES
+                    ('tool-eink-1','tools-eink-active',1,'T1','FLAYCAT 80',1,1,1,NULL,
+                     '2026-08-25T09:00:00Z','2026-08-25T09:00:00Z'),
+                    ('tool-eink-2','tools-eink-active',2,'T2','OLD DRILL',1,1,0,NULL,
+                     '2026-08-25T09:00:00Z','2026-08-25T09:00:00Z'),
+                    ('tool-eink-3','tools-eink-active',3,'T3','DRILL 8.4 VIDIA',0,0,1,' 12 ',
+                     '2026-08-25T09:00:00Z','2026-08-25T09:00:00Z'),
+                    ('tool-eink-4','tools-eink-pinned',1,'T7','FIN 16',1,1,1,NULL,
+                     '2026-08-25T09:30:00Z','2026-08-25T09:30:00Z');
+                INSERT INTO process_revisions(
+                    id,case_operation_id,revision_number,is_active,tool_table_release_id,
+                    created_at,created_by,change_description,version,updated_at,manufacturing_program_id)
+                VALUES('process-eink-active','case-op-eink-1',1,1,'tools-eink-active',
+                       '2026-08-25T09:00:00Z','test','active',1,'2026-08-25T09:00:00Z',
+                       'case-operation:case-op-eink-1');
+                """);
+            using var activeResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            Assert.Equal(HttpStatusCode.OK, activeResponse.StatusCode);
+            using var active = JsonDocument.Parse(await activeResponse.Content.ReadAsStringAsync());
+            var activeTools = active.RootElement.GetProperty("tools");
+            Assert.Equal(2, activeTools.GetArrayLength());
+            Assert.Equal("T1", activeTools[0].GetProperty("tool").GetString());
+            Assert.Equal("FLAYCAT 80", activeTools[0].GetProperty("description").GetString());
+            Assert.False(activeTools[0].TryGetProperty("position", out _));
+            Assert.Equal("T3", activeTools[1].GetProperty("tool").GetString());
+            Assert.Equal("12", activeTools[1].GetProperty("position").GetString());
+            var activeRevision = active.RootElement.GetProperty("revision").GetUInt32();
+            Assert.NotEqual(revisionWithoutTools, activeRevision);
+
+            using var unchangedResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var unchanged = JsonDocument.Parse(await unchangedResponse.Content.ReadAsStringAsync());
+            Assert.Equal(activeRevision, unchanged.RootElement.GetProperty("revision").GetUInt32());
+
+            await ExecuteAsync(application.Services, """
+                UPDATE production_run_programs
+                SET production_tool_table_release_id = 'tools-eink-pinned', version = version + 1
+                WHERE production_run_id = 'run:batch-operation:operation-eink-1';
+                """);
+            using var pinnedResponse = await client.SendAsync(Get("/api/tablets/3041/status"));
+            using var pinned = JsonDocument.Parse(await pinnedResponse.Content.ReadAsStringAsync());
+            var pinnedTools = pinned.RootElement.GetProperty("tools");
+            Assert.Equal(1, pinnedTools.GetArrayLength());
+            Assert.Equal("T7", pinnedTools[0].GetProperty("tool").GetString());
+            Assert.Equal("FIN 16", pinnedTools[0].GetProperty("description").GetString());
+            Assert.NotEqual(activeRevision, pinned.RootElement.GetProperty("revision").GetUInt32());
+        });
+    }
+
+    [Fact]
     public async Task Send_to_qc_resolves_current_run_is_idempotent_and_changes_only_workflow_projection()
     {
         await RunWithServerAsync(async (application, client, packageRoot) =>

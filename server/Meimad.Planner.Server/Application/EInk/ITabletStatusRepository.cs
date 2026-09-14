@@ -12,6 +12,7 @@ internal sealed record TabletStatusSource(
     TabletStatusMachineSource? Machine,
     TabletStatusRunSource? Run,
     IReadOnlyList<TabletStatusOutputSource> Outputs,
+    IReadOnlyList<TabletStatusToolSource> Tools,
     TabletStatusWorkflowSource? Workflow,
     TabletVerificationSessionSource? VerificationSession);
 
@@ -34,6 +35,11 @@ internal sealed record TabletStatusOutputSource(
     string PartName,
     int OperationNumber,
     string OperationName);
+
+internal sealed record TabletStatusToolSource(
+    string ToolIdentifier,
+    string Description,
+    string? MagazinePosition);
 
 internal sealed record TabletStatusWorkflowSource(
     string EventId,

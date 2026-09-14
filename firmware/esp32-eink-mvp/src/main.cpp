@@ -908,11 +908,11 @@ void runCompileTimeDemo(
 
   uint8_t toolPage = loadToolPage();
   if (action == meimad::button_input::ButtonAction::PreviousToolPage) {
-    toolPage = meimad::production_ui::previousToolPage(toolPage, screen.toolCount);
+    toolPage = meimad::production_ui::previousToolPage(toolPage, screen.toolCount());
   } else if (action == meimad::button_input::ButtonAction::NextToolPage) {
-    toolPage = meimad::production_ui::nextToolPage(toolPage, screen.toolCount);
+    toolPage = meimad::production_ui::nextToolPage(toolPage, screen.toolCount());
   }
-  toolPage = meimad::production_ui::normalizedToolPage(toolPage, screen.toolCount);
+  toolPage = meimad::production_ui::normalizedToolPage(toolPage, screen.toolCount());
 
   Serial.printf(
       "Compile-time demo: scenario=%s index=%u; Wi-Fi and Server calls are disabled.\n",
@@ -1216,7 +1216,7 @@ void setup() {
           || confirmationPending || batteryWarningChanged;
       if (serverContentChanged) toolPage = 0;
       toolPage = meimad::production_ui::normalizedToolPage(
-          toolPage, productionScreen.toolCount);
+          toolPage, productionScreen.toolCount());
       if (!refreshScreen) {
         MEIMAD_LOG(
             "DISPLAY", "refresh skipped reason=unchanged server_revision=%lu",
@@ -1273,7 +1273,7 @@ void setup() {
               serverStatus = tabletStatus.status;
               statePolicyFromServer = true;
               toolPage = meimad::production_ui::normalizedToolPage(
-                  toolPage, productionScreen.toolCount);
+                  toolPage, productionScreen.toolCount());
               if (!eventAccepted
                   && tabletStatus.status ==
                       meimad::tablet_api::TabletStatus::InQc) {
@@ -1409,9 +1409,9 @@ void setup() {
       const uint8_t requestedPage =
           wakeButton.action == meimad::button_input::ButtonAction::PreviousToolPage
               ? meimad::production_ui::previousToolPage(
-                    toolPage, productionScreen.toolCount)
+                    toolPage, productionScreen.toolCount())
               : meimad::production_ui::nextToolPage(
-                    toolPage, productionScreen.toolCount);
+                    toolPage, productionScreen.toolCount());
       if (requestedPage != toolPage) {
         Serial.printf(
             "Tool page changed: %u -> %u\n",
@@ -1424,7 +1424,7 @@ void setup() {
             "Tool page unchanged at boundary: %u / %u\n",
             static_cast<unsigned>(toolPage + 1),
             static_cast<unsigned>(
-                meimad::production_ui::toolPageCount(productionScreen.toolCount)));
+                meimad::production_ui::toolPageCount(productionScreen.toolCount())));
       }
     }
   }
@@ -1530,9 +1530,9 @@ void loop() {
           const uint8_t requestedPage = event.action
                   == meimad::button_input::ButtonAction::PreviousToolPage
               ? meimad::production_ui::previousToolPage(
-                    gAwakeRuntime.toolPage, gAwakeRuntime.screen.toolCount)
+                    gAwakeRuntime.toolPage, gAwakeRuntime.screen.toolCount())
               : meimad::production_ui::nextToolPage(
-                    gAwakeRuntime.toolPage, gAwakeRuntime.screen.toolCount);
+                    gAwakeRuntime.toolPage, gAwakeRuntime.screen.toolCount());
           if (requestedPage != gAwakeRuntime.toolPage) {
             gAwakeRuntime.toolPage = requestedPage;
             saveLastRefreshDuration(drawProductionLayout(

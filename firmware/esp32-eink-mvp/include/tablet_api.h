@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include <vector>
+
 namespace meimad::tablet_api {
 
 enum class TabletStatus {
@@ -48,6 +50,18 @@ struct TabletOperation {
   String name;
 };
 
+// One active row of the Server-resolved released tool table, in released order.
+struct TabletTool {
+  String tool;
+  String description;
+  // Magazine pocket label when the released table names one; empty otherwise.
+  String position;
+};
+
+// Upper bound on projected tool rows kept in memory. The Server projects every
+// active row; rows beyond this bound are dropped and reported on Serial.
+constexpr size_t kMaximumTools = 64;
+
 struct TabletVerification {
   bool required = false;
   VerificationState state = VerificationState::None;
@@ -67,6 +81,8 @@ struct TabletStatusResponse {
   TabletNcRun ncRun;
   TabletPart part;
   TabletOperation operation;
+  // Empty when the Server has no released tool table for the Run or omits the field.
+  std::vector<TabletTool> tools;
   TabletStatus status = TabletStatus::Unknown;
   TabletVerification verification;
   TabletDiagnostics diagnostics;

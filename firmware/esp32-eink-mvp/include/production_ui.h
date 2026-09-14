@@ -1,6 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
+
+#include <vector>
+
 #include "tablet_api.h"
 
 #if !MEIMAD_EINK_DRIVER_STUB
@@ -10,12 +13,12 @@
 namespace meimad::production_ui {
 
 constexpr uint8_t kToolRowsPerPage = 3;
-constexpr uint8_t kMaximumTools = 12;
 
 struct ToolRow {
   String tool;
   String description;
-  String offset;
+  // Magazine pocket label, or "-" when the released table names none.
+  String position;
 };
 
 struct ProductionScreenModel {
@@ -32,8 +35,11 @@ struct ProductionScreenModel {
   String verificationResponseCode;
   String notice;
   bool lowBattery = false;
-  ToolRow tools[kMaximumTools];
-  uint8_t toolCount = 0;
+  // Heap-backed so a full tool table never grows the wake-cycle stack frame.
+  std::vector<ToolRow> tools;
+  uint8_t toolCount() const {
+    return tools.size() > 255 ? 255 : static_cast<uint8_t>(tools.size());
+  }
 };
 
 ProductionScreenModel makeProductionScreen(

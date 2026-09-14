@@ -86,13 +86,16 @@ The initial `/api/tablet/ping?hardwareId=<mac>` call uses the normalized physica
 MAC only for discovery/mapping. TabletID is provisioned by firmware upload and
 must match the Server registration. The trusted-LAN MVP has no tablet credential.
 When the approved tablet-status GET succeeds, the layout displays that response.
-The status response does not yet carry official tool rows, so the live tool area
-explicitly says `NO TOOL DATA AVAILABLE`; it never fabricates Server data. Until
-the pending Server compatibility route exists, the boot screen uses the example
-layout fixture and marks it `LAYOUT DEMO`. That fixture contains seven tools to
-exercise three-page pagination. The physical Previous/Next gestures select
-those pages and persist the selected page in NVS. Official package-to-tool-row
-binding remains pending.
+Since firmware 0.1.6 the status response carries `tools`: the active rows of the
+released tool table the Server resolved for the Run. The tool area lists the
+released identifier, description, and magazine pocket (`-` when the release
+names none), keeps up to 64 rows, and paginates them three per page. It says
+`NO TOOL DATA AVAILABLE` only when the Server projects no released tool table;
+it never fabricates Server data, and a Server that omits the field parses as no
+tool data rather than as an error. When no Server status has ever been rendered,
+the boot screen uses the example layout fixture and marks it `LAYOUT DEMO`. That
+fixture contains seven tools to exercise three-page pagination. The physical
+Previous/Next gestures select those pages and persist the selected page in NVS.
 
 Compilation checks geometry-independent model behavior and pagination. Normal
 working-distance readability, clipping, contrast, and button navigation still

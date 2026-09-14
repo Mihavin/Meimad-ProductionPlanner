@@ -51,6 +51,13 @@ ProductionScreenModel makeProductionScreen(
   model.status = status.status;
   model.verificationState = status.verification.state;
   model.verificationResponseCode = status.verification.responseCode;
+  model.tools.reserve(status.tools.size());
+  for (const auto& tool : status.tools) {
+    model.tools.push_back(
+        {tool.tool,
+         tool.description,
+         tool.position.isEmpty() ? String("-") : tool.position});
+  }
   return model;
 }
 
@@ -64,14 +71,14 @@ ProductionScreenModel makeDevelopmentFixture(const String& tabletId) {
   model.operationNumber = 30;
   model.operationName = "Finish Milling";
   model.status = tablet_api::TabletStatus::InSetupRun;
-  model.tools[0] = {"T01", "D10 End Mill", "H01"};
-  model.tools[1] = {"T02", "D6 Ball Mill", "H02"};
-  model.tools[2] = {"T03", "Probe", "H99"};
-  model.tools[3] = {"T04", "D20 Face Mill", "H04"};
-  model.tools[4] = {"T05", "D4 Drill", "H05"};
-  model.tools[5] = {"T06", "D8 Reamer", "H06"};
-  model.tools[6] = {"T07", "Chamfer Mill", "H07"};
-  model.toolCount = 7;
+  model.tools = {
+      {"T01", "D10 End Mill", "1"},
+      {"T02", "D6 Ball Mill", "2"},
+      {"T03", "Probe", "-"},
+      {"T04", "D20 Face Mill", "4"},
+      {"T05", "D4 Drill", "5"},
+      {"T06", "D8 Reamer", "6"},
+      {"T07", "Chamfer Mill", "7"}};
   return model;
 }
 
@@ -168,8 +175,8 @@ void drawProductionScreen(
   constexpr int kToolColumn1X = 112;
   constexpr int kToolColumn2X = 650;
 
-  const uint8_t page = normalizedToolPage(requestedToolPage, model.toolCount);
-  const uint8_t pages = toolPageCount(model.toolCount);
+  const uint8_t page = normalizedToolPage(requestedToolPage, model.toolCount());
+  const uint8_t pages = toolPageCount(model.toolCount());
 
   display.begin();
   display.fillScreen(TFT_WHITE);
@@ -268,24 +275,24 @@ void drawProductionScreen(
   display.setTextSize(1);
   display.drawString("TOOL", 34, 344);
   display.drawString("DESCRIPTION", 126, 344);
-  display.drawString("OFFSET", 666, 344);
+  display.drawString("POCKET", 666, 344);
   display.drawFastHLine(kLeft, 360, kContentWidth, TFT_BLACK);
   display.drawFastVLine(kToolColumn1X, 338, 136, TFT_BLACK);
   display.drawFastVLine(kToolColumn2X, 338, 136, TFT_BLACK);
 
   const uint8_t firstTool = static_cast<uint8_t>(page * kToolRowsPerPage);
   display.setTextSize(2);
-  if (model.toolCount == 0) {
+  if (model.toolCount() == 0) {
     display.drawString("NO TOOL DATA AVAILABLE", 126, 378);
   } else {
     for (uint8_t row = 0; row < kToolRowsPerPage; ++row) {
       const uint8_t toolIndex = static_cast<uint8_t>(firstTool + row);
-      if (toolIndex >= model.toolCount) break;
+      if (toolIndex >= model.toolCount()) break;
       const int y = 370 + row * 38;
       display.drawString(fitText(display, model.tools[toolIndex].tool, 68), 34, y);
       display.drawString(
           fitText(display, model.tools[toolIndex].description, 500), 126, y);
-      display.drawString(fitText(display, model.tools[toolIndex].offset, 92), 666, y);
+      display.drawString(fitText(display, model.tools[toolIndex].position, 92), 666, y);
       if (row < kToolRowsPerPage - 1) {
         display.drawFastHLine(kLeft, y + 28, kContentWidth, TFT_BLACK);
       }

@@ -363,13 +363,13 @@
                                        FontWeight="Bold" />
                             <TextBlock Text="UNASSIGNED" FontWeight="Bold" />
                             </DockPanel>
+                            <Button Content="Create Production Run..." HorizontalAlignment="Center"
+                                    Margin="0,6,0,0" Padding="10,3" Click="CreateProductionRun_Click"
+                                    IsEnabled="{Binding CanDrag}" AutomationProperties.Name="Create Production Run"/>
                             <TextBox Text="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
-                                     Margin="0,5,0,0" ToolTip="Search part, Case, batch, order, operation, or ID"
+                                     Margin="0,6,0,0" ToolTip="Search part, Case, batch, order, operation, or ID"
                                      AutomationProperties.Name="Search Planning Board" />
                         </StackPanel>
-                        <Button Grid.Row="0" Content="Create Production Run..." HorizontalAlignment="Center"
-                                Margin="0,28,0,4" Padding="10,3" Click="CreateProductionRun_Click"
-                                IsEnabled="{Binding CanDrag}" AutomationProperties.Name="Create Production Run"/>
                         <ListBox x:Name="OperationPool" Grid.Row="1"
                                  ItemsSource="{Binding Pool}"
                                  ItemContainerStyle="{StaticResource SearchableOperationItem}"
