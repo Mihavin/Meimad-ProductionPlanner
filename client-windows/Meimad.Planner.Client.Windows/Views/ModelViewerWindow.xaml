@@ -1,0 +1,191 @@
+<Window x:Class="Meimad.Planner.Client.Windows.Views.ModelViewerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
+        Title="{Binding Title}" Width="1320" Height="820" MinWidth="960" MinHeight="600"
+        WindowStartupLocation="CenterOwner" Background="#F2F5F8">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="Padding" Value="8,3" />
+        </Style>
+        <Style x:Key="PanelTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#5B6B7A" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+    </Window.Resources>
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="270" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="290" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Toolbar -->
+        <WrapPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,6">
+            <Button Content="Isometric" Click="View_Click" Tag="isometric" />
+            <Button Content="Front" Click="View_Click" Tag="front" />
+            <Button Content="Back" Click="View_Click" Tag="back" />
+            <Button Content="Top" Click="View_Click" Tag="top" />
+            <Button Content="Bottom" Click="View_Click" Tag="bottom" />
+            <Button Content="Left" Click="View_Click" Tag="left" />
+            <Button Content="Right" Click="View_Click" Tag="right" />
+            <Button Content="Fit" Click="Fit_Click" ToolTip="Fit every visible model into the window" />
+            <TextBlock Text="Projection" VerticalAlignment="Center" Margin="10,0,5,6" />
+            <ComboBox x:Name="ProjectionCombo" Width="120" SelectedIndex="0" Margin="0,0,6,6"
+                      SelectionChanged="Projection_SelectionChanged">
+                <ComboBoxItem Content="Orthographic" Tag="orthographic" />
+                <ComboBoxItem Content="Perspective" Tag="perspective" />
+            </ComboBox>
+            <TextBlock Text="Display" VerticalAlignment="Center" Margin="6,0,5,6" />
+            <ComboBox x:Name="DisplayModeCombo" Width="150" SelectedIndex="1" Margin="0,0,6,6"
+                      SelectionChanged="DisplayMode_SelectionChanged">
+                <ComboBoxItem Content="Shaded" Tag="shaded" />
+                <ComboBoxItem Content="Shaded with edges" Tag="visibleEdges" />
+                <ComboBoxItem Content="Hidden line" Tag="hiddenLine" />
+                <ComboBoxItem Content="Wireframe" Tag="wireframe" />
+                <ComboBoxItem Content="Transparent" Tag="transparent" />
+            </ComboBox>
+            <CheckBox x:Name="BoundingBoxToggle" Content="Bounding box" VerticalAlignment="Center" Margin="6,0,10,6"
+                      Checked="BoundingBox_Changed" Unchecked="BoundingBox_Changed" />
+            <Button Content="Snapshot…" Click="Snapshot_Click" ToolTip="Save the current view as a PNG image" />
+        </WrapPanel>
+
+        <!-- Model files -->
+        <Border Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Padding="10" Background="White"
+                BorderBrush="#C7D1DB" BorderThickness="1" CornerRadius="4">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="Models" Style="{StaticResource PanelTitle}" />
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
+                           Text="Part model, rest-material stock, fixtures and other STEP/STL files linked to this Case. Untick a model to hide it." />
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <DockPanel Margin="0,0,0,6">
+                        <ComboBox x:Name="AddKindCombo" DockPanel.Dock="Left" Width="150" SelectedIndex="0"
+                                  IsEnabled="{Binding CanEdit}" Margin="0,0,6,0">
+                            <ComboBoxItem Content="Part model" Tag="part" />
+                            <ComboBoxItem Content="Rest material / stock" Tag="stock" />
+                            <ComboBoxItem Content="Fixture" Tag="fixture" />
+                            <ComboBoxItem Content="Other" Tag="other" />
+                        </ComboBox>
+                        <Button Content="Add file…" Click="AddFile_Click" IsEnabled="{Binding CanEdit}" Margin="0"
+                                ToolTip="Link a STEP (.stp/.step) or STL file to this Case" />
+                    </DockPanel>
+                    <WrapPanel>
+                        <Button Content="Set as primary" Click="SetPrimary_Click" IsEnabled="{Binding CanEdit}" />
+                        <Button Content="Remove link" Click="RemoveFile_Click" IsEnabled="{Binding CanEdit}" />
+                        <Button Content="Reload" Click="Reload_Click" Margin="0,0,0,6" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource Hint}" Margin="0,4,0,0" />
+                </StackPanel>
+                <ListBox x:Name="FilesList" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}"
+                         BorderThickness="0" HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <CheckBox IsChecked="{Binding IsVisible}" VerticalAlignment="Top" Margin="0,2,6,0"
+                                          ToolTip="Show or hide this model" />
+                                <StackPanel Grid.Column="1">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding PrimaryText}" Foreground="#1B6E3A"
+                                                   FontSize="11" FontWeight="SemiBold" Margin="6,0,0,0" />
+                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding FilePath}" />
+                                    </DockPanel>
+                                    <TextBlock FontSize="11" Foreground="#5B6B7A">
+                                        <Run Text="{Binding KindText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding FormatText, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding StatusText}" FontSize="11" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#5B6B7A" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasLoadError}" Value="True">
+                                                        <Setter Property="Foreground" Value="#C62828" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- Viewer -->
+        <Border Grid.Row="1" Grid.Column="1" BorderBrush="#C7D1DB" BorderThickness="1" CornerRadius="4" Background="White">
+            <views:StepViewerControl x:Name="Viewer" />
+        </Border>
+
+        <!-- Measurement tools -->
+        <Border Grid.Row="1" Grid.Column="2" Margin="8,0,0,0" Padding="10" Background="White"
+                BorderBrush="#C7D1DB" BorderThickness="1" CornerRadius="4">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <TextBlock Text="Measure" Style="{StaticResource PanelTitle}" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Pick a tool, then click vertices, edges or faces in the viewer. Esc cancels the tool; right-drag pans, left-drag orbits, wheel zooms." />
+                    <WrapPanel>
+                        <Button Content="Point" Click="Tool_Click" Tag="point" ToolTip="Coordinates of a vertex" />
+                        <Button Content="Distance" Click="Tool_Click" Tag="distance" ToolTip="Straight distance between two vertices" />
+                        <Button Content="Min. distance" Click="Tool_Click" Tag="minimumDistance" ToolTip="Shortest distance between two vertices, edges or faces — also across models (clearance)" />
+                        <Button Content="Edge length" Click="Tool_Click" Tag="edgeLength" ToolTip="Exact length of a B-rep edge" />
+                        <Button Content="Radius / Ø" Click="Tool_Click" Tag="radius" ToolTip="Radius and diameter of a circular edge or a cylindrical, conical, spherical or toroidal face" />
+                        <Button Content="Angle" Click="Tool_Click" Tag="angle" ToolTip="Angle between two straight edges, two planar faces, or an edge and a plane" />
+                        <Button Content="Area" Click="Tool_Click" Tag="faceArea" ToolTip="Exact area of a face" />
+                        <Button Content="Volume / mass" Click="Tool_Click" Tag="volume" ToolTip="Volume, surface area, centroid and bounding box of the visible models" />
+                        <Button Content="Clear" Click="ClearMeasurement_Click" Margin="0,0,0,6" ToolTip="Cancel the tool and remove every measurement" />
+                    </WrapPanel>
+                    <Border Padding="8" Background="#EAF0F5" CornerRadius="3" Margin="0,4,0,8">
+                        <TextBlock x:Name="MeasurementText" TextWrapping="Wrap" Text="Select a measurement tool." />
+                    </Border>
+                    <TextBlock Text="Results" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <ListBox x:Name="ResultsList" MaxHeight="220" BorderBrush="#C7D1DB" Margin="0,0,0,10"
+                             SelectionChanged="ResultsList_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <Separator Margin="0,4,0,10" />
+                    <TextBlock Text="Bounding box / reference" Style="{StaticResource PanelTitle}" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="The orange box uses Model XYZ by default. For a custom reference click three base-plane vertices and two direction vertices, or a base face and a direction edge." />
+                    <WrapPanel>
+                        <Button Content="Base face + edge" Click="ReferenceFace_Click" />
+                        <Button Content="3 points + 2 points" Click="ReferencePoints_Click" />
+                        <Button Content="Flip X" Click="Flip_Click" Tag="X" />
+                        <Button Content="Flip Y" Click="Flip_Click" Tag="Y" />
+                        <Button Content="Flip Z" Click="Flip_Click" Tag="Z" />
+                        <Button Content="Clear reference" Click="ReferenceClear_Click" Margin="0,0,0,6" />
+                    </WrapPanel>
+                    <Border Padding="8" Background="#FFF2D9" CornerRadius="3">
+                        <TextBlock x:Name="BoundingBoxText" TextWrapping="Wrap" Text="Enable Bounding box to display it." />
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <TextBlock Grid.Row="2" Grid.ColumnSpan="3" Margin="0,6,0,0" Foreground="#5B6B7A" TextWrapping="Wrap"
+                   Text="Model files stay on the factory network; Meimad Planner stores only their paths. STEP models carry exact OpenCascade geometry for measurements; STL meshes support point, distance, volume and bounding-box tools." />
+    </Grid>
+</Window>

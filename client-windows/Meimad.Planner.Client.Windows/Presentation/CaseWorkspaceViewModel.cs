@@ -39,6 +39,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private CaseComponent? selectedWhereUsed;
     private CasePoolItemViewModel? selectedComponentCase;
     private string? entityTag;
+    private ModelFileItemViewModel? selectedModelFile;
+    private string modelFilesStatus = "Select a Case to list its model files.";
     private string searchText = string.Empty;
     private string customerFilter = string.Empty;
     private string activeFilter = "All";
@@ -289,6 +291,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 if (value is not null)
                 {
                     isCreating = false;
+                }
+                else
+                {
+                    ModelFiles.Clear();
+                    SelectedModelFile = null;
+                    ModelFilesStatus = "Select a Case to list its model files.";
                 }
                 isCreatingOperation = false;
                 isEditingOperation = false;
@@ -2132,8 +2140,159 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
+    // ---------------------------------------------------------------- model files (STEP/STL links)
+
+    public ObservableCollection<ModelFileItemViewModel> ModelFiles { get; } = [];
+
+    public ModelFileItemViewModel? SelectedModelFile
+    {
+        get => selectedModelFile;
+        set => SetField(ref selectedModelFile, value);
+    }
+
+    public string ModelFilesStatus
+    {
+        get => modelFilesStatus;
+        private set => SetField(ref modelFilesStatus, value);
+    }
+
+    public bool CanManageModelFiles => isEditor && apiClient is not null && SelectedCase is not null && !IsCreating && !IsBusy;
+
+    /// <summary>Raised after the model-file list of the selected Case was (re)loaded.</summary>
+    public event EventHandler? ModelFilesLoaded;
+
+    /// <summary>Session details the detached 3D viewer needs; null until connected or without a Case.</summary>
+    internal ModelViewerContext? CreateModelViewerContext() =>
+        apiClient is null || SelectedCase is null ? null : new ModelViewerContext(apiClient, clientId, editGeneration, isEditor);
+
+    internal async Task RefreshModelFilesAsync(string caseId)
+    {
+        if (apiClient is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var files = await apiClient.ListCaseModelFilesAsync(caseId);
+            if (SelectedCase?.CaseId != caseId)
+            {
+                return; // the planner moved on to another Case while the list was loading
+            }
+            ModelFiles.Clear();
+            foreach (var file in files)
+            {
+                ModelFiles.Add(new ModelFileItemViewModel(file));
+            }
+            ModelFilesStatus = ModelFiles.Count == 0
+                ? "No model files linked yet. Add the part's STEP file, rest-material stock, or fixtures."
+                : $"{ModelFiles.Count} model file(s) linked.";
+            SelectedModelFile = ModelFiles.FirstOrDefault(file => file.IsPrimary) ?? ModelFiles.FirstOrDefault();
+            ModelFilesLoaded?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            ModelFilesStatus = FriendlyMessage(exception);
+        }
+    }
+
+    internal async Task<ModelFileItemViewModel?> AddModelFileAsync(string filePath, string kind, string? caseOperationId)
+    {
+        if (!CanManageModelFiles || apiClient is null || SelectedCase is null)
+        {
+            ModelFilesStatus = "Edit Mode and a selected Case are required to link model files.";
+            return null;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var created = await apiClient.AddCaseModelFileAsync(
+                SelectedCase.CaseId,
+                new CaseModelFileCreate(filePath, kind, System.IO.Path.GetFileName(filePath), caseOperationId),
+                clientId,
+                editGeneration);
+            await RefreshModelFilesAsync(SelectedCase.CaseId);
+            var item = ModelFiles.FirstOrDefault(file => file.CaseModelFileId == created.CaseModelFileId);
+            SelectedModelFile = item;
+            StatusMessage = $"Linked {created.Label} to {SelectedCase.PartNumber}.";
+            return item;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            ModelFilesStatus = FriendlyMessage(exception);
+            StatusMessage = FriendlyMessage(exception);
+            return null;
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
+    internal async Task<bool> RemoveModelFileAsync(ModelFileItemViewModel item)
+    {
+        if (!CanManageModelFiles || apiClient is null || SelectedCase is null)
+        {
+            return false;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await apiClient.DeleteCaseModelFileAsync(SelectedCase.CaseId, item.CaseModelFileId, clientId, editGeneration);
+            ModelFiles.Remove(item);
+            if (ReferenceEquals(SelectedModelFile, item))
+            {
+                SelectedModelFile = ModelFiles.FirstOrDefault();
+            }
+            ModelFilesStatus = $"{ModelFiles.Count} model file(s) linked.";
+            StatusMessage = $"Removed the link to {item.Label}. The file itself was not deleted.";
+            return true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+            return false;
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
+    internal async Task SetPrimaryModelFileAsync(ModelFileItemViewModel item)
+    {
+        if (!CanManageModelFiles || apiClient is null || SelectedCase is null || item.IsPrimary)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await apiClient.UpdateCaseModelFileAsync(
+                SelectedCase.CaseId, item.CaseModelFileId, item.Version,
+                new CaseModelFileUpdate(IsPrimary: true), clientId, editGeneration);
+            await RefreshModelFilesAsync(SelectedCase.CaseId);
+            StatusMessage = $"{item.Label} is now the primary part model.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
     private void ApplyCase(PlannerCase plannerCase)
     {
+        _ = RefreshModelFilesAsync(plannerCase.CaseId);
         PartNumber = plannerCase.PartNumber;
         Name = plannerCase.Name;
         Revision = plannerCase.Revision ?? string.Empty;
@@ -2425,6 +2584,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private void RaiseStateProperties()
     {
         OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(CanManageModelFiles));
         OnPropertyChanged(nameof(HasForm));
         OnPropertyChanged(nameof(IsCreating));
         OnPropertyChanged(nameof(IsFormReadOnly));

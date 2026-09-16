@@ -154,6 +154,19 @@ public partial class MachinePlanningBoardView : UserControl
         await viewModel.ChangeManualPriorityAsync(operation, null);
     }
 
+    private void ViewIn3D_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryResolveContextOperation(sender, out var operation, out var viewModel)) return;
+        var context = viewModel.CreateModelViewerContext();
+        if (context is null)
+        {
+            MessageBox.Show("Connect to the Server before opening the 3D viewer.", "View in 3D",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        ModelViewerWindow.Open(Window.GetWindow(this), context, operation.CaseId, operation.DisplayTitle);
+    }
+
     private bool TryResolveContextOperation(
         object sender,
         out PlanningOperationViewModel operation,

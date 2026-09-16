@@ -24,10 +24,12 @@ public partial class CaseWorkspaceView : UserControl
         if (e.OldValue is CaseWorkspaceViewModel oldViewModel)
         {
             oldViewModel.PropertyChanged -= CaseWorkspace_PropertyChanged;
+            oldViewModel.ModelFilesLoaded -= CaseWorkspace_ModelFilesLoaded;
         }
         if (e.NewValue is CaseWorkspaceViewModel newViewModel)
         {
             newViewModel.PropertyChanged += CaseWorkspace_PropertyChanged;
+            newViewModel.ModelFilesLoaded += CaseWorkspace_ModelFilesLoaded;
             newViewModel.ConfirmBatchRemoval = ConfirmBatchRemoval;
         }
         StepViewer.ClearModel();
@@ -56,8 +58,8 @@ public partial class CaseWorkspaceView : UserControl
     {
         var dialog = new OpenFileDialog
         {
-            Title = "Open a STEP model",
-            Filter = "STEP models|*.stp;*.step|All files|*.*",
+            Title = "Preview a STEP or STL model",
+            Filter = "CAD models|*.stp;*.step;*.stl|STEP models|*.stp;*.step|STL meshes|*.stl|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
@@ -68,7 +70,7 @@ public partial class CaseWorkspaceView : UserControl
 
         try
         {
-            StepViewer.LoadStep(dialog.FileName);
+            StepViewer.LoadFile(dialog.FileName);
             StepDisplayModeCombo.SelectedIndex = 0;
             StepBoundingBoxToggle.IsChecked = false;
         }
@@ -77,9 +79,185 @@ public partial class CaseWorkspaceView : UserControl
             or InvalidDataException
             or FormatException)
         {
-            MessageBox.Show(exception.Message, "STEP preview", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(exception.Message, "Model preview", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         UpdateStepSnapshotState();
+    }
+
+    // ------------------------------------------------------------ linked model files
+
+    private void CaseWorkspace_ModelFilesLoaded(object? sender, EventArgs e) => LoadLinkedModelsIntoViewer();
+
+    /// <summary>Draws every linked file: the primary part model first, then stock/fixtures translucent.</summary>
+    private void LoadLinkedModelsIntoViewer()
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel)
+        {
+            return;
+        }
+
+        StepViewer.ClearModel();
+        var failures = new List<string>();
+        foreach (var item in viewModel.ModelFiles.OrderByDescending(file => file.IsPrimary).ThenBy(file => file.File.SortOrder))
+        {
+            try
+            {
+                item.LayerId = StepViewer.AddFile(item.FilePath, item.Label, item.Kind, null, ModelFileKinds.DefaultOpacity(item.Kind));
+                item.LoadError = null;
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or FormatException
+                or InvalidOperationException)
+            {
+                item.LayerId = null;
+                item.LoadError = exception is FileNotFoundException or DirectoryNotFoundException
+                    ? "File not found at the linked path."
+                    : exception.Message;
+                failures.Add($"{item.Label}: {item.LoadError}");
+            }
+        }
+        StepDisplayModeCombo.SelectedIndex = 0;
+        StepProjectionCombo.SelectedIndex = 0;
+        StepBoundingBoxToggle.IsChecked = false;
+        if (failures.Count > 0)
+        {
+            StepMeasurementText.Text = "Some linked files could not be loaded:\n" + string.Join('\n', failures);
+        }
+        UpdateStepSnapshotState();
+    }
+
+    private void LoadModelFiles_Click(object sender, RoutedEventArgs e) => LoadLinkedModelsIntoViewer();
+
+    private void ModelFilesList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (DataContext is CaseWorkspaceViewModel { SelectedModelFile: { } item })
+        {
+            try
+            {
+                StepViewer.LoadFile(item.FilePath);
+                item.LoadError = null;
+                UpdateStepSnapshotState();
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or FormatException)
+            {
+                item.LoadError = exception.Message;
+                MessageBox.Show(exception.Message, "Model preview", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+    }
+
+    private async void AddModelFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel || !viewModel.CanManageModelFiles)
+        {
+            return;
+        }
+
+        var kind = (StepAddKindCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? ModelFileKinds.Part;
+        var dialog = new OpenFileDialog
+        {
+            Title = $"Link a {ModelFileKinds.DisplayName(kind).ToLowerInvariant()} file to the Case",
+            Filter = "CAD models|*.stp;*.step;*.stl|STEP models|*.stp;*.step|STL meshes|*.stl|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        };
+        if (!string.IsNullOrWhiteSpace(viewModel.WorkingFolderPath) && Directory.Exists(viewModel.WorkingFolderPath))
+        {
+            dialog.InitialDirectory = viewModel.WorkingFolderPath;
+        }
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        foreach (var path in dialog.FileNames)
+        {
+            await viewModel.AddModelFileAsync(path, kind, caseOperationId: null);
+        }
+        LoadLinkedModelsIntoViewer();
+    }
+
+    private async void SetPrimaryModelFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is CaseWorkspaceViewModel { SelectedModelFile: { } item } viewModel)
+        {
+            await viewModel.SetPrimaryModelFileAsync(item);
+        }
+    }
+
+    private async void RemoveModelFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel { SelectedModelFile: { } item } viewModel)
+        {
+            return;
+        }
+        if (MessageBox.Show($"Remove the link to {item.Label}? The file on disk is not deleted.",
+                "Remove model link", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var layerId = item.LayerId;
+        if (await viewModel.RemoveModelFileAsync(item) && layerId is not null)
+        {
+            StepViewer.RemoveLayer(layerId);
+            UpdateStepSnapshotState();
+        }
+    }
+
+    private void OpenModelWindow_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel || viewModel.SelectedCase is null)
+        {
+            MessageBox.Show("Select a Case first.", "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var context = viewModel.CreateModelViewerContext();
+        if (context is null)
+        {
+            MessageBox.Show("Connect to the Server before opening the 3D viewer.", "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        ModelViewerWindow.Open(Window.GetWindow(this), context, viewModel.SelectedCase.CaseId,
+            $"{viewModel.PartNumber} {viewModel.Name}".Trim());
+    }
+
+    private void StepProjection_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (StepViewer is null) return;
+        var token = (StepProjectionCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        StepViewer.SetProjection(token == "perspective" ? StepProjectionMode.Perspective : StepProjectionMode.Orthographic);
+    }
+
+    private void StepTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string token })
+        {
+            return;
+        }
+        if (!StepViewer.HasModel)
+        {
+            StepMeasurementText.Text = "Load a model first.";
+            return;
+        }
+        StepViewer.BeginMeasurement(token switch
+        {
+            "point" => StepMeasurementTool.Point,
+            "distance" => StepMeasurementTool.Distance,
+            "minimumDistance" => StepMeasurementTool.MinimumDistance,
+            "edgeLength" => StepMeasurementTool.EdgeLength,
+            "radius" => StepMeasurementTool.Radius,
+            "angle" => StepMeasurementTool.Angle,
+            "faceArea" => StepMeasurementTool.FaceArea,
+            "volume" => StepMeasurementTool.Volume,
+            _ => StepMeasurementTool.None
+        });
+        StepViewer.Focus();
     }
 
     private void BrowseGCode_Click(object sender, RoutedEventArgs e)
@@ -179,7 +357,9 @@ public partial class CaseWorkspaceView : UserControl
         StepViewer.SetDisplayMode(token switch
         {
             "visibleEdges" => StepDisplayMode.VisibleEdges,
+            "hiddenLine" => StepDisplayMode.HiddenLine,
             "wireframe" => StepDisplayMode.Wireframe,
+            "transparent" => StepDisplayMode.Transparent,
             _ => StepDisplayMode.Shaded
         });
     }
@@ -228,6 +408,7 @@ public partial class CaseWorkspaceView : UserControl
         SnapshotStepButton.IsEnabled = StepViewer.HasModel
             && DataContext is CaseWorkspaceViewModel { CanEditUnlockedFields: true };
         StepDisplayModeCombo.IsEnabled = StepViewer.IsSolidModel;
+        StepProjectionCombo.IsEnabled = StepViewer.HasModel;
         StepBoundingBoxToggle.IsEnabled = StepViewer.HasModel;
         if (!StepViewer.HasModel)
         {

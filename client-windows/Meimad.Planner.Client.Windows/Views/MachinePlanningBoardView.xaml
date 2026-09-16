@@ -190,6 +190,11 @@
                                   IsEnabled="{Binding HasManualPriority}"
                                   Click="ClearManualPriority_Click"
                                   AutomationProperties.Name="Clear setup priority" />
+                        <Separator />
+                        <MenuItem Header="View in 3D"
+                                  ToolTip="Open the Case's STEP/STL models with measurement tools in a separate window."
+                                  Click="ViewIn3D_Click"
+                                  AutomationProperties.Name="View in 3D" />
                         <MenuItem Header="Production readiness..."
                                   ToolTip="Review all readiness reasons and confirm material, offsets, and an explicit compatible release."
                                   IsEnabled="{Binding CanEditReadiness}"

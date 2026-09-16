@@ -260,6 +260,18 @@ internal interface IPlannerApiClient : IDisposable
 
     Task DeleteCaseAsync(string caseId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task DeleteCaseOperationAsync(string caseId, string operationId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<IReadOnlyList<CaseModelFile>> ListCaseModelFilesAsync(string caseId, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<CaseModelFile> AddCaseModelFileAsync(string caseId, CaseModelFileCreate create, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<CaseModelFile> UpdateCaseModelFileAsync(string caseId, string caseModelFileId, int version, CaseModelFileUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeleteCaseModelFileAsync(string caseId, string caseModelFileId, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
     Task DeleteOrderAsync(string orderId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task DeleteBatchAsync(string batchId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task DeleteMachineAsync(string machineId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -1586,6 +1598,53 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         DeleteAsync($"api/v1/cases/{Uri.EscapeDataString(caseId)}", clientId, generation, token);
     public Task DeleteCaseOperationAsync(string caseId, string operationId, string clientId, long generation, CancellationToken token = default) =>
         DeleteAsync($"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(operationId)}", clientId, generation, token);
+
+    public async Task<IReadOnlyList<CaseModelFile>> ListCaseModelFilesAsync(
+        string caseId,
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<CaseModelFile>(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/model-files",
+            cancellationToken);
+
+    public async Task<CaseModelFile> AddCaseModelFileAsync(
+        string caseId,
+        CaseModelFileCreate create,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/model-files",
+            clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(create, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CaseModelFile>(response, cancellationToken);
+    }
+
+    public async Task<CaseModelFile> UpdateCaseModelFileAsync(
+        string caseId,
+        string caseModelFileId,
+        int version,
+        CaseModelFileUpdate update,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/model-files/{Uri.EscapeDataString(caseModelFileId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"case-model-file:{caseModelFileId}:v{version}\"");
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CaseModelFile>(response, cancellationToken);
+    }
+
+    public Task DeleteCaseModelFileAsync(string caseId, string caseModelFileId, string clientId, long generation, CancellationToken token = default) =>
+        DeleteAsync($"api/v1/cases/{Uri.EscapeDataString(caseId)}/model-files/{Uri.EscapeDataString(caseModelFileId)}", clientId, generation, token);
     public Task DeleteOrderAsync(string orderId, string clientId, long generation, CancellationToken token = default) =>
         DeleteAsync($"api/v1/orders/{Uri.EscapeDataString(orderId)}", clientId, generation, token);
     public Task DeleteBatchAsync(string batchId, string clientId, long generation, CancellationToken token = default) =>

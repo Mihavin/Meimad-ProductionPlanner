@@ -234,7 +234,7 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
-                    <TabItem Header="STEP Viewer" ToolTip="Open a local .stp or .step model and create a Case preview image">
+                    <TabItem Header="3D Models" ToolTip="STEP and STL models linked to the Case: part, rest-material stock, fixtures — with measurement tools">
                         <ScrollViewer x:Name="StepTabScroll" VerticalScrollBarVisibility="Visible"
                                       HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
                         <Grid Margin="8" MinHeight="600">
@@ -246,28 +246,40 @@
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button Content="Open STEP…" Click="OpenStep_Click" />
+                                    <Button Content="Open in 3D window" Click="OpenModelWindow_Click"
+                                            ToolTip="Open the linked models in a separate, larger window with the full measurement toolbox" />
+                                    <Button Content="Preview file…" Click="OpenStep_Click"
+                                            ToolTip="Preview any STEP or STL file without linking it to the Case" />
                                     <Button x:Name="SnapshotStepButton" Content="Snapshot and use as Case image"
                                             Click="SnapshotStep_Click" IsEnabled="False" Margin="0" />
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal">
+                                <WrapPanel Orientation="Horizontal">
                                     <Button Content="Isometric" Click="StepIsometric_Click" />
                                     <Button Content="Front" Click="StepFront_Click" />
                                     <Button Content="Top" Click="StepTop_Click" />
                                     <Button Content="Right" Click="StepRight_Click" />
                                     <Button Content="Fit" Click="StepFit_Click" ToolTip="Fit the complete part to the viewer and orbit around its center" />
+                                    <TextBlock Text="Projection" VerticalAlignment="Center" Margin="10,0,5,0" />
+                                    <ComboBox x:Name="StepProjectionCombo" Width="110" SelectedIndex="0" IsEnabled="False"
+                                              SelectionChanged="StepProjection_SelectionChanged"
+                                              ToolTip="Orthographic keeps parallel edges parallel; perspective shows depth like a photograph">
+                                        <ComboBoxItem Content="Orthographic" Tag="orthographic" />
+                                        <ComboBoxItem Content="Perspective" Tag="perspective" />
+                                    </ComboBox>
                                     <TextBlock Text="Display" VerticalAlignment="Center" Margin="10,0,5,0" />
-                                    <ComboBox x:Name="StepDisplayModeCombo" Width="130" SelectedIndex="0" IsEnabled="False"
-                                              ToolTip="Choose shaded faces, shaded faces with visible edges, or wireframe">
+                                    <ComboBox x:Name="StepDisplayModeCombo" Width="140" SelectedIndex="0" IsEnabled="False"
+                                              ToolTip="Shaded, shaded with visible edges, hidden line, wireframe, or transparent">
                                         <ComboBoxItem Content="Shaded" Tag="shaded" />
-                                        <ComboBoxItem Content="Visible edges" Tag="visibleEdges" />
+                                        <ComboBoxItem Content="Shaded with edges" Tag="visibleEdges" />
+                                        <ComboBoxItem Content="Hidden line" Tag="hiddenLine" />
                                         <ComboBoxItem Content="Wireframe" Tag="wireframe" />
+                                        <ComboBoxItem Content="Transparent" Tag="transparent" />
                                     </ComboBox>
                                     <CheckBox x:Name="StepBoundingBoxToggle" Content="Show bounding box"
                                               IsChecked="False" IsEnabled="False" VerticalAlignment="Center" Margin="10,0,0,0"
                                               Checked="StepBoundingBox_Changed" Unchecked="StepBoundingBox_Changed"
                                               ToolTip="Show the model-coordinate bounding box only when requested" />
-                                </StackPanel>
+                                </WrapPanel>
                             </DockPanel>
                             <Grid Grid.Row="1">
                                 <Grid.ColumnDefinitions>
@@ -280,17 +292,69 @@
                                 <Border Grid.Column="1" Margin="8,0,0,0" Padding="12" BorderBrush="#C7D1DB"
                                         BorderThickness="1" CornerRadius="4" Background="#F7F9FB">
                                     <StackPanel>
-                                        <TextBlock Text="Measure toolbox" FontWeight="SemiBold" FontSize="15" />
-                                        <TextBlock Margin="0,4,0,12" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
-                                                   Text="Measure a straight distance between two STEP vertices." />
-                                        <Button Content="Distance (two points)" Click="StepMeasureDistance_Click" Margin="0,0,0,6" />
-                                        <Button Content="Clear measurement" Click="StepClearMeasurement_Click" Margin="0,0,0,12" />
-                                        <Border Padding="8" Background="#EAF0F5" CornerRadius="3">
+                                        <TextBlock Text="Model files" FontWeight="SemiBold" FontSize="15" />
+                                        <TextBlock Margin="0,4,0,8" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                                   Text="STEP/STL files linked to this Case by path: the part model, rest-material stock, fixtures. The primary part model opens first." />
+                                        <ListBox x:Name="ModelFilesList" ItemsSource="{Binding ModelFiles}" SelectedItem="{Binding SelectedModelFile}"
+                                                 MaxHeight="160" BorderBrush="#C7D1DB" HorizontalContentAlignment="Stretch"
+                                                 MouseDoubleClick="ModelFilesList_MouseDoubleClick">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Margin="0,1">
+                                                        <DockPanel>
+                                                            <TextBlock DockPanel.Dock="Right" Text="{Binding PrimaryText}" Foreground="#1B6E3A"
+                                                                       FontSize="11" FontWeight="SemiBold" Margin="6,0,0,0" />
+                                                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                                       ToolTip="{Binding FilePath}" />
+                                                        </DockPanel>
+                                                        <TextBlock FontSize="11" Foreground="#5B6B7A">
+                                                            <Run Text="{Binding KindText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding FormatText, Mode=OneWay}" />
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <TextBlock Text="{Binding ModelFilesStatus}" Margin="0,4,0,6" FontSize="11"
+                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                        <DockPanel Margin="0,0,0,6">
+                                            <ComboBox x:Name="StepAddKindCombo" DockPanel.Dock="Left" Width="118" SelectedIndex="0"
+                                                      IsEnabled="{Binding CanManageModelFiles}" Margin="0,0,6,0"
+                                                      ToolTip="What the file represents">
+                                                <ComboBoxItem Content="Part model" Tag="part" />
+                                                <ComboBoxItem Content="Stock" Tag="stock" />
+                                                <ComboBoxItem Content="Fixture" Tag="fixture" />
+                                                <ComboBoxItem Content="Other" Tag="other" />
+                                            </ComboBox>
+                                            <Button Content="Add file…" Click="AddModelFile_Click" IsEnabled="{Binding CanManageModelFiles}" Margin="0"
+                                                    ToolTip="Link a STEP or STL file to the Case" />
+                                        </DockPanel>
+                                        <WrapPanel Margin="0,0,0,8">
+                                            <Button Content="Show all" Click="LoadModelFiles_Click" ToolTip="Load every linked file into the viewer" />
+                                            <Button Content="Set primary" Click="SetPrimaryModelFile_Click" IsEnabled="{Binding CanManageModelFiles}" />
+                                            <Button Content="Remove" Click="RemoveModelFile_Click" IsEnabled="{Binding CanManageModelFiles}" Margin="0"
+                                                    ToolTip="Remove the link (the file on disk stays)" />
+                                        </WrapPanel>
+                                        <Separator Margin="0,4,0,10" />
+                                        <TextBlock Text="Measure" FontWeight="SemiBold" FontSize="15" />
+                                        <TextBlock Margin="0,4,0,8" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                                   Text="Pick a tool, then click vertices, edges or faces. Esc cancels. Left-drag orbits, right-drag pans, wheel zooms." />
+                                        <WrapPanel>
+                                            <Button Content="Point" Click="StepTool_Click" Tag="point" ToolTip="Coordinates of a vertex" />
+                                            <Button Content="Distance" Click="StepTool_Click" Tag="distance" ToolTip="Straight distance between two vertices" />
+                                            <Button Content="Min. dist." Click="StepTool_Click" Tag="minimumDistance" ToolTip="Shortest distance between two vertices, edges or faces — also between models" />
+                                            <Button Content="Edge" Click="StepTool_Click" Tag="edgeLength" ToolTip="Exact edge length" />
+                                            <Button Content="Radius / Ø" Click="StepTool_Click" Tag="radius" ToolTip="Radius and diameter of a circular edge or round face" />
+                                            <Button Content="Angle" Click="StepTool_Click" Tag="angle" ToolTip="Angle between edges or planar faces" />
+                                            <Button Content="Area" Click="StepTool_Click" Tag="faceArea" ToolTip="Exact face area" />
+                                            <Button Content="Volume" Click="StepTool_Click" Tag="volume" ToolTip="Volume, surface, centroid and bounding box" />
+                                            <Button Content="Clear" Click="StepClearMeasurement_Click" Margin="0" ToolTip="Cancel the tool and remove every measurement" />
+                                        </WrapPanel>
+                                        <Border Padding="8" Margin="0,6,0,0" Background="#EAF0F5" CornerRadius="3">
                                             <TextBlock x:Name="StepMeasurementText" TextWrapping="Wrap"
-                                                       Text="Select Distance, then click two model vertices." />
+                                                       Text="Select a measurement tool." />
                                         </Border>
                                         <TextBlock Margin="0,10,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
-                                                   Text="Values use the coordinate units stored by the STEP model. A and B stay attached while rotating or zooming." />
+                                                   Text="STEP values are exact OpenCascade geometry in millimetres; STL meshes support point, distance and volume tools. Measurements stay attached while rotating or zooming." />
                                         <Separator Margin="0,12" />
                                         <TextBlock Text="Bounding box / reference" FontWeight="SemiBold" FontSize="15" />
                                         <TextBlock Margin="0,4,0,8" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
@@ -305,7 +369,7 @@
                                 </Border>
                             </Grid>
                             <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
-                                       Text="The shaded part fits once when opened and then keeps its camera scale while rotating. Drag to rotate, use the mouse wheel to zoom, and select Fit to reset the camera framing. Edges and the bounding box are optional. Snapshot saves a PNG and places its path in the Case picture field; press Save Case to commit that change." />
+                                       Text="Linked model files load automatically when the Case is selected (primary part model first; stock and fixtures are drawn translucent). Left-drag rotates, right-drag pans, the wheel zooms, and Fit resets the framing. Snapshot saves a PNG and places its path in the Case picture field; press Save Case to commit that change." />
                         </Grid>
                         </ScrollViewer>
                     </TabItem>

@@ -151,6 +151,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<AdministrativeSetupService>();
         builder.Services.AddSingleton<IPlanningDeletionRepository, SqlitePlanningDeletionRepository>();
         builder.Services.AddSingleton<PlanningDeletionService>();
+        builder.Services.AddSingleton<ICaseModelFileRepository, SqliteCaseModelFileRepository>();
+        builder.Services.AddSingleton<CaseModelFileService>();
         builder.Services.AddHostedService<DatabaseInitializationService>();
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IEditModeRepository, SqliteEditModeRepository>();
@@ -353,6 +355,7 @@ public static class ServerApplication
                     "text/html; charset=utf-8")
                 : Results.NotFound());
         application.MapCaseEndpoints();
+        application.MapCaseModelFileEndpoints();
         application.MapAdministrativeSetupEndpoints();
         application.MapEditModeEndpoints();
         application.MapPlanningDeletionEndpoints();

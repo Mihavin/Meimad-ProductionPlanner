@@ -41,6 +41,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                     DELETE FROM case_components
                     WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id);
                     DELETE FROM kitaron_suppressed_operations WHERE case_id=$id;
+                    DELETE FROM case_model_files WHERE case_id=$id;
                     """;
                 removeComponents.Parameters.AddWithValue("$id", id);
                 await removeComponents.ExecuteNonQueryAsync(token);
@@ -279,6 +280,14 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                 suppress.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
                 suppress.Parameters.AddWithValue("$id", id);
                 await suppress.ExecuteNonQueryAsync(token);
+            }
+            // Model files attached to the Operation stay with the Case; they just lose the link.
+            await using (var detachModels = c.CreateCommand())
+            {
+                detachModels.Transaction = t;
+                detachModels.CommandText = "UPDATE case_model_files SET case_operation_id = NULL WHERE case_operation_id = $id;";
+                detachModels.Parameters.AddWithValue("$id", id);
+                await detachModels.ExecuteNonQueryAsync(token);
             }
             await DeleteRowAsync(c, t, "case_operations", id, token);
             await using var stage = c.CreateCommand();

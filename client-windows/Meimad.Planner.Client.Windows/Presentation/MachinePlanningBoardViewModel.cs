@@ -958,6 +958,10 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Session details the detached 3D viewer needs; null until connected.</summary>
+    internal ModelViewerContext? CreateModelViewerContext() =>
+        apiClient is null ? null : new ModelViewerContext(apiClient, clientId, editGeneration, isEditor);
+
     internal async Task UndoAsync() =>
         await ReplayPlacementAsync(undoHistory, redoHistory, undo: true);
 

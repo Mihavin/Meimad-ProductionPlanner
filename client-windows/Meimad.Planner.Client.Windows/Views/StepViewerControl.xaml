@@ -3,10 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Meimad.Planner.Client.Windows.Views"
              MinHeight="360" Background="#F7F9FB"
-             Focusable="True">
+             Focusable="True" KeyDown="Viewer_KeyDown">
     <Grid x:Name="ViewerRoot" Background="#F7F9FB" ClipToBounds="True"
           MouseLeftButtonDown="Viewer_MouseLeftButtonDown"
           MouseLeftButtonUp="Viewer_MouseLeftButtonUp"
+          MouseRightButtonDown="Viewer_MouseRightButtonDown"
+          MouseRightButtonUp="Viewer_MouseRightButtonUp"
           MouseMove="Viewer_MouseMove"
           MouseWheel="Viewer_MouseWheel"
           SizeChanged="Viewer_SizeChanged">

@@ -896,8 +896,12 @@ public partial class TimelineView : UserControl
                 open.Click += TimelineOpenOperation_Click;
                 var show = new MenuItem { Header = "Show in Planning Board", Tag = interval.OperationId };
                 show.Click += TimelineShowInBoard_Click;
+                var view3D = new MenuItem { Header = "View in 3D", Tag = interval.OperationId,
+                    ToolTip = "Open the Case's STEP/STL models with measurement tools in a separate window" };
+                view3D.Click += TimelineViewIn3D_Click;
                 menu.Items.Add(open);
                 menu.Items.Add(show);
+                menu.Items.Add(view3D);
                 block.ContextMenu = menu;
             }
             Canvas.SetLeft(block, x);
@@ -978,6 +982,12 @@ public partial class TimelineView : UserControl
     {
         if (sender is MenuItem { Tag: string operationId })
             OperationActionRequested?.Invoke(this, new(operationId, TimelineOperationAction.ShowInPlanningBoard));
+    }
+
+    private void TimelineViewIn3D_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string operationId })
+            OperationActionRequested?.Invoke(this, new(operationId, TimelineOperationAction.ViewIn3D));
     }
 
     private void AddArrowHead(double x1, double y1, double x2, double y2, string tooltip)
@@ -1455,6 +1465,6 @@ public partial class TimelineView : UserControl
     }
 }
 
-internal enum TimelineOperationAction { OpenOperation, ShowInPlanningBoard }
+internal enum TimelineOperationAction { OpenOperation, ShowInPlanningBoard, ViewIn3D }
 
 internal sealed record TimelineOperationActionRequest(string OperationId, TimelineOperationAction Action);

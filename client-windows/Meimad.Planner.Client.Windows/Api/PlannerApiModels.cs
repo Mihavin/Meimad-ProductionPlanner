@@ -64,6 +64,36 @@ internal sealed record PlannerCase(
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
+/// <summary>A CAD file (STEP part model, STL stock, fixture, ...) linked to a Case by path.</summary>
+internal sealed record CaseModelFile(
+    string CaseModelFileId,
+    string CaseId,
+    string? CaseOperationId,
+    string Kind,
+    string Format,
+    string FilePath,
+    string Label,
+    bool IsPrimary,
+    int SortOrder,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+internal sealed record CaseModelFileCreate(
+    string FilePath,
+    string? Kind = null,
+    string? Label = null,
+    string? CaseOperationId = null,
+    bool IsPrimary = false);
+
+internal sealed record CaseModelFileUpdate(
+    string? Kind = null,
+    string? Label = null,
+    string? CaseOperationId = null,
+    bool ClearCaseOperation = false,
+    bool? IsPrimary = null,
+    int? SortOrder = null);
+
 internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive, string? Sort = null);
 
 internal sealed record CaseUpdate(

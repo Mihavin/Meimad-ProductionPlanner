@@ -57,6 +57,24 @@ public partial class MainWindow : Window
             viewModel.MachinePlanningBoard.FocusOperation(request.OperationId);
             return;
         }
+        if (request.Action == TimelineOperationAction.ViewIn3D)
+        {
+            if (operation is null)
+            {
+                MessageBox.Show(this, "The operation is not loaded on the Planning Board yet. Refresh and try again.",
+                    "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var context = viewModel.MachinePlanningBoard.CreateModelViewerContext();
+            if (context is null)
+            {
+                MessageBox.Show(this, "Connect to the Server before opening the 3D viewer.",
+                    "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            ModelViewerWindow.Open(this, context, operation.CaseId, operation.DisplayTitle);
+            return;
+        }
         if (operation is not null)
         {
             WorkspaceTabs.SelectedIndex = 0;
