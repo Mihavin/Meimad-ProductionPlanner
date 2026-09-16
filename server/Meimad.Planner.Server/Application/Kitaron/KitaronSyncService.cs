@@ -372,15 +372,11 @@ internal sealed class KitaronSyncService
     private static string? RawText(KitaronSourceRow row, string column)
     {
         if (!row.Values.TryGetValue(column, out var value)) return null;
-        var text = Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim();
-        return string.IsNullOrWhiteSpace(text) ? null : text;
+        return KitaronTextNormalization.Clean(Convert.ToString(value, CultureInfo.InvariantCulture));
     }
 
-    private static string? Text(KitaronSourceRow row, KitaronMappingField field)
-    {
-        var text = Convert.ToString(Value(row, field), CultureInfo.InvariantCulture)?.Trim();
-        return string.IsNullOrWhiteSpace(text) ? null : text;
-    }
+    private static string? Text(KitaronSourceRow row, KitaronMappingField field) =>
+        KitaronTextNormalization.Clean(Convert.ToString(Value(row, field), CultureInfo.InvariantCulture));
 
     private static decimal? Decimal(object? value)
     {
@@ -425,7 +421,7 @@ internal sealed class KitaronSyncService
                 }
 
                 var first = valid[0];
-                var quantity = (int)valid.Max(row => row.Quantity!.Value);
+                var quantity = (int)valid.Max(EffectiveDemandQuantity);
                 var date = DateOnly.FromDateTime(valid.Min(row => row.WorkFinishDate!.Value));
                 var status = valid.Any(row => row.StopProduction)
                     ? "cancelled"
@@ -441,6 +437,24 @@ internal sealed class KitaronSyncService
             .Where(item => item is not null)
             .Cast<KitaronSyncOrder>()
             .ToArray();
+    }
+
+    // Meimad Order quantity represents outstanding demand, not the original order size: when
+    // Kitaron reports a partial delivery (Supplied) against the row, only the un-supplied
+    // remainder is real remaining demand for production planning. Falls back to the full ordered
+    // quantity whenever Supplied is unavailable or the row is already fully (or over-)supplied,
+    // since a zero/negative remainder is not a valid stored Order quantity.
+    private static double EffectiveDemandQuantity(KitaronSourceOrder row)
+    {
+        if (row.Supplied is double supplied)
+        {
+            var unsupplied = row.Quantity!.Value - supplied;
+            if (unsupplied >= 1)
+            {
+                return unsupplied;
+            }
+        }
+        return row.Quantity!.Value;
     }
 
     internal static bool IsIgnoredOrderNumber(string? orderNumber) =>

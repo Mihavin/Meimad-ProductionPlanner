@@ -310,6 +310,7 @@ public sealed class KitaronConnectionApiTests
         Assert.Contains("SELECT DISTINCT node.IDNodeContens", query, StringComparison.Ordinal);
         Assert.Contains("so.DetailID = source.DetailID", query, StringComparison.Ordinal);
         Assert.Contains("so.[PriceInCurr] AS Price", query, StringComparison.Ordinal);
+        Assert.Contains("CAST(NULL AS float) AS Supplied", query, StringComparison.Ordinal);
         Assert.Contains("o.OrderNumber)) <> N'הזמנה לדוגמא 1'", query, StringComparison.Ordinal);
         Assert.Contains("WHERE StopProduction = 1", query, StringComparison.Ordinal);
         Assert.DoesNotContain("TRY_CONVERT", query, StringComparison.Ordinal);
@@ -328,19 +329,33 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
+    public void Canonical_order_query_selects_the_supplied_column_when_present()
+    {
+        var query = SqlServerKitaronSourceReader.BuildOrderQuery(
+            "dbo", "VQWorkPlanningForStationF4", "PriceInCurr", suppliedColumn: "Supplied");
+
+        Assert.Contains("so.[Supplied] AS Supplied", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Canonical_order_query_combines_row_and_header_closure_facts()
     {
+        // "OrderClosed" is a multi-value status/reason code, not a boolean, and is deliberately
+        // never passed here: on the commissioned schema OrderClosed=2 means the row is still open
+        // (TSubOrder.Closed=0) while 4/32/68 mean closed (Closed=1), so no single numeric
+        // comparison is safe to guess. Only genuine boolean-shaped columns are combined, each
+        // using the same non-zero check.
         var query = SqlServerKitaronSourceReader.BuildOrderQuery(
             "dbo",
             "VQWorkPlanningForStationF4",
             "PriceInCurr",
-            ["OrderClosed", "RecordClosed", "RowClosed"],
-            ["OrderClosed", "Closed"]);
+            ["RecordClosed", "RowClosed", "Closed"],
+            ["RecordClosed", "Closed"]);
 
-        Assert.Contains("COALESCE(TRY_CONVERT(int, so.[OrderClosed]), 0) = 2", query, StringComparison.Ordinal);
         Assert.Contains("COALESCE(TRY_CONVERT(int, so.[RecordClosed]), 0) <> 0", query, StringComparison.Ordinal);
         Assert.Contains("COALESCE(TRY_CONVERT(int, so.[RowClosed]), 0) <> 0", query, StringComparison.Ordinal);
-        Assert.Contains("COALESCE(TRY_CONVERT(int, o.[OrderClosed]), 0) = 2", query, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(TRY_CONVERT(int, so.[Closed]), 0) <> 0", query, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(TRY_CONVERT(int, o.[RecordClosed]), 0) <> 0", query, StringComparison.Ordinal);
         Assert.Contains("COALESCE(TRY_CONVERT(int, o.[Closed]), 0) <> 0", query, StringComparison.Ordinal);
         Assert.Contains("AS IsClosed", query, StringComparison.Ordinal);
     }
@@ -406,6 +421,34 @@ public sealed class KitaronConnectionApiTests
         Assert.Equal(12.50m, result.Single(item => item.SourceKey == "open").Price);
         Assert.Equal("complete", result.Single(item => item.SourceKey == "closed").Status);
         Assert.Equal("cancelled", result.Single(item => item.SourceKey == "cancelled").Status);
+    }
+
+    [Fact]
+    public void Canonical_order_quantity_is_the_unsupplied_remainder_when_partially_delivered()
+    {
+        KitaronSourceOrder[] source =
+        [
+            // 23 ordered, 15 already supplied: only the 8 unsupplied units are real remaining demand.
+            new("partial", "16W121-22", "Rib", null, "L000240682", 23,
+                new DateTime(2026, 10, 30), false, IsClosed: false, Supplied: 15),
+            // Fully supplied but the sync-side "Closed" flag hasn't caught up: fall back to the
+            // full ordered quantity rather than store an invalid zero/negative Order quantity.
+            new("fully-supplied", "16W121-21", "Rib", null, "L000240682", 15,
+                new DateTime(2023, 2, 27), false, IsClosed: false, Supplied: 15),
+            // Over-supplied: same fallback applies.
+            new("over-supplied", "16W121-21", "Rib", null, "L000240683", 10,
+                new DateTime(2023, 2, 27), false, IsClosed: false, Supplied: 12),
+            // No Supplied figure available at all (older/unmapped source): unchanged behavior.
+            new("unknown-supply", "16W121-21", "Rib", null, "L000240684", 7,
+                new DateTime(2023, 2, 27), false)
+        ];
+
+        var result = KitaronSyncService.BuildOrders(source, []);
+
+        Assert.Equal(8, result.Single(item => item.SourceKey == "partial").Quantity);
+        Assert.Equal(15, result.Single(item => item.SourceKey == "fully-supplied").Quantity);
+        Assert.Equal(10, result.Single(item => item.SourceKey == "over-supplied").Quantity);
+        Assert.Equal(7, result.Single(item => item.SourceKey == "unknown-supply").Quantity);
     }
 
     [Fact]

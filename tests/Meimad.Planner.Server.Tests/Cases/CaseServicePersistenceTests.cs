@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.Cases;
@@ -71,6 +72,70 @@ public sealed class CaseServicePersistenceTests
 
         var read = await service.GetByIdAsync(created.CaseId);
         Assert.Equal(updated, read);
+    }
+
+    [Fact]
+    public async Task Kitaron_managed_case_allows_editing_non_identity_fields()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var editAuthority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+        var created = await service.CreateAsync(
+            CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "external-case-kitaron-editable")),
+            editAuthority);
+        await MarkKitaronManagedAsync(fixture.Database, created.CaseId);
+
+        var updated = await service.UpdateAsync(
+            created.CaseId,
+            created.Version,
+            Patch(
+                customerReference: OptionalField<string?>.Specified("PO-9001"),
+                previewPath: OptionalField<string?>.Specified(@"C:\Cases\PN-100\new-preview.png"),
+                workingFolderPath: OptionalField<string?>.Specified(@"C:\Cases\PN-100\new-folder"),
+                materialType: OptionalField<string?>.Specified("Steel"),
+                materialSpecification: OptionalField<string?>.Specified("4140"),
+                rawMaterialForm: OptionalField<string?>.Specified("Bar"),
+                rawMaterialDimensions: OptionalField<string?>.Specified("50mm dia"),
+                notes: OptionalField<string?>.Specified("Updated by operator")),
+            editAuthority);
+
+        Assert.Equal(2, updated.Version);
+        Assert.Equal("PO-9001", updated.CustomerReference);
+        Assert.Equal(@"C:\Cases\PN-100\new-preview.png", updated.PreviewPath);
+        Assert.Equal(@"C:\Cases\PN-100\new-folder", updated.WorkingFolderPath);
+        Assert.Equal("Steel", updated.MaterialType);
+        Assert.Equal("4140", updated.MaterialSpecification);
+        Assert.Equal("Bar", updated.RawMaterialForm);
+        Assert.Equal("50mm dia", updated.RawMaterialDimensions);
+        Assert.Equal("Updated by operator", updated.Notes);
+    }
+
+    [Theory]
+    [InlineData("partNumber")]
+    [InlineData("name")]
+    [InlineData("revision")]
+    [InlineData("customer")]
+    public async Task Kitaron_managed_case_rejects_editing_identity_fields(string field)
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        var editAuthority = await GrantEditModeAsync(fixture.Database);
+        var service = CreateService(fixture.Database);
+        var created = await service.CreateAsync(
+            CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "external-case-kitaron-locked")),
+            editAuthority);
+        await MarkKitaronManagedAsync(fixture.Database, created.CaseId);
+
+        var patch = field switch
+        {
+            "partNumber" => Patch(partNumber: OptionalField<string?>.Specified("PN-999")),
+            "name" => Patch(name: OptionalField<string?>.Specified("Renamed part")),
+            "revision" => Patch(revision: OptionalField<string?>.Specified("B")),
+            "customer" => Patch(customer: OptionalField<string?>.Specified("Customer Z")),
+            _ => throw new ArgumentOutOfRangeException(nameof(field))
+        };
+
+        await Assert.ThrowsAsync<KitaronManagedResourceException>(() =>
+            service.UpdateAsync(created.CaseId, created.Version, patch, editAuthority));
     }
 
     [Fact]
@@ -450,6 +515,19 @@ public sealed class CaseServicePersistenceTests
         command.Parameters.AddWithValue("$generation", editAuthority.Generation);
         await command.ExecuteNonQueryAsync();
         return editAuthority;
+    }
+
+    private static async Task MarkKitaronManagedAsync(SqliteDatabase database, string caseId)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO kitaron_sync_links (
+                source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at)
+            VALUES ('case', $caseId, $caseId, 1, 'test-hash', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z');
+            """;
+        command.Parameters.AddWithValue("$caseId", caseId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static CreateCaseCommand CompleteCaseCommand(

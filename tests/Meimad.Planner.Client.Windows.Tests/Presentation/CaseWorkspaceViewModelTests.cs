@@ -306,6 +306,37 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task Editor_can_batch_allocate_a_child_cases_own_direct_orders()
+    {
+        // A Case can be a BOM child of a parent while also carrying its own direct Orders (e.g. a
+        // part also sold as a spare). Batch creation must offer both sources of demand, not just
+        // whichever the parent-derived projection happens to produce (which can be empty, as here
+        // since the fake's ListDerivedCaseOrdersAsync default returns no rows).
+        var api = new FakeApiClient(CreateCase() with { IsChild = true });
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(9));
+        await viewModel.EnsureLoadedAsync();
+
+        Assert.True(viewModel.IsChildCase);
+        Assert.Single(viewModel.Orders);
+
+        await viewModel.BeginCreateBatchAsync();
+
+        var row = Assert.Single(viewModel.BatchOrderAllocations);
+        Assert.Equal("order-1", row.OrderId);
+        Assert.Null(row.DerivedOrderKey);
+
+        viewModel.NewBatchNumber = "B-3";
+        viewModel.NewBatchPlannedQuantity = "5";
+        row.AllocatedQuantity = "5";
+        await viewModel.CreateBatchAsync();
+
+        Assert.NotNull(api.LastBatchCreate);
+        Assert.Contains(api.LastBatchCreate!.Allocations, allocation =>
+            allocation.AllocationType == "order" && allocation.OrderId == "order-1" && allocation.Quantity == 5);
+    }
+
+    [Fact]
     public async Task Editor_edits_existing_order_with_etag_and_refreshes_visible_demand()
     {
         var api = new FakeApiClient(CreateCase());

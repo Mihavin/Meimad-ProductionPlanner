@@ -6,6 +6,7 @@ namespace Meimad.Planner.Server.Application.Kitaron;
 internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 {
     private const int MaximumRows = 200_000;
+    private static readonly string[] OrderSuppliedColumnCandidates = ["Supplied"];
     private static readonly string[] OrderPriceColumnCandidates =
     [
         // The commissioned Kitaron schema stores the sales-order unit price in
@@ -20,9 +21,14 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         "RowPrice",
         "PriceRow"
     ];
+    // "OrderClosed" is deliberately excluded: it is a multi-value status/reason code, not a
+    // boolean, and its "closed" value is not consistent across Kitaron installations - on the
+    // commissioned schema, OrderClosed=2 means the row is still OPEN (matching TSubOrder.Closed=0)
+    // while OrderClosed=4/32/68 means closed (Closed=1). A prior hardcoded "OrderClosed = 2" guess
+    // had this backwards and forced genuinely open, not-yet-supplied rows to read as "complete".
+    // The real boolean "Closed" column (when present, as it is here) is the reliable signal.
     private static readonly string[] OrderRowClosedColumnCandidates =
     [
-        "OrderClosed",
         "RecordClosed",
         "RowClosed",
         "Closed",
@@ -32,7 +38,6 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     ];
     private static readonly string[] OrderHeaderClosedColumnCandidates =
     [
-        "OrderClosed",
         "RecordClosed",
         "Closed",
         "IsClosed",
@@ -110,6 +115,12 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             "TSubOrder",
             OrderPriceColumnCandidates,
             cancellationToken);
+        var suppliedColumn = await FindFirstColumnAsync(
+            connection,
+            "dbo",
+            "TSubOrder",
+            OrderSuppliedColumnCandidates,
+            cancellationToken);
         var rowClosedColumns = await FindColumnsAsync(
             connection,
             "dbo",
@@ -128,23 +139,26 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             settings.ViewName,
             priceColumn,
             rowClosedColumns,
-            headerClosedColumns);
+            headerClosedColumns,
+            suppliedColumn);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<KitaronSourceOrder>();
         while (await reader.ReadAsync(cancellationToken))
         {
             EnsureWithinLimit(result.Count);
+            var partNumber = KitaronTextNormalization.CleanRequired(reader.GetString(1));
             result.Add(new KitaronSourceOrder(
                 reader.GetInt32(0).ToString(CultureInfo.InvariantCulture),
-                reader.GetString(1).Trim(),
-                reader.IsDBNull(2) ? reader.GetString(1).Trim() : reader.GetString(2).Trim(),
-                reader.IsDBNull(3) ? null : NullIfWhiteSpace(reader.GetString(3)),
-                reader.GetString(4).Trim(),
+                partNumber,
+                reader.IsDBNull(2) ? partNumber : KitaronTextNormalization.CleanRequired(reader.GetString(2)),
+                reader.IsDBNull(3) ? null : KitaronTextNormalization.Clean(reader.GetString(3)),
+                KitaronTextNormalization.CleanRequired(reader.GetString(4)),
                 reader.IsDBNull(5) ? null : Convert.ToDouble(reader.GetValue(5), CultureInfo.InvariantCulture),
                 reader.IsDBNull(6) ? null : reader.GetDateTime(6),
                 reader.GetBoolean(7),
                 !reader.IsDBNull(8) && Convert.ToBoolean(reader.GetValue(8), CultureInfo.InvariantCulture),
-                reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9), CultureInfo.InvariantCulture)));
+                reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9), CultureInfo.InvariantCulture),
+                reader.IsDBNull(10) ? null : Convert.ToDouble(reader.GetValue(10), CultureInfo.InvariantCulture)));
         }
         return result;
     }
@@ -184,14 +198,16 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         while (await reader.ReadAsync(cancellationToken))
         {
             EnsureWithinLimit(result.Count);
+            var parentPartNumber = KitaronTextNormalization.CleanRequired(reader.GetString(2));
+            var childPartNumber = KitaronTextNormalization.CleanRequired(reader.GetString(5));
             result.Add(new KitaronSourceComponent(
                 $"{reader.GetInt32(0).ToString(CultureInfo.InvariantCulture)}:{reader.GetInt32(1).ToString(CultureInfo.InvariantCulture)}",
-                reader.GetString(2).Trim(),
-                reader.IsDBNull(3) ? reader.GetString(2).Trim() : reader.GetString(3).Trim(),
-                reader.IsDBNull(4) ? null : NullIfWhiteSpace(reader.GetString(4)),
-                reader.GetString(5).Trim(),
-                reader.IsDBNull(6) ? reader.GetString(5).Trim() : reader.GetString(6).Trim(),
-                reader.IsDBNull(7) ? null : NullIfWhiteSpace(reader.GetString(7)),
+                parentPartNumber,
+                reader.IsDBNull(3) ? parentPartNumber : KitaronTextNormalization.CleanRequired(reader.GetString(3)),
+                reader.IsDBNull(4) ? null : KitaronTextNormalization.Clean(reader.GetString(4)),
+                childPartNumber,
+                reader.IsDBNull(6) ? childPartNumber : KitaronTextNormalization.CleanRequired(reader.GetString(6)),
+                reader.IsDBNull(7) ? null : KitaronTextNormalization.Clean(reader.GetString(7)),
                 Convert.ToDouble(reader.GetValue(8), CultureInfo.InvariantCulture),
                 reader.GetInt32(9)));
         }
@@ -204,12 +220,6 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             throw new KitaronSyncDataException($"A Kitaron source query exceeded the {MaximumRows:N0}-row safety limit.");
     }
 
-    private static string? NullIfWhiteSpace(string value)
-    {
-        var trimmed = value.Trim();
-        return trimmed.Length == 0 ? null : trimmed;
-    }
-
     internal static string BuildQuery(string schema, string view, IReadOnlyList<string> columns) =>
         $"SELECT {string.Join(", ", columns.Select(Quote))} FROM {Quote(schema)}.{Quote(view)};";
 
@@ -218,9 +228,11 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         string view,
         string? priceColumn = null,
         IReadOnlyList<string>? rowClosedColumns = null,
-        IReadOnlyList<string>? headerClosedColumns = null)
+        IReadOnlyList<string>? headerClosedColumns = null,
+        string? suppliedColumn = null)
     {
         var price = priceColumn is null ? "CAST(NULL AS decimal(19,4))" : $"so.{Quote(priceColumn)}";
+        var supplied = suppliedColumn is null ? "CAST(NULL AS float)" : $"so.{Quote(suppliedColumn)}";
         var closedChecks = (rowClosedColumns ?? [])
             .Select(column => ClosedCheck("so", column))
             .Concat((headerClosedColumns ?? [])
@@ -252,7 +264,7 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         )
         SELECT so.RecordID, d.DetailNumber, d.DetailName, d.REV,
                o.OrderNumber, so.Number, so.SupplyDate, so.StopProduction,
-               {{closed}} AS IsClosed, {{price}} AS Price
+               {{closed}} AS IsClosed, {{price}} AS Price, {{supplied}} AS Supplied
         FROM source_details source
         JOIN dbo.TSubOrder so
           ON so.DetailID = source.DetailID
@@ -385,11 +397,6 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     private static string Quote(string value) =>
         $"[{value.Replace("]", "]]", StringComparison.Ordinal)}]";
 
-    private static string ClosedCheck(string alias, string column)
-    {
-        var comparison = column.Equals("OrderClosed", StringComparison.OrdinalIgnoreCase)
-            ? "= 2"
-            : "<> 0";
-        return $"COALESCE(TRY_CONVERT(int, {alias}.{Quote(column)}), 0) {comparison}";
-    }
+    private static string ClosedCheck(string alias, string column) =>
+        $"COALESCE(TRY_CONVERT(int, {alias}.{Quote(column)}), 0) <> 0";
 }

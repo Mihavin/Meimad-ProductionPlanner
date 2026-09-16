@@ -180,8 +180,9 @@ internal sealed class CaseService
             Select(command.RawMaterialDimensions, current.RawMaterialDimensions),
             Select(command.Notes, current.Notes)));
 
-        // Kitaron owns everything except the two local/client-side path fields: an operator may
-        // still point a synced Case at a local working folder or picture without Kitaron's data
+        // Kitaron owns only the Case identity fields (Part Number, Name, Revision, Customer); an
+        // operator may still edit every other field - material info, customer reference, notes,
+        // working folder, and picture path - on a Kitaron-managed Case without Kitaron's data
         // being touched.
         if (current.IsKitaronManaged && HasKitaronOwnedChanges(current, values))
         {
@@ -235,13 +236,7 @@ internal sealed class CaseService
         values.PartNumber != current.PartNumber
         || values.Name != current.Name
         || values.Revision != current.Revision
-        || values.Customer != current.Customer
-        || values.CustomerReference != current.CustomerReference
-        || values.MaterialType != current.MaterialType
-        || values.MaterialSpecification != current.MaterialSpecification
-        || values.RawMaterialForm != current.RawMaterialForm
-        || values.RawMaterialDimensions != current.RawMaterialDimensions
-        || values.Notes != current.Notes;
+        || values.Customer != current.Customer;
 }
 
 internal sealed class CaseNotFoundException : Exception

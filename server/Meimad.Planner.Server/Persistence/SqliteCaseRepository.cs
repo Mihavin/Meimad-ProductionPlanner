@@ -4,7 +4,6 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.Cases;
 using Microsoft.Data.Sqlite;
-using Meimad.Planner.Server.Application.Kitaron;
 
 namespace Meimad.Planner.Server.Persistence;
 
@@ -688,8 +687,9 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             transaction,
             editAuthority,
             cancellationToken);
-        await ThrowIfKitaronManagedAsync(
-            connection, transaction, "case", plannerCase.CaseId, "Case", cancellationToken);
+        // CaseService already rejects the write before reaching this repository when a Kitaron-owned
+        // identity field (Part Number, Name, Revision, Customer) actually changed; every other field
+        // stays editable on a Kitaron-managed Case, so no blanket Kitaron guard belongs here.
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -724,29 +724,6 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
         await transaction.CommitAsync(cancellationToken);
         return updated;
-    }
-
-    private static async Task ThrowIfKitaronManagedAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string sourceEntity,
-        string targetId,
-        string resourceType,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT EXISTS(
-                SELECT 1 FROM kitaron_sync_links
-                WHERE source_entity=$entity AND target_id=$id);
-            """;
-        command.Parameters.AddWithValue("$entity", sourceEntity);
-        command.Parameters.AddWithValue("$id", targetId);
-        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
-        {
-            throw new KitaronManagedResourceException(resourceType, targetId);
-        }
     }
 
     private static async Task<string> EnsureEditAuthorityAsync(

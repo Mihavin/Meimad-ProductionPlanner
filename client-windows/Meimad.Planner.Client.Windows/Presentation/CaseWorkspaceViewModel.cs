@@ -323,14 +323,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool IsCreating => isCreating;
 
+    // Kitaron owns only the Case identity fields: Part Number, Name, Revision, and Customer
+    // (deletion is likewise blocked, see CanDeleteCase). Every other field is editable in Meimad
+    // Planner even on a Kitaron-managed Case. The Server enforces the same split — it rejects a
+    // save only if one of these identity fields actually changed.
     public bool IsFormReadOnly => !isEditor || isKitaronManagedCase;
 
-    // The working folder and picture path are local/client-side references, not Kitaron master
-    // data, so they stay editable (and saveable) even on an otherwise Kitaron-managed Case. The
-    // Server enforces the same split — it rejects a save only if a Kitaron-owned field actually
-    // changed.
-    public bool CanEditLocalPathFields => isEditor && !IsBusy;
-    public bool IsLocalPathFieldsReadOnly => !CanEditLocalPathFields;
+    public bool CanEditUnlockedFields => isEditor && !IsBusy;
+    public bool IsUnlockedFieldsReadOnly => !CanEditUnlockedFields;
 
     public bool CanSave => isEditor && HasForm && !IsBusy;
 
@@ -1308,13 +1308,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isEditingBatch = false;
         isCreatingBatch = true;
         ResetBatchForm();
+        // A Case can carry its own direct Orders even while also a BOM child of one or more
+        // parents (e.g. a part sold as a spare and also consumed as a component); both sources of
+        // demand must be offered here, not just whichever one IsChildCase happens to pick.
+        foreach (var order in Orders)
+            BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
         if (IsChildCase)
             foreach (var order in DerivedOrders.Where(order => order.Status != "cancelled" && order.RemainingQuantity > 0))
                 BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
-        else
-            foreach (var order in Orders)
-                BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
-        StatusMessage = "Allocate the child Batch to read-only parent-derived demand, stock, and optional scrap allowance.";
+        StatusMessage = "Allocate the Batch to this Case's own Orders, any parent-derived demand, stock, and optional scrap allowance.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1340,6 +1342,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var allocations = SelectedBatch.Allocations ?? [];
         NewBatchStockQuantity = allocations.FirstOrDefault(value => value.AllocationType == "stock")?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         NewBatchScrapAllowance = allocations.FirstOrDefault(value => value.AllocationType == "scrapAllowance")?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        // See BeginCreateBatchAsync: a Case's own direct Orders and its parent-derived demand are
+        // not mutually exclusive, so both are offered for allocation here too.
+        foreach (var order in Orders)
+        {
+            var row = new BatchOrderAllocationViewModel(order);
+            row.AllocatedQuantity = allocations.FirstOrDefault(value => value.AllocationType == "order" && value.OrderId == order.OrderId)?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            BatchOrderAllocations.Add(row);
+        }
         if (IsChildCase)
         {
             foreach (var order in DerivedOrders)
@@ -1349,13 +1359,6 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 BatchOrderAllocations.Add(row);
             }
         }
-        else
-            foreach (var order in Orders)
-            {
-                var row = new BatchOrderAllocationViewModel(order);
-                row.AllocatedQuantity = allocations.FirstOrDefault(value => value.AllocationType == "order" && value.OrderId == order.OrderId)?.Quantity.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-                BatchOrderAllocations.Add(row);
-            }
         StatusMessage = $"Editing Production Batch {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
         RaiseStateProperties();
         return Task.CompletedTask;
@@ -2428,8 +2431,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanSave));
         OnPropertyChanged(nameof(CanBeginCreate));
         OnPropertyChanged(nameof(CanEditForm));
-        OnPropertyChanged(nameof(CanEditLocalPathFields));
-        OnPropertyChanged(nameof(IsLocalPathFieldsReadOnly));
+        OnPropertyChanged(nameof(CanEditUnlockedFields));
+        OnPropertyChanged(nameof(IsUnlockedFieldsReadOnly));
         OnPropertyChanged(nameof(CanDelete));
         OnPropertyChanged(nameof(CanDeleteCase));
         OnPropertyChanged(nameof(CanDeleteOrder));

@@ -41,7 +41,7 @@ public partial class CaseWorkspaceView : UserControl
     private void CaseWorkspace_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(CaseWorkspaceViewModel.SelectedCase)
-            or nameof(CaseWorkspaceViewModel.IsFormReadOnly)
+            or nameof(CaseWorkspaceViewModel.CanEditUnlockedFields)
             or nameof(CaseWorkspaceViewModel.IsCreating))
         {
             if (e.PropertyName == nameof(CaseWorkspaceViewModel.SelectedCase))
@@ -125,7 +125,7 @@ public partial class CaseWorkspaceView : UserControl
     private void SnapshotStep_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not CaseWorkspaceViewModel viewModel
-            || !viewModel.CanEditForm
+            || !viewModel.CanEditUnlockedFields
             || !StepViewer.HasModel)
         {
             return;
@@ -226,7 +226,7 @@ public partial class CaseWorkspaceView : UserControl
     private void UpdateStepSnapshotState()
     {
         SnapshotStepButton.IsEnabled = StepViewer.HasModel
-            && DataContext is CaseWorkspaceViewModel { CanEditForm: true };
+            && DataContext is CaseWorkspaceViewModel { CanEditUnlockedFields: true };
         StepDisplayModeCombo.IsEnabled = StepViewer.IsSolidModel;
         StepBoundingBoxToggle.IsEnabled = StepViewer.HasModel;
         if (!StepViewer.HasModel)

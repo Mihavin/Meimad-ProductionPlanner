@@ -12,7 +12,8 @@ internal sealed record KitaronSourceOrder(
     DateTime? WorkFinishDate,
     bool StopProduction,
     bool IsClosed = false,
-    decimal? Price = null);
+    decimal? Price = null,
+    double? Supplied = null);
 
 internal sealed record KitaronSourceComponent(
     string SourceKey,

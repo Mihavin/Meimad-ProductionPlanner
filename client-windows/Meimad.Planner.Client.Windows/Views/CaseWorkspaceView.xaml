@@ -188,11 +188,11 @@
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Name}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Revision" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Revision}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Customer" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Customer}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Customer Reference" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CustomerReference}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Type" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialType}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Specification" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialSpecification}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Form" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialForm}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
-                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Dimensions" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialDimensions}" IsReadOnly="{Binding IsFormReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Customer Reference" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CustomerReference}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Type" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialType}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Material Specification" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MaterialSpecification}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Form" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialForm}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Raw Material Dimensions" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding RawMaterialDimensions}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/></StackPanel>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Total Setup Time (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentSetupTime, Mode=OneWay}" IsReadOnly="True" IsTabStop="False" ToolTip="Read-only sum of setup time across all Case Operations."/></StackPanel>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Total Cycle Time / Part (HH:mm:ss)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CurrentCycleTimePerPart, Mode=OneWay}" IsReadOnly="True" IsTabStop="False" ToolTip="Read-only sum of cycle time per part across all Case Operations."/></StackPanel>
                                 </UniformGrid>
@@ -200,19 +200,19 @@
                                     <TextBlock Text="Case Working Folder (external path)" Style="{StaticResource FieldLabel}"/>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Browse Folder…" Click="BrowseFolder_Click"
-                                                IsEnabled="{Binding CanEditLocalPathFields}" Margin="8,0,0,0" />
-                                        <TextBox Text="{Binding WorkingFolderPath}" IsReadOnly="{Binding IsLocalPathFieldsReadOnly}"/>
+                                                IsEnabled="{Binding CanEditUnlockedFields}" Margin="8,0,0,0" />
+                                        <TextBox Text="{Binding WorkingFolderPath}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/>
                                     </DockPanel>
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}">
                                     <TextBlock Text="Picture Path (server-readable path only)" Style="{StaticResource FieldLabel}"/>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Browse Picture…" Click="BrowsePicture_Click"
-                                                IsEnabled="{Binding CanEditLocalPathFields}" Margin="8,0,0,0" />
-                                        <TextBox Text="{Binding PreviewPath}" IsReadOnly="{Binding IsLocalPathFieldsReadOnly}"/>
+                                                IsEnabled="{Binding CanEditUnlockedFields}" Margin="8,0,0,0" />
+                                        <TextBox Text="{Binding PreviewPath}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}"/>
                                     </DockPanel>
                                 </StackPanel>
-                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsFormReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>
+                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>
                                 <DockPanel>
                                     <TextBlock Text="Saving requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

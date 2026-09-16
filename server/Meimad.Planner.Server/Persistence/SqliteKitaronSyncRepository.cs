@@ -653,7 +653,16 @@ internal sealed class SqliteKitaronSyncRepository(
                 Add(insert, "$id", id); Add(insert, "$part", item.PartNumber); Add(insert, "$name", item.Name);
                 Add(insert, "$revision", item.Revision); Add(insert, "$customer", item.Customer);
                 Add(insert, "$folder", item.WorkingFolderPath); Add(insert, "$now", now.ToString("O"));
-                await insert.ExecuteNonQueryAsync(cancellationToken);
+                try
+                {
+                    await insert.ExecuteNonQueryAsync(cancellationToken);
+                }
+                catch (SqliteException exception)
+                {
+                    throw new InvalidOperationException(
+                        $"Case insert failed for SourceKey='{item.SourceKey}' PartNumber='{item.PartNumber}' computedId='{id}': {exception.Message}",
+                        exception);
+                }
                 counts.CasesCreated++;
             }
             else counts.CasesMatched++;
