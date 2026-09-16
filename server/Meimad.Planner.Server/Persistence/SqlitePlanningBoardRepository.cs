@@ -165,7 +165,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    nc_estimate.estimated_cycle_seconds,
                    nc_estimate.confidence,
                    nc_estimate.warnings_json,
-                   batch_operations.source_case_operation_id
+                   batch_operations.source_case_operation_id,
+                   machine_assignments.manual_priority AS manual_priority
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -296,7 +297,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 TotalPlannedMachineTimeSeconds: occupancy?.TotalPlannedMachineSeconds,
                 SetupEstimateWarnings: occupancy?.Warnings ?? [],
                 UsesSetupOccupancyEstimate: occupancy is not null,
-                CaseOperationId: GetNullableString(reader, 42)));
+                CaseOperationId: GetNullableString(reader, 42),
+                ManualPriority: GetNullableInt32(reader, reader.GetOrdinal("manual_priority"))));
         }
 
         await reader.DisposeAsync();

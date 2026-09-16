@@ -93,7 +93,8 @@ internal sealed record PlanningBoardOperationResponse(
     double? TotalPlannedMachineTimeSeconds,
     IReadOnlyList<string> SetupEstimateWarnings,
     bool UsesSetupOccupancyEstimate,
-    string? CaseOperationId)
+    string? CaseOperationId,
+    int? ManualPriority)
 {
     internal static PlanningBoardOperationResponse FromApplication(
         PlanningBoardOperation operation) => new(
@@ -160,7 +161,8 @@ internal sealed record PlanningBoardOperationResponse(
         operation.TotalPlannedMachineTimeSeconds,
         operation.SetupEstimateWarnings ?? [],
         operation.UsesSetupOccupancyEstimate,
-        operation.CaseOperationId);
+        operation.CaseOperationId,
+        operation.ManualPriority);
 }
 
 internal sealed record PlanningBoardMachineResponse(

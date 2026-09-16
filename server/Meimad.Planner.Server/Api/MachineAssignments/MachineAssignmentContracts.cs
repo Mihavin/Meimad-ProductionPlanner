@@ -13,8 +13,13 @@ internal sealed record AssignMachineRequest(
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record MachineAssignmentOverrideRequest(bool Confirmed, string? Reason);
 
+// ManualPriority: lower wins ahead of any Work Finish Date when two Machines contend for the same
+// scarce worker. Omit it to leave the stored value alone; send ClearManualPriority to remove it.
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed record PatchMachineAssignmentRequest(string? PlanningMode);
+internal sealed record PatchMachineAssignmentRequest(
+    string? PlanningMode,
+    int? ManualPriority = null,
+    bool ClearManualPriority = false);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record SuspendOperationRequest(
@@ -33,7 +38,8 @@ internal sealed record MachineAssignmentResponse(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string? ProductionRunId)
+    string? ProductionRunId,
+    int? ManualPriority)
 {
     internal static MachineAssignmentResponse FromDomain(MachineAssignment assignment) => new(
         assignment.MachineAssignmentId,
@@ -44,7 +50,8 @@ internal sealed record MachineAssignmentResponse(
         assignment.Version,
         assignment.CreatedAt,
         assignment.UpdatedAt,
-        assignment.ProductionRunId);
+        assignment.ProductionRunId,
+        assignment.ManualPriority);
 }
 
 internal sealed record MachineBacklogItemResponse(

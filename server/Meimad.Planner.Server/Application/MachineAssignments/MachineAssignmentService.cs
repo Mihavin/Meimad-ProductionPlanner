@@ -182,6 +182,38 @@ internal sealed class MachineAssignmentService
             cancellationToken);
     }
 
+    internal Task<MachineAssignmentPlanningModeMutationResult> ChangeManualPriorityAsync(
+        string machineAssignmentId,
+        int expectedVersion,
+        int? manualPriority,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(machineAssignmentId))
+        {
+            throw new MachineAssignmentValidationException(
+                "assignmentId",
+                "required",
+                "assignmentId is required.");
+        }
+
+        if (manualPriority is < 0)
+        {
+            throw new MachineAssignmentValidationException(
+                "manualPriority",
+                "invalid_manual_priority",
+                "manualPriority must be zero or a positive number; lower values are scheduled first.");
+        }
+
+        return repository.ChangeManualPriorityAsync(
+            machineAssignmentId.Trim(),
+            expectedVersion,
+            manualPriority,
+            timeProvider.GetUtcNow(),
+            editAuthority,
+            cancellationToken);
+    }
+
     internal Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,

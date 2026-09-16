@@ -883,6 +883,81 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
+    // A manual setup priority makes this assignment claim a shared worker ahead of any due date
+    // (lower number first); null clears it. Like planning mode, it never touches placement history.
+    internal async Task ChangeManualPriorityAsync(
+        PlanningOperationViewModel operation,
+        int? manualPriority)
+    {
+        if (apiClient is null || !isEditor || IsBusy)
+        {
+            AddFeedback(
+                "attention",
+                "Edit Mode required",
+                $"The setup priority for {operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
+            return;
+        }
+
+        if (operation.MachineAssignmentId is null || !operation.AssignmentVersion.HasValue)
+        {
+            AddFeedback(
+                "blocking",
+                "Machine assignment required",
+                $"{operation.DisplayTitle} must have a current Machine assignment before its setup priority can change.");
+            return;
+        }
+
+        if (operation.ManualPriority == manualPriority)
+        {
+            StatusMessage = manualPriority.HasValue
+                ? $"{operation.DisplayTitle} already has setup priority {manualPriority}."
+                : $"{operation.DisplayTitle} has no setup priority to clear.";
+            return;
+        }
+
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            var assignment = await apiClient.ChangeMachineAssignmentManualPriorityAsync(
+                operation.MachineAssignmentId,
+                operation.AssignmentVersion.Value,
+                manualPriority,
+                clientId,
+                editGeneration);
+            if (!string.Equals(
+                    assignment.MachineAssignmentId,
+                    operation.MachineAssignmentId,
+                    StringComparison.Ordinal)
+                || assignment.ManualPriority != manualPriority)
+            {
+                throw new PlannerProtocolException(
+                    "Server returned a different assignment or setup priority after the update.");
+            }
+            var summary = manualPriority.HasValue
+                ? $"{operation.DisplayTitle} now has setup priority {manualPriority}; it will claim a shared setup worker ahead of any Work Finish Date."
+                : $"{operation.DisplayTitle} no longer has a manual setup priority; Work Finish Date decides again.";
+            AddFeedback("information", "Setup priority updated", summary);
+            StatusMessage = summary;
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Setup priority rejected", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (succeeded)
+        {
+            await RefreshAsync();
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     internal async Task UndoAsync() =>
         await ReplayPlacementAsync(undoHistory, redoHistory, undo: true);
 
@@ -1256,6 +1331,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
         MachineAssignmentId = operation.MachineAssignmentId;
         AssignmentVersion = operation.AssignmentVersion;
         PlanningMode = NormalizePlanningMode(operation.PlanningMode);
+        ManualPriority = operation.ManualPriority;
         this.planningModeEditAvailable = planningModeEditAvailable;
         ActivePauseReason = operation.ActivePauseReason;
         PausedBy = operation.PausedBy;
@@ -1311,6 +1387,9 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string? MachineAssignmentId { get; }
     public int? AssignmentVersion { get; }
     public string PlanningMode { get; }
+    public int? ManualPriority { get; }
+    public bool HasManualPriority => ManualPriority.HasValue;
+    public string ManualPriorityText => ManualPriority.HasValue ? $"Setup priority {ManualPriority}" : string.Empty;
     public string? WorkFinishDate { get; }
     public DateTimeOffset? LatestStart { get; }
     public string? LatestStartWarning { get; }

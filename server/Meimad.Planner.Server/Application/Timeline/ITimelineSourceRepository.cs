@@ -93,7 +93,8 @@ internal sealed record TimelineSourceOperation(
     int CompletedQuantity = 0,
     int? TargetQuantity = null,
     double? MeasuredAverageCycleSeconds = null,
-    int MeasuredCycleSampleCount = 0);
+    int MeasuredCycleSampleCount = 0,
+    int? ManualPriority = null);
 
 internal sealed record TimelineSourceResource(
     string ResourceId,

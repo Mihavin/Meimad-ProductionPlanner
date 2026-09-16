@@ -297,7 +297,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                     WHERE program.production_run_id=machine_assignments.production_run_id
                       AND EXISTS(SELECT 1 FROM production_run_outputs output
                           WHERE output.production_run_program_id=program.id
-                            AND output.batch_operation_id=batch_operations.id))
+                            AND output.batch_operation_id=batch_operations.id)),
+                   machine_assignments.manual_priority AS manual_priority
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -421,7 +422,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 CompletedQuantity: completedQuantity,
                 TargetQuantity: targetQuantity,
                 MeasuredAverageCycleSeconds: useMeasuredSeries ? measuredAverageCycleSeconds : null,
-                MeasuredCycleSampleCount: useMeasuredSeries ? measuredCycleSampleCount : 0));
+                MeasuredCycleSampleCount: useMeasuredSeries ? measuredCycleSampleCount : 0,
+                ManualPriority: NullableInt(reader, reader.GetOrdinal("manual_priority"))));
         }
 
         return values;

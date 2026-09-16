@@ -328,7 +328,8 @@ internal sealed class TimelineProjectionService
                         operation.LoadUnloadEveryNParts,
                         operation.ExternalDelayAfter,
                         externalWorkingDayDelays.GetValueOrDefault(operation.OperationId),
-                        operation.ProductionCycleQuantity))
+                        operation.ProductionCycleQuantity,
+                        ManualPriority: operation.ManualPriority))
                     .ToArray()))
             .OrderBy(backlog => machinesById.TryGetValue(backlog.MachineId, out var machine)
                 ? machine.Number

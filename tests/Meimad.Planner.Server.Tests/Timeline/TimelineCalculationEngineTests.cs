@@ -1117,6 +1117,79 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Manual_priority_overrides_earlier_work_finish_date_for_setup_contention()
+    {
+        // Machine 14's Order is due sooner, so by due date alone it would claim the single setup
+        // worker first. The planner pinned Machine 15 ahead with a manual priority to match what
+        // the setupist actually did on the floor; that must win over the due date.
+        var dateUrgent = new TimelineOperationInput(
+            "op-a-machine-14", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 10, 22), PriorityOrderNumber: "SO-1");
+        var pinnedFirst = new TimelineOperationInput(
+            "op-z-machine-15", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2027, 3, 18), PriorityOrderNumber: "SO-99",
+            ManualPriority: 1);
+        var backlogs = new[]
+        {
+            Backlog("machine-14", [dateUrgent]),
+            Backlog("machine-15", [pinnedFirst])
+        };
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            backlogs,
+            [
+                new TimelineMachineCalendar("machine-14", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-15", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup-1", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(Utc(8), Assert.Single(result.Operations, value => value.OperationId == pinnedFirst.OperationId).StartsAt);
+        var delayed = Assert.Single(result.Operations, value => value.OperationId == dateUrgent.OperationId);
+        Assert.Equal(Utc(9), delayed.StartsAt);
+        Assert.Contains(delayed.WaitingIntervals, interval =>
+            interval.Detail!.Contains("manual priority 1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Lower_manual_priority_wins_and_null_priority_falls_back_to_due_date()
+    {
+        var priorityTwo = new TimelineOperationInput(
+            "op-priority-2", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 1), ManualPriority: 2);
+        var priorityOne = new TimelineOperationInput(
+            "op-priority-1", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 8, 30), ManualPriority: 1);
+        var unpinned = new TimelineOperationInput(
+            "op-unpinned", TimeSpan.FromHours(1), TimeSpan.Zero,
+            PriorityWorkFinishDate: new DateOnly(2026, 7, 1));
+
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [
+                Backlog("machine-a", [priorityTwo]),
+                Backlog("machine-b", [priorityOne]),
+                Backlog("machine-c", [unpinned])
+            ],
+            [
+                new TimelineMachineCalendar("machine-a", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-b", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-c", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [], [],
+            [new TimelineResourceCalendar("setup-1", TimelineResourceRole.SetupWorker,
+                [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        // Any pinned operation outranks an unpinned one regardless of due date; among pinned
+        // ones the lower number goes first; the unpinned one waits for both.
+        Assert.Equal(Utc(8), Assert.Single(result.Operations, value => value.OperationId == priorityOne.OperationId).StartsAt);
+        Assert.Equal(Utc(9), Assert.Single(result.Operations, value => value.OperationId == priorityTwo.OperationId).StartsAt);
+        Assert.Equal(Utc(10), Assert.Single(result.Operations, value => value.OperationId == unpinned.OperationId).StartsAt);
+    }
+
+    [Fact]
     public void Setup_prove_out_replaces_the_first_normal_cycle_in_timeline_duration()
     {
         var operation = new TimelineOperationInput(

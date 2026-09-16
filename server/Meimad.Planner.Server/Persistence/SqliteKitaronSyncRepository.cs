@@ -124,6 +124,7 @@ internal sealed class SqliteKitaronSyncRepository(
             $"{counts.OperationsCreated} Case Operation(s), and {counts.ComponentsCreated} Case Component(s) created. " +
             $"{counts.BatchesDeleted} dependent Production Batch(es) and {counts.OrdersDeleted} non-Kitaron Order(s) removed. " +
             $"{counts.HistoricalOrdersRetained} superseded Order(s) retained only for locked production history. " +
+            $"{counts.OperationsSuppressed} Kitaron route Operation(s) left out because a planner removed them in Meimad Planner. " +
             $"{plan.MaterialOrders?.Count ?? 0:N0} Kitaron material order line(s) with delivery approval data imported as advisory records. " +
             "Existing or linked records were reused safely.";
         await using (var command = connection.CreateCommand())
@@ -1006,6 +1007,22 @@ internal sealed class SqliteKitaronSyncRepository(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncOperation item, string caseId,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
+        if (await IsOperationSuppressedAsync(connection, transaction, item.SourceKey, cancellationToken))
+        {
+            // A planner deleted this imported Operation on purpose. Keep it out of the route until
+            // an Operation with the same number exists again on the Case; then Kitaron re-adopts it.
+            var reAdded = await FindIdsAsync(connection, transaction,
+                "SELECT id FROM case_operations WHERE case_id=$caseId AND operation_number=$key ORDER BY id;",
+                item.OperationNumber, cancellationToken, caseId);
+            if (reAdded.Count == 0)
+            {
+                counts.OperationsSuppressed++;
+                return;
+            }
+
+            await ClearOperationSuppressionAsync(connection, transaction, item.SourceKey, cancellationToken);
+        }
+
         var link = await ReadValidLinkAsync(
             connection, transaction, "case_operation", item.SourceKey, "case_operations", counts, cancellationToken);
         if (link is null)
@@ -1058,6 +1075,28 @@ internal sealed class SqliteKitaronSyncRepository(
         else counts.OperationsMatched++;
         await UpsertLinkAsync(connection, transaction, "case_operation", item.SourceKey, link.Value.TargetId,
             link.Value.OwnsTarget, item.SourceHash, now, cancellationToken);
+    }
+
+    private static async Task<bool> IsOperationSuppressedAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string sourceKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM kitaron_suppressed_operations WHERE source_key=$key);";
+        Add(command, "$key", sourceKey);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+    }
+
+    private static async Task ClearOperationSuppressionAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string sourceKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM kitaron_suppressed_operations WHERE source_key=$key;";
+        Add(command, "$key", sourceKey);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task ResolveComponentAsync(
@@ -1382,7 +1421,7 @@ internal sealed class SqliteKitaronSyncRepository(
     private sealed class MutableCounts
     {
         internal int CasesCreated, CasesUpdated, CasesMatched, OrdersCreated, OrdersUpdated, OrdersMatched, OrdersDeleted, BatchesDeleted;
-        internal int OperationsCreated, OperationsUpdated, OperationsMatched, Warnings;
+        internal int OperationsCreated, OperationsUpdated, OperationsMatched, OperationsSuppressed, Warnings;
         internal int HistoricalOrdersRetained;
         internal int ComponentsCreated, ComponentsUpdated, ComponentsMatched;
     }

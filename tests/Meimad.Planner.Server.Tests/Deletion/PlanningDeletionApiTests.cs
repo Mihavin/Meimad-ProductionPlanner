@@ -36,6 +36,47 @@ public sealed class PlanningDeletionApiTests
     }
 
     [Fact]
+    public async Task Deleting_a_kitaron_imported_operation_turns_its_link_into_a_suppression_record()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var link = connection.CreateCommand())
+            {
+                link.CommandText = """
+                    INSERT INTO kitaron_sync_links (
+                        source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at)
+                    VALUES ('case_operation', 'KIT-1' || char(31) || '10', 'case-op-1', 1, 'hash',
+                            '2026-08-11T08:00:00Z', '2026-08-11T08:00:00Z');
+                    """;
+                await link.ExecuteNonQueryAsync();
+            }
+
+            Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/v1/batches/batch-1")).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/v1/orders/order-1")).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/v1/cases/case-1/operations/case-op-1")).StatusCode);
+
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            Assert.Equal(0L, await CountAsync(verifyConnection, "case_operations", "case-op-1"));
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = "SELECT COUNT(*) FROM kitaron_sync_links WHERE source_entity='case_operation' AND target_id='case-op-1';";
+            Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+            verify.CommandText = "SELECT case_id || '|' || operation_number FROM kitaron_suppressed_operations WHERE source_key='KIT-1' || char(31) || '10';";
+            var suppressed = (string?)await verify.ExecuteScalarAsync();
+            Assert.NotNull(suppressed);
+            Assert.StartsWith("case-1|", suppressed, StringComparison.Ordinal);
+
+            // Deleting the Case afterwards clears its suppression records too.
+            Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/v1/cases/case-1")).StatusCode);
+            verify.CommandText = "SELECT COUNT(*) FROM kitaron_suppressed_operations WHERE case_id='case-1';";
+            Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
     public async Task Batch_delete_cascades_assignments_pauses_and_published_packages_and_compacts_backlog()
     {
         await RunAsync(async (application, client) =>

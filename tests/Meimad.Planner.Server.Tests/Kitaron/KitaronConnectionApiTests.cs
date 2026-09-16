@@ -1234,6 +1234,99 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
+    public async Task Sync_keeps_a_planner_deleted_case_operation_removed_until_it_is_added_again()
+    {
+        await RunAsync(new CapturingTester(), async (application, client) =>
+        {
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var now = new DateTimeOffset(2026, 9, 16, 6, 0, 0, TimeSpan.Zero);
+            var item = new KitaronSyncCase(
+                "REMOVED-PART", "REMOVED-PART", "Removed operation part", null, null,
+                "stale", "case-hash");
+            var operation = new KitaronSyncOperation(
+                "REMOVED-PART10", "REMOVED-PART", 10, 0, "Cut", null, null, null, "operation-hash");
+            var plan = new KitaronSyncPlan(
+                1, [item], [], [operation], [], new HashSet<string>(), [], 1);
+
+            var first = await repository.ApplyAsync(plan, now, CancellationToken.None);
+            Assert.Equal(1, first.OperationsCreated);
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            string caseId;
+            string operationId;
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                await using var read = connection.CreateCommand();
+                read.CommandText = "SELECT case_id || '|' || id FROM case_operations;";
+                var parts = ((string)(await read.ExecuteScalarAsync())!).Split('|');
+                caseId = parts[0];
+                operationId = parts[1];
+
+                await using var grant = connection.CreateCommand();
+                grant.CommandText = """
+                    UPDATE edit_tokens
+                    SET holder_client_id='kitaron-remove-test', holder_user_id='tester', generation=1,
+                        acquired_at='2026-09-16T00:00:00Z', version=version+1,
+                        updated_at='2026-09-16T00:00:00Z'
+                    WHERE id=1;
+                    """;
+                await grant.ExecuteNonQueryAsync();
+            }
+
+            // The planner removes the imported Operation through the normal deletion endpoint.
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "kitaron-remove-test");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            using var delete = await client.DeleteAsync($"/api/v1/cases/{caseId}/operations/{operationId}");
+            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+
+            // The next synchronization must not bring it back, and it is not a warning.
+            var second = await repository.ApplyAsync(plan, now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal("succeeded", second.Status);
+            Assert.Equal(0, second.OperationsCreated);
+            Assert.Equal(0, second.WarningCount);
+
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                await using var verify = connection.CreateCommand();
+                verify.CommandText = "SELECT COUNT(*) FROM case_operations;";
+                Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+                verify.CommandText =
+                    "SELECT COUNT(*) FROM kitaron_suppressed_operations WHERE source_key='REMOVED-PART' || char(31) || '10';";
+                Assert.Equal(1L, (long)(await verify.ExecuteScalarAsync())!);
+
+                // The planner later adds Operation 10 again by hand: Kitaron re-adopts that row
+                // instead of creating a duplicate, and the suppression ends.
+                await using var readd = connection.CreateCommand();
+                readd.CommandText = """
+                    INSERT INTO case_operations (id, case_id, operation_number, route_position, name,
+                        dependency_type, version, created_at, updated_at)
+                    VALUES ('manual-op-10', $caseId, 10, 0, 'Cut again', 'independent', 1,
+                        '2026-09-16T07:00:00Z', '2026-09-16T07:00:00Z');
+                    """;
+                readd.Parameters.AddWithValue("$caseId", caseId);
+                await readd.ExecuteNonQueryAsync();
+            }
+
+            var third = await repository.ApplyAsync(plan, now.AddMinutes(2), CancellationToken.None);
+            Assert.Equal("succeeded", third.Status);
+            Assert.Equal(0, third.OperationsCreated);
+
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verifyLink = verifyConnection.CreateCommand();
+            verifyLink.CommandText = """
+                SELECT target_id || '|' || owns_target
+                FROM kitaron_sync_links
+                WHERE source_entity='case_operation' AND source_key='REMOVED-PART' || char(31) || '10';
+                """;
+            Assert.Equal("manual-op-10|0", await verifyLink.ExecuteScalarAsync());
+            verifyLink.CommandText = "SELECT COUNT(*) FROM kitaron_suppressed_operations;";
+            Assert.Equal(0L, (long)(await verifyLink.ExecuteScalarAsync())!);
+            verifyLink.CommandText = "SELECT COUNT(*) FROM case_operations;";
+            Assert.Equal(1L, (long)(await verifyLink.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
     public async Task Legacy_parent_operations_skip_conflicting_component_without_failing_sync()
     {
         await RunAsync(new CapturingTester(), async (application, _) =>

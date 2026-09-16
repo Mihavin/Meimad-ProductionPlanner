@@ -1508,7 +1508,8 @@ internal sealed record PlanningBoardOperation(
     double? TotalPlannedMachineTimeSeconds = null,
     IReadOnlyList<string>? SetupEstimateWarnings = null,
     bool UsesSetupOccupancyEstimate = false,
-    string? CaseOperationId = null);
+    string? CaseOperationId = null,
+    int? ManualPriority = null);
 
 internal sealed record PlannerReadinessComponent(
     string Key,
@@ -1586,7 +1587,8 @@ internal sealed record MachineAssignment(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string PlanningMode = "manual");
+    string PlanningMode = "manual",
+    int? ManualPriority = null);
 
 internal sealed record TimelineSnapshot(
     DateTimeOffset ReadAt,

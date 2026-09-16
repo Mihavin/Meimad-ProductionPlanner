@@ -179,6 +179,17 @@
                                   IsEnabled="{Binding CanSetManualMode}"
                                   Click="SetManualMode_Click"
                                   AutomationProperties.Name="Set manual mode" />
+                        <Separator />
+                        <MenuItem Header="Set setup priority..."
+                                  ToolTip="When several Machines wait for the same setup worker, a lower priority number is set up first, ahead of any Work Finish Date. Use it to match the order the setupist actually works in."
+                                  IsEnabled="{Binding CanChangePlanningMode}"
+                                  Click="SetManualPriority_Click"
+                                  AutomationProperties.Name="Set setup priority" />
+                        <MenuItem Header="Clear setup priority"
+                                  ToolTip="Remove the manual setup priority so Work Finish Date decides again."
+                                  IsEnabled="{Binding HasManualPriority}"
+                                  Click="ClearManualPriority_Click"
+                                  AutomationProperties.Name="Clear setup priority" />
                         <MenuItem Header="Production readiness..."
                                   ToolTip="Review all readiness reasons and confirm material, offsets, and an explicit compatible release."
                                   IsEnabled="{Binding CanEditReadiness}"
@@ -233,6 +244,21 @@
                             <TextBlock DockPanel.Dock="Right" Text="{Binding PlanningModeText}" FontSize="10"
                                        FontWeight="SemiBold" Margin="6,0,0,0"
                                        ToolTip="Planning mode for this Machine assignment" />
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding ManualPriorityText}" FontSize="10"
+                                       FontWeight="SemiBold" Margin="6,0,0,0"
+                                       Foreground="{StaticResource RedBrush}"
+                                       ToolTip="Manual setup priority: this assignment claims a shared setup worker ahead of any Work Finish Date (lower number first).">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasManualPriority}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                             <TextBlock DockPanel.Dock="Right" Text="{Binding ReadinessSummaryText}" FontSize="10"
                                        Margin="6,0,0,0" TextTrimming="CharacterEllipsis"
                                        ToolTip="{Binding ReadinessDetailText}" Cursor="Hand"

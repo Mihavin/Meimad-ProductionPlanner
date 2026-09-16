@@ -10,7 +10,7 @@ internal static class MachineAssignmentEndpoints
     {
         endpoints.MapPatch(
             "/api/v1/machine-assignments/{assignmentId}",
-            ChangePlanningModeAsync);
+            PatchAssignmentAsync);
         var operations = endpoints.MapGroup("/api/v1/batch-operations");
         operations.MapPut("/{batchOperationId}/assignment", AssignOrMoveAsync);
         operations.MapDelete("/{batchOperationId}/assignment", UnassignAsync);
@@ -64,7 +64,7 @@ internal static class MachineAssignmentEndpoints
         }
     }
 
-    private static async Task<IResult> ChangePlanningModeAsync(
+    private static async Task<IResult> PatchAssignmentAsync(
         string assignmentId,
         PatchMachineAssignmentRequest request,
         HttpContext httpContext,
@@ -97,12 +97,29 @@ internal static class MachineAssignmentEndpoints
 
         try
         {
-            var result = await service.ChangePlanningModeAsync(
-                assignmentId,
-                expectedVersion,
-                request.PlanningMode,
-                authority!,
-                cancellationToken);
+            var touchesPriority = request.ClearManualPriority || request.ManualPriority.HasValue;
+            if (touchesPriority && request.PlanningMode is not null)
+            {
+                return PlanningHttpSupport.Error(
+                    StatusCodes.Status422UnprocessableEntity,
+                    "validation_failed",
+                    "Change either planningMode or manualPriority in one request, not both.",
+                    httpContext);
+            }
+
+            var result = touchesPriority
+                ? await service.ChangeManualPriorityAsync(
+                    assignmentId,
+                    expectedVersion,
+                    request.ClearManualPriority ? null : request.ManualPriority,
+                    authority!,
+                    cancellationToken)
+                : await service.ChangePlanningModeAsync(
+                    assignmentId,
+                    expectedVersion,
+                    request.PlanningMode,
+                    authority!,
+                    cancellationToken);
             SetEntityTag(httpContext.Response, result.Assignment);
             return Results.Ok(MachineAssignmentResponse.FromDomain(result.Assignment));
         }

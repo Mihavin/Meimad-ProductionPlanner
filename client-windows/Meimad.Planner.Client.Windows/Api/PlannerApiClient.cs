@@ -687,6 +687,16 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    // null clears the override; lower values are scheduled first when Machines share a worker.
+    Task<MachineAssignment> ChangeMachineAssignmentManualPriorityAsync(
+        string machineAssignmentId,
+        int assignmentVersion,
+        int? manualPriority,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<BatchOperationExecution> ChangeOperationExecutionAsync(
         string batchOperationId,
         string action,
@@ -2492,6 +2502,50 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             EditGenerationHeader,
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         request.Content = JsonContent.Create(new { planningMode = normalizedMode }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<MachineAssignment>(response, cancellationToken);
+    }
+
+    public async Task<MachineAssignment> ChangeMachineAssignmentManualPriorityAsync(
+        string machineAssignmentId,
+        int assignmentVersion,
+        int? manualPriority,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(machineAssignmentId))
+        {
+            throw new ArgumentException("Machine assignment ID is required.", nameof(machineAssignmentId));
+        }
+
+        if (assignmentVersion < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(assignmentVersion),
+                "Machine assignment version must be positive.");
+        }
+
+        if (manualPriority is < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(manualPriority),
+                "Manual priority must be zero or positive.");
+        }
+
+        using var request = CreateRequest(
+            HttpMethod.Patch,
+            $"api/v1/machine-assignments/{Uri.EscapeDataString(machineAssignmentId)}",
+            clientId);
+        request.Headers.TryAddWithoutValidation(
+            "If-Match",
+            $"\"machine-assignment:{machineAssignmentId}:v{assignmentVersion}\"");
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = manualPriority.HasValue
+            ? JsonContent.Create(new { manualPriority = manualPriority.Value }, options: JsonOptions)
+            : JsonContent.Create(new { clearManualPriority = true }, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<MachineAssignment>(response, cancellationToken);
     }

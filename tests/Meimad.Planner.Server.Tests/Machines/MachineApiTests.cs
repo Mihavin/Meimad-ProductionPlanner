@@ -685,6 +685,120 @@ public sealed class MachineApiTests
         return request;
     }
 
+    private static HttpRequestMessage CreateAssignmentPatch(
+        string assignmentId,
+        string entityTag,
+        object body)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"/api/v1/machine-assignments/{assignmentId}")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+        return request;
+    }
+
+    [Fact]
+    public async Task Manual_priority_patch_sets_clears_and_validates_the_setup_priority()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var machineId = await CreateMachineAsync(client, "M-PRIO", "mill", ["mill"]);
+
+            using var createdResponse = await client.PutAsJsonAsync(
+                "/api/v1/batch-operations/op-a/assignment",
+                new { machineId, backlogPosition = 0 });
+            Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+            using var createdJson = JsonDocument.Parse(
+                await createdResponse.Content.ReadAsStringAsync());
+            var assignmentId = createdJson.RootElement
+                .GetProperty("machineAssignmentId").GetString()!;
+            var originalVersion = createdJson.RootElement.GetProperty("version").GetInt32();
+            var originalTag = createdResponse.Headers.ETag?.Tag;
+            Assert.Equal(JsonValueKind.Null,
+                createdJson.RootElement.GetProperty("manualPriority").ValueKind);
+
+            // Negative priorities and mixing priority with planning mode are rejected untouched.
+            using (var negativeRequest = CreateAssignmentPatch(
+                       assignmentId, originalTag!, new { manualPriority = -1 }))
+            using (var negative = await client.SendAsync(negativeRequest))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, negative.StatusCode);
+            }
+
+            using (var mixedRequest = CreateAssignmentPatch(
+                       assignmentId, originalTag!, new { manualPriority = 1, planningMode = "backward" }))
+            using (var mixed = await client.SendAsync(mixedRequest))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, mixed.StatusCode);
+            }
+
+            using var setRequest = CreateAssignmentPatch(
+                assignmentId, originalTag!, new { manualPriority = 1 });
+            using var set = await client.SendAsync(setRequest);
+            Assert.Equal(HttpStatusCode.OK, set.StatusCode);
+            using var setJson = JsonDocument.Parse(await set.Content.ReadAsStringAsync());
+            Assert.Equal(1, setJson.RootElement.GetProperty("manualPriority").GetInt32());
+            Assert.Equal(originalVersion + 1, setJson.RootElement.GetProperty("version").GetInt32());
+            Assert.Equal("manual", setJson.RootElement.GetProperty("planningMode").GetString());
+            var setTag = set.Headers.ETag?.Tag;
+            Assert.Equal(
+                $"\"machine-assignment:{assignmentId}:v{originalVersion + 1}\"",
+                setTag);
+
+            // A stale tag is a version conflict, not a silent overwrite.
+            using (var staleRequest = CreateAssignmentPatch(
+                       assignmentId, originalTag!, new { manualPriority = 2 }))
+            using (var stale = await client.SendAsync(staleRequest))
+            {
+                Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+            }
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal(1L, await ScalarAsync(connection,
+                    $"SELECT manual_priority FROM machine_assignments WHERE id='{assignmentId}';"));
+            }
+
+            using var events = await client.GetAsync(
+                "/api/v1/event-log?eventType=machine_assignment_manual_priority_changed");
+            events.EnsureSuccessStatusCode();
+            using var eventsJson = JsonDocument.Parse(await events.Content.ReadAsStringAsync());
+            Assert.Single(eventsJson.RootElement.GetProperty("items").EnumerateArray());
+
+            using var board = await client.GetAsync("/api/v1/planning-board");
+            board.EnsureSuccessStatusCode();
+            using var boardJson = JsonDocument.Parse(await board.Content.ReadAsStringAsync());
+            var boardOperation = boardJson.RootElement.GetProperty("machines")
+                .EnumerateArray()
+                .Single(machine => machine.GetProperty("machineId").GetString() == machineId)
+                .GetProperty("backlog").EnumerateArray()
+                .Single(operation => operation.GetProperty("batchOperationId").GetString() == "op-a");
+            Assert.Equal(1, boardOperation.GetProperty("manualPriority").GetInt32());
+
+            using var clearRequest = CreateAssignmentPatch(
+                assignmentId, setTag!, new { clearManualPriority = true });
+            using var cleared = await client.SendAsync(clearRequest);
+            Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+            using var clearedJson = JsonDocument.Parse(await cleared.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null,
+                clearedJson.RootElement.GetProperty("manualPriority").ValueKind);
+            Assert.Equal(originalVersion + 2, clearedJson.RootElement.GetProperty("version").GetInt32());
+
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal(DBNull.Value, await ScalarAsync(connection,
+                    $"SELECT manual_priority FROM machine_assignments WHERE id='{assignmentId}';"));
+            }
+        });
+    }
+
     private static async Task SeedCalendarAndOperationsAsync(IServiceProvider services)
     {
         var database = services.GetRequiredService<SqliteDatabase>();

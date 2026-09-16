@@ -1219,18 +1219,16 @@ internal sealed class TimelineCalculationEngine
         IReadOnlyDictionary<string, ScheduleNode> nodes,
         IReadOnlyDictionary<string, BacklogEntry> operations)
     {
+        var representativeComparer = Comparer<TimelineOperationInput>.Create(CompareOperationPriorities);
         var leftOperation = nodes[left].Members.Select(id => operations[id].Operation)
-            .OrderBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
-            .ThenBy(value => value.PriorityWorkFinishDate)
-            .ThenBy(value => value.PriorityOrderNumber,
-                Comparer<string?>.Create(TimelinePriorityComparer.CompareOrderNumbers))
+            .OrderBy(value => value, representativeComparer)
             .First();
         var rightOperation = nodes[right].Members.Select(id => operations[id].Operation)
-            .OrderBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
-            .ThenBy(value => value.PriorityWorkFinishDate)
-            .ThenBy(value => value.PriorityOrderNumber,
-                Comparer<string?>.Create(TimelinePriorityComparer.CompareOrderNumbers))
+            .OrderBy(value => value, representativeComparer)
             .First();
+        var manual = CompareManualPriorities(leftOperation.ManualPriority, rightOperation.ManualPriority);
+        if (manual != 0) return manual;
+
         var due = Nullable.Compare(leftOperation.PriorityWorkFinishDate, rightOperation.PriorityWorkFinishDate);
         if (!leftOperation.PriorityWorkFinishDate.HasValue && rightOperation.PriorityWorkFinishDate.HasValue) due = 1;
         else if (leftOperation.PriorityWorkFinishDate.HasValue && !rightOperation.PriorityWorkFinishDate.HasValue) due = -1;
@@ -2081,10 +2079,23 @@ internal sealed class TimelineCalculationEngine
         return comparison != 0 ? comparison : StringComparer.Ordinal.Compare(left, right);
     }
 
+    // An operator-set manual priority (lower wins) outranks every due-date signal: it exists so
+    // a real shop-floor decision - "the setupist started Machine 15 before Machine 14" - can be
+    // expressed even when the other Machine's Order is due sooner.
+    private static int CompareManualPriorities(int? left, int? right)
+    {
+        if (left.HasValue && right.HasValue) return left.Value.CompareTo(right.Value);
+        if (left.HasValue) return -1;
+        return right.HasValue ? 1 : 0;
+    }
+
     private static int CompareOperationPriorities(
         TimelineOperationInput left,
         TimelineOperationInput right)
     {
+        var manualComparison = CompareManualPriorities(left.ManualPriority, right.ManualPriority);
+        if (manualComparison != 0) return manualComparison;
+
         var dueComparison = Nullable.Compare(left.PriorityWorkFinishDate, right.PriorityWorkFinishDate);
         if (!left.PriorityWorkFinishDate.HasValue && right.PriorityWorkFinishDate.HasValue) dueComparison = 1;
         else if (left.PriorityWorkFinishDate.HasValue && !right.PriorityWorkFinishDate.HasValue) dueComparison = -1;
@@ -2108,7 +2119,9 @@ internal sealed class TimelineCalculationEngine
         var blockers = occupations
             .Where(value => value.Intervals.Any(interval =>
                 interval.EndsAt > earliest && interval.StartsAt < allocation.FinishesAt))
-            .OrderBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
+            .OrderBy(value => value.ManualPriority.HasValue ? 0 : 1)
+            .ThenBy(value => value.ManualPriority)
+            .ThenBy(value => value.PriorityWorkFinishDate.HasValue ? 0 : 1)
             .ThenBy(value => value.PriorityWorkFinishDate)
             .ThenBy(value => value.PriorityOrderNumber,
                 Comparer<string?>.Create(TimelinePriorityComparer.CompareOrderNumbers))
@@ -2124,6 +2137,11 @@ internal sealed class TimelineCalculationEngine
             TimelineResourceRole.RegularWorker => "a regular worker for load/unload",
             _ => "a worker"
         };
+        if (CompareManualPriorities(winner.ManualPriority, operation.ManualPriority) < 0)
+        {
+            return $"Waiting for {roleLabel}; operation '{winner.OperationId}' received the resource first because its manual priority {winner.ManualPriority} was set ahead by the planner.";
+        }
+
         if (winner.PriorityWorkFinishDate.HasValue
             && (!operation.PriorityWorkFinishDate.HasValue
                 || winner.PriorityWorkFinishDate < operation.PriorityWorkFinishDate))
@@ -2153,7 +2171,8 @@ internal sealed class TimelineCalculationEngine
                 phase.Allocation.Intervals,
                 operation.OperationId,
                 operation.PriorityWorkFinishDate,
-                operation.PriorityOrderNumber));
+                operation.PriorityOrderNumber,
+                operation.ManualPriority));
         }
     }
 
@@ -2717,7 +2736,8 @@ internal sealed class TimelineCalculationEngine
         IReadOnlyList<InstantWindow> Intervals,
         string OperationId,
         DateOnly? PriorityWorkFinishDate,
-        string? PriorityOrderNumber);
+        string? PriorityOrderNumber,
+        int? ManualPriority = null);
 
     private sealed record Allocation(
         IReadOnlyList<InstantWindow> Intervals,

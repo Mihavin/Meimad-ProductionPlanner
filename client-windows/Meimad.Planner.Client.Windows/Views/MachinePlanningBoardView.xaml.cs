@@ -5,7 +5,6 @@ using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using Meimad.Planner.Client.Windows.Presentation;
 using Microsoft.Win32;
-using Microsoft.VisualBasic;
 
 namespace Meimad.Planner.Client.Windows.Views;
 
@@ -109,8 +108,12 @@ public partial class MachinePlanningBoardView : UserControl
         int? seconds = null;
         if (reportType == "partTimeUpdate")
         {
-            var value = Interaction.InputBox("Enter manual part time in seconds:", "Manual part time update", "0");
-            if (!int.TryParse(value, out var parsed) || parsed <= 0) return;
+            var value = TextPromptWindow.Show(
+                Window.GetWindow(this),
+                "Enter manual part time in seconds:",
+                "Manual part time update",
+                "0");
+            if (value is null || !int.TryParse(value.Trim(), out var parsed) || parsed <= 0) return;
             seconds = parsed;
         }
         await viewModel.RecordManualReportAsync(operation, reportType, seconds);
@@ -124,6 +127,52 @@ public partial class MachinePlanningBoardView : UserControl
 
     private async void SetManualMode_Click(object sender, RoutedEventArgs e) =>
         await ChangePlanningModeAsync(sender, "manual");
+
+    private async void SetManualPriority_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryResolveContextOperation(sender, out var operation, out var viewModel)) return;
+        var current = operation.ManualPriority?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "1";
+        var value = TextPromptWindow.Show(
+            Window.GetWindow(this),
+            "Enter the setup priority (0 or higher). When several Machines wait for the same setup worker, the lowest number is set up first, ahead of any Work Finish Date.",
+            $"Setup priority for {operation.DisplayTitle}",
+            current);
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (!int.TryParse(value.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var priority) || priority < 0)
+        {
+            MessageBox.Show("Setup priority must be a whole number of 0 or higher.",
+                "Setup priority", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        await viewModel.ChangeManualPriorityAsync(operation, priority);
+    }
+
+    private async void ClearManualPriority_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryResolveContextOperation(sender, out var operation, out var viewModel)) return;
+        await viewModel.ChangeManualPriorityAsync(operation, null);
+    }
+
+    private bool TryResolveContextOperation(
+        object sender,
+        out PlanningOperationViewModel operation,
+        out MachinePlanningBoardViewModel viewModel)
+    {
+        operation = null!;
+        viewModel = null!;
+        if (sender is not MenuItem menuItem
+            || ItemsControl.ItemsControlFromItemContainer(menuItem) is not ContextMenu contextMenu
+            || contextMenu.PlacementTarget is not FrameworkElement { DataContext: PlanningOperationViewModel resolved }
+            || DataContext is not MachinePlanningBoardViewModel board)
+        {
+            return false;
+        }
+
+        operation = resolved;
+        viewModel = board;
+        return true;
+    }
 
     private async void ProductionReadinessText_Click(object sender, MouseButtonEventArgs e)
     {

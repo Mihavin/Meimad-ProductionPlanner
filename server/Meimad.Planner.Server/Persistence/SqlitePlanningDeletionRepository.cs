@@ -40,6 +40,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                         WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id));
                     DELETE FROM case_components
                     WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id);
+                    DELETE FROM kitaron_suppressed_operations WHERE case_id=$id;
                     """;
                 removeComponents.Parameters.AddWithValue("$id", id);
                 await removeComponents.ExecuteNonQueryAsync(token);
@@ -236,13 +237,15 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         {
             await using var read = c.CreateCommand();
             read.Transaction = t;
-            read.CommandText = "SELECT route_position, simultaneous_group_key FROM case_operations WHERE id = $id AND case_id = $caseId;";
+            read.CommandText = "SELECT route_position, simultaneous_group_key, operation_number, name FROM case_operations WHERE id = $id AND case_id = $caseId;";
             read.Parameters.AddWithValue("$id", id);
             read.Parameters.AddWithValue("$caseId", caseId);
             await using var reader = await read.ExecuteReaderAsync(token);
             if (!await reader.ReadAsync(token)) return false;
             var position = reader.GetInt32(0);
             var group = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var operationNumber = reader.GetInt32(2);
+            var operationName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
             await reader.DisposeAsync();
             await BlockIfAnyAsync(c, t, "batch_operations", "source_case_operation_id", id, "The Operation has already been instantiated in a Production Batch.", token);
             await BlockIfAnyAsync(c, t, "process_revisions", "case_operation_id", id, "The Operation has immutable process or G-code release history.", token);
@@ -251,6 +254,31 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             {
                 await BlockBySqlAsync(c, t, "SELECT EXISTS(SELECT 1 FROM case_operations WHERE case_id = $caseId AND simultaneous_group_key = $group AND id <> $id);", id, "Remove the locked-simultaneous group relationship before deleting this Operation.", token,
                     ("$caseId", caseId), ("$group", group));
+            }
+            // A Kitaron-imported Operation may be removed like any other. The deletion is
+            // deliberate, so its sync link becomes a suppression record: the next synchronization
+            // must not "repair" the missing target by recreating the Operation.
+            await using (var suppress = c.CreateCommand())
+            {
+                suppress.Transaction = t;
+                suppress.CommandText = """
+                    INSERT INTO kitaron_suppressed_operations (source_key, case_id, operation_number, name, suppressed_at)
+                    SELECT source_key, $caseId, $number, $name, $now
+                    FROM kitaron_sync_links
+                    WHERE source_entity = 'case_operation' AND target_id = $id
+                    ON CONFLICT (source_key) DO UPDATE SET
+                        case_id = excluded.case_id,
+                        operation_number = excluded.operation_number,
+                        name = excluded.name,
+                        suppressed_at = excluded.suppressed_at;
+                    DELETE FROM kitaron_sync_links WHERE source_entity = 'case_operation' AND target_id = $id;
+                    """;
+                suppress.Parameters.AddWithValue("$caseId", caseId);
+                suppress.Parameters.AddWithValue("$number", operationNumber);
+                suppress.Parameters.AddWithValue("$name", operationName);
+                suppress.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
+                suppress.Parameters.AddWithValue("$id", id);
+                await suppress.ExecuteNonQueryAsync(token);
             }
             await DeleteRowAsync(c, t, "case_operations", id, token);
             await using var stage = c.CreateCommand();

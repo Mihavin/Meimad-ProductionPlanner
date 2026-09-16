@@ -291,7 +291,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                    batch_operations.required_machine_type,
                    batch_operations.actual_start,
                    batch_operations.actual_end,
-                   batch_operations.actual_machine_id
+                   batch_operations.actual_machine_id,
+                   machine_assignments.manual_priority
             FROM machine_assignments
             JOIN batch_operations
               ON batch_operations.id = machine_assignments.batch_operation_id
@@ -346,7 +347,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                        machine_assignments.updated_at,
                        machine_assignments.planning_mode,
                        machine_assignments.production_run_id,
-                       batch_operations.status
+                       batch_operations.status,
+                       machine_assignments.manual_priority
                 FROM machine_assignments
                 JOIN batch_operations
                   ON batch_operations.id = machine_assignments.batch_operation_id
@@ -425,6 +427,105 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                 null,
                 new { planningMode = assignment.PlanningMode.ToToken() },
                 new { planningMode = updated.PlanningMode.ToToken() }),
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return new MachineAssignmentPlanningModeMutationResult(updated, Changed: true);
+    }
+
+    public async Task<MachineAssignmentPlanningModeMutationResult> ChangeManualPriorityAsync(
+        string machineAssignmentId,
+        int expectedVersion,
+        int? manualPriority,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(
+            connection, transaction, editAuthority, cancellationToken);
+
+        MachineAssignment assignment;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT id, batch_operation_id, machine_id, backlog_position,
+                       version, created_at, updated_at, planning_mode, production_run_id,
+                       manual_priority
+                FROM machine_assignments
+                WHERE id = $assignmentId AND released_at IS NULL;
+                """;
+            read.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new MachineAssignmentNotFoundException(machineAssignmentId);
+            }
+
+            assignment = ReadAssignment(reader);
+        }
+
+        if (assignment.Version != expectedVersion)
+        {
+            throw new MachineAssignmentVersionConflictException(
+                machineAssignmentId, expectedVersion);
+        }
+
+        if (assignment.ManualPriority == manualPriority)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new MachineAssignmentPlanningModeMutationResult(assignment, Changed: false);
+        }
+
+        // Unlike planning mode, priority may change while the operation runs: it only affects
+        // how a not-yet-started setup competes for a scarce worker, so it is never harmful.
+        var updated = assignment with
+        {
+            ManualPriority = manualPriority,
+            Version = assignment.Version + 1,
+            UpdatedAt = now
+        };
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE machine_assignments
+                SET manual_priority = $manualPriority,
+                    version = version + 1,
+                    updated_at = $updatedAt
+                WHERE id = $assignmentId AND version = $expectedVersion;
+                """;
+            update.Parameters.AddWithValue("$manualPriority",
+                manualPriority.HasValue ? manualPriority.Value : DBNull.Value);
+            update.Parameters.AddWithValue("$updatedAt", FormatInstant(now));
+            update.Parameters.AddWithValue("$assignmentId", machineAssignmentId);
+            update.Parameters.AddWithValue("$expectedVersion", expectedVersion);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new MachineAssignmentVersionConflictException(
+                    machineAssignmentId, expectedVersion);
+            }
+        }
+
+        await SqliteStructuredEventLogRepository.AppendAsync(
+            connection,
+            transaction,
+            new(
+                "machine_assignment_manual_priority_changed",
+                now,
+                actor,
+                new Dictionary<string, string>
+                {
+                    ["machineAssignmentId"] = assignment.MachineAssignmentId,
+                    ["batchOperationId"] = assignment.BatchOperationId,
+                    ["machineId"] = assignment.MachineId
+                },
+                "planner_selected",
+                null,
+                new { manualPriority = assignment.ManualPriority },
+                new { manualPriority = updated.ManualPriority }),
             cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
@@ -1344,7 +1445,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, batch_operation_id, machine_id, backlog_position,
-                   version, created_at, updated_at, planning_mode, production_run_id
+                   version, created_at, updated_at, planning_mode, production_run_id,
+                   manual_priority
             FROM machine_assignments
             WHERE batch_operation_id = $operationId AND released_at IS NULL;
             """;
@@ -1363,7 +1465,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, batch_operation_id, machine_id, backlog_position,
-                   version, created_at, updated_at, planning_mode, production_run_id
+                   version, created_at, updated_at, planning_mode, production_run_id,
+                   manual_priority
             FROM machine_assignments
             WHERE machine_id = $machineId AND released_at IS NULL
             ORDER BY backlog_position;
@@ -1379,16 +1482,22 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         return assignments;
     }
 
-    private static MachineAssignment ReadAssignment(SqliteDataReader reader) => new(
-        reader.GetString(0),
-        reader.GetString(1),
-        reader.GetString(2),
-        reader.GetInt32(3),
-        ReadPlanningMode(reader.GetString(7)),
-        reader.GetInt32(4),
-        ParseInstant(reader.GetString(5)),
-        ParseInstant(reader.GetString(6)),
-        reader.IsDBNull(8) ? null : reader.GetString(8));
+    private static MachineAssignment ReadAssignment(SqliteDataReader reader)
+    {
+        // Read by name: the SELECTs feeding this reader carry different trailing columns.
+        var priorityOrdinal = reader.GetOrdinal("manual_priority");
+        return new(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetInt32(3),
+            ReadPlanningMode(reader.GetString(7)),
+            reader.GetInt32(4),
+            ParseInstant(reader.GetString(5)),
+            ParseInstant(reader.GetString(6)),
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.IsDBNull(priorityOrdinal) ? null : reader.GetInt32(priorityOrdinal));
+    }
 
     private static MachineAssignmentPlanningMode ReadPlanningMode(string value) =>
         MachineAssignmentPlanningModes.TryParse(value, out var mode)

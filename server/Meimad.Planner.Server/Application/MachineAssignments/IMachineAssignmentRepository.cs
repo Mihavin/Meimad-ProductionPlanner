@@ -36,6 +36,14 @@ internal interface IMachineAssignmentRepository
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
+    Task<MachineAssignmentPlanningModeMutationResult> ChangeManualPriorityAsync(
+        string machineAssignmentId,
+        int expectedVersion,
+        int? manualPriority,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
     Task<BatchOperationExecutionResult> ChangeExecutionStatusAsync(
         string batchOperationId,
         BatchOperationExecutionAction action,
