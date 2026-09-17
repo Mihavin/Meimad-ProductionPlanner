@@ -2192,15 +2192,19 @@ public sealed class TimelineApiTests
                 "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z");
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            Assert.Contains(
+            var predecessorConflict = Assert.Single(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 conflict => conflict.GetProperty("code").GetString() == "dependency_predecessor_unassigned");
+            Assert.Contains(
+                "Assign OP", predecessorConflict.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.Contains(
+                "still in the pool", predecessorConflict.GetProperty("message").GetString(), StringComparison.Ordinal);
             var waiting = Assert.Single(
                 document.RootElement.GetProperty("machines").EnumerateArray()
                     .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray()),
                 interval => interval.GetProperty("operationId").GetString() == "op-2");
             Assert.Equal("waiting", waiting.GetProperty("type").GetString());
-            Assert.Contains("not assigned", waiting.GetProperty("detail").GetString(),
+            Assert.Contains("still in the pool", waiting.GetProperty("detail").GetString(),
                 StringComparison.OrdinalIgnoreCase);
         });
     }

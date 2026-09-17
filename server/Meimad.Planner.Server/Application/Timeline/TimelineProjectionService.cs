@@ -1164,7 +1164,9 @@ internal sealed class TimelineProjectionService
                         conflicts.Add(Conflict(
                             "dependency_predecessor_unassigned",
                             operation.DependencyType == "sequential" ? "blocking" : "attention",
-                            $"Batch {operation.BatchNumber} OP{operation.OperationNumber} waits for OP{predecessor.OperationNumber}, which is not assigned to a Machine.",
+                            operation.DependencyType == "sequential"
+                                ? $"Batch {operation.BatchNumber} ({operation.PartNumber}) OP{operation.OperationNumber} {operation.OperationName} cannot be scheduled because it must follow OP{predecessor.OperationNumber} {predecessor.OperationName}, which is still in the pool. Assign OP{predecessor.OperationNumber} to a Machine to unblock OP{operation.OperationNumber}."
+                                : $"Batch {operation.BatchNumber} ({operation.PartNumber}) OP{operation.OperationNumber} {operation.OperationName} may overlap OP{predecessor.OperationNumber} {predecessor.OperationName}, but OP{predecessor.OperationNumber} is still in the pool and has no forecast. Assign OP{predecessor.OperationNumber} to a Machine to place both on the Timeline.",
                             [predecessor.OperationId, operation.OperationId],
                             operation.MachineId is null ? [] : [operation.MachineId]));
                         if (operation.DependencyType == "sequential")
