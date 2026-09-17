@@ -14,9 +14,9 @@ internal sealed record PlanningBoardResponse(
 {
     internal static PlanningBoardResponse FromApplication(PlanningBoardSnapshot snapshot) => new(
         snapshot.ReadAt,
-        "unavailable",
-        "The pure time engine is not connected to the planning-board projection yet.",
-        [],
+        snapshot.ConflictCalculationStatus,
+        snapshot.ConflictCalculationMessage,
+        (snapshot.Conflicts ?? []).Select(PlanningBoardConflictResponse.FromApplication).ToArray(),
         snapshot.Pool.Select(PlanningBoardOperationResponse.FromApplication).ToArray(),
         snapshot.Machines.Select(PlanningBoardMachineResponse.FromApplication).ToArray(),
         snapshot.ProductionRuns ?? []);
@@ -27,7 +27,19 @@ internal sealed record PlanningBoardConflictResponse(
     string Code,
     string Severity,
     string Title,
-    string Message);
+    string Message,
+    IReadOnlyList<string> OperationIds,
+    IReadOnlyList<string> MachineIds)
+{
+    internal static PlanningBoardConflictResponse FromApplication(PlanningBoardConflict conflict) => new(
+        conflict.ConflictId,
+        conflict.Code,
+        conflict.Severity,
+        conflict.Title,
+        conflict.Message,
+        conflict.OperationIds,
+        conflict.MachineIds);
+}
 
 internal sealed record PlanningBoardOperationResponse(
     string BatchOperationId,

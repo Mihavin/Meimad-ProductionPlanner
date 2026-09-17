@@ -112,9 +112,8 @@ public sealed class MachineApiTests
             using var boardDocument = JsonDocument.Parse(
                 await boardResponse.Content.ReadAsStringAsync());
             Assert.Equal(
-                "unavailable",
+                "current",
                 boardDocument.RootElement.GetProperty("conflictCalculationStatus").GetString());
-            Assert.Empty(boardDocument.RootElement.GetProperty("conflicts").EnumerateArray());
             Assert.Equal(
                 "op-laser",
                 boardDocument.RootElement.GetProperty("pool")[0]

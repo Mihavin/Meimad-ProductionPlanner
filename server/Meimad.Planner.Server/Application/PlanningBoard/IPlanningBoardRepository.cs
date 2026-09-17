@@ -11,7 +11,19 @@ internal sealed record PlanningBoardSnapshot(
     DateTimeOffset ReadAt,
     IReadOnlyList<PlanningBoardOperation> Pool,
     IReadOnlyList<PlanningBoardMachine> Machines,
-    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns = null);
+    IReadOnlyList<ProductionRunPlanningCard>? ProductionRuns = null,
+    string ConflictCalculationStatus = "unavailable",
+    string ConflictCalculationMessage = "Conflicts were not calculated for this read.",
+    IReadOnlyList<PlanningBoardConflict>? Conflicts = null);
+
+internal sealed record PlanningBoardConflict(
+    string ConflictId,
+    string Code,
+    string Severity,
+    string Title,
+    string Message,
+    IReadOnlyList<string> OperationIds,
+    IReadOnlyList<string> MachineIds);
 
 internal sealed record ProductionRunPlanningCard(
     string ProductionRunId, string Status, string? MachineId, int? BacklogPosition,
