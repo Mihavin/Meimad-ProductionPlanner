@@ -718,7 +718,7 @@
                             <CheckBox Content="Active" IsChecked="{Binding ResourceIsActive}" Margin="0,0,0,12"/>
                             <CheckBox Content="Respect Israel Master Calendar" IsChecked="{Binding ResourceRespectMasterCalendar}" Margin="0,0,0,12"/>
                             <StackPanel Orientation="Horizontal"><Button Content="{Binding ResourceSaveActionText}" Command="{Binding SaveResourceCommand}"/><Button Content="Delete" Click="DeleteResource_Click" Margin="0"/></StackPanel>
-                            <TextBlock Text="Inactive employees are excluded from future resource availability. Employee capacity scheduling is not implemented." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            <TextBlock Text="Inactive employees are excluded from future resource availability. The Timeline reserves active employees by role: setup needs a setup worker qualified for the Machine, QA needs a QA worker, and worker-attended load/unload needs a regular worker, each only within that employee's own calendar and exceptions." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                             <Separator Margin="0,16,0,12"/>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="Refresh exceptions" Command="{Binding RefreshResourceExceptionsCommand}"/><Button Content="New exception" Command="{Binding NewResourceExceptionCommand}" Margin="0"/></StackPanel>

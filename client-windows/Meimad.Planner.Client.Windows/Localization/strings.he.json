@@ -1069,7 +1069,7 @@
     "Import writes only Cases and Orders in one Server transaction. It never creates Batches, Operations, Machine assignments, backlog entries, or Timeline data.":  "ייבוא כותב רק מקרים והזמנות בעסקת שרת אחת. הוא לעולם לא יוצר אצוות, פעולות, הקצאות מכונה, כניסות צבר או נתוני ציר זמן.",
     "importToken is required.":  "נדרש importToken.",
     "In progress":  "בתהליך",
-    "Inactive employees are excluded from future resource availability. Employee capacity scheduling is not implemented.":  "עובדים לא פעילים אינם נכללים בזמינות המשאבים העתידיים. תזמון קיבולת עובדים אינו מיושם.",
+    "Inactive employees are excluded from future resource availability. The Timeline reserves active employees by role: setup needs a setup worker qualified for the Machine, QA needs a QA worker, and worker-attended load/unload needs a regular worker, each only within that employee's own calendar and exceptions.":  "עובדים לא פעילים אינם נכללים בזמינות המשאבים העתידיים. ציר הזמן משריין עובדים פעילים לפי תפקיד: הכנה דורשת עובד הכנה המוסמך למכונה, בקרת איכות דורשת עובד בקרת איכות, וטעינה/פריקה בליווי עובד דורשת עובד רגיל — כל אחד רק בתוך לוח השנה והחריגים של אותו עובד.",
     "Inactive Machine — drops will be rejected":  "מכונה לא פעילה - הטיפות יידחו",
     "Incompatible Machine":  "מכונה לא תואמת",
     "incomplete staging publication":  "פרסום בימתי לא שלם",

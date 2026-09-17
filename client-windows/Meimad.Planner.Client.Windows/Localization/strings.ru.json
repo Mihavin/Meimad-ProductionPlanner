@@ -1069,7 +1069,7 @@
     "Import writes only Cases and Orders in one Server transaction. It never creates Batches, Operations, Machine assignments, backlog entries, or Timeline data.":  "Импорт записывает только Дела и Заказы в одной транзакции Сервера. Он никогда не создает пакеты, операции, назначения машин, записи невыполненной работы или данные временной шкалы.",
     "importToken is required.":  "Требуется импорттокен.",
     "In progress":  "В процессе",
-    "Inactive employees are excluded from future resource availability. Employee capacity scheduling is not implemented.":  "Неактивные сотрудники исключены из будущей доступности ресурсов. Планирование загрузки сотрудников не реализовано.",
+    "Inactive employees are excluded from future resource availability. The Timeline reserves active employees by role: setup needs a setup worker qualified for the Machine, QA needs a QA worker, and worker-attended load/unload needs a regular worker, each only within that employee's own calendar and exceptions.":  "Неактивные сотрудники исключены из будущей доступности ресурсов. Временная шкала резервирует активных сотрудников по роли: наладка требует наладчика, допущенного к станку, контроль качества — контролёра ОТК, а загрузка/выгрузка с участием работника — обычного работника; каждый только в пределах собственного календаря и исключений.",
     "Inactive Machine — drops will be rejected":  "Неактивная машина — выпадения будут отклонены",
     "Incompatible Machine":  "Несовместимая машина",
     "incomplete staging publication":  "неполная постановочная публикация",
