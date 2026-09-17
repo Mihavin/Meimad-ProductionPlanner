@@ -23,6 +23,12 @@ build/
 out/
 coverage/
 TestResults/
+.release-build/
+.publish-temp/
+.qa/excluded-release-artifacts/
+
+# Factory working-plan workbooks are operator data, kept locally only
+data/*.xlsx
 
 # Runtime data and diagnostics
 .diagnostics/

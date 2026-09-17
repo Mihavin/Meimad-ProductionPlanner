@@ -1,6 +1,6 @@
 # Legacy Excel planning import report
 
-- **Workbook analyzed:** `data/Working plane.xlsx`
+- **Workbook analyzed:** `data/Working plane.xlsx` (operator data; kept locally, not versioned)
 - **Observed size:** 45,497,003 bytes
 - **Observed SHA-256:** `6228050C77BAEB341A6CC1EAB0B98E50EF48E371E5593D1A71B5D06D90C9FCF0`
 - **Analysis boundary:** read-only multipart preview against an isolated fresh database; no commit was performed

@@ -142,7 +142,7 @@ dotnet test .\tests\Meimad.Planner.Client.Windows.Tests\Meimad.Planner.Client.Wi
 
 ### 0.1 Supplied-workbook preview smoke
 
-The operator-supplied `data/Working plane.xlsx` was exercised through the freshly built Server's actual HTTP multipart preview endpoint against an isolated temporary database; no Edit Mode or commit endpoint was used. The order-driven `גיליון1` layout produced 373 unique Case Parts, 557 grouped Part+Order rows, and 557 Part+Batch Number rows. The summed Batch planned quantity was 10,996 and exactly equaled the summed related-Order allocation quantity. Validation returned zero blockers and 239 warnings (primarily explicit aggregation/matching review notices). The original workbook was read only and was not modified.
+The operator-supplied `data/Working plane.xlsx` (kept locally, not versioned) was exercised through the freshly built Server's actual HTTP multipart preview endpoint against an isolated temporary database; no Edit Mode or commit endpoint was used. The order-driven `גיליון1` layout produced 373 unique Case Parts, 557 grouped Part+Order rows, and 557 Part+Batch Number rows. The summed Batch planned quantity was 10,996 and exactly equaled the summed related-Order allocation quantity. Validation returned zero blockers and 239 warnings (primarily explicit aggregation/matching review notices). The original workbook was read only and was not modified.
 
 The exact sheet names/dimensions, detected columns, proposed meanings, representative value formats, all 16 Machine-section labels, unclear-field and issue-code breakdown, current database entity mapping, transient staging design, and manual production-import checklist are in [Legacy Excel planning import report](legacy-excel-import-report.md).
 
