@@ -1341,16 +1341,34 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<BatchMaterialReconciliation>(response, cancellationToken);
     }
 
-    public async Task<byte[]?> GetCasePreviewAsync(
+    public Task<byte[]?> GetCasePreviewAsync(
         string caseId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        GetValidatedFileAsync($"api/v1/cases/{Uri.EscapeDataString(caseId)}/preview", cancellationToken);
+
+    private sealed record ValidatedFile(
+        byte[] Bytes, DateTimeOffset? LastModified, System.Net.Http.Headers.EntityTagHeaderValue? EntityTag);
+
+    private readonly Dictionary<string, ValidatedFile> validatedFiles = new(StringComparer.Ordinal);
+
+    // Pictures rarely change; a 304 keeps the previously returned array instance so callers
+    // can skip re-decoding by reference comparison.
+    private async Task<byte[]?> GetValidatedFileAsync(string relativeUrl, CancellationToken cancellationToken)
     {
-        using var response = await httpClient.GetAsync(
-            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/preview",
-            cancellationToken);
-        if (response.StatusCode is System.Net.HttpStatusCode.NotFound
-            or System.Net.HttpStatusCode.UnsupportedMediaType)
+        ValidatedFile? cached;
+        lock (validatedFiles) validatedFiles.TryGetValue(relativeUrl, out cached);
+        using var request = new HttpRequestMessage(HttpMethod.Get, relativeUrl);
+        if (cached?.EntityTag is not null) request.Headers.IfNoneMatch.Add(cached.EntityTag);
+        if (cached?.LastModified is not null) request.Headers.IfModifiedSince = cached.LastModified;
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotModified && cached is not null)
         {
+            return cached.Bytes;
+        }
+
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.UnsupportedMediaType)
+        {
+            lock (validatedFiles) validatedFiles.Remove(relativeUrl);
             return null;
         }
 
@@ -1359,7 +1377,17 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             await ThrowApiErrorAsync(response, cancellationToken);
         }
 
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var lastModified = response.Content.Headers.LastModified;
+        var entityTag = response.Headers.ETag;
+        lock (validatedFiles)
+        {
+            if (lastModified is not null || entityTag is not null)
+                validatedFiles[relativeUrl] = new(bytes, lastModified, entityTag);
+            else
+                validatedFiles.Remove(relativeUrl);
+        }
+        return bytes;
     }
 
     public async Task<LegacyWorkingPlanPreview> PreviewLegacyWorkingPlanAsync(
@@ -2352,26 +2380,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<WeeklyEmployeeEfficiencyReport>(response, cancellationToken);
     }
 
-    public async Task<byte[]?> GetMachinePictureAsync(
+    public Task<byte[]?> GetMachinePictureAsync(
         string machineId,
-        CancellationToken cancellationToken = default)
-    {
-        using var response = await httpClient.GetAsync(
-            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/picture",
-            cancellationToken);
-        if (response.StatusCode is System.Net.HttpStatusCode.NotFound
-            or System.Net.HttpStatusCode.UnsupportedMediaType)
-        {
-            return null;
-        }
-
-        if (!response.IsSuccessStatusCode)
-        {
-            await ThrowApiErrorAsync(response, cancellationToken);
-        }
-
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
-    }
+        CancellationToken cancellationToken = default) =>
+        GetValidatedFileAsync($"api/v1/machines/{Uri.EscapeDataString(machineId)}/picture", cancellationToken);
 
     public async Task<PlanningBoardSnapshot> GetPlanningBoardAsync(
         CancellationToken cancellationToken = default)

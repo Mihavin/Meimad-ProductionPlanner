@@ -1492,6 +1492,37 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Machine_picture_revalidates_with_if_modified_since_and_reuses_bytes_on_304()
+    {
+        var pictureBytes = new byte[] { 1, 2, 3 };
+        var first = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(pictureBytes) };
+        first.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+        first.Content.Headers.LastModified = DateTimeOffset.Parse("2026-09-10T08:00:00Z");
+        var changed = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([9, 9]) };
+        changed.Content.Headers.LastModified = DateTimeOffset.Parse("2026-09-11T08:00:00Z");
+        var handler = new RecordingHandler(
+            first,
+            new HttpResponseMessage(HttpStatusCode.NotModified),
+            changed,
+            new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var api = CreateClient(handler);
+
+        var initial = await api.GetMachinePictureAsync("machine-1");
+        var unchanged = await api.GetMachinePictureAsync("machine-1");
+        var updated = await api.GetMachinePictureAsync("machine-1");
+        var removed = await api.GetMachinePictureAsync("machine-1");
+
+        Assert.Equal(pictureBytes, initial);
+        Assert.Same(initial, unchanged);
+        Assert.Equal(new byte[] { 9, 9 }, updated);
+        Assert.Null(removed);
+        Assert.Null(handler.Requests[0].IfModifiedSince);
+        Assert.Equal("Thu, 10 Sep 2026 08:00:00 GMT", handler.Requests[1].IfModifiedSince);
+        Assert.Equal("Fri, 11 Sep 2026 08:00:00 GMT", handler.Requests[3].IfModifiedSince);
+        Assert.All(handler.Requests, request => Assert.Equal("/api/v1/machines/machine-1/picture", request.Path));
+    }
+
+    [Fact]
     public async Task Case_save_sends_edit_generation_and_etag()
     {
         var handler = new RecordingHandler(
@@ -2587,7 +2618,8 @@ public sealed class PlannerApiClientTests
                 ReadHeader(request, "If-Match"),
                 request.Content is null
                     ? string.Empty
-                    : await request.Content.ReadAsStringAsync(cancellationToken)));
+                    : await request.Content.ReadAsStringAsync(cancellationToken),
+                ReadHeader(request, "If-Modified-Since")));
             return responses.Dequeue();
         }
 
@@ -2602,5 +2634,6 @@ public sealed class PlannerApiClientTests
         string? UserId,
         string? Generation,
         string? IfMatch,
-        string Body);
+        string Body,
+        string? IfModifiedSince = null);
 }

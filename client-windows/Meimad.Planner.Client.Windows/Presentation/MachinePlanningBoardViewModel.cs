@@ -1107,6 +1107,12 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             ?? WorkingCalendars.FirstOrDefault();
     }
 
+    private sealed record DecodedImage(byte[]? Bytes, string? LocalPath, DateTime LocalWriteTime, BitmapImage? Image);
+
+    private readonly Dictionary<string, DecodedImage> machinePictures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DecodedImage> casePreviews = new(StringComparer.Ordinal);
+    private Dictionary<string, string?>? previewPathByCase;
+
     private async Task LoadMachinePicturesAsync()
     {
         if (apiClient is null)
@@ -1114,9 +1120,14 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             return;
         }
 
+        var pictureTasks = Machines.ToDictionary(
+            machine => machine.MachineId,
+            machine => apiClient.GetMachinePictureAsync(machine.MachineId),
+            StringComparer.Ordinal);
+        await Task.WhenAll(pictureTasks.Values);
         foreach (var machine in Machines)
         {
-            machine.Picture = ToBitmap(await apiClient.GetMachinePictureAsync(machine.MachineId));
+            machine.Picture = DecodeCached(machinePictures, machine.MachineId, pictureTasks[machine.MachineId].Result, null);
         }
     }
 
@@ -1128,23 +1139,63 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             .Distinct(StringComparer.Ordinal)
             .ToDictionary(caseId => caseId, caseId => apiClient.GetCasePreviewAsync(caseId), StringComparer.Ordinal);
         await Task.WhenAll(previewTasks.Values);
-        IReadOnlyList<PlannerCase> cases = [];
-        try
+        // The Case list is only needed for the local-path fallback of Cases the Server could not
+        // serve, and Case preview paths rarely change, so it is read once per session.
+        var unresolved = previewTasks
+            .Where(pair => pair.Value.Result is null && !(previewPathByCase?.ContainsKey(pair.Key) ?? false))
+            .Select(pair => pair.Key)
+            .ToArray();
+        if (unresolved.Length > 0)
         {
-            cases = await apiClient.ListCasesAsync(new CaseQuery(null, null, null, "partNumber"));
+            previewPathByCase = new Dictionary<string, string?>(StringComparer.Ordinal);
+            try
+            {
+                foreach (var item in await apiClient.ListCasesAsync(new CaseQuery(null, null, null, "partNumber")))
+                    previewPathByCase[item.CaseId] = item.PreviewPath;
+            }
+            catch (NotSupportedException)
+            {
+                // Minimal API fakes used by isolated board tests may not expose Case master data.
+            }
+            foreach (var caseId in unresolved) previewPathByCase.TryAdd(caseId, null);
         }
-        catch (NotSupportedException)
-        {
-            // Minimal API fakes used by isolated board tests may not expose Case master data.
-        }
-        var previewPaths = cases.ToDictionary(item => item.CaseId, item => item.PreviewPath, StringComparer.Ordinal);
         var previews = previewTasks.ToDictionary(
             pair => pair.Key,
-            pair => LoadPreview(pair.Value.Result, previewPaths.GetValueOrDefault(pair.Key)),
+            pair => DecodeCached(casePreviews, pair.Key, pair.Value.Result,
+                pair.Value.Result is null ? previewPathByCase?.GetValueOrDefault(pair.Key) : null),
             StringComparer.Ordinal);
         foreach (var operation in operations)
         {
             operation.Preview = previews[operation.CaseId];
+        }
+    }
+
+    private static BitmapImage? DecodeCached(
+        Dictionary<string, DecodedImage> cache, string key, byte[]? serverBytes, string? localPath)
+    {
+        var localWriteTime = localPath is null ? default : LocalWriteTime(localPath);
+        if (cache.TryGetValue(key, out var cached)
+            && ReferenceEquals(cached.Bytes, serverBytes)
+            && string.Equals(cached.LocalPath, localPath, StringComparison.Ordinal)
+            && cached.LocalWriteTime == localWriteTime)
+        {
+            return cached.Image;
+        }
+
+        var image = LoadPreview(serverBytes, localPath);
+        cache[key] = new DecodedImage(serverBytes, localPath, localWriteTime, image);
+        return image;
+    }
+
+    private static DateTime LocalWriteTime(string path)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return default;
         }
     }
 
