@@ -9,6 +9,10 @@ internal interface IProductionReadinessRepository
         string batchOperationId,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyDictionary<string, ProductionReadinessResult>> ReadManyAsync(
+        IReadOnlyCollection<string> batchOperationIds,
+        CancellationToken cancellationToken);
+
     Task<ProductionReadinessResult> UpdateInputsAsync(
         string batchOperationId,
         ProductionReadinessInputUpdate update,

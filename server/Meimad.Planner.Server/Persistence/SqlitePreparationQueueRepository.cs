@@ -13,12 +13,14 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
         await using var transaction = connection.BeginTransaction(deferred: true);
         var metadata = await ReadMetadataAsync(connection, transaction, cancellationToken);
         var result = new List<PreparationQueueSource>(metadata.Count);
+        var contexts = await SqliteProductionReadinessContextReader.ReadManyAsync(
+            connection, transaction,
+            metadata.Select(row => row.BatchOperationId).ToArray(),
+            cancellationToken);
 
         foreach (var row in metadata)
         {
-            var context = await SqliteProductionReadinessContextReader.ReadAsync(
-                connection, transaction, row.BatchOperationId, cancellationToken);
-            if (context is null) continue;
+            if (!contexts.TryGetValue(row.BatchOperationId, out var context)) continue;
             var hasPackage = await HasCurrentValidPackageAsync(
                 connection, transaction, row.BatchOperationId, cancellationToken);
             result.Add(new(

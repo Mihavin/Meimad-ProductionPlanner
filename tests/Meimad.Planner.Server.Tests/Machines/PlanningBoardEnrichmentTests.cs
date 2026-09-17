@@ -160,6 +160,62 @@ public sealed class PlanningBoardEnrichmentTests
         });
     }
 
+    [Fact]
+    public async Task Planning_board_keeps_readiness_context_per_operation_across_machines()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO working_calendars (id, name, time_zone_id, calendar_json)
+                    VALUES ('board-calendar', 'Board calendar', 'UTC', '{}');
+                    INSERT INTO machines (
+                        id, number, name, machine_type, capabilities_json,
+                        working_calendar_id, display_configuration_json, status, is_active,
+                        usable_tool_positions)
+                    VALUES
+                        ('machine-a', 'M-A', 'Machine A', 'Mill', '[]', 'board-calendar', '{}', 'available', 1, 20),
+                        ('machine-b', 'M-B', 'Machine B', 'Mill', '[]', 'board-calendar', '{}', 'available', 1, 30);
+                    INSERT INTO cases (id, part_number, name, working_folder_path)
+                    VALUES ('board-case', 'PN-BOARD', 'Board case', 'C:\Cases\PN-BOARD');
+                    INSERT INTO case_operations (
+                        id, case_id, operation_number, route_position, name,
+                        setup_seconds, cycle_seconds)
+                    VALUES ('board-case-op', 'board-case', 10, 0, 'Mill', 60, 30);
+                    INSERT INTO production_batches (
+                        id, case_id, batch_number, status, planned_quantity)
+                    VALUES
+                        ('batch-a', 'board-case', 'B-A', 'waiting', 4),
+                        ('batch-b', 'board-case', 'B-B', 'waiting', 7);
+                    INSERT INTO batch_operations (
+                        id, production_batch_id, source_case_operation_id,
+                        operation_number, route_position, name,
+                        setup_seconds, cycle_seconds, status)
+                    VALUES
+                        ('op-a', 'batch-a', 'board-case-op', 10, 0, 'Mill', 60, 30, 'not_started'),
+                        ('op-b', 'batch-b', 'board-case-op', 10, 0, 'Mill', 60, 30, 'not_started');
+                    INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                    VALUES
+                        ('assignment-a', 'op-a', 'machine-a', 0),
+                        ('assignment-b', 'op-b', 'machine-b', 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync("/api/v1/planning-board");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var operations = document.RootElement.GetProperty("machines").EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("backlog").EnumerateArray())
+                .ToDictionary(operation => operation.GetProperty("batchOperationId").GetString()!);
+            Assert.Equal(20, operations["op-a"].GetProperty("availableToolPositions").GetInt32());
+            Assert.Equal(30, operations["op-b"].GetProperty("availableToolPositions").GetInt32());
+        });
+    }
+
     private static async Task<string[]> ReadConflictEventsAsync(HttpClient client)
     {
         using var response = await client.GetAsync(

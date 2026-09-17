@@ -23,6 +23,21 @@ internal sealed class SqliteProductionReadinessRepository(SqliteDatabase databas
         return ProductionReadinessEvaluator.Evaluate(context);
     }
 
+    public async Task<IReadOnlyDictionary<string, ProductionReadinessResult>> ReadManyAsync(
+        IReadOnlyCollection<string> batchOperationIds,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        var contexts = await SqliteProductionReadinessContextReader.ReadManyAsync(
+            connection, transaction, batchOperationIds, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return contexts.ToDictionary(
+            pair => pair.Key,
+            pair => ProductionReadinessEvaluator.Evaluate(pair.Value),
+            StringComparer.Ordinal);
+    }
+
     public async Task<ProductionReadinessResult> UpdateInputsAsync(
         string batchOperationId,
         ProductionReadinessInputUpdate update,

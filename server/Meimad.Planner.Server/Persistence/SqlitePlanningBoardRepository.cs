@@ -302,12 +302,14 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         }
 
         await reader.DisposeAsync();
+        var contexts = await SqliteProductionReadinessContextReader.ReadManyAsync(
+            connection, transaction,
+            operations.Select(operation => operation.BatchOperationId).ToArray(),
+            cancellationToken);
         for (var index = 0; index < operations.Count; index++)
         {
             var operation = operations[index];
-            var context = await SqliteProductionReadinessContextReader.ReadAsync(
-                connection, transaction, operation.BatchOperationId, cancellationToken);
-            if (context is null) continue;
+            if (!contexts.TryGetValue(operation.BatchOperationId, out var context)) continue;
             var readiness = ProductionReadinessEvaluator.Evaluate(context);
             var readinessManaged = readiness.IsManaged;
             var capacityComponent = readiness.Components.Single(

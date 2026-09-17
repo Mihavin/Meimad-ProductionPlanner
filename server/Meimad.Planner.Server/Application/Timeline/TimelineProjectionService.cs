@@ -637,16 +637,20 @@ internal sealed class TimelineProjectionService
             allConflicts);
         var readinessByOperation = new Dictionary<string, ProductionReadinessResult>(
             StringComparer.Ordinal);
-        foreach (var operationId in projectedMachines
-                     .SelectMany(machine => machine.Intervals)
-                     .Where(interval => interval.OperationStatus == "not_started"
-                         && interval.OperationId is not null)
-                     .Select(interval => interval.OperationId!)
-                     .Distinct(StringComparer.Ordinal))
+        var notStartedOperationIds = projectedMachines
+            .SelectMany(machine => machine.Intervals)
+            .Where(interval => interval.OperationStatus == "not_started"
+                && interval.OperationId is not null)
+            .Select(interval => interval.OperationId!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (readinessRepository is not null && notStartedOperationIds.Length > 0)
         {
-            if (readinessRepository is null) break;
-            var readiness = await readinessRepository.ReadAsync(operationId, cancellationToken);
-            if (readiness.IsManaged) readinessByOperation[operationId] = readiness;
+            foreach (var (operationId, readiness) in await readinessRepository.ReadManyAsync(
+                         notStartedOperationIds, cancellationToken))
+            {
+                if (readiness.IsManaged) readinessByOperation[operationId] = readiness;
+            }
         }
         projectedMachines = projectedMachines.Select(machine => machine with
         {
