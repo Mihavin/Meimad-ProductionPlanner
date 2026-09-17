@@ -51,7 +51,8 @@ internal sealed class TimelineProjectionService
         DateTimeOffset horizonStart,
         DateTimeOffset horizonEnd,
         DateTimeOffset? asOf,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool recordDiagnostics = false)
     {
         var total = Stopwatch.StartNew();
         horizonStart = horizonStart.ToUniversalTime();
@@ -725,7 +726,10 @@ internal sealed class TimelineProjectionService
                 string.Join(',', allConflicts.Where(conflict => conflict.OperationIds.Contains(operation.OperationId))
                     .Select(conflict => conflict.Code)));
         }
-        await LogProjectionEventsAsync(projection, resourceWaitIntervals, cancellationToken);
+        if (recordDiagnostics)
+        {
+            await LogProjectionEventsAsync(projection, resourceWaitIntervals, cancellationToken);
+        }
         return projection;
     }
 
@@ -784,24 +788,27 @@ internal sealed class TimelineProjectionService
         CancellationToken token)
     {
         var day = projection.ReadAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var events = new List<StructuredEventWrite>();
         foreach (var conflict in projection.Conflicts)
-            await eventLog.AppendAsync(new(
+            events.Add(new(
                 "timeline_conflict_detected", projection.ReadAt, "system",
                 new Dictionary<string,string> {
                     ["conflictId"]=conflict.ConflictId,
                     ["operationIds"]=string.Join(',',conflict.OperationIds),
                     ["machineIds"]=string.Join(',',conflict.MachineIds) },
                 conflict.Code, conflict.Message, null, new { conflict.Severity },
-                $"timeline-conflict:{day}:{conflict.ConflictId}"), token);
+                $"timeline-conflict:{day}:{conflict.ConflictId}"));
 
         foreach (var interval in resourceWaitIntervals)
-            await eventLog.AppendAsync(new(
+            events.Add(new(
                 "resource_wait_detected", projection.ReadAt, "system",
                 new Dictionary<string,string> {
                     ["batchOperationId"]=interval.OperationId!,["machineId"]=interval.MachineId },
                 "resource_unavailable_or_contended", interval.Detail, null,
                 new { interval.StartsAt,interval.EndsAt },
-                $"resource-wait:{day}:{interval.OperationId}:{interval.MachineId}:{interval.Detail}"), token);
+                $"resource-wait:{day}:{interval.OperationId}:{interval.MachineId}:{interval.Detail}"));
+
+        await eventLog.AppendMissingAsync(events, token);
     }
 
     private static bool IsResourceWait(TimelineProjectionInterval interval) =>

@@ -97,6 +97,7 @@ internal sealed class DatabaseMigrator
     internal async Task MigrateAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await EnsureWriteAheadLoggingAsync(connection, cancellationToken);
         await EnsureMigrationTableAsync(connection, cancellationToken);
 
         var appliedMigrations = await ReadAppliedMigrationsAsync(connection, cancellationToken);
@@ -140,6 +141,27 @@ internal sealed class DatabaseMigrator
         {
             throw new InvalidOperationException(
                 $"Database reports schema version {finalVersion}; expected {latestKnownVersion}.");
+        }
+    }
+
+    // The journal mode is stored in the database file, so one switch at startup is enough.
+    // WAL lets the polling clients and CNC telemetry writers proceed without blocking each other.
+    private async Task EnsureWriteAheadLoggingAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode = WAL;";
+        var mode = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken)) ?? "";
+        if (string.Equals(mode, "wal", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("Database journal mode is WAL.");
+        }
+        else
+        {
+            logger.LogWarning(
+                "Database journal mode could not be switched to WAL and remains '{JournalMode}'; readers and writers will block each other.",
+                mode);
         }
     }
 

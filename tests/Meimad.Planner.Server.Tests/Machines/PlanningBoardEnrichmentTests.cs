@@ -144,7 +144,32 @@ public sealed class PlanningBoardEnrichmentTests
             Assert.DoesNotContain(
                 conflicts,
                 conflict => conflict.GetProperty("code").GetString() == "unassigned_operation");
+
+            Assert.Empty(await ReadConflictEventsAsync(client));
+
+            using var timelineResponse = await client.GetAsync(
+                "/api/v1/timeline?from=2026-09-01T00:00:00Z&to=2026-10-01T00:00:00Z");
+            timelineResponse.EnsureSuccessStatusCode();
+            var loggedOnce = await ReadConflictEventsAsync(client);
+            Assert.Contains("calendar_configuration_missing", loggedOnce);
+
+            using var repeatedTimelineResponse = await client.GetAsync(
+                "/api/v1/timeline?from=2026-09-01T00:00:00Z&to=2026-10-01T00:00:00Z");
+            repeatedTimelineResponse.EnsureSuccessStatusCode();
+            Assert.Equal(loggedOnce, await ReadConflictEventsAsync(client));
         });
+    }
+
+    private static async Task<string[]> ReadConflictEventsAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(
+            "/api/v1/event-log?eventType=timeline_conflict_detected&limit=500");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("reasonCode").GetString()!)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static async Task RunWithServerAsync(Func<WebApplication, HttpClient, Task> test)

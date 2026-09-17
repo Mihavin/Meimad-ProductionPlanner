@@ -42,6 +42,48 @@ internal sealed class SqliteStructuredEventLogRepository(SqliteDatabase database
         await command.ExecuteNonQueryAsync(token);
     }
 
+    // Read-time diagnostics are keyed per day, so most calls find every key already stored;
+    // checking first keeps those reads from taking the write lock at all.
+    public async Task AppendMissingAsync(IReadOnlyList<StructuredEventWrite> values, CancellationToken token)
+    {
+        if (values.Count == 0) return;
+        await using var connection = await database.OpenConnectionAsync(token);
+        var existingKeys = await ReadExistingKeysAsync(
+            connection,
+            values.Where(value => value.EventKey is not null).Select(value => value.EventKey!).Distinct(StringComparer.Ordinal).ToArray(),
+            token);
+        var missing = values
+            .Where(value => value.EventKey is null || !existingKeys.Contains(value.EventKey))
+            .ToArray();
+        if (missing.Length == 0) return;
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        foreach (var value in missing)
+            await AppendAsync(connection, transaction, value, token);
+        await transaction.CommitAsync(token);
+    }
+
+    private static async Task<HashSet<string>> ReadExistingKeysAsync(
+        SqliteConnection connection, IReadOnlyList<string> keys, CancellationToken token)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        const int chunkSize = 500;
+        for (var offset = 0; offset < keys.Count; offset += chunkSize)
+        {
+            var chunk = keys.Skip(offset).Take(chunkSize).ToArray();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT event_key FROM structured_event_log WHERE event_key IN ("
+                + string.Join(',', chunk.Select((_, index) => $"$k{index}"))
+                + ");";
+            for (var index = 0; index < chunk.Length; index++)
+                command.Parameters.AddWithValue($"$k{index}", chunk[index]);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+                existing.Add(reader.GetString(0));
+        }
+        return existing;
+    }
+
     public async Task<IReadOnlyList<StructuredEvent>> ListAsync(
         DateTimeOffset? from, DateTimeOffset? to, string? eventType, int limit, CancellationToken token)
     {

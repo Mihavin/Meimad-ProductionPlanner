@@ -84,6 +84,7 @@ internal interface ICncLivePublisher
 {
     ValueTask PublishAsync(CncLiveMessage message, CancellationToken cancellationToken = default);
     CncLiveSubscription Subscribe(IReadOnlySet<string> machineIds);
+    int SubscriberCount { get; }
 }
 
 internal sealed class CncLiveSubscription(

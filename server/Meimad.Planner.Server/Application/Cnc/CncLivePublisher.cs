@@ -7,6 +7,8 @@ internal sealed class CncLivePublisher : ICncLivePublisher
 {
     private readonly ConcurrentDictionary<Guid, Subscriber> subscribers = new();
 
+    public int SubscriberCount => subscribers.Count;
+
     public ValueTask PublishAsync(CncLiveMessage message, CancellationToken cancellationToken = default)
     {
         foreach (var subscriber in subscribers.Values)

@@ -75,10 +75,11 @@ public sealed class CncPlatformTests
             var socketClient = application.GetTestServer().CreateWebSocketClient();
             using var socket = await socketClient.ConnectAsync(
                 new Uri("ws://localhost/api/v1/machines/live"), default);
+            var publisher = application.Services.GetRequiredService<ICncLivePublisher>();
             await SendAsync(socket, new { type = "subscribe", machineIds = new[] { "machine-live" } });
+            await WaitForSubscriptionAsync(publisher);
             var adapter = new FakeCncMachineAdapter("machine-live", "cnc-machine-live");
             var consumer = application.Services.GetServices<ICncSnapshotConsumer>().Single();
-            var publisher = application.Services.GetRequiredService<ICncLivePublisher>();
 
             adapter.SetProgram("O1234", "PART-LIVE");
             adapter.SetVariable(0);
@@ -364,6 +365,17 @@ public sealed class CncPlatformTests
     {
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value));
         return socket.SendAsync(bytes, WebSocketMessageType.Text, true, default);
+    }
+
+    // The server registers the subscription only once its socket loop has read the
+    // subscribe frame; publishing before that silently drops the message.
+    private static async Task WaitForSubscriptionAsync(ICncLivePublisher publisher)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (publisher.SubscriberCount == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     private static async Task<JsonElement> ReceiveAsync(WebSocket socket)

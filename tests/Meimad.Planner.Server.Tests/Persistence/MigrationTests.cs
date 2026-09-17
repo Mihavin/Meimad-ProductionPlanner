@@ -64,6 +64,17 @@ public sealed class MigrationTests
     ];
 
     [Fact]
+    public async Task Migrator_switches_the_database_to_write_ahead_logging()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using var connection = await fixture.Database.OpenConnectionAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode;";
+        Assert.Equal("wal", (string)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
     public async Task Fresh_database_applies_latest_schema()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();

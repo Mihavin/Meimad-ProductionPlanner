@@ -57,7 +57,8 @@ internal static class TimelineEndpoints
                 context);
         }
 
-        return Results.Ok(await service.CalculateAsync(from, to, asOf, cancellationToken));
+        return Results.Ok(await service.CalculateAsync(
+            from, to, asOf, cancellationToken, recordDiagnostics: true));
     }
 
     private static bool TryReadInstant(string? value, out DateTimeOffset instant) =>

@@ -14,6 +14,7 @@ internal sealed record StructuredEventWrite(
 internal interface IStructuredEventLogRepository
 {
     Task AppendAsync(StructuredEventWrite value, CancellationToken token);
+    Task AppendMissingAsync(IReadOnlyList<StructuredEventWrite> values, CancellationToken token);
     Task<IReadOnlyList<StructuredEvent>> ListAsync(
         DateTimeOffset? from, DateTimeOffset? to, string? eventType, int limit, CancellationToken token);
 }
