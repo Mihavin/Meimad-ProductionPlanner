@@ -307,10 +307,60 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         HealthDetail = $"{health.Service} {health.Version} • Server UTC {health.ServerTimeUtc:yyyy-MM-dd HH:mm:ss}";
         Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
         ApplyEditStatus(editStatus);
+        await CheckClientUpdateAsync();
         await Setup.EnsureLoadedAsync();
         await CaseWorkspace.EnsureLoadedAsync();
         await MachinePlanningBoard.EnsureLoadedAsync();
         await Timeline.EnsureLoadedAsync();
+    }
+
+    private bool clientUpdateChecked;
+
+    /// <summary>Raised once per session when the Server distributes a newer client than the running one.</summary>
+    public event EventHandler<ClientUpdateAvailableEventArgs>? ClientUpdateAvailable;
+
+    /// <summary>The last client/Server version-pair decision, for diagnostics and tests.</summary>
+    public ClientUpdateDecision? LastClientUpdateDecision { get; private set; }
+
+    private async Task CheckClientUpdateAsync()
+    {
+        if (clientUpdateChecked || apiClient is null)
+        {
+            return;
+        }
+
+        clientUpdateChecked = true;
+        var api = apiClient;
+        ClientInstallerManifest manifest;
+        try
+        {
+            manifest = await api.GetClientInstallerManifestAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A Server older than 0.1.117 has no installer endpoint, and a transient failure must
+            // never break the session; the check simply runs again at the next client start.
+            return;
+        }
+
+        var decision = ClientUpdatePolicy.Evaluate(ClientUpdatePolicy.RunningVersion, manifest);
+        LastClientUpdateDecision = decision;
+        switch (decision.Action)
+        {
+            case ClientUpdateAction.Install:
+                ClientUpdateAvailable?.Invoke(this, new ClientUpdateAvailableEventArgs(
+                    decision,
+                    manifest,
+                    (folder, progress, token) => api.DownloadClientInstallerAsync(
+                        folder, manifest.Sha256 ?? string.Empty, progress, token)));
+                break;
+            case ClientUpdateAction.ClientNewerThanServer:
+            case ClientUpdateAction.InstallerMissing:
+                HealthLevel = "attention";
+                HealthDetail = decision.Message;
+                Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
+                break;
+        }
     }
 
     private async Task RunBusyAsync(Func<Task> operation)

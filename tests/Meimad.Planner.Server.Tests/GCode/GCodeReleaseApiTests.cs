@@ -256,7 +256,7 @@ public sealed class GCodeReleaseApiTests
                 "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])",
                 "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])",
                 "[[MEIMAD:VERIFICATION_HOOK]]", "[[MEIMAD:EVENT_CONTEXT]]",
-                "G90", "M30", "%", ""
+                "[[MEIMAD:CYCLE_START]]", "G90", "[[MEIMAD:CYCLE_END]]", "M30", "%", ""
             }));
             var tools = Encoding.UTF8.GetBytes("tool,position\nT1,1\n");
 

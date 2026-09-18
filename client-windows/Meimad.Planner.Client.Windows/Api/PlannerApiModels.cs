@@ -2030,3 +2030,14 @@ internal sealed class PlannerProtocolException : Exception
     {
     }
 }
+
+/// <summary>What the Server reports about the Windows client installer it distributes.</summary>
+internal sealed record ClientInstallerManifest(
+    string ServerVersion,
+    string? ClientVersion,
+    bool InstallerAvailable,
+    string? FileName,
+    long? ByteLength,
+    string? Sha256);
+
+internal sealed record ClientInstallerDownload(string LocalPath, long ByteLength, string Sha256);

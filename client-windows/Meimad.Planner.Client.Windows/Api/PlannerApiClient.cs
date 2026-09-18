@@ -13,6 +13,15 @@ internal interface IPlannerApiClient : IDisposable
 {
     Task<ServerHealth> GetHealthAsync(CancellationToken cancellationToken = default);
 
+    Task<ClientInstallerManifest> GetClientInstallerManifestAsync(
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<ClientInstallerDownload> DownloadClientInstallerAsync(
+        string destinationFolder,
+        string expectedSha256,
+        IProgress<long>? progress = null,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<ServerMaintenanceCatalog> GetServerMaintenanceAsync(
         string clientId,
         string userId,
@@ -808,6 +817,78 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             Required(dto.Service, "service name"),
             Required(dto.Version, "service version"),
             dto.ServerTimeUtc);
+    }
+
+    public async Task<ClientInstallerManifest> GetClientInstallerManifestAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/client-installer", cancellationToken);
+        var dto = await ReadSuccessAsync<ClientInstallerManifestDto>(response, cancellationToken);
+        return new ClientInstallerManifest(
+            Required(dto.ServerVersion, "server version"),
+            dto.ClientVersion,
+            dto.InstallerAvailable,
+            dto.FileName,
+            dto.ByteLength,
+            dto.Sha256);
+    }
+
+    public async Task<ClientInstallerDownload> DownloadClientInstallerAsync(
+        string destinationFolder,
+        string expectedSha256,
+        IProgress<long>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(destinationFolder))
+            throw new ArgumentException("A download folder is required.", nameof(destinationFolder));
+        Directory.CreateDirectory(destinationFolder);
+
+        using var response = await importHttpClient.GetAsync(
+            "api/v1/client-installer/download", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            await ThrowApiErrorAsync(response, cancellationToken);
+
+        var serverFileName = response.Content.Headers.ContentDisposition?.FileNameStar
+            ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
+            ?? "Meimad-Planner-Client-Setup.msi";
+        var safeFileName = Path.GetFileName(serverFileName);
+        if (string.IsNullOrWhiteSpace(safeFileName)
+            || !safeFileName.EndsWith(".msi", StringComparison.OrdinalIgnoreCase))
+            throw new PlannerProtocolException("Server returned an invalid client installer file name.");
+        var localPath = UniquePath(destinationFolder, safeFileName);
+        try
+        {
+            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var target = new FileStream(
+                localPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[81920];
+            long length = 0;
+            int read;
+            while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                hasher.AppendData(buffer, 0, read);
+                length += read;
+                progress?.Report(length);
+            }
+            await target.FlushAsync(cancellationToken);
+            var actualHash = Convert.ToHexString(hasher.GetHashAndReset());
+            var headerHash = Header(response, "X-Meimad-Checksum-SHA256");
+            var expectedHash = string.IsNullOrWhiteSpace(expectedSha256) ? headerHash : expectedSha256;
+            if (string.IsNullOrWhiteSpace(expectedHash)
+                || !string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(headerHash)
+                    && !string.Equals(actualHash, headerHash, StringComparison.OrdinalIgnoreCase)))
+                throw new PlannerProtocolException("Downloaded client installer checksum did not match the Server checksum.");
+
+            return new(localPath, length, actualHash);
+        }
+        catch
+        {
+            if (File.Exists(localPath)) File.Delete(localPath);
+            throw;
+        }
     }
 
     public async Task<EditModeStatus> GetEditModeAsync(
@@ -2988,6 +3069,14 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         string? Service,
         string? Version,
         DateTimeOffset ServerTimeUtc);
+
+    private sealed record ClientInstallerManifestDto(
+        string? ServerVersion,
+        string? ClientVersion,
+        bool InstallerAvailable,
+        string? FileName,
+        long? ByteLength,
+        string? Sha256);
 
     private sealed record EditModeDto(
         string? State,

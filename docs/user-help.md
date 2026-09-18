@@ -12,6 +12,16 @@ This guide is for planners, supervisors, setup personnel, and machine operators.
 
 If the Server is unavailable, read-only screens may keep their last snapshot, but do not assume that a displayed plan is current.
 
+### Client updates
+
+The Server and the client are released as a pair with the same version number, and the Server carries the client installer that belongs to its version. At every start, after the first successful connection, the client compares its version with the Server's client package:
+
+- **Newer client on the Server:** a dialog **New version available** opens with the message "New version X is available. The client will be installed now.", downloads the installer from the Server, verifies its checksum, starts the installation, and closes the client. Windows asks for administrator confirmation (UAC) because the client is installed for all users; after the installer finishes, the client starts again by itself. **Cancel** during the download keeps the current client for this session; the dialog returns at the next start.
+- **Client newer than the Server:** nothing is installed. The connection indicator shows an attention notice asking to upgrade the Server (a client is never downgraded).
+- **Versions differ but the Server has no installer:** the indicator shows a notice to ask the administrator; the installer is normally present after any Server upgrade from 0.1.117 on.
+
+The downloaded installer and its log (`install-client-update.log`) are kept under `%LOCALAPPDATA%\MeimadPlanner\updates`.
+
 ## 2. Main screens
 
 ### Cases
@@ -210,6 +220,13 @@ The Server only recognizes a bare part-number line: uppercase letters and digits
 ### FOCAS library not found
 
 The `focas` check reports `FOCAS library Fwlib64.dll was not found` and lists the searched folders. Copy the 64-bit FOCAS 2 library files from the FANUC kit into the Server install folder's `focas` subfolder, or set the `MEIMAD_FOCAS_LIBRARY_DIR` environment variable for the service, then run **Test FOCAS connection** again. `EW_NODLL (-15)` means `Fwlib64.dll` was found but `fwlibe64.dll` or the control-series `fwlib*64.dll` is missing next to it. `EW_SOCKET (-16)` with the library complete means the control did not answer on the FOCAS port: check the fixed IP, that FOCAS/Ethernet is enabled on the control, and that the Server has a route to the machine VLAN.
+
+### Client update fails or repeats
+
+- **The installer window closes and the client does not return:** open `%LOCALAPPDATA%\MeimadPlanner\updates\install-client-update.log`. A declined UAC prompt or an error 1603 leaves the old client installed; start it from the Start menu, and the dialog offers the update again. The same MSI can be installed by hand from that folder.
+- **"The update could not be installed: … checksum did not match":** the download was corrupted or the Server's `client-installer` folder holds a modified file. Retry once; if it repeats, reinstall the Server package so the bundled installer and its manifest match.
+- **The notice says the Server has no client installer:** the Server was installed from a package older than 0.1.117 or its `client-installer` folder was emptied. Upgrade the Server, or install the client MSI from the release folder by hand.
+- **The dialog appears at every start although the installation succeeded:** the client started from a second, older installation folder (for example a copied `bin` directory). Use the Start menu entry of the installed client.
 
 ### Operation cannot start
 

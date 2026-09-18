@@ -1,6 +1,6 @@
 # Windows installers
 
-Current package version: `0.1.116`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
+Current package version: `0.1.117`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
 
 The repository builds two independent 64-bit Windows Installer packages:
 
@@ -57,3 +57,17 @@ The Server binaries are installed below `Program Files`. Mutable Server state is
 - E-Ink packages: `%ProgramData%\MeimadPlanner\Server\eink`
 
 Uninstalling or upgrading the Server does not remove these mutable-data folders. The service keeps the default loopback-only address (`http://127.0.0.1:5080`); remote factory access still requires the deployment-specific TLS, authentication, firewall, and host-binding configuration described in the deployment documentation.
+
+## Bundled client installer and client auto-update
+
+Since 0.1.117 the Server MSI carries the matching client MSI. `build-installers.ps1` builds the client MSI first, copies it into the Server payload as `client-installer\Meimad-Planner-Client-Setup.msi`, and writes `client-installer\Meimad-Planner-Client-Setup.json` next to it:
+
+```json
+{"fileName":"Meimad-Planner-Client-Setup.msi","version":"0.1.117","sha256":"…","byteLength":107358447,"builtAt":"2026-09-18T09:14:00Z"}
+```
+
+The installed Server serves both through `GET /api/v1/client-installer` (manifest) and `GET /api/v1/client-installer/download` (MSI with `X-Meimad-Checksum-SHA256`). It recomputes the SHA-256 from the file and offers the MSI only when the manifest describes it, so a hand-edited folder is never distributed. The folder and file name are configurable (`ClientInstaller:Folder`, `ClientInstaller:FileName`), and a Server upgrade replaces the bundled MSI like any other payload file.
+
+Every Windows client compares its own version with the Server's client package once per session after the first health check. When the Server carries a newer client, the client shows "New version available, the client will be installed", downloads the MSI to `%LOCALAPPDATA%\MeimadPlanner\updates`, verifies the checksum, and runs `msiexec /i … /passive /norestart` through a helper script that waits for the client to exit and restarts it afterwards (log: `install-client-update.log` in the same folder; the UAC prompt still appears because the client is a per-machine install). A client that is newer than the Server's package is never downgraded; it shows an attention notice instead.
+
+Release consequence: upgrading the Server is enough to bring every client PC to the same version. The client MSI still exists separately for first installations. `verify-installers.ps1` fails when the bundled MSI or its manifest does not match the distributed client MSI.

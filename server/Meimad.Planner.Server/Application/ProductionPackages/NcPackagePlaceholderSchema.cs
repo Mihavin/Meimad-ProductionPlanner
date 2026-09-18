@@ -47,9 +47,9 @@ internal static partial class NcPackagePlaceholderSchema
 
     // CYCLE_START/CYCLE_END are the canonical-protocol equivalent of the legacy V1
     // "(MEIMAD PACKAGE CYCLE START/END V1)" markers that drive real part counting
-    // (SqliteProductionRunCycleAccounting). They are optional (a Manual/no-counting
-    // Operation may omit both) but validated as a matched pair below, so they are
-    // deliberately NOT in UniqueRequiredKeys.
+    // (SqliteProductionRunCycleAccounting). Since 2026-09-18 every canonical template
+    // must carry exactly one pair, validated (required, matched, ordered) with its own
+    // codes in ValidateCycleMarkerPair, so it is deliberately NOT in UniqueRequiredKeys.
     private static readonly string[] UniqueRequiredKeys =
     [
         NcPackagePlaceholderKeys.ProductionRunId,
@@ -187,10 +187,12 @@ internal static partial class NcPackagePlaceholderSchema
         if (startCount > 1 || endCount > 1)
             throw Invalid("production_package_placeholder_duplicate",
                 "Canonical NC template must contain at most one [[MEIMAD:CYCLE_START]] and one [[MEIMAD:CYCLE_END]].");
+        if (startCount == 0 && endCount == 0)
+            throw Invalid("production_package_cycle_marker_required",
+                "Canonical NC template must contain one [[MEIMAD:CYCLE_START]] and one [[MEIMAD:CYCLE_END]] around the physical part cycle.");
         if (startCount != endCount)
             throw Invalid("production_package_cycle_marker_unpaired",
-                "[[MEIMAD:CYCLE_START]] and [[MEIMAD:CYCLE_END]] must both be present or both be absent.");
-        if (startCount == 0) return;
+                "[[MEIMAD:CYCLE_START]] and [[MEIMAD:CYCLE_END]] must both be present.");
 
         var startLine = Array.FindIndex(lines,
             line => StandaloneToken(NcPackagePlaceholderKeys.CycleStart).IsMatch(line ?? string.Empty));

@@ -199,6 +199,30 @@ Implemented Server liveness endpoint:
 
 The current endpoint proves only that the process and HTTP pipeline are running. Although SQLite migrations now run during startup, database and migration readiness fields are not currently exposed. It does not expose paths, credentials, host secrets, or exception text. Authentication and a separate detailed readiness endpoint remain TBD.
 
+### `GET /api/v1/client-installer`
+
+Implemented (0.1.117). Reports the Windows client installer the Server distributes, so a client can compare its own version with the Server's client package at start:
+
+```json
+{
+  "serverVersion": "0.1.117",
+  "clientVersion": "0.1.117",
+  "installerAvailable": true,
+  "fileName": "Meimad-Planner-Client-Setup.msi",
+  "byteLength": 107358447,
+  "sha256": "c490ce15ef1695f5aa37020b50f0f2f6fabe1c9276f0ef3f00e80fc38c393c03",
+  "builtAt": "2026-09-18T09:14:00Z"
+}
+```
+
+`serverVersion` is the running Server's `major.minor.patch`. `clientVersion`, `byteLength`, `sha256`, and `builtAt` come from the `Meimad-Planner-Client-Setup.json` manifest that the installer build writes next to the MSI in the Server's `client-installer` folder (`ClientInstaller:Folder`, default `client-installer` under the Server directory; `ClientInstaller:FileName`, default `Meimad-Planner-Client-Setup.msi`). The Server recomputes the SHA-256 from the file and offers the MSI only when the manifest describes it; otherwise `installerAvailable` is `false` and the client fields are `null`.
+
+### `GET /api/v1/client-installer/download`
+
+Implemented (0.1.117). Streams the client MSI (`application/octet-stream`, `Content-Disposition` file name, range requests enabled) with `X-Meimad-Checksum-SHA256` and `X-Meimad-Client-Version` headers. Returns `404 client_installer_unavailable` when no valid MSI is present. Both routes are read-only and need no Edit Mode headers.
+
+The Windows client calls the manifest route once per session after its first successful health check. When `clientVersion` is newer than the running client it shows "New version available, the client will be installed", downloads the MSI to `%LOCALAPPDATA%\MeimadPlanner\updates`, verifies the checksum, starts `msiexec /i … /passive /norestart` through a helper script that waits for the client to exit, and restarts the client afterwards (`install-client-update.log` in the same folder). A client newer than the Server's package, or a version mismatch without an installer, only raises an attention notice in the connection indicator; the client never downgrades itself.
+
 ### `GET /api/v1/service-info`
 
 **Proposed.** Returns API version, supported contract features, server time, and client compatibility range. It does not expose infrastructure secrets.
@@ -682,7 +706,7 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/manufacturing-programs/{programId}/tool-table-releases/{toolTableReleaseId}/file` | Stream a referenced exact tool-table release after length and SHA-256 verification. |
 | `GET` | `/api/v1/cases/{caseId}/operations/{caseOperationId}/tool-table-releases/{toolTableReleaseId}/file` | Download and verify an historical tool-table release. |
 
-Canonical case-operation or Manufacturing-Program G-code publication uses protocol v2 `[[MEIMAD:<KEY>]]` tokens. `PART_NAME` and `OPERATION_NAME` are required one-or-more times; `PRODUCTION_RUN_ID`, `PRODUCTION_PACKAGE_ID`, `MACHINE_ID`, `NC_RELEASE_ID`, `OFFSET_LOADER_RELEASE_ID`, `EVENT_CONTEXT`, and `VERIFICATION_HOOK` are required exactly once. `CYCLE_START`/`CYCLE_END` are optional and, when used, must both be present exactly once with `CYCLE_START` first; they expand to wire-format part-counting events (same mechanism as the legacy V1 cycle markers) only when the assigned Machine has Server Verification enabled. `EVENT_CONTEXT` and `VERIFICATION_HOOK` occupy standalone lines, and the hook precedes executable code. Unknown, malformed, missing, or invalidly duplicated tokens and active verification calls return `422 validation_failed` with a stable detail code. The Server assigns the immutable six-digit NC identity and stores the exact uploaded bytes. `MACHINE_ID`, `NC_RELEASE_ID`, `PRODUCTION_RUN_ID`, and `PRODUCTION_PACKAGE_ID` all resolve to short unique 6-digit numbers in the generated runnable NC, not to internal identifier strings. The former `(MEIMAD PACKAGE ... V1)` parser remains an explicit compatibility path for immutable historical releases; it is not canonical postprocessor output, and it builds only on a `HAAS_NGC` Machine (any other `ncDialect` returns `422 production_package_dialect_legacy_unsupported`).
+Canonical case-operation or Manufacturing-Program G-code publication uses protocol v2 `[[MEIMAD:<KEY>]]` tokens. `PART_NAME` and `OPERATION_NAME` are required one-or-more times; `PRODUCTION_RUN_ID`, `PRODUCTION_PACKAGE_ID`, `MACHINE_ID`, `NC_RELEASE_ID`, `OFFSET_LOADER_RELEASE_ID`, `EVENT_CONTEXT`, and `VERIFICATION_HOOK` are required exactly once. `CYCLE_START`/`CYCLE_END` are required by the postprocessor specification for every new template (a template with neither marker fails package creation with `production_package_cycle_marker_required`); when present they must both appear exactly once with `CYCLE_START` first, and they expand to wire-format part-counting events (same mechanism as the legacy V1 cycle markers) only when the assigned Machine has Server Verification enabled. `EVENT_CONTEXT` and `VERIFICATION_HOOK` occupy standalone lines, and the hook precedes executable code. Unknown, malformed, missing, or invalidly duplicated tokens and active verification calls return `422 validation_failed` with a stable detail code. The Server assigns the immutable six-digit NC identity and stores the exact uploaded bytes. `MACHINE_ID`, `NC_RELEASE_ID`, `PRODUCTION_RUN_ID`, and `PRODUCTION_PACKAGE_ID` all resolve to short unique 6-digit numbers in the generated runnable NC, not to internal identifier strings. The former `(MEIMAD PACKAGE ... V1)` parser remains an explicit compatibility path for immutable historical releases; it is not canonical postprocessor output, and it builds only on a `HAAS_NGC` Machine (any other `ncDialect` returns `422 production_package_dialect_legacy_unsupported`).
 
 Guarded active-editor deletion is implemented at `DELETE /api/v1/cases/{caseId}`, `DELETE /api/v1/cases/{caseId}/operations/{caseOperationId}`, `DELETE /api/v1/orders/{orderId}`, `DELETE /api/v1/batches/{batchId}`, and `DELETE /api/v1/machines/{machineId}`. Success returns `204`; a missing resource returns `404 resource_not_found`; a protected relationship returns `409 delete_blocked`. Case deletion requires no Orders, Batches, or Operations. Operation deletion requires no dependent Case Operation, instantiated Batch Operation, or remaining locked-simultaneous peer and compacts route positions. Order deletion requires no Batch Allocation. A separately confirmed never-started Batch deletion is the exception to ordinary relationship blocking: it deletes the Batch-owned Machine Assignments, pause history, assignment overrides, package metadata/file records, allocations, and Batch Operations, compacts affected Machine backlogs, deletes the Batch, and recomputes affected Order lifecycles in one immediate transaction. If a legacy or multi-output Production Run for the Batch has non-null `structure_locked_at`, the Server performs no mutation and returns `409 delete_blocked` with a production-history explanation. Machine deletion still requires no assignment, downtime, device binding, official package, or Employee qualification reference. These endpoints never delete external folders, images, engineering files, or physical package bytes.
 

@@ -8,8 +8,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($SourcePath)) { $SourcePath = Join-Path $repositoryRoot 'docs\nc-postprocessor-and-macro-specification.md' }
-if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $repositoryRoot 'docs\Meimad-NC-Postprocessor-Programmer-Guide-v1.8.docx' }
-if ([string]::IsNullOrWhiteSpace($XpsPath)) { $XpsPath = Join-Path $repositoryRoot '.diagnostics\postprocessor-guide-v1.8.xps' }
+if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $repositoryRoot 'docs\Meimad-NC-Postprocessor-Programmer-Guide-v1.9.docx' }
+if ([string]::IsNullOrWhiteSpace($XpsPath)) { $XpsPath = Join-Path $repositoryRoot '.diagnostics\postprocessor-guide-v1.9.xps' }
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
 $xps = [IO.Path]::GetFullPath($XpsPath)

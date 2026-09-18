@@ -85,13 +85,13 @@ Initial keys include:
 | `[[MEIMAD:OFFSET_LOADER_RELEASE_ID]]` | Generated package Offset Loader release | Verification binding when applicable |
 | `[[MEIMAD:EVENT_CONTEXT]]` | Package Creator | Deterministic DPRNT/event correlation block |
 | `[[MEIMAD:VERIFICATION_HOOK]]` | Package Creator policy transformation | Deterministic verification insertion point |
-| `[[MEIMAD:CYCLE_START]]` | Package Creator | Optional physical-cycle-start part-counting event |
-| `[[MEIMAD:CYCLE_END]]` | Package Creator | Optional physical-cycle-end part-counting event |
+| `[[MEIMAD:CYCLE_START]]` | Package Creator | Physical-cycle-start part-counting event; required in every new template |
+| `[[MEIMAD:CYCLE_END]]` | Package Creator | Physical-cycle-end part-counting event; required in every new template |
 
 Protocol v2 multiplicity is explicit: `PART_NAME` and `OPERATION_NAME` are
-repeatable but required at least once. `CYCLE_START` and `CYCLE_END` are the
-only optional keys — an Operation with no automated part counting may omit
-both. Every other key in the table is required exactly once for a canonical
+repeatable but required at least once. `CYCLE_START` and `CYCLE_END` are
+required exactly once in every template (`production_package_cycle_marker_required`
+when both are absent; the check runs at package build, so an older release without the pair must be re-released). Every other key in the table is required exactly once for a canonical
 CNC template. `EVENT_CONTEXT` and `VERIFICATION_HOOK` occupy standalone lines,
 and `VERIFICATION_HOOK` precedes the first executable block. Keys are
 uppercase and exact; unknown keys, malformed delimiters, and invalid
@@ -159,7 +159,7 @@ The Server takes machine-side Part identity only from a bare part-number-shaped 
 
 Package Creator expands `EVENT_CONTEXT` itself, on verification-enabled and verification-disabled Machines alike, in the NC dialect configured on the assigned Machine (`ncDialect`): a `DPRNT[MEIMAD/V/2/CONTEXT/...]` statement for `HAAS_NGC`, `FANUC_MACRO_B`, and `MAZAK_MATRIX_EIA`, or a `PUT 'MEIMAD/V/2/CONTEXT/...'` statement followed by `WRITE C` for `OKUMA_OSP`. The same dialect selects the verification hook (`G65 P9002 A<nc>.` or `CALL O9002 PA=<nc>`), the cycle-event blocks, and the Offset Loader program (`offset-loader/O01990.nc` or `offset-loader/O1990.MIN`). The postprocessor never rewrites Server-generated blocks and does not choose the dialect. Per-control examples are in [`nc-postprocessor-and-macro-specification.md`](nc-postprocessor-and-macro-specification.md).
 
-### Part counting (optional)
+### Part counting (required)
 
 ```text
 [[MEIMAD:CYCLE_START]]
@@ -171,8 +171,8 @@ physical part cycle)
 Place `CYCLE_START` immediately before the work that begins one physical cycle and
 `CYCLE_END` only on the common successful path after that cycle fully completes —
 before `M30`/`M99`/any successful return, never on an alarm/reset/optional-stop/
-failure path. Omit the pair entirely for an Operation that does not need automated
-part counting.
+failure path. Every template contains exactly one pair; a template without it fails
+package creation with `production_package_cycle_marker_required`.
 
 ### Verification insertion point
 
@@ -247,7 +247,7 @@ Network connectivity controls available delivery methods. It does not decide whe
 - Token/grammar-based parsing only; no fuzzy matching.
 - Unknown required placeholders fail closed unless a protocol version explicitly declares them optional.
 - Placeholders declared unique must occur exactly once; repeatable placeholders must have declared multiplicity.
-- `CYCLE_START`/`CYCLE_END` must occur together (both absent or both present exactly once, in that order); one without the other or out of order fails closed.
+- `CYCLE_START`/`CYCLE_END` must occur together (both present exactly once, in that order); one without the other or out of order fails closed. Absence of both fails closed as well (`production_package_cycle_marker_required`).
 - All required placeholders must be resolved or intentionally removed by a named transformation before a runnable CNC artifact can be activated.
 - Verification-disabled runnable NC must contain no unresolved verification marker and no active Server-verification code.
 - Verification-enabled runnable NC must contain the approved hook/version and exact current package correlation.

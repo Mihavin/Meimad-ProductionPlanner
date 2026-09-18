@@ -225,7 +225,6 @@ if (Test-Path -LiteralPath $harvestedServerSettings) {
 }
 
 New-WixPayloadAuthoring -SourceDirectory $clientHarvestStage -OutputFile $clientPayloadAuthoring -ComponentGroupId "ClientPayloadComponents"
-New-WixPayloadAuthoring -SourceDirectory $serverHarvestStage -OutputFile $serverPayloadAuthoring -ComponentGroupId "ServerPayloadComponents"
 
 Write-Host "Building client MSI..."
 Invoke-DotNet -Arguments @(
@@ -235,6 +234,31 @@ Invoke-DotNet -Arguments @(
     "-p:ClientExecutableDir=$clientStage",
     "-p:InstallerOutputPath=$outputPath"
 )
+
+# Bundle the client MSI that was just built into the Server payload, with a JSON manifest,
+# so the Server can hand the matching client to any client PC whose version does not fit.
+$builtClientMsi = Join-Path $outputPath "Meimad-Planner-Client-Setup.msi"
+if (-not (Test-Path -LiteralPath $builtClientMsi)) {
+    throw "The client MSI was not produced at $builtClientMsi."
+}
+$bundledClientFolder = Join-Path $serverHarvestStage "client-installer"
+New-Item -ItemType Directory -Path $bundledClientFolder -Force | Out-Null
+Copy-Item -LiteralPath $builtClientMsi -Destination (Join-Path $bundledClientFolder "Meimad-Planner-Client-Setup.msi") -Force
+$bundledClientHash = (Get-FileHash -LiteralPath $builtClientMsi -Algorithm SHA256).Hash.ToLowerInvariant()
+$bundledClientManifest = [ordered]@{
+    fileName = "Meimad-Planner-Client-Setup.msi"
+    version = "$clientPackageVersion"
+    sha256 = $bundledClientHash
+    byteLength = (Get-Item -LiteralPath $builtClientMsi).Length
+    builtAt = [DateTimeOffset]::UtcNow.ToString("o")
+}
+[System.IO.File]::WriteAllText(
+    (Join-Path $bundledClientFolder "Meimad-Planner-Client-Setup.json"),
+    ($bundledClientManifest | ConvertTo-Json -Compress),
+    [System.Text.UTF8Encoding]::new($false))
+
+# The Server payload is authored only now, after the bundled client installer joined the stage.
+New-WixPayloadAuthoring -SourceDirectory $serverHarvestStage -OutputFile $serverPayloadAuthoring -ComponentGroupId "ServerPayloadComponents"
 
 Write-Host "Building Server MSI..."
 Invoke-DotNet -Arguments @(

@@ -238,6 +238,25 @@ try {
         throw 'Packaged E-Ink simulator styles do not prove the monochrome 800x480 profile.'
     }
 
+    $bundledClientMsi = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "Meimad-Planner-Client-Setup.msi" |
+        Where-Object { $_.FullName -match "client-installer\Meimad-Planner-Client-Setup\.msi$" })
+    $bundledClientManifestFile = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "Meimad-Planner-Client-Setup.json" |
+        Where-Object { $_.FullName -match "client-installer\Meimad-Planner-Client-Setup\.json$" })
+    if ($bundledClientMsi.Count -ne 1 -or $bundledClientManifestFile.Count -ne 1) {
+        throw "Expected the Server MSI to bundle client-installer\Meimad-Planner-Client-Setup.msi with its JSON manifest; found MSI $($bundledClientMsi.Count), manifest $($bundledClientManifestFile.Count)."
+    }
+    $distributedClientHash = (Get-FileHash -LiteralPath $clientMsi -Algorithm SHA256).Hash.ToLowerInvariant()
+    $bundledClientHash = (Get-FileHash -LiteralPath $bundledClientMsi[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($bundledClientHash -ne $distributedClientHash) {
+        throw "The client MSI bundled in the Server MSI does not match the distributed client MSI."
+    }
+    $bundledClientManifest = Get-Content -LiteralPath $bundledClientManifestFile[0].FullName -Raw | ConvertFrom-Json
+    if ($bundledClientManifest.version -ne $ExpectedVersion -or
+        $bundledClientManifest.sha256 -ne $distributedClientHash -or
+        [long]$bundledClientManifest.byteLength -ne (Get-Item -LiteralPath $clientMsi).Length) {
+        throw "The bundled client installer manifest does not describe the distributed client MSI $ExpectedVersion."
+    }
+
     [pscustomobject]@{
         ProductVersion = $ExpectedVersion
         ClientExtractedFiles = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -File).Count
@@ -247,6 +266,7 @@ try {
         EInkSimulatorProfile = '800x480 TFT bitmap; explicit status power policy; D1/D2/D4/reset; guarded SEND_TO_QC'
         ServiceRecoveryPolicy = 'restart 60s; restart 60s; none; reset 1d'
         ChecksumsVerified = $expectedHashes.Count
+        BundledClientInstaller = "client-installer\Meimad-Planner-Client-Setup.msi $ExpectedVersion; manifest and hash verified"
     } | Format-List
 }
 finally {

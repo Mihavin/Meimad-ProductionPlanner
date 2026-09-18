@@ -71,6 +71,8 @@ using Meimad.Planner.Server.Application.WorkingCalendars;
 using Meimad.Planner.Server.Domain.Timeline;
 using Meimad.Planner.Server.Domain.ResourcePlanning;
 using Meimad.Planner.Server.Domain.ProductionRuns;
+using Meimad.Planner.Server.Api.ClientInstaller;
+using Meimad.Planner.Server.Application.ClientInstaller;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
 using Meimad.Planner.Server.Infrastructure.Fanuc;
@@ -120,6 +122,9 @@ public static class ServerApplication
             builder.Configuration,
             builder.Environment.ContentRootPath);
         var timelineOptions = TimelineOptions.FromConfiguration(builder.Configuration);
+        var clientInstallerOptions = ClientInstallerOptions.FromConfiguration(
+            builder.Configuration,
+            builder.Environment.ContentRootPath);
         var setupEstimationOptions = SetupEstimationOptions.FromConfiguration(builder.Configuration);
         var legacyImportOptions = LegacyImportOptions.FromConfiguration(builder.Configuration);
 
@@ -133,6 +138,8 @@ public static class ServerApplication
         builder.Services.AddSingleton(eInkOptions);
         builder.Services.AddSingleton(gCodeOptions);
         builder.Services.AddSingleton(productionPackageOptions);
+        builder.Services.AddSingleton(clientInstallerOptions);
+        builder.Services.AddSingleton<ClientInstallerService>();
         builder.Services.AddSingleton(timelineOptions);
         builder.Services.AddSingleton(setupEstimationOptions);
         builder.Services.AddSingleton(legacyImportOptions);
@@ -389,6 +396,7 @@ public static class ServerApplication
         application.MapEInkEndpoints();
         application.MapEInkDeviceRegistrationEndpoints();
         application.MapTabletEndpoints();
+        application.MapClientInstallerEndpoints();
         application.MapJobPackageEndpoints();
         application.MapGCodeEndpoints();
         application.MapManufacturingProgramEndpoints();

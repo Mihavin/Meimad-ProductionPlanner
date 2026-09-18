@@ -24,7 +24,7 @@ public sealed class NcPackageTemplateTransformerTests
         "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])",
         "[[MEIMAD:VERIFICATION_HOOK]]",
         "[[MEIMAD:EVENT_CONTEXT]]",
-        "(CAM NOTE: WRONG PART NAME)", "G90", "M30", "%"
+        "[[MEIMAD:CYCLE_START]]", "(CAM NOTE: WRONG PART NAME)", "G90", "[[MEIMAD:CYCLE_END]]", "M30", "%"
     ];
 
     [Fact]
@@ -250,17 +250,17 @@ public sealed class NcPackageTemplateTransformerTests
     }
 
     [Fact]
-    public void Canonical_schema_allows_omitting_both_cycle_markers()
+    public void Canonical_schema_requires_both_cycle_markers()
     {
-        var validation = NcPackagePlaceholderSchema.ValidateCanonical(CanonicalTemplate);
-        Assert.Equal(0, validation.Counts[NcPackagePlaceholderKeys.CycleStart]);
-        Assert.Equal(0, validation.Counts[NcPackagePlaceholderKeys.CycleEnd]);
+        var source = CanonicalTemplate.Where(line => !line.Contains("CYCLE_", StringComparison.Ordinal)).ToArray();
+        var error = Assert.Throws<ProductionPackageBuildException>(() => NcPackagePlaceholderSchema.ValidateCanonical(source));
+        Assert.Equal("production_package_cycle_marker_required", error.Code);
     }
 
     [Fact]
     public void Canonical_schema_rejects_cycle_start_without_matching_cycle_end()
     {
-        var source = CanonicalTemplate.Append("[[MEIMAD:CYCLE_START]]").ToArray();
+        var source = CanonicalTemplate.Where(line => line != "[[MEIMAD:CYCLE_END]]").ToArray();
         var error = Assert.Throws<ProductionPackageBuildException>(() =>
             NcPackagePlaceholderSchema.ValidateCanonical(source));
         Assert.Equal("production_package_cycle_marker_unpaired", error.Code);
@@ -269,7 +269,7 @@ public sealed class NcPackageTemplateTransformerTests
     [Fact]
     public void Canonical_schema_rejects_cycle_end_before_cycle_start()
     {
-        var source = CanonicalTemplate.Append("[[MEIMAD:CYCLE_END]]")
+        var source = CanonicalTemplate.Where(line => !line.Contains("CYCLE_", StringComparison.Ordinal)).Append("[[MEIMAD:CYCLE_END]]")
             .Append("[[MEIMAD:CYCLE_START]]").ToArray();
         var error = Assert.Throws<ProductionPackageBuildException>(() =>
             NcPackagePlaceholderSchema.ValidateCanonical(source));

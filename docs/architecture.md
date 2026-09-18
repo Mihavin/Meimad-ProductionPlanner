@@ -248,6 +248,7 @@ The implemented `client-windows/` application uses WPF on .NET 10 and establishe
 - a validated HTTP/HTTPS Server root setting;
 - a simple local display name and stable client ID stored under Local AppData;
 - a compact main header with a connection indicator/tooltip and one lock/unlock Edit Mode action;
+- a once-per-session client/Server version-pair check against `GET /api/v1/client-installer`: when the Server's bundled client package is newer, `ClientUpdateWindow` downloads the MSI, verifies its SHA-256, and starts `msiexec` through a detached script that waits for the client to exit and restarts it (`ClientUpdatePolicy`, `ClientInstallerLauncher`); a client newer than the Server's package, or a mismatch without an installer, only raises an attention notice and the client never downgrades itself;
 - a dedicated Setup page for connection Save/Connect/Refresh, Working Calendar management and Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holidays, report/email settings, and staged legacy Excel preview/mapping/automatic-draft/review/commit;
 - `/health` connectivity/version status;
 - Viewer, Editor, and RequestingEdit presentation;
@@ -315,6 +316,8 @@ tablet-workflow persistence, use the TabletID path scope, timestamp
 receipts on the Server, validate hardware range, and apply bounded retention.
 
 ## 5. Deployment topology
+
+The Server MSI bundles the client MSI of the same version with a JSON manifest under `client-installer\`, and `ClientInstallerService` serves them on `/api/v1/client-installer` (manifest) and `/api/v1/client-installer/download` (file with checksum header) after recomputing the SHA-256 and checking it against the manifest. Upgrading the Server therefore brings every client PC to the Server's version at the next client start; the separate client MSI remains for first installations.
 
 ```mermaid
 flowchart TB

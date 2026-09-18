@@ -31,6 +31,8 @@ public partial class MainWindow : Window
         viewModel.NcCreatorQueue.ActionRequested += PreparationActionRequested;
         viewModel.ToolRoomQueue.ActionRequested += PreparationActionRequested;
         viewModel.SetupQueue.ActionRequested += PreparationActionRequested;
+        viewModel.ClientUpdateAvailable += (_, update) =>
+            Dispatcher.BeginInvoke(new Action(() => ClientUpdateWindow.Show(this, update)));
         PlanningBoardView.OpenOperationRequested += PlanningBoardOpenOperationRequested;
         MainTimelineView.OperationActionRequested += TimelineOperationActionRequested;
         refreshTimer = new DispatcherTimer(DispatcherPriority.Background)

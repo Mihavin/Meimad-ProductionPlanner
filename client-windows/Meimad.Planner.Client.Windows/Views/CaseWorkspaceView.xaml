@@ -487,7 +487,7 @@
                                     </DataGrid>
 
                                     <TextBlock Text="Release G-code" FontWeight="SemiBold" Margin="0,14,0,6"/>
-                                    <TextBlock Text="The source NC template must contain exactly one standalone [[MEIMAD:VERIFICATION_HOOK]] before its first executable block. Release does not require or validate a G65 P... call; the Server inserts the configured verification call only when it builds a Machine-specific Production Package."
+                                    <TextBlock Text="The source NC template must contain exactly one standalone [[MEIMAD:VERIFICATION_HOOK]] before its first executable block and exactly one [[MEIMAD:CYCLE_START]] / [[MEIMAD:CYCLE_END]] pair around the physical part cycle (the pair is checked when a Production Package is built). Release does not require or validate a G65 P... call; the Server inserts the configured verification call only when it builds a Machine-specific Production Package."
                                                TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <UniformGrid Columns="2">
                                         <StackPanel Style="{StaticResource FormField}">
