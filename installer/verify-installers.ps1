@@ -239,9 +239,9 @@ try {
     }
 
     $bundledClientMsi = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "Meimad-Planner-Client-Setup.msi" |
-        Where-Object { $_.FullName -match "client-installer\Meimad-Planner-Client-Setup\.msi$" })
+        Where-Object { $_.FullName -match "client-installer\\Meimad-Planner-Client-Setup\.msi$" })
     $bundledClientManifestFile = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -Filter "Meimad-Planner-Client-Setup.json" |
-        Where-Object { $_.FullName -match "client-installer\Meimad-Planner-Client-Setup\.json$" })
+        Where-Object { $_.FullName -match "client-installer\\Meimad-Planner-Client-Setup\.json$" })
     if ($bundledClientMsi.Count -ne 1 -or $bundledClientManifestFile.Count -ne 1) {
         throw "Expected the Server MSI to bundle client-installer\Meimad-Planner-Client-Setup.msi with its JSON manifest; found MSI $($bundledClientMsi.Count), manifest $($bundledClientManifestFile.Count)."
     }
