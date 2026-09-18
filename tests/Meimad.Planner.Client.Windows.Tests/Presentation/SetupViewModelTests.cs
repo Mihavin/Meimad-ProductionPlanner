@@ -95,6 +95,7 @@ public sealed class SetupViewModelTests
         viewModel.MachineAxisType = "5-axis";
         viewModel.MachineCapabilitiesText = "probe, high-speed";
         viewModel.MachineExecutionMode = "CNC_GCODE";
+        viewModel.MachineNcDialect = "OKUMA_OSP";
         viewModel.MachineUsableToolPositions = "30";
         viewModel.MachineRapidRateMillimetersPerMinute = "24000";
         viewModel.MachineToolChangeTimeSeconds = "4.5";
@@ -107,6 +108,7 @@ public sealed class SetupViewModelTests
         Assert.Equal("type-mill", api.LastMachineCreate!.MachineTypeId);
         Assert.Equal("5-axis milling", api.LastMachineCreate.ProcessType);
         Assert.Equal("CNC_GCODE", api.LastMachineCreate.ExecutionMode);
+        Assert.Equal("OKUMA_OSP", api.LastMachineCreate.NcDialect);
         Assert.Equal(["post-default"], api.LastMachineCreate.SupportedPostprocessorIds);
         Assert.Equal(30, api.LastMachineCreate.UsableToolPositions);
         Assert.Equal(24000, api.LastMachineCreate.RapidRateMillimetersPerMinute);
@@ -145,19 +147,78 @@ public sealed class SetupViewModelTests
         await viewModel.SaveMachineAsync();
         viewModel.SelectedMachine = viewModel.Machines.Single();
 
-        viewModel.HaasTelemetryProvider = "MTCONNECT";
+        viewModel.SelectedConnectionType = viewModel.ConnectionTypes.Single(type => type.Value == "HAAS_MTCONNECT");
+        Assert.Equal("MTCONNECT", viewModel.HaasTelemetryProvider);
         await viewModel.TestHaasConnectionAsync();
 
         Assert.Equal(1, api.MtConnectTestCount);
         Assert.Equal(0, api.MdcTestCount);
         Assert.StartsWith("MTConnect: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
 
-        viewModel.HaasTelemetryProvider = "MDC";
+        viewModel.SelectedConnectionType = viewModel.ConnectionTypes.Single(type => type.Value == "HAAS_MDC");
+        Assert.Equal("MDC", viewModel.HaasTelemetryProvider);
         await viewModel.TestHaasConnectionAsync();
 
         Assert.Equal(1, api.MtConnectTestCount);
         Assert.Equal(1, api.MdcTestCount);
         Assert.StartsWith("MDC: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+
+        viewModel.SelectedConnectionType = viewModel.ConnectionTypes.Single(type => type.Value == "HAAS_DPRNT");
+        Assert.Equal("DPRNT", viewModel.HaasTelemetryProvider);
+        await viewModel.TestHaasConnectionAsync();
+
+        Assert.Equal(1, api.MtConnectTestCount);
+        Assert.Equal(1, api.MdcTestCount);
+        Assert.Equal(1, api.DprntTestCount);
+        Assert.StartsWith("DPRNT: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+        Assert.Contains("30P647004101-001", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FOCAS_configuration_is_saved_through_the_generic_CNC_connection_and_tested_with_typed_checks()
+    {
+        var api = new FakeApiClient();
+        var viewModel = CreateViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(11));
+        await viewModel.EnsureLoadedAsync();
+        await viewModel.BeginNewMachineAsync();
+        viewModel.MachineNumber = "M57";
+        viewModel.MachineName = "FANUC 0i-F";
+        viewModel.SelectedMachineTypeForMachine = viewModel.MachineTypes.Single();
+        viewModel.SelectedMachineCalendar = viewModel.WorkingCalendars.Single();
+        await viewModel.SaveMachineAsync();
+        viewModel.SelectedMachine = viewModel.Machines.Single();
+
+        viewModel.SelectedConnectionType = viewModel.ConnectionTypes.Single(type => type.Value == "FANUC_FOCAS");
+        Assert.True(viewModel.ShowsFocasConfiguration);
+        Assert.False(viewModel.ShowsHaasConfiguration);
+        // NONE only makes sense for FANUC FOCAS; selecting this connection type extends the shared list to include it.
+        Assert.Contains("NONE", viewModel.DprntSources);
+        viewModel.FocasHost = "192.168.0.77";
+        viewModel.FocasMacAddress = "00:E0:E4:12:34:56";
+        viewModel.DprntSource = "FILE";
+        viewModel.DprntFilePath = @"\\FANUC-0IF\print\print.txt";
+        viewModel.DprntFileClearPolicy = "ON_OFFSET_LOADER";
+        viewModel.DprntTcpHost = " 192.168.0.90 ";
+        viewModel.FocasEnabled = true;
+
+        await viewModel.SaveFocasConfigurationAsync();
+
+        var update = Assert.IsType<CncConnectionUpdate>(api.LastCncConnectionUpdate);
+        Assert.Equal("FANUC_FOCAS", update.AdapterType);
+        Assert.True(update.Enabled);
+        Assert.False(update.AllowWrite);
+        var configuration = Assert.IsType<FocasConnectionConfiguration>(update.Configuration);
+        Assert.Equal("192.168.0.77", configuration.Host);
+        Assert.Equal("ON_OFFSET_LOADER", configuration.Dprnt!.ClearPolicy);
+        Assert.Equal(@"\\FANUC-0IF\print\print.txt", configuration.Dprnt.FilePath);
+        Assert.Equal("192.168.0.90", configuration.Dprnt.Host);
+        Assert.StartsWith("FANUC FOCAS configuration saved", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+
+        await viewModel.TestFocasConnectionAsync();
+
+        Assert.StartsWith("FOCAS: OFFLINE", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+        Assert.Contains("Fwlib64.dll", viewModel.HaasDiagnostics, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -453,6 +514,36 @@ public sealed class SetupViewModelTests
         internal EmployeeCalendarExceptionCreate? LastResourceExceptionCreate { get; private set; }
         internal int MtConnectTestCount { get; private set; }
         internal int MdcTestCount { get; private set; }
+        internal int DprntTestCount { get; private set; }
+        internal HaasConnectionUpdate? LastHaasConnectionUpdate { get; private set; }
+        internal CncConnectionUpdate? LastCncConnectionUpdate { get; private set; }
+
+        public Task<CncConnection?> GetCncConnectionAsync(
+            string machineId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<CncConnection?>(null);
+
+        public Task<CncConnection> UpdateCncConnectionAsync(
+            string machineId, CncConnectionUpdate update, string clientId, long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastCncConnectionUpdate = update;
+            var configuration = System.Text.Json.JsonSerializer.SerializeToElement(
+                update.Configuration,
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            return Task.FromResult(new CncConnection(
+                $"cnc-{machineId}", machineId, update.AdapterType, update.Enabled, "DISABLED", null, null,
+                update.PollingIntervalMs, update.ConnectionTimeoutMs, update.MaximumReconnectBackoffMs,
+                update.AllowRead, update.AllowWrite, update.RawTelemetryRetentionDays,
+                configuration, update.Version + 1, DateTimeOffset.UtcNow));
+        }
+
+        public Task<CncConnectionTest> TestCncConnectionAsync(
+            string machineId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new CncConnectionTest(false, "OFFLINE",
+            [
+                new("focas", false, "UNAVAILABLE", "FOCAS library Fwlib64.dll was not found."),
+                new("dprnt", true, "AVAILABLE", @"DPRNT file '\\FANUC-0IF\print\print.txt' is readable.")
+            ]));
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
             CancellationToken cancellationToken = default) =>
@@ -600,6 +691,16 @@ public sealed class SetupViewModelTests
             MdcTestCount++;
             return Task.FromResult(new HaasConnectionTest(
                 true, "MDC connection succeeded.", "O1500", "RUNNING", 9300, null));
+        }
+
+        public Task<HaasConnectionTest> TestHaasDprntAsync(
+            string machineId,
+            CancellationToken cancellationToken = default)
+        {
+            DprntTestCount++;
+            return Task.FromResult(new HaasConnectionTest(
+                true, @"DPRNT file '\\mazak\print\print.txt' is readable; last PartName is 30P647004101-001.",
+                null, null, null, null));
         }
 
         public Task<IReadOnlyList<MachineDowntime>> ListDowntimesAsync(string? machineId = null, CancellationToken cancellationToken = default) =>

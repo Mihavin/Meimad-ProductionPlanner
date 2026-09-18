@@ -238,6 +238,94 @@ public sealed class HaasApiTests
         });
     }
 
+    [Fact]
+    public async Task DPRNT_file_source_round_trips_and_survives_a_pre_source_client_save()
+    {
+        // A local path that does not exist keeps the probe fast on Windows (no SMB name resolution).
+        var printFile = Path.Combine(Path.GetTempPath(), "MeimadPlanner.DprntApi", Guid.NewGuid().ToString("N"), "print.txt");
+        await RunAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "haas-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+
+            using var rejected = await client.PutAsJsonAsync(
+                "/api/v1/machines/machine-haas/haas/connection", new
+                {
+                    host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
+                    telemetryProvider = "DPRNT", dprntSource = "FILE",
+                    localNetShareEnabled = false, partCounterSource = "Q500",
+                    pollingIntervalMs = 2000, connectionTimeoutMs = 3000, stableProgramPolls = 2,
+                    headerLineLimit = 50, headerByteLimit = 32768,
+                    headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
+                    enabled = false, version = 0
+                });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+            Assert.Contains("dprntFilePath", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            using var saved = await client.PutAsJsonAsync(
+                "/api/v1/machines/machine-haas/haas/connection", new
+                {
+                    host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
+                    telemetryProvider = "DPRNT", dprntSource = "FILE",
+                    dprntFilePath = printFile, dprntFileClearPolicy = "ON_OFFSET_LOADER",
+                    localNetShareEnabled = false, partCounterSource = "Q500",
+                    pollingIntervalMs = 2000, connectionTimeoutMs = 3000, stableProgramPolls = 2,
+                    headerLineLimit = 50, headerByteLimit = 32768,
+                    headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
+                    enabled = false, version = 0
+                });
+            saved.EnsureSuccessStatusCode();
+            using (var json = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal("DPRNT", json.RootElement.GetProperty("telemetryProvider").GetString());
+                Assert.Equal("FILE", json.RootElement.GetProperty("dprntSource").GetString());
+                Assert.Equal(printFile, json.RootElement.GetProperty("dprntFilePath").GetString());
+                Assert.Equal("ON_OFFSET_LOADER", json.RootElement.GetProperty("dprntFileClearPolicy").GetString());
+            }
+
+            // A Windows client built before the DPRNT source fields omits them and must not reset them.
+            using var legacySaved = await client.PutAsJsonAsync(
+                "/api/v1/machines/machine-haas/haas/connection", new
+                {
+                    host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
+                    localNetShareEnabled = false, partCounterSource = "Q500",
+                    pollingIntervalMs = 2500, connectionTimeoutMs = 3000, stableProgramPolls = 2,
+                    headerLineLimit = 50, headerByteLimit = 32768,
+                    headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
+                    enabled = false, version = 1
+                });
+            legacySaved.EnsureSuccessStatusCode();
+
+            using var read = await client.GetAsync("/api/v1/machines/machine-haas/haas/connection");
+            read.EnsureSuccessStatusCode();
+            using (var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal("DPRNT", json.RootElement.GetProperty("telemetryProvider").GetString());
+                Assert.Equal("FILE", json.RootElement.GetProperty("dprntSource").GetString());
+                Assert.Equal(printFile, json.RootElement.GetProperty("dprntFilePath").GetString());
+                Assert.Equal("ON_OFFSET_LOADER", json.RootElement.GetProperty("dprntFileClearPolicy").GetString());
+                Assert.Equal(2500, json.RootElement.GetProperty("pollingIntervalMs").GetInt32());
+                Assert.Equal(2, json.RootElement.GetProperty("version").GetInt32());
+            }
+
+            using var generic = await client.GetAsync("/api/v1/machines/machine-haas/cnc-connection");
+            generic.EnsureSuccessStatusCode();
+            using var genericJson = JsonDocument.Parse(await generic.Content.ReadAsStringAsync());
+            Assert.False(genericJson.RootElement.GetProperty("allowWrite").GetBoolean());
+            var dprnt = genericJson.RootElement.GetProperty("configuration").GetProperty("dprnt");
+            Assert.Equal("FILE", dprnt.GetProperty("source").GetString());
+            Assert.Equal(printFile, dprnt.GetProperty("filePath").GetString());
+            Assert.Equal("ON_OFFSET_LOADER", dprnt.GetProperty("clearPolicy").GetString());
+
+            using var probe = await client.PostAsync("/api/v1/machines/machine-haas/haas/test-dprnt", null);
+            Assert.Equal(HttpStatusCode.BadGateway, probe.StatusCode);
+            using var probeJson = JsonDocument.Parse(await probe.Content.ReadAsStringAsync());
+            Assert.False(probeJson.RootElement.GetProperty("succeeded").GetBoolean());
+            Assert.Contains("print.txt", probeJson.RootElement.GetProperty("message").GetString(), StringComparison.Ordinal);
+        });
+    }
+
     private static async Task SeedAsync(IServiceProvider services)
     {
         var database = services.GetRequiredService<SqliteDatabase>();

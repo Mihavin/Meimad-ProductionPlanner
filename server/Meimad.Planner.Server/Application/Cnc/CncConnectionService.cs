@@ -50,11 +50,14 @@ internal sealed class CncConnectionService(
         if (update.Enabled && !update.AllowRead)
             throw new CncValidationException("allowRead", "An enabled MVP CNC connection requires read permission.");
         if (adapter != CncAdapterType.HaasNgc && update.AllowWrite)
-            throw new CncValidationException("allowWrite", "Write permission is unavailable for unimplemented adapters.");
+            throw new CncValidationException("allowWrite", adapter == CncAdapterType.FanucFocas
+                ? "The FANUC FOCAS adapter is read-only; write permission cannot be granted."
+                : "Write permission is unavailable for unimplemented adapters.");
 
         var configurationJson = adapter switch
         {
             CncAdapterType.HaasNgc => ValidateHaas(update.Configuration, update),
+            CncAdapterType.FanucFocas => ValidateFocas(update.Configuration, update),
             _ => "{}"
         };
         var now = timeProvider.GetUtcNow();
@@ -118,9 +121,10 @@ internal sealed class CncConnectionService(
         var telemetryProvider = string.IsNullOrWhiteSpace(value.TelemetryProvider)
             ? HaasTelemetryProviders.Mdc : value.TelemetryProvider.Trim().ToUpperInvariant();
         if (!HaasTelemetryProviders.IsSupported(telemetryProvider))
-            throw new CncValidationException("configuration.telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
+            throw new CncValidationException("configuration.telemetryProvider", "Telemetry provider must be MDC, MTCONNECT, or DPRNT.");
         if (telemetryProvider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
             throw new CncValidationException("configuration.mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
+        var dprnt = value.Dprnt is null ? null : ValidateDprnt(value.Dprnt, allowNone: false);
         if (update.AllowWrite)
             throw new CncValidationException("allowWrite",
                 "Direct CNC variable writes are disabled; protected setup verification executes on the controller.");
@@ -132,6 +136,7 @@ internal sealed class CncConnectionService(
         var sanitized = value with
         {
             TelemetryProvider = telemetryProvider,
+            Dprnt = dprnt,
             ProgramAccess = value.ProgramAccess with
             {
                 UsernameSecretId = Optional(update.UsernameSecretId),
@@ -145,6 +150,99 @@ internal sealed class CncConnectionService(
             }
         };
         return JsonSerializer.Serialize(sanitized, CncJson.Options);
+    }
+
+    private static string ValidateFocas(JsonElement json, CncConnectionUpdate update)
+    {
+        FanucFocasConnectionConfiguration value;
+        try
+        {
+            value = json.Deserialize<FanucFocasConnectionConfiguration>(CncJson.Options)
+                ?? throw new JsonException();
+        }
+        catch (JsonException)
+        {
+            throw new CncValidationException("configuration", "FANUC FOCAS configuration is invalid.");
+        }
+        if (string.IsNullOrWhiteSpace(value.Host)
+            || !IPAddress.TryParse(value.Host, out var address)
+            || IPAddress.IsLoopback(address)
+            || address.Equals(IPAddress.Any)
+            || address.Equals(IPAddress.IPv6Any))
+            throw new CncValidationException("configuration.host", "A fixed, non-loopback CNC IP address is required.");
+        if (string.IsNullOrWhiteSpace(value.MacAddress)
+            || !Regex.IsMatch(value.MacAddress.Replace('-', ':').ToUpperInvariant(),
+                "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", RegexOptions.CultureInvariant))
+            throw new CncValidationException("configuration.macAddress",
+                "A six-octet CNC MAC address is required.");
+        Range(value.Port, 1, 65535, "configuration.port");
+        var partCounterSource = string.IsNullOrWhiteSpace(value.PartCounterSource)
+            ? FocasPartCounterSources.PartsCount6711 : value.PartCounterSource.Trim().ToUpperInvariant();
+        if (!FocasPartCounterSources.IsSupported(partCounterSource))
+            throw new CncValidationException("configuration.partCounterSource",
+                "Part counter source must be PARTS_COUNT_6711 or PARTS_TOTAL_6712.");
+        var programAccess = value.ProgramAccess ?? new FocasProgramAccessConfiguration();
+        var provider = string.IsNullOrWhiteSpace(programAccess.Provider)
+            ? "NONE" : programAccess.Provider.Trim().ToUpperInvariant();
+        if (programAccess.Enabled && provider != FocasProgramAccessConfiguration.UploadProvider)
+            throw new CncValidationException("configuration.programAccess.provider",
+                "Only FOCAS program upload is implemented for FANUC header access.");
+        var folder = Optional(programAccess.ProgramFolder) ?? FocasProgramAccessConfiguration.DefaultProgramFolder;
+        if (folder.Length > 256)
+            throw new CncValidationException("configuration.programAccess.programFolder", "Program folder must be 256 characters or fewer.");
+        Range(programAccess.HeaderLineLimit, 1, 500, "configuration.programAccess.headerLineLimit");
+        Range(programAccess.HeaderByteLimit, 256, 1024 * 1024, "configuration.programAccess.headerByteLimit");
+        if (update.AllowWrite)
+            throw new CncValidationException("allowWrite", "The FANUC FOCAS adapter is read-only; write permission cannot be granted.");
+        var monitoring = value.Monitoring ?? new HaasMonitoringConfiguration(
+            update.PollingIntervalMs, 2, update.MaximumReconnectBackoffMs, update.RawTelemetryRetentionDays);
+        Range(monitoring.StableProgramPolls, 1, 20, "configuration.monitoring.stableProgramPolls");
+        var sanitized = value with
+        {
+            Host = value.Host.Trim(),
+            MacAddress = value.MacAddress.Trim(),
+            TimeoutMs = update.ConnectionTimeoutMs,
+            PartCounterSource = partCounterSource,
+            Dprnt = ValidateDprnt(value.Dprnt ?? new CncDprntConfiguration(), allowNone: true),
+            ProgramAccess = programAccess with
+            {
+                Provider = programAccess.Enabled ? FocasProgramAccessConfiguration.UploadProvider : provider,
+                ProgramFolder = folder,
+                HeaderPartPatterns = programAccess.HeaderPartPatterns ?? Haas.NcHeaderParser.DefaultPartPatterns
+            },
+            Monitoring = monitoring with
+            {
+                PollingIntervalMs = update.PollingIntervalMs,
+                MaximumReconnectBackoffMs = update.MaximumReconnectBackoffMs,
+                RawTelemetryRetentionDays = update.RawTelemetryRetentionDays
+            }
+        };
+        return JsonSerializer.Serialize(sanitized, CncJson.Options);
+    }
+
+    /// <summary>Shared DPRNT source rules: FILE needs a path, and every value is normalized to its upper-case constant.</summary>
+    private static CncDprntConfiguration ValidateDprnt(CncDprntConfiguration value, bool allowNone)
+    {
+        var source = string.IsNullOrWhiteSpace(value.Source)
+            ? CncDprntSources.Tcp : value.Source.Trim().ToUpperInvariant();
+        if (!CncDprntSources.IsSupported(source) || (source == CncDprntSources.None && !allowNone))
+            throw new CncValidationException("configuration.dprnt.source",
+                allowNone ? "DPRNT source must be TCP, FILE, or NONE." : "DPRNT source must be TCP or FILE.");
+        var filePath = Optional(value.FilePath);
+        if (filePath is { Length: > 1024 })
+            throw new CncValidationException("configuration.dprnt.filePath", "DPRNT file path must be 1024 characters or fewer.");
+        if (source == CncDprntSources.File && filePath is null)
+            throw new CncValidationException("configuration.dprnt.filePath", "A DPRNT file path is required when the DPRNT source is FILE.");
+        var clearPolicy = string.IsNullOrWhiteSpace(value.ClearPolicy)
+            ? CncDprntClearPolicies.Never : value.ClearPolicy.Trim().ToUpperInvariant();
+        if (!CncDprntClearPolicies.IsSupported(clearPolicy))
+            throw new CncValidationException("configuration.dprnt.clearPolicy",
+                "DPRNT file clear policy must be NEVER, ON_OFFSET_LOADER, or AFTER_READ.");
+        if (value.Port is { } port) Range(port, 1, 65535, "configuration.dprnt.port");
+        var tcpHost = Optional(value.Host);
+        if (tcpHost is not null && (tcpHost.Length > 253 || Uri.CheckHostName(tcpHost) == UriHostNameType.Unknown))
+            throw new CncValidationException("configuration.dprnt.host", "DPRNT TCP host must be an IP address or host name.");
+        return new(source, filePath, clearPolicy, value.Port, tcpHost);
     }
 
     private static string Required(string? value, string field)

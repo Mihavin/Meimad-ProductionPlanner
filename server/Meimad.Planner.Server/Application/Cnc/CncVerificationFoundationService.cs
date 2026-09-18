@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.GCode;
 
 namespace Meimad.Planner.Server.Application.Cnc;
 
@@ -66,6 +67,8 @@ internal interface ICncVerificationFoundationRepository
     Task<IReadOnlyList<OffsetLoaderRelease>> ListOffsetLoaderReleasesAsync(
         string productionRunId, CancellationToken token);
     Task<StoredCncVerificationSettings?> GetSettingsAsync(string machineId, CancellationToken token);
+    /// <summary>The Machine's NC dialect, or null when the Machine does not exist.</summary>
+    Task<string?> GetMachineNcDialectAsync(string machineId, CancellationToken token);
     Task<StoredCncVerificationSettings> UpsertSettingsAsync(
         StoredCncVerificationSettings settings, int expectedVersion,
         EditAuthority authority, CancellationToken token);
@@ -147,14 +150,18 @@ internal sealed class CncVerificationFoundationService
             throw new CncVerificationValidationException("finalizeProgramNumber", "program_collision",
                 "Challenge, verification, and finalizer protected programs must be different.");
         if (command.CustomGcodeAlias.HasValue) Range(command.CustomGcodeAlias.Value, 1, 999, "customGcodeAlias");
-        Range(command.NonceVariable, 10000, 10999, "nonceVariable");
-        Range(command.VerificationStateVariable, 10000, 10999, "verificationStateVariable");
-        Range(command.ReleaseTokenVariable, 10000, 10999, "releaseTokenVariable");
-        Range(command.EventSequenceVariable, 10000, 10999, "eventSequenceVariable");
-        if (!IsM109Variable(command.ResponseVariable))
+        // The variable numbers a control can persist depend on its dialect (Haas #10000-#10999,
+        // FANUC/Mazak #500-#999, Okuma VC1-VC200); the Machine carries that dialect.
+        var dialect = NcDialects.Profile(await repository.GetMachineNcDialectAsync(machineId.Trim(), token));
+        var persistent = dialect.PersistentVariables;
+        Range(command.NonceVariable, persistent.Minimum, persistent.Maximum, "nonceVariable");
+        Range(command.VerificationStateVariable, persistent.Minimum, persistent.Maximum, "verificationStateVariable");
+        Range(command.ReleaseTokenVariable, persistent.Minimum, persistent.Maximum, "releaseTokenVariable");
+        Range(command.EventSequenceVariable, persistent.Minimum, persistent.Maximum, "eventSequenceVariable");
+        if (!dialect.IsResponseVariable(command.ResponseVariable))
             throw new CncVerificationValidationException("responseVariable", "unsupported_m109_variable",
-                "responseVariable must be in the Haas M109 range 500-549 or 10500-10549.");
-        var variables = new[] { command.NonceVariable, CanonicalVariable(command.ResponseVariable),
+                $"responseVariable must be in {dialect.ResponseVariableDescription} for the {dialect.DisplayName} dialect.");
+        var variables = new[] { command.NonceVariable, dialect.CanonicalVariable(command.ResponseVariable),
             command.VerificationStateVariable, command.ReleaseTokenVariable,
             command.EventSequenceVariable };
         if (variables.Distinct().Count() != variables.Length)
@@ -248,10 +255,6 @@ internal sealed class CncVerificationFoundationService
             throw new CncVerificationValidationException(field, "out_of_range",
                 $"{field} must be between {minimum} and {maximum}.");
     }
-    private static bool IsM109Variable(int value) =>
-        value is >= 500 and <= 549 or >= 10500 and <= 10549;
-    private static int CanonicalVariable(int value) =>
-        value is >= 500 and <= 549 ? value + 10000 : value;
     private static string RecoveryReason(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

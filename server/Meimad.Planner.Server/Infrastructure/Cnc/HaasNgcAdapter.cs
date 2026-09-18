@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Cnc;
+using Meimad.Planner.Server.Application.Fanuc;
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Domain.Haas;
@@ -18,7 +19,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
     private readonly INcProgramFileProvider programProvider;
     private readonly INcHeaderParser headerParser;
     private readonly TimeProvider timeProvider;
-    private readonly HaasDprntPartReader dprntPartReader = new();
+    private readonly CncDprntSource dprntSource;
     private string? candidateProgram;
     private int candidatePolls;
     private string? cachedProgram;
@@ -40,6 +41,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             connection.ConfigurationJson, CncJson.Options)
             ?? throw new CncValidationException("configuration", "Haas NGC configuration is invalid.");
         Validate(configuration);
+        dprntSource = new CncDprntSource(configuration.Host, DprntPort, connection.ConnectionTimeoutMs, configuration.Dprnt);
         client = clientFactory.Create(ToLegacySettings(connection, configuration, timeProvider.GetUtcNow()));
         this.mtConnectReader = mtConnectReader;
         this.programProvider = programProvider;
@@ -52,28 +54,30 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
     public CncAdapterType AdapterType => CncAdapterType.HaasNgc;
 
     public CncAdapterCapabilities GetCapabilities() => new(
+        connection.AllowRead && !UsesDprntOnly,
         connection.AllowRead,
-        connection.AllowRead,
-        connection.AllowRead && configuration.ProgramAccess.Enabled
+        connection.AllowRead && !UsesDprntOnly && configuration.ProgramAccess.Enabled
             && configuration.ProgramAccess.Provider == "HAAS_LOCAL_NET_SHARE",
         false,
         false,
-        connection.AllowRead,
+        connection.AllowRead && !UsesDprntOnly,
         false, false, false, false, false, false, false);
 
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
+        if (UsesDprntOnly) return;
         if (UsesMtConnect)
             pendingMtConnectRead = await ReadMtConnectAsync(cancellationToken);
         else
             await client.ConnectAsync(cancellationToken);
     }
 
-    public Task DisconnectAsync(CancellationToken cancellationToken = default) => UsesMtConnect
+    public Task DisconnectAsync(CancellationToken cancellationToken = default) => UsesMtConnect || UsesDprntOnly
         ? Task.CompletedTask : client.DisconnectAsync(cancellationToken);
 
     public async Task<CncConnectionTestResult> TestConnectionAsync(CancellationToken token = default)
     {
+        if (UsesDprntOnly) return await TestDprntConnectionAsync(token);
         if (UsesMtConnect) return await TestMtConnectConnectionAsync(token);
         var checks = new List<CncAdapterCheck>();
         HaasProgramStatus? status = null;
@@ -116,11 +120,22 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             }
         }
 
+        await AddDprntFileCheckAsync(checks, token);
         var mdcOkay = checks.First(value => value.Id == "mdc").Succeeded;
         var failedOptional = checks.Any(value => !value.Succeeded);
         var statusValue = !mdcOkay ? CncConnectionStates.Offline
             : failedOptional ? CncConnectionStates.Degraded : CncConnectionStates.Online;
         return new(mdcOkay && !failedOptional, statusValue, checks);
+    }
+
+    /// <summary>A configured DPRNT file is part of the connection test for every telemetry provider.</summary>
+    private async Task AddDprntFileCheckAsync(List<CncAdapterCheck> checks, CancellationToken token)
+    {
+        if (!dprntSource.UsesFile) return;
+        var dprnt = await dprntSource.DrainAsync(allowClear: false, token);
+        checks.Add(new("dprntFile", dprnt.Available,
+            dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable,
+            dprnt.Available ? dprntSource.SuccessMessage(dprnt) : dprnt.Error ?? "The DPRNT file is unavailable."));
     }
 
     private async Task<CncConnectionTestResult> TestMtConnectConnectionAsync(CancellationToken token)
@@ -171,11 +186,12 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             }
         }
 
+        await AddDprntFileCheckAsync(checks, token);
         var providerOkay = checks.First(value => value.Id == "mtconnect").Succeeded;
         var failedOptional = checks.Any(value => !value.Succeeded);
         var connectionStatus = !providerOkay ? CncConnectionStates.Offline
             : failedOptional ? CncConnectionStates.Degraded : CncConnectionStates.Online;
-        return new(providerOkay, connectionStatus, checks);
+        return new(providerOkay && !failedOptional, connectionStatus, checks);
     }
 
     private async Task<CncAdapterSnapshot> ReadMtConnectSnapshotAsync(CancellationToken token)
@@ -208,12 +224,11 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         };
         string? error = null;
         var program = status.ProgramNumber;
-        var dprnt = await dprntPartReader.DrainAsync(configuration.Host,
-            (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort,
-            connection.ConnectionTimeoutMs, token);
-        foreach (var eventLine in dprnt.EventLines)
+        var dprnt = await dprntSource.DrainAsync(allowClear: true, token);
+        foreach (var eventLine in dprnt.Result.EventLines)
             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
-        var dprntPart = dprnt.PartName;
+        dprntSource.ApplyFileHealth(dprnt, components, health, ref error);
+        var dprntPart = dprnt.Result.PartName;
 
         if (program != candidateProgram)
         {
@@ -306,6 +321,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
     {
         if (!connection.AllowRead)
             throw new InvalidOperationException("Read access is disabled for this CNC connection.");
+        if (UsesDprntOnly) return await ReadDprntOnlySnapshotAsync(token);
         if (UsesMtConnect) return await ReadMtConnectSnapshotAsync(token);
         var at = timeProvider.GetUtcNow();
         var status = await client.GetMachineStatusAsync(token);
@@ -339,11 +355,10 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
                 error ??= Safe(exception.Message);
             }
         }
-        var dprnt = await dprntPartReader.DrainAsync(configuration.Host,
-            (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort,
-            connection.ConnectionTimeoutMs, token);
-        foreach (var eventLine in dprnt.EventLines)
+        var dprnt = await dprntSource.DrainAsync(allowClear: true, token);
+        foreach (var eventLine in dprnt.Result.EventLines)
             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+        dprntSource.ApplyFileHealth(dprnt, components, health, ref error);
 
         var program = status.ProgramNumber;
         if (program != candidateProgram)
@@ -367,9 +382,9 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             if (!cachedPartFromDprnt) cachedPart = new(null, null, false);
             cachedHeaderPath = new(null, null, false);
         }
-        if (dprnt.PartName is not null)
+        if (dprnt.Result.PartName is not null)
         {
-            cachedPart = new(dprnt.PartName, at, false);
+            cachedPart = new(dprnt.Result.PartName, at, false);
             cachedPartFromDprnt = true;
             cachedHeaderPath = new(null, null, false);
             components["DPRNT"] = CncComponentStates.Available;
@@ -471,7 +486,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
 
     public async ValueTask DisposeAsync()
     {
-        await dprntPartReader.DisposeAsync();
+        await dprntSource.DisposeAsync();
         await client.DisposeAsync();
     }
 
@@ -491,6 +506,85 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         HaasTelemetryProviders.MtConnect,
         StringComparison.OrdinalIgnoreCase);
 
+    private bool UsesDprntOnly => string.Equals(
+        configuration.TelemetryProvider,
+        HaasTelemetryProviders.DprntOnly,
+        StringComparison.OrdinalIgnoreCase);
+
+    private int DprntPort =>
+        (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort;
+
+    private async Task<CncAdapterSnapshot> ReadDprntOnlySnapshotAsync(CancellationToken token)
+    {
+        var at = timeProvider.GetUtcNow();
+        var dprnt = await dprntSource.DrainAsync(allowClear: true, token);
+        var raw = new List<RawCncTelemetry>();
+        foreach (var eventLine in dprnt.Result.EventLines)
+            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+        if (dprnt.Result.PartName is not null)
+        {
+            cachedPart = new(dprnt.Result.PartName, at, false);
+            cachedPartFromDprnt = true;
+        }
+        else if (!dprnt.Available)
+        {
+            cachedPart = cachedPart with { Stale = cachedPart.Value is not null };
+        }
+        else if (dprntSource.UsesFile && cachedPart.Stale)
+        {
+            // Lines written during a file outage are still in the file and were consumed by this drain.
+            cachedPart = cachedPart with { Stale = false };
+        }
+        var dprntState = dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable;
+        var components = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["DPRNT"] = dprntState,
+            ["MTCONNECT"] = CncComponentStates.Unsupported,
+            ["MDC"] = CncComponentStates.Unsupported,
+            ["PROGRAM_ACCESS"] = CncComponentStates.Unsupported
+        };
+        var health = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["machineState"] = CncComponentStates.Unsupported,
+            ["activeProgram"] = CncComponentStates.Unsupported,
+            ["partCounter"] = CncComponentStates.Unsupported,
+            ["programHeader"] = cachedPart.Value is null || cachedPart.Stale
+                ? CncComponentStates.Unavailable : CncComponentStates.Available
+        };
+        if (dprntSource.UsesFile) health["dprntFile"] = dprntState;
+        var connectionStatus = !dprnt.Available ? CncConnectionStates.Offline
+            : cachedPart.Value is null ? CncConnectionStates.Degraded : CncConnectionStates.Online;
+        var snapshot = new MachineSnapshot(
+            MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at,
+            connectionStatus,
+            dprnt.Available ? at : null,
+            new(null, null, false),
+            new(new(null, null, false), cachedPart, new(null, null, false)),
+            new(null, null, false),
+            new(null, null, null, null),
+            components,
+            health,
+            dprnt.Error is null ? null : Safe(dprnt.Error));
+        return new(snapshot, raw);
+    }
+
+    private async Task<CncConnectionTestResult> TestDprntConnectionAsync(CancellationToken token)
+    {
+        var dprnt = await dprntSource.DrainAsync(allowClear: false, token);
+        var checks = new List<CncAdapterCheck>
+        {
+            new("dprnt", dprnt.Available,
+                dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable,
+                dprnt.Available
+                    ? dprntSource.SuccessMessage(dprnt)
+                    : dprnt.Error ?? "The DPRNT source is unavailable."),
+            new("programAccess", true, CncComponentStates.Unsupported,
+                "A DPRNT-only connection has no machine telemetry or NC header access; Part identity comes from DPRNT lines.")
+        };
+        return new(dprnt.Available,
+            dprnt.Available ? CncConnectionStates.Online : CncConnectionStates.Offline, checks);
+    }
+
     private static HaasConnectionSettings ToLegacySettings(
         MachineConnection connection, HaasNgcConnectionConfiguration config, DateTimeOffset now) => new(
             connection.MachineId, config.Host, config.MacAddress!, config.Mdc.Port, config.MtConnect?.Port ?? 8082,
@@ -502,7 +596,10 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
             config.ProgramAccess.HeaderByteLimit, config.ProgramAccess.HeaderPartPatterns,
             connection.Enabled, connection.Version, connection.CreatedAt, now,
             string.IsNullOrWhiteSpace(config.TelemetryProvider)
-                ? HaasTelemetryProviders.Mdc : config.TelemetryProvider);
+                ? HaasTelemetryProviders.Mdc : config.TelemetryProvider,
+            config.Dprnt?.Source ?? CncDprntSources.Tcp,
+            config.Dprnt?.FilePath,
+            config.Dprnt?.ClearPolicy ?? CncDprntClearPolicies.Never);
 
     private static void Validate(HaasNgcConnectionConfiguration value)
     {
@@ -523,9 +620,21 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
         var provider = string.IsNullOrWhiteSpace(value.TelemetryProvider)
             ? HaasTelemetryProviders.Mdc : value.TelemetryProvider.Trim().ToUpperInvariant();
         if (!HaasTelemetryProviders.IsSupported(provider))
-            throw new CncValidationException("telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
+            throw new CncValidationException("telemetryProvider", "Telemetry provider must be MDC, MTCONNECT, or DPRNT.");
         if (provider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
             throw new CncValidationException("mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
+        if (value.Dprnt is not null)
+        {
+            var source = value.Dprnt.Source?.Trim().ToUpperInvariant() ?? string.Empty;
+            if (source is not (CncDprntSources.Tcp or CncDprntSources.File))
+                throw new CncValidationException("dprnt.source", "DPRNT source must be TCP or FILE.");
+            if (source == CncDprntSources.File && string.IsNullOrWhiteSpace(value.Dprnt.FilePath))
+                throw new CncValidationException("dprnt.filePath", "A DPRNT file path is required when the DPRNT source is FILE.");
+            if (!CncDprntClearPolicies.IsSupported(value.Dprnt.ClearPolicy?.Trim().ToUpperInvariant() ?? string.Empty))
+                throw new CncValidationException("dprnt.clearPolicy", "DPRNT file clear policy must be NEVER, ON_OFFSET_LOADER, or AFTER_READ.");
+            if (!string.IsNullOrWhiteSpace(value.Dprnt.Host) && Uri.CheckHostName(value.Dprnt.Host.Trim()) == UriHostNameType.Unknown)
+                throw new CncValidationException("dprnt.host", "DPRNT TCP host must be an IP address or host name.");
+        }
     }
 
     private static string Safe(string value) => value.Length <= 500 ? value : value[..500];
@@ -536,12 +645,15 @@ internal sealed class CncAdapterFactory(
     IHaasMtConnectReader mtConnectReader,
     INcProgramFileProvider programProvider,
     INcHeaderParser headerParser,
-    TimeProvider timeProvider) : ICncAdapterFactory
+    TimeProvider timeProvider,
+    IFocasClientFactory focasClientFactory) : ICncAdapterFactory
 {
     public ICncMachineAdapter CreateAdapter(MachineConnection connection) => connection.AdapterType switch
     {
         CncAdapterType.HaasNgc => new HaasNgcAdapter(
             connection, haasClientFactory, mtConnectReader, programProvider, headerParser, timeProvider),
+        CncAdapterType.FanucFocas => new FanucFocasAdapter(
+            connection, focasClientFactory, headerParser, timeProvider),
         _ => throw new CncAdapterUnsupportedException(CncAdapterTypes.Serialize(connection.AdapterType))
     };
 }

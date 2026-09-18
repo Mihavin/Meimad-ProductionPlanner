@@ -60,7 +60,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 WHERE machine_supported_postprocessors.machine_id = machines.id
                 ORDER BY machine_supported_postprocessors.postprocessor_id
             )
-        ), '[]') AS supported_postprocessor_ids_json
+        ), '[]') AS supported_postprocessor_ids_json,
+        machines.nc_dialect
         """;
 
     private readonly SqliteDatabase database;
@@ -105,13 +106,13 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 working_calendar_id, display_configuration_json, status, picture_reference,
                 is_active, display_enabled, version, created_at, updated_at, machine_type_id,
                 respect_master_calendar, execution_mode, usable_tool_positions,
-                rapid_rate_mm_per_min, tool_change_time_seconds, machine_time_factor)
+                rapid_rate_mm_per_min, tool_change_time_seconds, machine_time_factor, nc_dialect)
             VALUES (
                 $id, $number, $name, $processType, $axisType, $capabilities,
                 $calendarId, '{}', $status, $picturePath,
                 $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId,
                 $respectMasterCalendar, $executionMode, $usableToolPositions,
-                $rapidRateMillimetersPerMinute, $toolChangeTimeSeconds, $machineTimeFactor);
+                $rapidRateMillimetersPerMinute, $toolChangeTimeSeconds, $machineTimeFactor, $ncDialect);
             """;
         AddWriteParameters(command, machine);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -208,6 +209,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 rapid_rate_mm_per_min = $rapidRateMillimetersPerMinute,
                 tool_change_time_seconds = $toolChangeTimeSeconds,
                 machine_time_factor = $machineTimeFactor,
+                nc_dialect = $ncDialect,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
@@ -461,6 +463,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             "$toolChangeTimeSeconds",
             machine.ToolChangeTimeSeconds.HasValue ? machine.ToolChangeTimeSeconds.Value : DBNull.Value);
         command.Parameters.AddWithValue("$machineTimeFactor", machine.MachineTimeFactor);
+        command.Parameters.AddWithValue("$ncDialect", machine.NcDialect);
     }
 
     private static Machine ReadMachine(SqliteDataReader reader)
@@ -493,7 +496,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             reader.IsDBNull(19) ? null : reader.GetInt32(19),
             reader.IsDBNull(20) ? null : reader.GetDouble(20),
             reader.IsDBNull(21) ? null : reader.GetDouble(21),
-            reader.GetDouble(22));
+            reader.GetDouble(22),
+            reader.GetString(24));
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

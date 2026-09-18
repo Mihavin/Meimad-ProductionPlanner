@@ -25,6 +25,14 @@ internal interface IHaasMdcClientFactory
     IHaasMdcClient Create(HaasConnectionSettings settings);
 }
 
+/// <summary>One-shot, side-effect-free read of the configured DPRNT source for Setup diagnostics.</summary>
+internal interface IHaasDprntProbe
+{
+    Task<HaasDprntProbeResult> ProbeAsync(HaasConnectionSettings settings, CancellationToken cancellationToken = default);
+}
+
+internal sealed record HaasDprntProbeResult(bool Available, string Message, string? PartName);
+
 internal interface IHaasMtConnectReader
 {
     Task<HaasMtConnectRead> ReadAsync(
@@ -87,7 +95,10 @@ internal sealed record HaasSettingsUpdate(
     IReadOnlyList<string>? HeaderPartPatterns,
     bool Enabled,
     int ExpectedVersion,
-    string? TelemetryProvider);
+    string? TelemetryProvider,
+    string? DprntSource = null,
+    string? DprntFilePath = null,
+    string? DprntFileClearPolicy = null);
 
 internal sealed class HaasValidationException(string field, string message) : Exception(message)
 {

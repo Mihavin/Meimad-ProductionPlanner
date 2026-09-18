@@ -298,6 +298,8 @@ internal interface IPlannerApiClient : IDisposable
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<HaasConnectionTest> TestHaasNetShareAsync(
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<HaasConnectionTest> TestHaasDprntAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<HaasMachineMonitor> GetHaasMonitorAsync(
         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<CncVerificationSettings> GetCncVerificationSettingsAsync(
@@ -322,6 +324,15 @@ internal interface IPlannerApiClient : IDisposable
     Task ReconnectCncAsync(
         string machineId, string clientId, long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncConnection?> GetCncConnectionAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncConnection> UpdateCncConnectionAsync(
+        string machineId, CncConnectionUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncConnectionTest> TestCncConnectionAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<CncMachineSnapshot?> GetCncSnapshotAsync(
+        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<MachineDowntimeResource> RestoreBreakdownAsync(
         string downtimeId, BreakdownRestore restore, string entityTag,
         string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
@@ -1811,6 +1822,14 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadHaasConnectionTestAsync(response, cancellationToken);
     }
 
+    public async Task<HaasConnectionTest> TestHaasDprntAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-dprnt", null, cancellationToken);
+        return await ReadHaasConnectionTestAsync(response, cancellationToken);
+    }
+
     public async Task<HaasMachineMonitor> GetHaasMonitorAsync(
         string machineId, CancellationToken cancellationToken = default)
     {
@@ -1887,6 +1906,59 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     {
         using var response = await httpClient.GetAsync("api/v1/cnc-adapters", cancellationToken);
         return await ReadSuccessAsync<IReadOnlyList<CncAdapterDefinition>>(response, cancellationToken);
+    }
+
+    public async Task<CncConnection?> GetCncConnectionAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/cnc-connection", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        return await ReadSuccessAsync<CncConnection>(response, cancellationToken);
+    }
+
+    public async Task<CncConnection> UpdateCncConnectionAsync(
+        string machineId, CncConnectionUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/cnc-connection", clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<CncConnection>(response, cancellationToken);
+    }
+
+    public async Task<CncConnectionTest> TestCncConnectionAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/cnc-connection/test", null, cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadGateway)
+        {
+            // Connection-test failures deliberately return HTTP 502 with the typed diagnostic body.
+            var payload = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            try
+            {
+                var failed = JsonSerializer.Deserialize<CncConnectionTest>(payload, JsonOptions);
+                if (failed?.Checks is not null) return failed;
+            }
+            catch (JsonException)
+            {
+                // A non-test error envelope is handled by the normal safe API-error path below.
+            }
+        }
+        return await ReadSuccessAsync<CncConnectionTest>(response, cancellationToken);
+    }
+
+    public async Task<CncMachineSnapshot?> GetCncSnapshotAsync(
+        string machineId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/snapshot", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        return await ReadSuccessAsync<CncMachineSnapshot>(response, cancellationToken);
     }
 
     public async Task ReconnectCncAsync(

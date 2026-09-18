@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Haas;
+using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Domain.Haas;
 
 namespace Meimad.Planner.Server.Api.Haas;
@@ -14,6 +15,7 @@ internal static class HaasEndpoints
         group.MapPost("/test-mtconnect", TestMtConnectAsync);
         group.MapPost("/test-mdc", TestMdcAsync);
         group.MapPost("/test-net-share", TestNetShareAsync);
+        group.MapPost("/test-dprnt", TestDprntAsync);
         group.MapGet("/monitor", ReadMonitorAsync);
     }
 
@@ -42,7 +44,8 @@ internal static class HaasEndpoints
                 request.PartCounterSource, request.PollingIntervalMs, request.ConnectionTimeoutMs,
              request.StableProgramPolls, request.HeaderLineLimit, request.HeaderByteLimit,
                 request.HeaderPartPatterns, request.Enabled, request.Version,
-                request.TelemetryProvider), authority!, token);
+                request.TelemetryProvider, request.DprntSource, request.DprntFilePath,
+                request.DprntFileClearPolicy), authority!, token);
             return Results.Ok(Response(value));
         }
         catch (HaasValidationException exception)
@@ -74,6 +77,10 @@ internal static class HaasEndpoints
         string machineId, HaasIntegrationService service, CancellationToken token) =>
         TestResult(await service.TestNetShareAsync(machineId, token));
 
+    private static async Task<IResult> TestDprntAsync(
+        string machineId, HaasIntegrationService service, CancellationToken token) =>
+        TestResult(await service.TestDprntAsync(machineId, token));
+
     private static async Task<IResult> ReadMonitorAsync(
         string machineId, HttpContext context, HaasIntegrationService service, CancellationToken token)
     {
@@ -94,7 +101,8 @@ internal static class HaasEndpoints
         value.PartCounterSource,
         value.PollingIntervalMs, value.ConnectionTimeoutMs, value.StableProgramPolls,
         value.HeaderLineLimit, value.HeaderByteLimit, value.HeaderPartPatterns,
-        value.Enabled, value.Version, value.UpdatedAt, value.TelemetryProvider);
+        value.Enabled, value.Version, value.UpdatedAt, value.TelemetryProvider,
+        value.DprntSource, value.DprntFilePath, value.DprntFileClearPolicy);
 }
 
 internal sealed record HaasConnectionUpdateRequest(
@@ -104,7 +112,8 @@ internal sealed record HaasConnectionUpdateRequest(
     string? PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string>? HeaderPartPatterns,
-    bool Enabled, int Version, string? TelemetryProvider);
+    bool Enabled, int Version, string? TelemetryProvider,
+    string? DprntSource = null, string? DprntFilePath = null, string? DprntFileClearPolicy = null);
 
 internal sealed record HaasConnectionResponse(
     string MachineId, string Host, string MacAddress,
@@ -113,4 +122,5 @@ internal sealed record HaasConnectionResponse(
     string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
-    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = HaasTelemetryProviders.Mdc);
+    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = HaasTelemetryProviders.Mdc,
+    string DprntSource = CncDprntSources.Tcp, string? DprntFilePath = null, string DprntFileClearPolicy = CncDprntClearPolicies.Never);

@@ -130,6 +130,15 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         return await reader.ReadAsync(token) ? ReadSettings(reader) : null;
     }
 
+    public async Task<string?> GetMachineNcDialectAsync(string machineId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT nc_dialect FROM machines WHERE id=$machineId;";
+        command.Parameters.AddWithValue("$machineId", machineId);
+        return await command.ExecuteScalarAsync(token) as string;
+    }
+
     public async Task<StoredCncVerificationSettings> UpsertSettingsAsync(
         StoredCncVerificationSettings value, int expectedVersion,
         EditAuthority authority, CancellationToken token)

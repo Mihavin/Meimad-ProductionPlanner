@@ -39,7 +39,7 @@ The implemented browser-facing Server URLs are listed in [Server HTTP pages](doc
 ## Documentation
 
 - [User help](docs/user-help.md)
-- [Simple Haas NGC postprocessor programmer guide](docs/haas-ngc-postprocessor-and-macro-specification.md) ([Word](docs/Meimad-Haas-NGC-Postprocessor-Programmer-Guide-v1.5.docx))
+- [NC postprocessor programmer guide — Haas NGC, FANUC 0i/30i/31i, Mazak Matrix, Okuma OSP-P200](docs/nc-postprocessor-and-macro-specification.md) ([Word](docs/Meimad-NC-Postprocessor-Programmer-Guide-v1.8.docx)); audit: [postprocessor-writer-documentation-audit-2026-09-18.md](docs/postprocessor-writer-documentation-audit-2026-09-18.md)
 - [Tasks 24-32 completion audit](docs/tasks-24-32-completion-audit.md)
 - [CNC verification code audit](docs/cnc-verification-code-audit-2026-08-27.md)
 - [Internal CNC engineering decision record](docs/haas-internal-engineering-review-2026-08-27.md)

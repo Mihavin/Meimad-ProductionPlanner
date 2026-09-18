@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.Cnc;
+using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
@@ -636,6 +638,58 @@ public sealed class MachineApiTests
             Assert.Equal(HttpStatusCode.NoContent, deleteMachine.StatusCode);
             using var nowUnmappedDelete = await client.DeleteAsync($"/api/v1/postprocessors/{threeAxis}");
             Assert.Equal(HttpStatusCode.NoContent, nowUnmappedDelete.StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task Machine_NC_dialect_round_trips_rejects_unknown_values_and_is_pinned_while_verification_is_enabled()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            var id = await CreateMachineAsync(client, "M-OSP", "mill", []);
+            using var created = await client.GetAsync($"/api/v1/machines/{id}");
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            Assert.Equal("HAAS_NGC", createdJson.RootElement.GetProperty("ncDialect").GetString());
+
+            using var invalid = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncDialect = "SIEMENS_840D" }) };
+            invalid.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var rejected = await client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+            Assert.Contains("invalid_nc_dialect", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            using var change = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncDialect = "OKUMA_OSP" }) };
+            change.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var changed = await client.SendAsync(change);
+            Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+            using var changedJson = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
+            Assert.Equal("OKUMA_OSP", changedJson.RootElement.GetProperty("ncDialect").GetString());
+
+            // Mappings are validated against the new dialect (VC1-VC200); once verification is
+            // enabled the dialect is pinned until verification is disabled again.
+            var verification = application.Services.GetRequiredService<CncVerificationFoundationService>();
+            await verification.UpdateSettingsAsync(
+                id,
+                new("HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 1, 2, 3, 4, 9003, 5, 6, 6, 300, true),
+                0,
+                new EditAuthority("machine-api-client", 1));
+
+            using var current = await client.GetAsync($"/api/v1/machines/{id}");
+            using var revert = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncDialect = "HAAS_NGC" }) };
+            revert.Headers.IfMatch.Add(new EntityTagHeaderValue(current.Headers.ETag!.Tag));
+            using var blocked = await client.SendAsync(revert);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
+            Assert.Contains("verification_enabled", await blocked.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            using var unchanged = await client.GetAsync($"/api/v1/machines/{id}");
+            using var unchangedJson = JsonDocument.Parse(await unchanged.Content.ReadAsStringAsync());
+            Assert.Equal("OKUMA_OSP", unchangedJson.RootElement.GetProperty("ncDialect").GetString());
         });
     }
 

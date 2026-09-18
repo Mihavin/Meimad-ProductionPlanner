@@ -79,7 +79,9 @@ internal sealed class DatabaseMigrator
         new SchemaV71MachineAssignmentReleaseKeepsSelectedReleaseMigration(),
         new SchemaV72MachineAssignmentManualPriorityMigration(),
         new SchemaV73KitaronSuppressedOperationsMigration(),
-        new SchemaV74CaseModelFilesMigration()
+        new SchemaV74CaseModelFilesMigration(),
+        new SchemaV75FanucFocasAdapterTypeMigration(),
+        new SchemaV76MachineNcDialectMigration()
     ];
 
     private readonly SqliteDatabase database;
@@ -217,10 +219,50 @@ internal sealed class DatabaseMigrator
             migration.Version,
             migration.Name);
 
+        // PRAGMA foreign_keys is a no-op inside a transaction, so a table rebuild that must not
+        // cascade into dependent rows switches enforcement off before the transaction starts.
+        if (migration.DisablesForeignKeyEnforcement)
+            await ExecutePragmaAsync(connection, "PRAGMA foreign_keys = OFF;", cancellationToken);
+        try
+        {
+            await ApplyMigrationTransactionAsync(connection, migration, cancellationToken);
+        }
+        finally
+        {
+            if (migration.DisablesForeignKeyEnforcement)
+                await ExecutePragmaAsync(connection, "PRAGMA foreign_keys = ON;", cancellationToken);
+        }
+    }
+
+    private static async Task ExecutePragmaAsync(
+        SqliteConnection connection, string pragma, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = pragma;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task ApplyMigrationTransactionAsync(
+        SqliteConnection connection,
+        IDatabaseMigration migration,
+        CancellationToken cancellationToken)
+    {
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         try
         {
             await migration.ApplyAsync(connection, transaction, cancellationToken);
+
+            if (migration.DisablesForeignKeyEnforcement)
+            {
+                await using var integrity = connection.CreateCommand();
+                integrity.Transaction = transaction;
+                integrity.CommandText = "PRAGMA foreign_key_check;";
+                if (await integrity.ExecuteScalarAsync(cancellationToken) is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"Migration {migration.Version} left dangling foreign-key references.");
+                }
+            }
 
             await using var historyCommand = connection.CreateCommand();
             historyCommand.Transaction = transaction;

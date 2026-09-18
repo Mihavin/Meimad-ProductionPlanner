@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Net;
 using System.Text.Json.Serialization;
 
@@ -133,7 +134,8 @@ internal sealed record PlannerMachine(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double MachineTimeFactor = 1.0)
+    double MachineTimeFactor = 1.0,
+    string NcDialect = "HAAS_NGC")
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -486,7 +488,8 @@ internal sealed record MachineCreate(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double MachineTimeFactor = 1.0);
+    double MachineTimeFactor = 1.0,
+    string NcDialect = "HAAS_NGC");
 
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -494,7 +497,8 @@ internal sealed record HaasConnectionSettings(
     string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
-    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC");
+    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC",
+    string DprntSource = "TCP", string? DprntFilePath = null, string DprntFileClearPolicy = "NEVER");
 
 internal sealed record HaasConnectionUpdate(
     string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -502,7 +506,8 @@ internal sealed record HaasConnectionUpdate(
     string PartCounterSource,
     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
-    bool Enabled, int Version, string TelemetryProvider);
+    bool Enabled, int Version, string TelemetryProvider,
+    string DprntSource = "TCP", string? DprntFilePath = null, string DprntFileClearPolicy = "NEVER");
 
 internal sealed record HaasConnectionTest(
     bool Succeeded, string Message, string? ProgramNumber, string? MachineStatus,
@@ -594,6 +599,76 @@ internal sealed record CncAdapterCapabilities(
     bool CanReadSpindle,
     bool CanUploadNcProgram,
     bool CanDownloadNcProgram);
+
+/// <summary>Protocol-independent primary CNC connection; <see cref="Configuration"/> is the adapter-typed public view.</summary>
+internal sealed record CncConnection(
+    string Id,
+    string MachineId,
+    string AdapterType,
+    bool Enabled,
+    string ConnectionStatus,
+    DateTimeOffset? LastConnectedAt,
+    DateTimeOffset? LastSuccessfulPollAt,
+    int PollingIntervalMs,
+    int ConnectionTimeoutMs,
+    int MaximumReconnectBackoffMs,
+    bool AllowRead,
+    bool AllowWrite,
+    int RawTelemetryRetentionDays,
+    JsonElement Configuration,
+    int Version,
+    DateTimeOffset UpdatedAt);
+
+internal sealed record CncConnectionUpdate(
+    string AdapterType,
+    bool Enabled,
+    int PollingIntervalMs,
+    int ConnectionTimeoutMs,
+    int MaximumReconnectBackoffMs,
+    bool AllowRead,
+    bool AllowWrite,
+    int RawTelemetryRetentionDays,
+    object Configuration,
+    int Version);
+
+internal sealed record FocasConnectionConfiguration(
+    string Host,
+    string? MacAddress,
+    int Port,
+    int TimeoutMs,
+    string PartCounterSource,
+    FocasDprntConfiguration? Dprnt,
+    FocasProgramAccessConfiguration? ProgramAccess);
+
+internal sealed record FocasDprntConfiguration(
+    string Source, string? FilePath, string ClearPolicy, int? Port, string? Host = null);
+
+internal sealed record FocasProgramAccessConfiguration(
+    string Provider, bool Enabled, string ProgramFolder);
+
+internal sealed record CncConnectionTest(
+    bool OverallSuccess, string ConnectionStatus, IReadOnlyList<CncConnectionCheck> Checks);
+
+internal sealed record CncConnectionCheck(string Id, bool Succeeded, string Status, string Message);
+
+internal sealed record CncMachineSnapshot(
+    string MachineId,
+    DateTimeOffset Timestamp,
+    string ConnectionStatus,
+    DateTimeOffset? LastSeenAt,
+    CncSnapshotValue<string> MachineState,
+    CncSnapshotProgram Program,
+    CncSnapshotValue<int?> PartCounter,
+    IReadOnlyDictionary<string, string> ComponentHealth,
+    IReadOnlyDictionary<string, string> CapabilityHealth,
+    string? LastError);
+
+internal sealed record CncSnapshotProgram(
+    CncSnapshotValue<string> ProgramNumber,
+    CncSnapshotValue<string> PartName,
+    CncSnapshotValue<string> HeaderSourcePath);
+
+internal sealed record CncSnapshotValue<T>(T? Value, DateTimeOffset? ReadAt, bool Stale);
 
 internal sealed record WorkingCalendar(
     string WorkingCalendarId,

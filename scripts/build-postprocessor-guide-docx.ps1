@@ -7,9 +7,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($SourcePath)) { $SourcePath = Join-Path $repositoryRoot 'docs\haas-ngc-postprocessor-and-macro-specification.md' }
-if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $repositoryRoot 'docs\Meimad-Haas-NGC-Postprocessor-Programmer-Guide-v1.7.docx' }
-if ([string]::IsNullOrWhiteSpace($XpsPath)) { $XpsPath = Join-Path $repositoryRoot '.diagnostics\postprocessor-guide-v1.7.xps' }
+if ([string]::IsNullOrWhiteSpace($SourcePath)) { $SourcePath = Join-Path $repositoryRoot 'docs\nc-postprocessor-and-macro-specification.md' }
+if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $repositoryRoot 'docs\Meimad-NC-Postprocessor-Programmer-Guide-v1.8.docx' }
+if ([string]::IsNullOrWhiteSpace($XpsPath)) { $XpsPath = Join-Path $repositoryRoot '.diagnostics\postprocessor-guide-v1.8.xps' }
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
 $xps = [IO.Path]::GetFullPath($XpsPath)
@@ -61,7 +61,7 @@ try {
     $doc.Styles.Item('Heading 3').ParagraphFormat.SpaceAfter = 5
 
     $header = $section.Headers.Item(1).Range
-    $header.Text = 'MEIMAD  |  HAAS NGC POSTPROCESSOR GUIDE'
+    $header.Text = 'MEIMAD  |  NC POSTPROCESSOR GUIDE'
     $header.Font.Name = 'Calibri'
     $header.Font.Size = 8.5
     $header.Font.Color = 8421504
@@ -107,7 +107,7 @@ try {
             $selection.Font.Bold = $false
             $selection.Font.Color = 6908265
             $selection.ParagraphFormat.SpaceAfter = 18
-            $selection.TypeText('Source-template markers, package-build rules, SolidCAM GPPL, Cimatron GPP and GPP2 examples')
+            $selection.TypeText('Source-template markers, package-build rules, and Haas NGC, FANUC 0i/30i/31i, Mazak Matrix and Okuma OSP-P200 examples with SolidCAM and Cimatron patterns')
             $selection.TypeParagraph()
             continue
         }

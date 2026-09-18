@@ -36,7 +36,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    settings.event_sequence_variable,
                    connection.enabled,connection.allow_write,connection.connection_status,
                    current.production_package_id,
-                   COALESCE(package_capability.allow_manual_dummy_tool_offsets,0)
+                   COALESCE(package_capability.allow_manual_dummy_tool_offsets,0),
+                   machine.nc_dialect
             FROM batch_operations operation
             JOIN case_operations source_operation ON source_operation.id=operation.source_case_operation_id
             JOIN cases case_record ON case_record.id=source_operation.case_id
@@ -77,6 +78,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             && reader.GetString(16) == "ONLINE";
         var currentPackageId = Nullable(reader, 17);
         var manualDummyAllowed = reader.GetBoolean(18);
+        var ncDialect = reader.GetString(19);
         await reader.DisposeAsync();
 
         var runNumber = runId is null ? null : (int?)await EnsureRunNumberAsync(
@@ -103,7 +105,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             executionMode, partName, operationName,
             gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash, ncIdentityToken,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
-            verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness);
+            verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness,
+            ncDialect);
     }
 
     public async Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken)

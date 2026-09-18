@@ -492,6 +492,8 @@ Implemented deterministic tests use fixed UTC timestamps and cover same- and dif
 
 **Implementation status:** Protocol-independent Server connection platform and Haas production adapter implemented; full real VF-3 production acceptance remains pending. Schema v43 adds one primary `MachineConnection`, normalized current state, meaningful-change history, connection events, and retained raw telemetry on top of the v42 immutable header/Bench/audit tables. `HAAS_NGC` now explicitly selects MDC or read-only MTConnect as its normalized telemetry provider. MTConnect `/probe` and `/current` HTTP/XML parsing, single-device validation, state/program/counter/macro-range normalization, compact diagnostics, dedicated API test, Server polling, Setup source selection, and live-agent commissioning tests are implemented. The separate generic MTConnect, OPC UA, and Custom adapters remain registry-only unsupported options. Filename, MTConnect `PROGRAM`, and Cycle Start have no business-transition role.
 
+**DPRNT file source and FANUC FOCAS (schema v75):** The DPRNT source is now adapter-independent (`TCP`, `FILE`, or `NONE`). `FILE` tails a controller-written print file over a UNC share (Mazak Matrix `print.txt` with DPR14 = 4) and applies a clear policy (`ON_OFFSET_LOADER`, `AFTER_READ`, `NEVER`) with loss-safe truncation; `HAAS_NGC.telemetryProvider=DPRNT` serves controllers without MDC/MTConnect. `FANUC_FOCAS` is a read-only adapter over the FANUC FOCAS 2 library with a fake-client unit test suite, API validation tests, and a table-rebuild migration test; it is implemented at the Server contract level only. Real-controller acceptance (Mazak print-file behaviour under DPR14, share permissions for the service account, FOCAS library installation, `cnc_exeprgname`/`cnc_rdparam` behaviour on the specific control series, and the commissioning-gated program-head upload path) remains a physical commissioning requirement and is not claimed here. The 2026-09-18 postprocessor documentation audit (`docs/postprocessor-writer-documentation-audit-2026-09-18.md`) added two DPRNT-path fixes with tests — both readers strip ASCII control codes such as the FANUC `POPEN`/`PCLOS` DC2/DC4, and the generic `dprnt.host` lets a serial-to-Ethernet bridge with its own address carry the TCP source — and replaced the Haas-only writer guide with a controller-neutral specification. The same day, schema v76 added the Machine NC dialect (`HAAS_NGC`, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, `OKUMA_OSP`): the Production Package Creator renders the verification hook, event context, cycle events, and Offset Loader through a per-dialect profile (Okuma OSP uses `CALL`/`PUT`/`WRITE C`/`VC` variables and an `O1990.MIN` loader), verification variable ranges are validated per dialect in the service and in the SQLite triggers, the Machine API and Setup expose the dialect, and the writer guide examples for SolidCAM (GPPL `output`) and Cimatron (GPP `.exf` `OUTPUT J`) were corrected. The protected verification subprograms for FANUC, Mazak, and Okuma and the exact OSP `PUT`/`WRITE` device routing remain physical commissioning work (OD-037).
+
 The real-machine Definition of Done is intentionally not claimed. Haas publicly documents Q500/Q600/E and Local Net Share, but not a guaranteed active MEMORY/USB/Remote-Net-Share program-to-SMB-file mapping. Complete and record the read-only VF-3 tests in `haas-active-program-header.md` before enabling production polling. Tool Table transfer transport remains site/controller-specific; the implemented reset endpoint requires explicit successful-transfer confirmation before the audited zero/write/read-back sequence.
 
 ## 14. Phase 11 - E-Ink API and simulator
@@ -720,6 +722,34 @@ first-article/QC operating strategy.
   proof of battery power and the aligned response remains required. Preserve sequence
   gaps as anomalies; never reset or reseed `#10504` to repair history.
   Verification remains disabled.
+
+- **OD-036 - NC dialect for Server-injected blocks:** Resolved 2026-09-18, the day it was
+  recorded. Schema v76 adds `machines.nc_dialect` (`HAAS_NGC` default, `FANUC_MACRO_B`,
+  `MAZAK_MATRIX_EIA`, `OKUMA_OSP`), exposed as `ncDialect` on the Machine API and as
+  "NC dialect" in Setup. `Application/GCode/NcDialects.cs` renders the verification hook,
+  `EVENT_CONTEXT`, the cycle-event blocks, and the Offset Loader per dialect: Haas keeps
+  `G65`/`DPRNT`/`G103`; FANUC and Mazak use the same custom macro B without `G103` and with
+  `#500–#999` variables; Okuma OSP uses `CALL O9002 PA=`, `PUT '...'` + `WRITE C`,
+  `VC1–VC200`, `IF [...] Nlabel`/`GOTO`, and an `O1990.MIN` loader ending in `M02`.
+  `CncVerificationFoundationService` and the rebuilt v76 triggers validate the five
+  variables per dialect, a dialect change is refused while verification is enabled, and
+  legacy V1 releases build only for `HAAS_NGC`. Not chosen: a FANUC non-buffered M-code
+  barrier (the cycle block simply has none; register one on the control if event timing
+  must match motion) and emitting `EVENT_CONTEXT` as a comment (every dialect prints it).
+  Physical commissioning of the non-Haas subprograms and the `MEIMAD/V/2/CONTEXT`
+  ingestion log noise remain open under OD-037.
+
+- **OD-037 - Okuma OSP-P200/P300 commissioning and release validation:** the Server side
+  of the OSP dialect is implemented (OD-036), but nothing has run on the Genos L200E-M
+  (OSP-P200L). Confirm on the control the exact `PUT`/`WRITE C` statement form and the
+  output-device parameter that routes it to the RS-232 port (serial-to-Ethernet bridge,
+  Server DPRNT source TCP with `dprnt.host`) or to a text file on the OSP-P Windows side
+  (Server DPRNT source FILE); write and commission the protected `O9001`–`O9003`
+  subprograms in User Task 2 (also for FANUC and Mazak); and decide whether
+  `NcPackagePlaceholderSchema` should recognize the `$NAME.MIN%` transfer header line,
+  which it currently treats as executable (`verification_placeholder_not_first`). The
+  `OkumaOspDialect` class centralizes the rendered syntax so a spelling correction is a
+  one-line change. A future Okuma API / THINC telemetry adapter is a separate decision.
 
 ### TV Dashboard
 

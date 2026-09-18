@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Domain.Haas;
 
 namespace Meimad.Planner.Server.Application.Haas;
@@ -11,7 +12,8 @@ internal sealed class HaasIntegrationService(
     IHaasMtConnectReader mtConnectReader,
     IHaasProgramReader programReader,
     INcHeaderParser headerParser,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IHaasDprntProbe? dprntProbe = null)
 {
     internal async Task<HaasConnectionSettings?> GetSettingsAsync(
         string machineId, CancellationToken token = default) =>
@@ -40,7 +42,23 @@ internal sealed class HaasIntegrationService(
             ?? current?.TelemetryProvider
             ?? HaasTelemetryProviders.Mdc;
         if (!HaasTelemetryProviders.IsSupported(telemetryProvider))
-            throw new HaasValidationException("telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
+            throw new HaasValidationException("telemetryProvider", "Telemetry provider must be MDC, MTCONNECT, or DPRNT.");
+        // A pre-DPRNT-source client omits these fields; keep the explicit Server-side choice.
+        var dprntSource = update.DprntSource?.Trim().ToUpperInvariant()
+            ?? current?.DprntSource
+            ?? CncDprntSources.Tcp;
+        if (dprntSource is not (CncDprntSources.Tcp or CncDprntSources.File))
+            throw new HaasValidationException("dprntSource", "DPRNT source must be TCP or FILE.");
+        var dprntFilePath = update.DprntFilePath is null ? current?.DprntFilePath : Optional(update.DprntFilePath);
+        if (dprntFilePath is { Length: > 1024 })
+            throw new HaasValidationException("dprntFilePath", "DPRNT file path must be 1024 characters or fewer.");
+        if (dprntSource == CncDprntSources.File && string.IsNullOrWhiteSpace(dprntFilePath))
+            throw new HaasValidationException("dprntFilePath", "A DPRNT file path (UNC share path to the controller's print file) is required when the DPRNT source is FILE.");
+        var dprntFileClearPolicy = Optional(update.DprntFileClearPolicy)?.ToUpperInvariant()
+            ?? current?.DprntFileClearPolicy
+            ?? CncDprntClearPolicies.Never;
+        if (!CncDprntClearPolicies.IsSupported(dprntFileClearPolicy))
+            throw new HaasValidationException("dprntFileClearPolicy", "DPRNT file clear policy must be NEVER, ON_OFFSET_LOADER, or AFTER_READ.");
         var counterSource = update.PartCounterSource?.Trim().ToUpperInvariant() ?? string.Empty;
         if (!HaasPartCounterSources.IsSupported(counterSource))
             throw new HaasValidationException("partCounterSource", "Part counter source must be Q500, M30_COUNTER_1, or M30_COUNTER_2.");
@@ -63,8 +81,26 @@ internal sealed class HaasIntegrationService(
             counterSource,
             update.PollingIntervalMs, update.ConnectionTimeoutMs, update.StableProgramPolls,
             update.HeaderLineLimit, update.HeaderByteLimit, patterns, update.Enabled,
-            current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now, telemetryProvider);
+            current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now, telemetryProvider,
+            dprntSource, dprntFilePath, dprntFileClearPolicy);
         return await repository.UpsertSettingsAsync(value, update.ExpectedVersion, authority, token);
+    }
+
+    /// <summary>Reads the configured DPRNT source once without truncating or changing planning state.</summary>
+    internal async Task<HaasConnectionTest> TestDprntAsync(string machineId, CancellationToken token = default)
+    {
+        var settings = await RequiredSettingsAsync(machineId, token);
+        if (dprntProbe is null)
+            return new HaasConnectionTest(false, "DPRNT probing is not available on this Server.", null, null, null, null);
+        try
+        {
+            var probe = await dprntProbe.ProbeAsync(settings, token);
+            return new HaasConnectionTest(probe.Available, probe.Message, null, null, null, null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return new HaasConnectionTest(false, Safe(exception.Message), null, null, null, null);
+        }
     }
 
     internal async Task<HaasConnectionTest> TestMdcAsync(string machineId, CancellationToken token = default)
@@ -112,6 +148,11 @@ internal sealed class HaasIntegrationService(
         try
         {
             string? program;
+            if (string.Equals(settings.TelemetryProvider, HaasTelemetryProviders.DprntOnly, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new HaasProgramHeaderUnavailableException(
+                    "A DPRNT-only connection reports no active program, so the machine-side NC header cannot be located.");
+            }
             if (UsesMtConnect(settings))
             {
                 program = (await ReadMtConnectAsync(settings, token)).ProgramNumber;

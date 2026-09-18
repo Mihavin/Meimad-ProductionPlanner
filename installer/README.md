@@ -1,6 +1,6 @@
 # Windows installers
 
-Current package version: `0.1.112`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
+Current package version: `0.1.115`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
 
 The repository builds two independent 64-bit Windows Installer packages:
 
@@ -20,6 +20,8 @@ Build both packages from the repository root:
 ```
 
 The resulting packages are written to `installer\artifacts`. The script publishes self-contained `win-x64` application payloads first, so the target computer does not need a separately installed .NET runtime.
+
+FANUC FOCAS support needs the FANUC-licensed FOCAS 2 library, which is not in version control. Put the 64-bit `Fwlib64.dll`, `fwlibe64.dll`, and the control-series `fwlib*64.dll` files from the FANUC kit into the repository's `focas\` folder (see `focas\README.md`) before building: the Server publish copies them into its `focas\` subfolder and the Server MSI harvests them from there, so installed Servers need no manual copy. On a Server installed without them, copy the same files into the install folder's `focas` subfolder (next to `Meimad.Planner.Server.exe`) or set the `MEIMAD_FOCAS_LIBRARY_DIR` environment variable for the service. Without the library, FANUC Machines report a failed `focas` connection check and stay `OFFLINE`; nothing else is affected.
 
 Both packages are machine-wide installers and require Administrator elevation. Double-click the MSI and accept the Windows UAC prompt, or launch it from an elevated terminal. A non-elevated silent (`/qn`) install cannot display a UAC prompt and fails with Windows Installer error 1730.
 

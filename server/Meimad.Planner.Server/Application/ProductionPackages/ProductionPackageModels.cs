@@ -43,7 +43,8 @@ internal sealed record ProductionPackageBuildContext(
     bool DirectTransferOnline,
     bool ManualDummyToolOffsetsAllowed,
     string? CurrentPackageId,
-    ProductionReadinessContext ReadinessContext);
+    ProductionReadinessContext ReadinessContext,
+    string NcDialect = "HAAS_NGC");
 
 internal sealed record ProductionPackageArtifact(
     string ArtifactId,

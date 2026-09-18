@@ -215,6 +215,77 @@ public sealed class ProductionPackageApiTests
     }
 
     [Fact]
+    public async Task Okuma_OSP_dialect_package_renders_CALL_and_PUT_WRITE_and_a_MIN_offset_loader()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.OspPackage.Tests", Guid.NewGuid().ToString("N"));
+        var releaseRoot = Path.Combine(root, "releases");
+        var packageRoot = Path.Combine(root, "packages");
+        Directory.CreateDirectory(root);
+        await using var application = ServerApplication.Build(
+            ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
+             $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
+            webHost => webHost.UseTestServer());
+        try
+        {
+            await application.StartAsync();
+            await SeedAsync(application.Services, releaseRoot, true);
+            await using (var connection = await application.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var dialect = connection.CreateCommand())
+            {
+                // The Machine's dialect decides the injected syntax; its verification variables are OSP common variables.
+                dialect.CommandText = """
+                    UPDATE machines SET nc_dialect='OKUMA_OSP' WHERE id='machine-package';
+                    UPDATE cnc_verification_settings
+                    SET nonce_variable=1,response_variable=2,verification_state_variable=3,
+                        release_token_variable=4,event_sequence_variable=5
+                    WHERE machine_id='machine-package';
+                    """;
+                await dialect.ExecuteNonQueryAsync();
+            }
+            using var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "tool-room-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "tool-room-user");
+            using var create = await client.PostAsync(
+                "/api/v1/batch-operations/operation-package/production-package",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+            using var document = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
+            var artifacts = document.RootElement.GetProperty("artifacts").EnumerateArray().ToArray();
+
+            var nc = artifacts.Single(value => value.GetProperty("artifactType").GetString() == "RUNNABLE_NC");
+            var ncText = Encoding.ASCII.GetString(await client.GetByteArrayAsync(
+                $"/api/v1/batch-operations/operation-package/production-package/artifacts/{nc.GetProperty("artifactId").GetString()}"));
+            Assert.Contains("CALL O9002 PA=483921 (MEIMAD VERIFY V1)", ncText, StringComparison.Ordinal);
+            Assert.Contains("PUT 'MEIMAD/V/2/CONTEXT/", ncText, StringComparison.Ordinal);
+            Assert.Contains("MACROVERSION/10/PROGRAM/483921'\r\nWRITE C", ncText, StringComparison.Ordinal);
+            Assert.DoesNotContain("G65", ncText, StringComparison.Ordinal);
+            Assert.DoesNotContain("DPRNT[MEIMAD", ncText, StringComparison.Ordinal);
+
+            var loader = artifacts.Single(value => value.GetProperty("artifactType").GetString() == "OFFSET_LOADER");
+            Assert.Equal("offset-loader/O1990.MIN", loader.GetProperty("logicalPath").GetString());
+            var loaderText = Encoding.ASCII.GetString(await client.GetByteArrayAsync(
+                $"/api/v1/batch-operations/operation-package/production-package/artifacts/{loader.GetProperty("artifactId").GetString()}"));
+            Assert.StartsWith("(MEIMAD PACKAGE OFFSET LOADER)", loaderText, StringComparison.Ordinal);
+            Assert.Contains("CALL O9001 PA=", loaderText, StringComparison.Ordinal);
+            Assert.Contains(" PB=483921\r\nM02\r\n", loaderText, StringComparison.Ordinal);
+            Assert.DoesNotContain("G65", loaderText, StringComparison.Ordinal);
+            Assert.DoesNotContain("%", loaderText, StringComparison.Ordinal);
+
+            var manifest = artifacts.Single(value => value.GetProperty("artifactType").GetString() == "MANIFEST");
+            using var manifestDocument = JsonDocument.Parse(await client.GetByteArrayAsync(
+                $"/api/v1/batch-operations/operation-package/production-package/artifacts/{manifest.GetProperty("artifactId").GetString()}"));
+            Assert.Equal("OKUMA_OSP", manifestDocument.RootElement.GetProperty("ncDialect").GetString());
+            Assert.Equal("OKUMA_OSP", manifestDocument.RootElement.GetProperty("machine").GetProperty("ncDialect").GetString());
+        }
+        finally
+        {
+            await application.StopAsync();
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public async Task Manual_machine_package_contains_only_applicable_non_executable_artifacts()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ManualPackage.Tests", Guid.NewGuid().ToString("N"));

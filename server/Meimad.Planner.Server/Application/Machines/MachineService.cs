@@ -9,15 +9,18 @@ internal sealed class MachineService
     private readonly IMachineRepository repository;
     private readonly TimeProvider timeProvider;
     private readonly ILogger<MachineService> logger;
+    private readonly Cnc.ICncVerificationFoundationRepository? verification;
 
     public MachineService(
         IMachineRepository repository,
         TimeProvider timeProvider,
-        ILogger<MachineService>? logger = null)
+        ILogger<MachineService>? logger = null,
+        Cnc.ICncVerificationFoundationRepository? verification = null)
     {
         this.repository = repository;
         this.timeProvider = timeProvider;
         this.logger = logger ?? NullLogger<MachineService>.Instance;
+        this.verification = verification;
     }
 
     internal async Task<Machine> CreateAsync(
@@ -51,7 +54,8 @@ internal sealed class MachineService
             values.UsableToolPositions,
             values.RapidRateMillimetersPerMinute,
             values.ToolChangeTimeSeconds,
-            values.MachineTimeFactor);
+            values.MachineTimeFactor,
+            values.NcDialect);
         var created = await repository.CreateAsync(machine, editAuthority, cancellationToken);
         logger.LogInformation(
             "Created Machine {MachineId} with execution mode {ExecutionMode} and {PostprocessorCount} supported Postprocessors.",
@@ -97,7 +101,20 @@ internal sealed class MachineService
             Select(command.UsableToolPositions, current.UsableToolPositions),
             Select(command.RapidRateMillimetersPerMinute, current.RapidRateMillimetersPerMinute),
             Select(command.ToolChangeTimeSeconds, current.ToolChangeTimeSeconds),
-            Select(command.MachineTimeFactor, current.MachineTimeFactor)));
+            Select(command.MachineTimeFactor, current.MachineTimeFactor),
+            Select(command.NcDialect, current.NcDialect)));
+        if (!string.Equals(values.NcDialect, current.NcDialect, StringComparison.Ordinal)
+            && verification is not null)
+        {
+            // Generated NC and the verification variable ranges follow the dialect, so an enabled
+            // verification configuration must be disabled and re-entered for the new control first.
+            var settings = await verification.GetSettingsAsync(machineId, cancellationToken);
+            if (settings is { Enabled: true })
+                throw new MachineValidationException([new MachineValidationIssue(
+                    "ncDialect",
+                    "verification_enabled",
+                    "Disable Server Verification for this Machine before changing its NC dialect; the verification variable mappings must be re-entered for the new control.")]);
+        }
         var updated = current with
         {
             Number = values.Number,
@@ -117,6 +134,7 @@ internal sealed class MachineService
             RapidRateMillimetersPerMinute = values.RapidRateMillimetersPerMinute,
             ToolChangeTimeSeconds = values.ToolChangeTimeSeconds,
             MachineTimeFactor = values.MachineTimeFactor,
+            NcDialect = values.NcDialect,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -150,7 +168,8 @@ internal sealed class MachineService
         command.UsableToolPositions,
         command.RapidRateMillimetersPerMinute,
         command.ToolChangeTimeSeconds,
-        command.MachineTimeFactor);
+        command.MachineTimeFactor,
+        command.NcDialect);
 
     private static T Select<T>(MachineField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;

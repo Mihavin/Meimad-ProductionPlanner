@@ -3,7 +3,7 @@
 > or the layout below — see §13 in this file. Writing a postprocessor against this draft
 > will fail Production Package creation with `production_package_placeholder_unknown`.
 > For the contract the server actually implements today, use
-> [`haas-ngc-postprocessor-and-macro-specification.md`](haas-ngc-postprocessor-and-macro-specification.md).
+> [`nc-postprocessor-and-macro-specification.md`](nc-postprocessor-and-macro-specification.md).
 > This file was recovered on 2026-09-05 from an unresolved git merge conflict
 > (commit `1b0d427`) that had accidentally left both the old and new specs concatenated,
 > with raw `<<<<<<<`/`=======`/`>>>>>>>` markers, in the "live" doc — which is how a real

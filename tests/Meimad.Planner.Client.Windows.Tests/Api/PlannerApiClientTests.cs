@@ -1433,6 +1433,135 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
+    public async Task Haas_connection_update_serializes_the_DPRNT_file_source_and_reads_it_back()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "machineId": "machine-mazak",
+              "host": "192.168.0.60",
+              "macAddress": "00:11:22:33:44:55",
+              "mdcPort": 5051,
+              "mtConnectPort": 8082,
+              "dprntPort": 8080,
+              "localNetShareEnabled": false,
+              "localNetSharePath": null,
+              "credentialsReference": null,
+              "partCounterSource": "Q500",
+              "pollingIntervalMs": 2000,
+              "connectionTimeoutMs": 3000,
+              "stableProgramPolls": 2,
+              "headerLineLimit": 50,
+              "headerByteLimit": 32768,
+              "headerPartPatterns": ["PART"],
+              "enabled": true,
+              "version": 2,
+              "updatedAt": "2026-09-17T12:00:00Z",
+              "telemetryProvider": "DPRNT",
+              "dprntSource": "FILE",
+              "dprntFilePath": "\\\\MAZAK-VARIAXIS\\MC_sdg\\print\\print.txt",
+              "dprntFileClearPolicy": "ON_OFFSET_LOADER"
+            }
+            """));
+        using var api = CreateClient(handler);
+        var update = new HaasConnectionUpdate(
+            "192.168.0.60", "00:11:22:33:44:55", 5051, 8082, 8080, false, null, null,
+            "Q500", 2000, 3000, 2, 50, 32768,
+            ["PART"], true, 1, "DPRNT", "FILE", @"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", "ON_OFFSET_LOADER");
+
+        var result = await api.UpdateHaasConnectionAsync("machine-mazak", update, "windows-1", 19);
+
+        Assert.Equal("DPRNT", result.TelemetryProvider);
+        Assert.Equal("FILE", result.DprntSource);
+        Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", result.DprntFilePath);
+        Assert.Equal("ON_OFFSET_LOADER", result.DprntFileClearPolicy);
+        Assert.Contains("\"dprntSource\":\"FILE\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"dprntFileClearPolicy\":\"ON_OFFSET_LOADER\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains("MC_sdg", handler.Requests[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Cnc_connection_update_serializes_the_FOCAS_configuration_and_reads_the_typed_view_back()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
+            {
+              "id": "cnc-machine-fanuc",
+              "machineId": "machine-fanuc",
+              "adapterType": "FANUC_FOCAS",
+              "enabled": false,
+              "connectionStatus": "DISABLED",
+              "lastConnectedAt": null,
+              "lastSuccessfulPollAt": null,
+              "pollingIntervalMs": 2000,
+              "connectionTimeoutMs": 3000,
+              "maximumReconnectBackoffMs": 30000,
+              "allowRead": true,
+              "allowWrite": false,
+              "rawTelemetryRetentionDays": 14,
+              "configuration": {
+                "host": "192.168.0.77",
+                "macAddress": "00:E0:E4:12:34:56",
+                "port": 8193,
+                "timeoutMs": 3000,
+                "partCounterSource": "PARTS_TOTAL_6712",
+                "dprnt": { "source": "FILE", "filePath": "\\\\FANUC-0IF\\print\\print.txt", "clearPolicy": "ON_OFFSET_LOADER", "port": 8080, "host": "192.168.0.90" },
+                "programAccess": { "provider": "FOCAS_PROGRAM_UPLOAD", "enabled": true, "programFolder": "//CNC_MEM/USER/PATH1/" },
+                "monitoring": { "pollingIntervalMs": 2000, "stableProgramPolls": 2, "maximumReconnectBackoffMs": 30000, "rawTelemetryRetentionDays": 14 }
+              },
+              "usernameSecretConfigured": false,
+              "passwordSecretConfigured": false,
+              "version": 1,
+              "updatedAt": "2026-09-17T12:00:00Z"
+            }
+            """));
+        using var api = CreateClient(handler);
+        var update = new CncConnectionUpdate("FANUC_FOCAS", false, 2000, 3000, 30000, true, false, 14,
+            new FocasConnectionConfiguration("192.168.0.77", "00:E0:E4:12:34:56", 8193, 3000, "PARTS_TOTAL_6712",
+                new FocasDprntConfiguration("FILE", @"\\FANUC-0IF\print\print.txt", "ON_OFFSET_LOADER", 8080, "192.168.0.90"),
+                new FocasProgramAccessConfiguration("FOCAS_PROGRAM_UPLOAD", true, "//CNC_MEM/USER/PATH1/")), 0);
+
+        var result = await api.UpdateCncConnectionAsync("machine-fanuc", update, "windows-1", 19);
+        var configuration = System.Text.Json.JsonSerializer.Deserialize<FocasConnectionConfiguration>(
+            result.Configuration.GetRawText(), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        Assert.Equal("FANUC_FOCAS", result.AdapterType);
+        Assert.False(result.AllowWrite);
+        Assert.Equal(1, result.Version);
+        Assert.Equal("PARTS_TOTAL_6712", configuration!.PartCounterSource);
+        Assert.Equal("ON_OFFSET_LOADER", configuration.Dprnt!.ClearPolicy);
+        Assert.Equal(@"\\FANUC-0IF\print\print.txt", configuration.Dprnt.FilePath);
+        Assert.Equal("192.168.0.90", configuration.Dprnt.Host);
+        Assert.Contains("\"host\":\"192.168.0.90\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.True(configuration.ProgramAccess!.Enabled);
+        Assert.Equal(HttpMethod.Put, handler.Requests[0].Method);
+        Assert.Contains("\"adapterType\":\"FANUC_FOCAS\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"clearPolicy\":\"ON_OFFSET_LOADER\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"allowWrite\":false", handler.Requests[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Cnc_connection_test_returns_the_typed_diagnostic_body_on_a_502_failure()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.BadGateway, """
+            {
+              "overallSuccess": false,
+              "connectionStatus": "OFFLINE",
+              "checks": [
+                { "id": "focas", "succeeded": false, "status": "UNAVAILABLE", "message": "FOCAS library Fwlib64.dll was not found." },
+                { "id": "dprnt", "succeeded": true, "status": "AVAILABLE", "message": "DPRNT file is readable." }
+              ]
+            }
+            """));
+        using var api = CreateClient(handler);
+
+        var result = await api.TestCncConnectionAsync("machine-fanuc");
+
+        Assert.False(result.OverallSuccess);
+        Assert.Equal("OFFLINE", result.ConnectionStatus);
+        Assert.Equal(2, result.Checks.Count);
+        Assert.Contains("Fwlib64.dll", result.Checks[0].Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Haas_connection_test_still_surfaces_standard_API_error_envelopes()
     {
         var handler = new RecordingHandler(Json(HttpStatusCode.NotFound, """

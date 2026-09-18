@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
+using System.Text.Json;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -68,6 +69,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool machineDisplayEnabled = true;
     private bool machineRespectMasterCalendar = true;
     private string machineExecutionMode = "MANUAL";
+    private string machineNcDialect = "HAAS_NGC";
     private string machineUsableToolPositions = string.Empty;
     private string machineRapidRateMillimetersPerMinute = string.Empty;
     private string machineToolChangeTimeSeconds = string.Empty;
@@ -75,10 +77,24 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string haasHost = string.Empty;
     private string haasMacAddress = string.Empty;
     private CncAdapterDefinition? selectedCncAdapter;
+    private ConnectionTypeOption? selectedConnectionType;
     private string haasMdcPort = "5051";
     private string haasMtConnectPort = "8082";
-    private string haasDprntPort = "8080";
-    private string haasTelemetryProvider = "MTCONNECT";
+    private string dprntSource = "TCP";
+    private string dprntTcpPort = "8080";
+    private string dprntTcpHost = string.Empty;
+    private string dprntFilePath = string.Empty;
+    private string dprntFileClearPolicy = "ON_OFFSET_LOADER";
+    private string focasHost = string.Empty;
+    private string focasMacAddress = string.Empty;
+    private string focasPort = "8193";
+    private string focasPartCounterSource = "PARTS_COUNT_6711";
+    private bool focasProgramUploadEnabled;
+    private string focasProgramFolder = "//CNC_MEM/USER/PATH1/";
+    private string focasPollingIntervalMs = "2000";
+    private string focasConnectionTimeoutMs = "3000";
+    private bool focasEnabled;
+    private int focasSettingsVersion;
     private bool haasLocalNetShareEnabled;
     private string haasLocalNetSharePath = string.Empty;
     private string haasCredentialsReference = string.Empty;
@@ -212,6 +228,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         TestHaasMtConnectCommand = new AsyncCommand(TestHaasMtConnectAsync, CanReadHaas);
         TestHaasMdcCommand = new AsyncCommand(TestHaasMdcAsync, CanReadHaas);
         TestHaasNetShareCommand = new AsyncCommand(TestHaasNetShareAsync, CanReadHaas);
+        TestHaasDprntCommand = new AsyncCommand(TestHaasDprntAsync, CanReadHaas);
+        SaveFocasConfigurationCommand = new AsyncCommand(SaveFocasConfigurationAsync, CanManageHaas);
+        TestFocasConnectionCommand = new AsyncCommand(TestFocasConnectionAsync, CanReadHaas);
         RefreshHaasMonitorCommand = new AsyncCommand(RefreshHaasMonitorAsync, CanReadHaas);
         ReconnectCncCommand = new AsyncCommand(ReconnectCncAsync, CanManageHaas);
         LoadVerificationConfigurationCommand = new AsyncCommand(LoadVerificationConfigurationAsync, CanReadHaas);
@@ -314,6 +333,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand TestHaasMtConnectCommand { get; }
     public AsyncCommand TestHaasMdcCommand { get; }
     public AsyncCommand TestHaasNetShareCommand { get; }
+    public AsyncCommand TestHaasDprntCommand { get; }
+    public AsyncCommand SaveFocasConfigurationCommand { get; }
+    public AsyncCommand TestFocasConnectionCommand { get; }
     public AsyncCommand RefreshHaasMonitorCommand { get; }
     public AsyncCommand ReconnectCncCommand { get; }
     public AsyncCommand LoadVerificationConfigurationCommand { get; }
@@ -487,33 +509,97 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public bool MachineRespectMasterCalendar { get => machineRespectMasterCalendar; set => SetField(ref machineRespectMasterCalendar, value); }
     public bool MachineDisplayEnabled { get => machineDisplayEnabled; set => SetField(ref machineDisplayEnabled, value); }
     public string MachineExecutionMode { get => machineExecutionMode; set => SetField(ref machineExecutionMode, value); }
+    /// <summary>Control family whose syntax the Server injects into this Machine's runnable NC and Offset Loader.</summary>
+    public string MachineNcDialect { get => machineNcDialect; set => SetField(ref machineNcDialect, value); }
+    public IReadOnlyList<string> MachineNcDialects { get; } = ["HAAS_NGC", "FANUC_MACRO_B", "MAZAK_MATRIX_EIA", "OKUMA_OSP"];
     public string MachineUsableToolPositions { get => machineUsableToolPositions; set => SetField(ref machineUsableToolPositions, value); }
     public string MachineRapidRateMillimetersPerMinute { get => machineRapidRateMillimetersPerMinute; set => SetField(ref machineRapidRateMillimetersPerMinute, value); }
     public string MachineToolChangeTimeSeconds { get => machineToolChangeTimeSeconds; set => SetField(ref machineToolChangeTimeSeconds, value); }
     public string MachineTimeFactor { get => machineTimeFactor; set => SetField(ref machineTimeFactor, value); }
     public string MachineFormHeading => editingMachineId is null ? "New machine" : "Edit machine";
     public ObservableCollection<CncAdapterDefinition> CncAdapters { get; } = [];
-    public CncAdapterDefinition? SelectedCncAdapter
+    private CncAdapterDefinition? SelectedCncAdapter
     {
         get => selectedCncAdapter;
+        set => SetField(ref selectedCncAdapter, value);
+    }
+    /// <summary>
+    /// The single connection-type picker. It replaces the old two-level "Adapter Type" plus
+    /// "Machine telemetry source" pair: each entry names exactly one protocol (MDC, MTConnect,
+    /// DPRNT-only, or FANUC FOCAS) instead of making the operator resolve an adapter/provider
+    /// combination themselves.
+    /// </summary>
+    public IReadOnlyList<ConnectionTypeOption> ConnectionTypes { get; } =
+    [
+        new("HAAS_MDC", "Haas MDC"),
+        new("HAAS_MTCONNECT", "Haas MTConnect"),
+        new("HAAS_DPRNT", "DPRNT only — no machine telemetry (e.g. Mazak)"),
+        new("FANUC_FOCAS", "FANUC FOCAS")
+    ];
+    public ConnectionTypeOption? SelectedConnectionType
+    {
+        get => selectedConnectionType;
         set
         {
-            if (SetField(ref selectedCncAdapter, value))
-                OnPropertyChanged(nameof(CncAdapterAvailability));
+            if (!SetField(ref selectedConnectionType, value)) return;
+            OnPropertyChanged(nameof(HaasTelemetryProvider));
+            OnPropertyChanged(nameof(ShowsHaasConfiguration));
+            OnPropertyChanged(nameof(ShowsFocasConfiguration));
+            OnPropertyChanged(nameof(DprntSources));
+            OnPropertyChanged(nameof(CncAdapterAvailability));
+            // NONE is meaningful only for FANUC FOCAS; leaving a Haas connection on it would be
+            // rejected by the Server, so switch it back to the safe default when it no longer applies.
+            if (!ShowsFocasConfiguration && DprntSource == "NONE") DprntSource = "TCP";
         }
     }
-    public string CncAdapterAvailability => SelectedCncAdapter is null
-        ? "Load configuration to read the Server adapter registry."
-        : SelectedCncAdapter.Implemented
-            ? $"{SelectedCncAdapter.DisplayName} is implemented."
-            : $"{SelectedCncAdapter.DisplayName} is registered but unsupported.";
+    /// <summary>Derived from <see cref="SelectedConnectionType"/>; the Server's Haas sub-provider values.</summary>
+    public string HaasTelemetryProvider => SelectedConnectionType?.Value switch
+    {
+        "HAAS_MDC" => "MDC",
+        "HAAS_DPRNT" => "DPRNT",
+        _ => "MTCONNECT"
+    };
+    public bool ShowsHaasConfiguration => SelectedConnectionType?.Value != "FANUC_FOCAS";
+    public bool ShowsFocasConfiguration => SelectedConnectionType?.Value == "FANUC_FOCAS";
+    public string CncAdapterAvailability
+    {
+        get
+        {
+            var adapter = CncAdapters.FirstOrDefault(item =>
+                item.Id == (ShowsFocasConfiguration ? "FANUC_FOCAS" : "HAAS_NGC"));
+            return adapter is null
+                ? "Load configuration to read the Server adapter registry."
+                : adapter.Implemented
+                    ? $"{adapter.DisplayName} is implemented."
+                    : $"{adapter.DisplayName} is registered but unsupported.";
+        }
+    }
     public string HaasHost { get => haasHost; set => SetField(ref haasHost, value); }
     public string HaasMacAddress { get => haasMacAddress; set => SetField(ref haasMacAddress, value); }
     public string HaasMdcPort { get => haasMdcPort; set => SetField(ref haasMdcPort, value); }
     public string HaasMtConnectPort { get => haasMtConnectPort; set => SetField(ref haasMtConnectPort, value); }
-    public string HaasDprntPort { get => haasDprntPort; set => SetField(ref haasDprntPort, value); }
-    public string HaasTelemetryProvider { get => haasTelemetryProvider; set => SetField(ref haasTelemetryProvider, value); }
-    public IReadOnlyList<string> HaasTelemetryProviders { get; } = ["MTCONNECT", "MDC"];
+    /// <summary>
+    /// DPRNT is one shared source (Part identity and MEIMAD workflow events) used by every
+    /// connection type, so it is configured once here rather than once per vendor panel.
+    /// </summary>
+    public string DprntSource { get => dprntSource; set => SetField(ref dprntSource, value); }
+    public IReadOnlyList<string> DprntSources => ShowsFocasConfiguration ? ["TCP", "FILE", "NONE"] : ["TCP", "FILE"];
+    public string DprntTcpPort { get => dprntTcpPort; set => SetField(ref dprntTcpPort, value); }
+    /// <summary>Serial-to-Ethernet bridge address for the TCP source; blank means the controller itself (FANUC FOCAS connections only).</summary>
+    public string DprntTcpHost { get => dprntTcpHost; set => SetField(ref dprntTcpHost, value); }
+    public string DprntFilePath { get => dprntFilePath; set => SetField(ref dprntFilePath, value); }
+    public string DprntFileClearPolicy { get => dprntFileClearPolicy; set => SetField(ref dprntFileClearPolicy, value); }
+    public IReadOnlyList<string> DprntClearPolicies { get; } = ["ON_OFFSET_LOADER", "NEVER", "AFTER_READ"];
+    public string FocasHost { get => focasHost; set => SetField(ref focasHost, value); }
+    public string FocasMacAddress { get => focasMacAddress; set => SetField(ref focasMacAddress, value); }
+    public string FocasPort { get => focasPort; set => SetField(ref focasPort, value); }
+    public string FocasPartCounterSource { get => focasPartCounterSource; set => SetField(ref focasPartCounterSource, value); }
+    public IReadOnlyList<string> FocasPartCounterSources { get; } = ["PARTS_COUNT_6711", "PARTS_TOTAL_6712"];
+    public bool FocasProgramUploadEnabled { get => focasProgramUploadEnabled; set => SetField(ref focasProgramUploadEnabled, value); }
+    public string FocasProgramFolder { get => focasProgramFolder; set => SetField(ref focasProgramFolder, value); }
+    public string FocasPollingIntervalMs { get => focasPollingIntervalMs; set => SetField(ref focasPollingIntervalMs, value); }
+    public string FocasConnectionTimeoutMs { get => focasConnectionTimeoutMs; set => SetField(ref focasConnectionTimeoutMs, value); }
+    public bool FocasEnabled { get => focasEnabled; set => SetField(ref focasEnabled, value); }
     public bool HaasLocalNetShareEnabled { get => haasLocalNetShareEnabled; set => SetField(ref haasLocalNetShareEnabled, value); }
     public string HaasLocalNetSharePath { get => haasLocalNetSharePath; set => SetField(ref haasLocalNetSharePath, value); }
     public string HaasCredentialsReference { get => haasCredentialsReference; set => SetField(ref haasCredentialsReference, value); }
@@ -1007,6 +1093,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineDisplayEnabled = true;
         MachineRespectMasterCalendar = true;
         MachineExecutionMode = "MANUAL";
+        MachineNcDialect = "HAAS_NGC";
         MachineUsableToolPositions = string.Empty;
         MachineRapidRateMillimetersPerMinute = string.Empty;
         MachineToolChangeTimeSeconds = string.Empty;
@@ -1099,9 +1186,16 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var adapters = await apiClient!.ListCncAdaptersAsync();
             CncAdapters.Clear();
             foreach (var adapter in adapters) CncAdapters.Add(adapter);
-            SelectedCncAdapter = CncAdapters.FirstOrDefault(value => value.Id == "HAAS_NGC");
+            var generic = await apiClient!.GetCncConnectionAsync(SelectedMachine!.MachineId);
             var value = await apiClient!.GetHaasConnectionAsync(SelectedMachine!.MachineId);
             PopulateHaasConfiguration(value);
+            if (generic is { AdapterType: "FANUC_FOCAS" })
+            {
+                PopulateFocasConfiguration(generic);
+                SelectedConnectionType = ConnectionTypes.First(type => type.Value == "FANUC_FOCAS");
+                HaasDiagnostics = $"FANUC FOCAS configuration loaded ({generic.ConnectionStatus}). Workflow state is derived from Server events.";
+                return;
+            }
             HaasDiagnostics = value.Version == 0
                 ? "Haas NGC is not configured for this Machine."
                 : "Configuration loaded. Workflow state is derived from Server events.";
@@ -1111,14 +1205,20 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     internal async Task SaveHaasConfigurationAsync()
     {
         if (!CanManageHaas()) return;
-        if (SelectedCncAdapter is { Implemented: false } || SelectedCncAdapter?.Id is not (null or "HAAS_NGC"))
+        if (ShowsFocasConfiguration)
         {
-            HaasDiagnostics = "The selected adapter is registered for future use and cannot be enabled or saved.";
+            HaasDiagnostics = "Select a Haas connection type (MDC, MTConnect, or DPRNT only) before saving Haas configuration.";
+            return;
+        }
+        var adapter = CncAdapters.FirstOrDefault(item => item.Id == "HAAS_NGC");
+        if (adapter is { Implemented: false })
+        {
+            HaasDiagnostics = "The Haas NGC adapter is registered for future use and cannot be enabled or saved.";
             return;
         }
         if (!int.TryParse(HaasMdcPort, out var mdcPort)
             || !int.TryParse(HaasMtConnectPort, out var mtPort)
-            || !int.TryParse(HaasDprntPort, out var dprntPort)
+            || !int.TryParse(DprntTcpPort, out var dprntPort)
             || !int.TryParse(HaasPollingIntervalMs, out var polling)
             || !int.TryParse(HaasConnectionTimeoutMs, out var timeout))
         {
@@ -1132,12 +1232,89 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
                     NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
                     HaasPartCounterSource, polling, timeout, 2, 50, 32768,
                     [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion,
-                    HaasTelemetryProvider),
+                    HaasTelemetryProvider, DprntSource, DprntFilePath.Trim(), DprntFileClearPolicy),
                 clientId, editGeneration);
             PopulateHaasConfiguration(value);
             HaasDiagnostics = "Haas NGC configuration saved by the Server.";
         });
     }
+
+    internal async Task SaveFocasConfigurationAsync()
+    {
+        if (!CanManageHaas()) return;
+        if (!ShowsFocasConfiguration)
+        {
+            HaasDiagnostics = "Select the FANUC FOCAS connection type before saving its configuration.";
+            return;
+        }
+        if (!int.TryParse(FocasPort, out var port)
+            || !int.TryParse(DprntTcpPort, out var dprntPort)
+            || !int.TryParse(FocasPollingIntervalMs, out var polling)
+            || !int.TryParse(FocasConnectionTimeoutMs, out var timeout))
+        {
+            HaasDiagnostics = "FOCAS ports, polling, and timeout must be numeric.";
+            return;
+        }
+        await RunHaasReadAsync(async () =>
+        {
+            var configuration = new FocasConnectionConfiguration(
+                FocasHost.Trim(), NullIfBlank(FocasMacAddress), port, timeout, FocasPartCounterSource,
+                new FocasDprntConfiguration(DprntSource, NullIfBlank(DprntFilePath), DprntFileClearPolicy, dprntPort, NullIfBlank(DprntTcpHost)),
+                new FocasProgramAccessConfiguration(
+                    FocasProgramUploadEnabled ? "FOCAS_PROGRAM_UPLOAD" : "NONE",
+                    FocasProgramUploadEnabled, FocasProgramFolder.Trim()));
+            var value = await apiClient!.UpdateCncConnectionAsync(SelectedMachine!.MachineId,
+                new CncConnectionUpdate("FANUC_FOCAS", FocasEnabled, polling, timeout, 30000, true, false, 14,
+                    configuration, focasSettingsVersion),
+                clientId, editGeneration);
+            PopulateFocasConfiguration(value);
+            HaasDiagnostics = "FANUC FOCAS configuration saved by the Server.";
+        });
+    }
+
+    internal Task TestFocasConnectionAsync() => RunHaasReadAsync(async () =>
+    {
+        var result = await apiClient!.TestCncConnectionAsync(SelectedMachine!.MachineId);
+        HaasDiagnostics = $"FOCAS: {result.ConnectionStatus} | " + string.Join(" | ", result.Checks.Select(check =>
+            $"{check.Id}: {(check.Succeeded ? "OK" : "FAILED")} - {check.Message}"));
+    });
+
+    private void PopulateFocasConfiguration(CncConnection value)
+    {
+        var configuration = JsonSerializer.Deserialize<FocasConnectionConfiguration>(
+            value.Configuration.GetRawText(), FocasJsonOptions);
+        FocasHost = configuration?.Host ?? string.Empty;
+        FocasMacAddress = configuration?.MacAddress ?? string.Empty;
+        FocasPort = (configuration?.Port ?? 8193).ToString(CultureInfo.InvariantCulture);
+        FocasPartCounterSource = configuration?.PartCounterSource ?? "PARTS_COUNT_6711";
+        DprntSource = configuration?.Dprnt?.Source ?? "TCP";
+        DprntTcpPort = (configuration?.Dprnt?.Port ?? 8080).ToString(CultureInfo.InvariantCulture);
+        DprntTcpHost = configuration?.Dprnt?.Host ?? string.Empty;
+        DprntFilePath = configuration?.Dprnt?.FilePath ?? string.Empty;
+        DprntFileClearPolicy = configuration?.Dprnt?.ClearPolicy ?? "NEVER";
+        FocasProgramUploadEnabled = configuration?.ProgramAccess?.Enabled ?? false;
+        FocasProgramFolder = configuration?.ProgramAccess?.ProgramFolder ?? "//CNC_MEM/USER/PATH1/";
+        FocasPollingIntervalMs = value.PollingIntervalMs.ToString(CultureInfo.InvariantCulture);
+        FocasConnectionTimeoutMs = value.ConnectionTimeoutMs.ToString(CultureInfo.InvariantCulture);
+        FocasEnabled = value.Enabled;
+        focasSettingsVersion = value.Version;
+    }
+
+    private void ResetFocasForm()
+    {
+        FocasHost = string.Empty;
+        FocasMacAddress = string.Empty;
+        FocasPort = "8193";
+        FocasPartCounterSource = "PARTS_COUNT_6711";
+        FocasProgramUploadEnabled = false;
+        FocasProgramFolder = "//CNC_MEM/USER/PATH1/";
+        FocasPollingIntervalMs = "2000";
+        FocasConnectionTimeoutMs = "3000";
+        FocasEnabled = false;
+        focasSettingsVersion = 0;
+    }
+
+    private static readonly JsonSerializerOptions FocasJsonOptions = new(JsonSerializerDefaults.Web);
 
     internal async Task LoadVerificationConfigurationAsync()
     {
@@ -1271,9 +1448,19 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     });
 
     internal Task TestHaasConnectionAsync() =>
-        string.Equals(HaasTelemetryProvider, "MTCONNECT", StringComparison.OrdinalIgnoreCase)
-            ? TestHaasMtConnectAsync()
-            : TestHaasMdcAsync();
+        string.Equals(HaasTelemetryProvider, "DPRNT", StringComparison.OrdinalIgnoreCase)
+            ? TestHaasDprntAsync()
+            : string.Equals(HaasTelemetryProvider, "MTCONNECT", StringComparison.OrdinalIgnoreCase)
+                ? TestHaasMtConnectAsync()
+                : TestHaasMdcAsync();
+
+    internal Task TestHaasDprntAsync() => RunHaasReadAsync(async () =>
+    {
+        var result = await apiClient!.TestHaasDprntAsync(SelectedMachine!.MachineId);
+        HaasDiagnostics = result.Succeeded
+            ? $"DPRNT: Connected | {result.Message}"
+            : $"DPRNT: {result.Message}";
+    });
 
     internal Task TestHaasMtConnectAsync() => RunHaasReadAsync(async () =>
     {
@@ -1296,6 +1483,18 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     internal Task RefreshHaasMonitorAsync() => RunHaasReadAsync(async () =>
     {
+        if (ShowsFocasConfiguration)
+        {
+            var focas = await apiClient!.GetCncSnapshotAsync(SelectedMachine!.MachineId);
+            HaasDiagnostics = focas is null
+                ? "No FOCAS telemetry snapshot has been received."
+                : $"{focas.ConnectionStatus} | State: {focas.MachineState.Value ?? "unknown"} | Part: {focas.Program.PartName.Value ?? "unverified"} | Program: {focas.Program.ProgramNumber.Value ?? "none"} | Parts counter: {focas.PartCounter.Value?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"} | Last Poll: {focas.Timestamp.ToLocalTime():HH:mm:ss}"
+                  + (focas.LastError is null ? string.Empty : $" | Error: {focas.LastError}");
+            HaasTimeline = focas is null
+                ? "No FOCAS component health recorded."
+                : string.Join(Environment.NewLine, focas.ComponentHealth.Select(item => $"{item.Key}: {item.Value}"));
+            return;
+        }
         var value = await apiClient!.GetHaasMonitorAsync(SelectedMachine!.MachineId);
         var snapshot = value.Snapshot;
         HaasDiagnostics = snapshot is null
@@ -2002,6 +2201,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineDisplayEnabled = value.DisplayEnabled;
         MachineRespectMasterCalendar = value.RespectMasterCalendar;
         MachineExecutionMode = value.ExecutionMode;
+        MachineNcDialect = value.NcDialect;
         MachineUsableToolPositions = value.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineRapidRateMillimetersPerMinute = value.RapidRateMillimetersPerMinute?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineToolChangeTimeSeconds = value.ToolChangeTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
@@ -2017,8 +2217,16 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasMacAddress = value.MacAddress;
         HaasMdcPort = value.MdcPort.ToString(CultureInfo.InvariantCulture);
         HaasMtConnectPort = value.MtConnectPort.ToString(CultureInfo.InvariantCulture);
-        HaasDprntPort = value.DprntPort.ToString(CultureInfo.InvariantCulture);
-        HaasTelemetryProvider = value.TelemetryProvider;
+        SelectedConnectionType = ConnectionTypes.First(type => type.Value == value.TelemetryProvider.Trim().ToUpperInvariant() switch
+        {
+            "MDC" => "HAAS_MDC",
+            "DPRNT" => "HAAS_DPRNT",
+            _ => "HAAS_MTCONNECT"
+        });
+        DprntTcpPort = value.DprntPort.ToString(CultureInfo.InvariantCulture);
+        DprntSource = value.DprntSource;
+        DprntFilePath = value.DprntFilePath ?? string.Empty;
+        DprntFileClearPolicy = value.DprntFileClearPolicy;
         HaasLocalNetShareEnabled = value.LocalNetShareEnabled;
         HaasLocalNetSharePath = value.LocalNetSharePath ?? string.Empty;
         HaasCredentialsReference = value.CredentialsReference ?? string.Empty;
@@ -2035,8 +2243,13 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         HaasMacAddress = string.Empty;
         HaasMdcPort = "5051";
         HaasMtConnectPort = "8082";
-        HaasDprntPort = "8080";
-        HaasTelemetryProvider = "MTCONNECT";
+        SelectedConnectionType = ConnectionTypes.First(type => type.Value == "HAAS_MTCONNECT");
+        DprntSource = "TCP";
+        DprntTcpPort = "8080";
+        DprntTcpHost = string.Empty;
+        DprntFilePath = string.Empty;
+        DprntFileClearPolicy = "ON_OFFSET_LOADER";
+        ResetFocasForm();
         HaasLocalNetShareEnabled = false;
         HaasLocalNetSharePath = string.Empty;
         HaasCredentialsReference = string.Empty;
@@ -2197,7 +2410,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             usableTools,
             rapidRate,
             toolChangeSeconds,
-            timeFactor);
+            timeFactor,
+            MachineNcDialect);
         return true;
     }
 
@@ -2386,6 +2600,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         TestHaasMtConnectCommand.RaiseCanExecuteChanged();
         TestHaasMdcCommand.RaiseCanExecuteChanged();
         TestHaasNetShareCommand.RaiseCanExecuteChanged();
+        TestHaasDprntCommand.RaiseCanExecuteChanged();
+        SaveFocasConfigurationCommand.RaiseCanExecuteChanged();
+        TestFocasConnectionCommand.RaiseCanExecuteChanged();
         RefreshHaasMonitorCommand.RaiseCanExecuteChanged();
         ReconnectCncCommand.RaiseCanExecuteChanged();
         NewPlannedMaintenanceCommand.RaiseCanExecuteChanged();
@@ -2679,4 +2896,10 @@ internal sealed class MachinePostprocessorOption : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+/// <summary>One entry of the unified CNC connection-type picker (protocol, not vendor-adapter, granularity).</summary>
+internal sealed record ConnectionTypeOption(string Value, string Label)
+{
+    public string ChoiceLabel => Label;
 }

@@ -162,9 +162,12 @@ internal static class CncEndpoints
 
     private static CncConnectionResponse Public(MachineConnection value)
     {
-        object configuration = value.AdapterType == CncAdapterType.HaasNgc
-            ? PublicHaas(value.ConfigurationJson)
-            : new { };
+        object configuration = value.AdapterType switch
+        {
+            CncAdapterType.HaasNgc => PublicHaas(value.ConfigurationJson),
+            CncAdapterType.FanucFocas => PublicFocas(value.ConfigurationJson),
+            _ => new { }
+        };
         return new(value.Id, value.MachineId, CncAdapterTypes.Serialize(value.AdapterType), value.Enabled,
             value.ConnectionStatus, value.LastConnectionAttemptAt, value.LastConnectedAt,
             value.LastDisconnectedAt, value.LastSuccessfulPollAt, value.PollingIntervalMs,
@@ -184,6 +187,7 @@ internal static class CncEndpoints
             value.Mdc,
             value.MtConnect,
             value.TelemetryProvider,
+            value.Dprnt,
             programAccess = new
             {
                 value.ProgramAccess.Provider,
@@ -196,6 +200,22 @@ internal static class CncEndpoints
                 passwordSecretConfigured = value.ProgramAccess.PasswordSecretId is not null
             },
             value.Production,
+            value.Monitoring
+        };
+    }
+
+    private static object PublicFocas(string json)
+    {
+        var value = JsonSerializer.Deserialize<FanucFocasConnectionConfiguration>(json, CncJson.Options)!;
+        return new
+        {
+            value.Host,
+            value.MacAddress,
+            value.Port,
+            value.TimeoutMs,
+            value.PartCounterSource,
+            value.Dprnt,
+            value.ProgramAccess,
             value.Monitoring
         };
     }

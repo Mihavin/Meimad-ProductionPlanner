@@ -1,3 +1,5 @@
+using Meimad.Planner.Server.Domain.Cnc;
+
 namespace Meimad.Planner.Server.Domain.Haas;
 
 internal static class HaasConnectivityStates
@@ -29,8 +31,10 @@ internal static class HaasTelemetryProviders
 {
     internal const string Mdc = "MDC";
     internal const string MtConnect = "MTCONNECT";
+    /// <summary>No machine telemetry; Part identity and workflow events come only from the DPRNT source.</summary>
+    internal const string DprntOnly = "DPRNT";
 
-    internal static bool IsSupported(string value) => value is Mdc or MtConnect;
+    internal static bool IsSupported(string value) => value is Mdc or MtConnect or DprntOnly;
 }
 
 internal sealed record HaasConnectionSettings(
@@ -54,7 +58,10 @@ internal sealed record HaasConnectionSettings(
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    string TelemetryProvider = HaasTelemetryProviders.Mdc);
+    string TelemetryProvider = HaasTelemetryProviders.Mdc,
+    string DprntSource = CncDprntSources.Tcp,
+    string? DprntFilePath = null,
+    string DprntFileClearPolicy = CncDprntClearPolicies.Never);
 
 internal sealed record HaasProgramStatus(
     string? ProgramNumber,

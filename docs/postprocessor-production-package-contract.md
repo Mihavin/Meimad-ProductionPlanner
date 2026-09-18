@@ -151,12 +151,13 @@ The control/post family may adapt surrounding comment syntax, but the Meimad tok
 ### DPRNT / event context
 
 ```text
-DPRNT[PART=[[MEIMAD:PART_NAME]]]
-DPRNT[OP=[[MEIMAD:OPERATION_NAME]]]
 [[MEIMAD:EVENT_CONTEXT]]
+DPRNT[[[MEIMAD:PART_NAME]]]
 ```
 
-If a control family uses another equivalent event output mechanism, use that mechanism with the same ownership model.
+The Server takes machine-side Part identity only from a bare part-number-shaped DPRNT line (uppercase letters and digits with at least one `-` or `.` separator, not ending `.CNC`). A prefixed form such as `DPRNT[PART=...]` is ignored, and `OPERATION_NAME` belongs in a `( )` comment, never in a DPRNT. On FANUC-family controls the DPRNT lines sit between the writer's own `POPEN` and `PCLOS`.
+
+Package Creator expands `EVENT_CONTEXT` itself, on verification-enabled and verification-disabled Machines alike, in the NC dialect configured on the assigned Machine (`ncDialect`): a `DPRNT[MEIMAD/V/2/CONTEXT/...]` statement for `HAAS_NGC`, `FANUC_MACRO_B`, and `MAZAK_MATRIX_EIA`, or a `PUT 'MEIMAD/V/2/CONTEXT/...'` statement followed by `WRITE C` for `OKUMA_OSP`. The same dialect selects the verification hook (`G65 P9002 A<nc>.` or `CALL O9002 PA=<nc>`), the cycle-event blocks, and the Offset Loader program (`offset-loader/O01990.nc` or `offset-loader/O1990.MIN`). The postprocessor never rewrites Server-generated blocks and does not choose the dialect. Per-control examples are in [`nc-postprocessor-and-macro-specification.md`](nc-postprocessor-and-macro-specification.md).
 
 ### Part counting (optional)
 

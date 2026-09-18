@@ -8,7 +8,11 @@ internal sealed record NcPackageTransformOptions(
     bool VerificationEnabled,
     int VerifyProgramNumber,
     int MacroVersion,
-    int EventSequenceVariable);
+    int EventSequenceVariable,
+    string NcDialect = NcDialects.HaasNgc)
+{
+    internal NcDialectProfile Profile => NcDialects.Profile(NcDialect);
+}
 
 internal sealed record NcPackageResolvedValues(
     string PartName,
@@ -50,15 +54,15 @@ internal static class NcPackageTemplateTransformer
                     StringComparison.Ordinal))
             {
                 if (options.VerificationEnabled)
-                    output.Add(FormattableString.Invariant(
-                        $"G65 P{options.VerifyProgramNumber} A{ncIdentityToken}. (MEIMAD VERIFY V1)"));
+                    output.Add(options.Profile.VerificationHook(options.VerifyProgramNumber, ncIdentityToken));
                 continue;
             }
             if (line.Contains($"[[MEIMAD:{NcPackagePlaceholderKeys.EventContext}]]",
                     StringComparison.Ordinal))
             {
-                output.Add("(MEIMAD EVENT CONTEXT V2)");
-                output.Add($"DPRNT[MEIMAD/V/2/CONTEXT/PACKAGE/{NcText(values.ProductionPackageId)}/RUN/{NcText(values.ProductionRunId)}/MACHINE/{NcText(values.MachineId)}/NCRELEASE/{NcText(values.NcReleaseId)}/MACROVERSION/{options.MacroVersion}/PROGRAM/{ncIdentityToken}]");
+                var context = FormattableString.Invariant(
+                    $"MEIMAD/V/2/CONTEXT/PACKAGE/{NcText(values.ProductionPackageId)}/RUN/{NcText(values.ProductionRunId)}/MACHINE/{NcText(values.MachineId)}/NCRELEASE/{NcText(values.NcReleaseId)}/MACROVERSION/{options.MacroVersion}/PROGRAM/{ncIdentityToken}");
+                output.AddRange(options.Profile.EventContext(options.Profile.SanitizePrintedText(context)));
                 continue;
             }
             if (line.Contains($"[[MEIMAD:{NcPackagePlaceholderKeys.CycleStart}]]",
@@ -113,8 +117,7 @@ internal static class NcPackageTemplateTransformer
             if (NcVerificationHookParser.PackageVerifyPlaceholder().IsMatch(line))
             {
                 if (options.VerificationEnabled)
-                    output.Add(FormattableString.Invariant(
-                        $"G65 P{options.VerifyProgramNumber} A{ncIdentityToken}. (MEIMAD VERIFY V1)"));
+                    output.Add(options.Profile.VerificationHook(options.VerifyProgramNumber, ncIdentityToken));
                 continue;
             }
 
@@ -161,24 +164,15 @@ internal static class NcPackageTemplateTransformer
                 : '_').ToArray());
     }
 
+    /// <summary>The part-counting block is rendered by the Machine's dialect (Haas G103 barrier, macro B, or Okuma OSP).</summary>
     private static void AppendCycle(
-        ICollection<string> output,
+        List<string> output,
         string eventCode,
         string idSuffix,
         int ncId,
-        NcPackageTransformOptions options)
-    {
-        var variable = options.EventSequenceVariable.ToString(CultureInfo.InvariantCulture);
-        output.Add("G103 P1");
-        output.Add($"#30=ROUND[#{variable}]");
-        output.Add($"IF [ABS[#{variable}-#30] GT 0.0001] THEN #30=0.");
-        output.Add("IF [#30 LT 0.] THEN #30=0.");
-        output.Add("IF [#30 GE 899999.] THEN #30=0.");
-        output.Add("#30=#30+1.");
-        output.Add($"#{variable}=#30");
-        output.Add($"DPRNT[MEIMAD/V/1/EVENT/{eventCode}/ID/NC-{ncId}-{idSuffix}-#3001[80]/SEQ/#30[60]/MACROVERSION/{options.MacroVersion}/PROGRAM/{ncId}]");
-        output.Add("G103 P0");
-    }
+        NcPackageTransformOptions options) =>
+        output.AddRange(options.Profile.CycleEvent(
+            eventCode, idSuffix, ncId, options.MacroVersion, options.EventSequenceVariable));
 }
 
 internal sealed class ProductionPackageBuildException(string code, string message)

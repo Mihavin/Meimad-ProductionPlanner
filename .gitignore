@@ -48,3 +48,8 @@ _MeimadPlanner/
 eink-packages/
 .cache/
 artifacts/
+
+# FANUC FOCAS 2 library folder: licensed binaries plus whatever reference material was dropped
+# in alongside them (sample projects, other-platform builds, ...). Only our own doc is tracked.
+focas/*
+!focas/MEIMAD-FOCAS-LIBRARY.md

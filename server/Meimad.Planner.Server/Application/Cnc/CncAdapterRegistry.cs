@@ -13,6 +13,9 @@ internal sealed class CncAdapterRegistry
         new(CncAdapterTypes.HaasNgc, "Haas NGC", true, new(
             true, true, true, true, true, true, false, false,
             false, false, false, false, false)),
+        new(CncAdapterTypes.FanucFocas, "FANUC FOCAS", true, new(
+            true, true, true, false, false, true, false, false,
+            true, true, true, false, false)),
         new(CncAdapterTypes.MtConnect, "MTConnect — Coming later", false, Unsupported),
         new(CncAdapterTypes.OpcUa, "OPC UA — Coming later", false, Unsupported),
         new(CncAdapterTypes.Custom, "Custom — Coming later", false, Unsupported)

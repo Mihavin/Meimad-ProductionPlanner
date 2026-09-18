@@ -23,7 +23,8 @@ internal sealed record CreateMachineRequest(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double? MachineTimeFactor = null)
+    double? MachineTimeFactor = null,
+    string? NcDialect = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -42,7 +43,8 @@ internal sealed record CreateMachineRequest(
         UsableToolPositions,
         RapidRateMillimetersPerMinute,
         ToolChangeTimeSeconds,
-        MachineTimeFactor);
+        MachineTimeFactor,
+        NcDialect);
 }
 
 internal sealed class PatchMachineRequest
@@ -71,7 +73,8 @@ internal sealed class PatchMachineRequest
             reader.Integer("usableToolPositions"),
             reader.Double("rapidRateMillimetersPerMinute"),
             reader.Double("toolChangeTimeSeconds"),
-            reader.Double("machineTimeFactor"));
+            reader.Double("machineTimeFactor"),
+            reader.String("ncDialect"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -84,7 +87,8 @@ internal sealed class PatchMachineRequest
             "workingCalendarId", "isActive", "displayEnabled", "picturePath",
             "machineTypeId", "respectMasterCalendar", "executionMode",
             "supportedPostprocessorIds", "usableToolPositions",
-            "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor"
+            "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor",
+            "ncDialect"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -252,7 +256,8 @@ internal sealed record MachineResponse(
     int? UsableToolPositions,
     double? RapidRateMillimetersPerMinute,
     double? ToolChangeTimeSeconds,
-    double MachineTimeFactor)
+    double MachineTimeFactor,
+    string NcDialect)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -277,7 +282,8 @@ internal sealed record MachineResponse(
         machine.UsableToolPositions,
         machine.RapidRateMillimetersPerMinute,
         machine.ToolChangeTimeSeconds,
-        machine.MachineTimeFactor);
+        machine.MachineTimeFactor,
+        machine.NcDialect);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

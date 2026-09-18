@@ -37,6 +37,15 @@ internal static partial class MachineValidator
                 "invalid_execution_mode",
                 "executionMode must be exactly 'CNC_GCODE' or 'MANUAL'."));
         }
+        var ncDialect = Normalize(values.NcDialect)?.ToUpperInvariant()
+            ?? MachineNcDialects.HaasNgc;
+        if (!MachineNcDialects.IsSupported(ncDialect))
+        {
+            issues.Add(new MachineValidationIssue(
+                "ncDialect",
+                "invalid_nc_dialect",
+                "ncDialect must be exactly 'HAAS_NGC', 'FANUC_MACRO_B', 'MAZAK_MATRIX_EIA', or 'OKUMA_OSP'."));
+        }
         var supportedPostprocessorIds = NormalizeIdentifiers(
             values.SupportedPostprocessorIds,
             "supportedPostprocessorIds",
@@ -96,7 +105,8 @@ internal static partial class MachineValidator
             values.UsableToolPositions,
             values.RapidRateMillimetersPerMinute,
             values.ToolChangeTimeSeconds,
-            machineTimeFactor);
+            machineTimeFactor,
+            ncDialect);
     }
 
     private static IReadOnlyList<string> NormalizeIdentifiers(

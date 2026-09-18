@@ -24,7 +24,8 @@ internal sealed record Machine(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double MachineTimeFactor = 1.0);
+    double MachineTimeFactor = 1.0,
+    string NcDialect = MachineNcDialects.HaasNgc);
 
 internal sealed record MachineValues(
     string? Number,
@@ -42,7 +43,8 @@ internal sealed record MachineValues(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double? MachineTimeFactor = null);
+    double? MachineTimeFactor = null,
+    string? NcDialect = null);
 
 internal sealed record ValidatedMachineValues(
     string Number,
@@ -60,7 +62,8 @@ internal sealed record ValidatedMachineValues(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double MachineTimeFactor = 1.0);
+    double MachineTimeFactor = 1.0,
+    string NcDialect = MachineNcDialects.HaasNgc);
 
 internal static class MachineExecutionModes
 {
@@ -68,4 +71,21 @@ internal static class MachineExecutionModes
     internal const string Manual = "MANUAL";
 
     internal static bool IsSupported(string? value) => value is CncGCode or Manual;
+}
+
+/// <summary>
+/// The control family whose syntax the Server injects into this Machine's runnable NC and Offset
+/// Loader, and whose variable ranges its verification configuration must respect.
+/// </summary>
+internal static class MachineNcDialects
+{
+    internal const string HaasNgc = "HAAS_NGC";
+    internal const string FanucMacroB = "FANUC_MACRO_B";
+    internal const string MazakMatrixEia = "MAZAK_MATRIX_EIA";
+    internal const string OkumaOsp = "OKUMA_OSP";
+
+    internal static readonly IReadOnlyList<string> All = [HaasNgc, FanucMacroB, MazakMatrixEia, OkumaOsp];
+
+    internal static bool IsSupported(string? value) =>
+        value is HaasNgc or FanucMacroB or MazakMatrixEia or OkumaOsp;
 }

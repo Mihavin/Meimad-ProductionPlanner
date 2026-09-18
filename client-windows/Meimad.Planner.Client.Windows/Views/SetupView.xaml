@@ -51,6 +51,12 @@
         <Style x:Key="ImportCompatibilitySection" TargetType="StackPanel">
             <Style.Triggers><DataTrigger Binding="{Binding ShowsCompatibilityReview}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
         </Style>
+        <Style x:Key="HaasAdapterSection" TargetType="StackPanel">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsHaasConfiguration}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="FocasAdapterSection" TargetType="StackPanel">
+            <Style.Triggers><DataTrigger Binding="{Binding ShowsFocasConfiguration}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+        </Style>
         <Style x:Key="ImportCaseSection" TargetType="StackPanel" BasedOn="{StaticResource SetupField}">
             <Style.Triggers><DataTrigger Binding="{Binding ShowsCaseCandidate}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
         </Style>
@@ -260,6 +266,7 @@
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capabilities (comma-separated)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineCapabilitiesText}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Picture path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachinePicturePath}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Execution mode" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineExecutionModes}" SelectedItem="{Binding MachineExecutionMode}"/></StackPanel>
+                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="NC dialect (control family for generated NC)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineNcDialects}" SelectedItem="{Binding MachineNcDialect}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Usable tool positions" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineUsableToolPositions}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Rapid rate (mm/min)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineRapidRateMillimetersPerMinute}"/></StackPanel>
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Tool-change time (seconds)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MachineToolChangeTimeSeconds}"/></StackPanel>
@@ -290,11 +297,12 @@
                                            Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
                                 <Expander Header="CNC Connection" IsExpanded="False" Margin="0,16,0,0">
                                     <StackPanel Margin="0,10,0,0">
-                                        <TextBlock Text="Adapter Type" Style="{StaticResource SetupFieldLabel}"/>
-                                        <ComboBox ItemsSource="{Binding CncAdapters}" SelectedItem="{Binding SelectedCncAdapter}"
+                                        <TextBlock Text="Connection type" Style="{StaticResource SetupFieldLabel}"/>
+                                        <ComboBox ItemsSource="{Binding ConnectionTypes}" SelectedItem="{Binding SelectedConnectionType}"
                                                   DisplayMemberPath="ChoiceLabel" Margin="0,2,0,3"/>
                                         <TextBlock Text="{Binding CncAdapterAvailability}" Foreground="{StaticResource MutedTextBrush}"
                                                    TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <StackPanel Style="{StaticResource HaasAdapterSection}">
                                         <TextBlock Text="Haas NGC configuration" FontWeight="Bold" Margin="0,0,0,6"/>
                                         <TextBlock Text="Machine-side identity comes from a direct DPRNT PartName or the active NC program header. File name and O-number remain separate and never identify the Part."
                                                    Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
@@ -303,15 +311,13 @@
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Controller MAC address" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMacAddress}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MDC Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMdcPort}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MTConnect Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMtConnectPort}"/></StackPanel>
-                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT PartName Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasDprntPort}"/></StackPanel>
-                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine telemetry source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasTelemetryProviders}" SelectedItem="{Binding HaasTelemetryProvider}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part counter source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasPartCounterSources}" SelectedItem="{Binding HaasPartCounterSource}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Polling interval (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasPollingIntervalMs}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Connection timeout (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasConnectionTimeoutMs}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Local Net Share path" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasLocalNetSharePath}"/></StackPanel>
                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Credential reference (no password)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasCredentialsReference}"/></StackPanel>
                                         </UniformGrid>
-                                        <TextBlock Text="MTConnect and DPRNT are read-only. Set the DPRNT output port configured on the Haas. Workflow state is owned by immutable Server events, not a persistent CNC variable."
+                                        <TextBlock Text="MTConnect and DPRNT are read-only. Workflow state is owned by immutable Server events, not a persistent CNC variable."
                                                    Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                             <CheckBox Content="Local Net Share enabled" IsChecked="{Binding HaasLocalNetShareEnabled}" Margin="0,0,18,0"/>
@@ -324,15 +330,60 @@
                                             <Button Content="Test MTConnect" Command="{Binding TestHaasMtConnectCommand}"/>
                                             <Button Content="Test MDC" Command="{Binding TestHaasMdcCommand}"/>
                                             <Button Content="Test Net Share" Command="{Binding TestHaasNetShareCommand}"/>
-                                            <Button Content="Refresh monitoring" Command="{Binding RefreshHaasMonitorCommand}" Margin="0"/>
-                                            <Button Content="Reconnect" Command="{Binding ReconnectCncCommand}" Margin="8,0,0,0"/>
                                         </WrapPanel>
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FocasAdapterSection}">
+                                            <TextBlock Text="FANUC FOCAS configuration" FontWeight="Bold" Margin="0,0,0,6"/>
+                                            <TextBlock Text="FOCAS 2 (Fwlib64) reads controller state, executing program, part counter, spindle/feed, and alarms; it never writes. Copy the FANUC FOCAS library (Fwlib64.dll) next to the Server before enabling polling."
+                                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                            <UniformGrid Columns="2">
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Fixed controller IP" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasHost}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Controller MAC address" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasMacAddress}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="FOCAS port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasPort}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part counter source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding FocasPartCounterSources}" SelectedItem="{Binding FocasPartCounterSource}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Program folder (header upload)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasProgramFolder}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Polling interval (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasPollingIntervalMs}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Connection timeout (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding FocasConnectionTimeoutMs}"/></StackPanel>
+                                            </UniformGrid>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                                <CheckBox Content="Read NC header through FOCAS program upload" IsChecked="{Binding FocasProgramUploadEnabled}" Margin="0,0,18,0"/>
+                                                <CheckBox Content="Enable Server polling" IsChecked="{Binding FocasEnabled}"/>
+                                            </StackPanel>
+                                            <WrapPanel>
+                                                <Button Content="Load configuration" Command="{Binding LoadHaasConfigurationCommand}"/>
+                                                <Button Content="Save FOCAS configuration" Command="{Binding SaveFocasConfigurationCommand}"/>
+                                                <Button Content="Test FOCAS connection" Command="{Binding TestFocasConnectionCommand}"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                        <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="#F7F9FB" CornerRadius="3" Padding="9" Margin="0,10,0,0">
+                                            <StackPanel>
+                                                <TextBlock Text="DPRNT (Part identity &amp; workflow events)" FontWeight="Bold" Margin="0,0,0,4"/>
+                                                <TextBlock Text="DPRNT is shared by every connection type above and configured once here: it supplies the Part identity and MEIMAD workflow events, independent of how machine state/program/counter are read. Source TCP reads the controller (Haas) or a serial-to-Ethernet bridge on the given port. Source FILE tails a controller-written print file over a UNC share, for example a Mazak Matrix print.txt with DPR14 = 4; the Server service account needs read access, and write access when the file is emptied. Source NONE (FOCAS only) disables DPRNT entirely: no Part identity or workflow events are observed."
+                                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                <UniformGrid Columns="2">
+                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding DprntSources}" SelectedItem="{Binding DprntSource}"/></StackPanel>
+                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT TCP port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding DprntTcpPort}"/></StackPanel>
+                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT file path (UNC, FILE source)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding DprntFilePath}"/></StackPanel>
+                                                    <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Empty DPRNT file" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding DprntClearPolicies}" SelectedItem="{Binding DprntFileClearPolicy}"/></StackPanel>
+                                                    <StackPanel Style="{StaticResource FocasAdapterSection}"><TextBlock Text="DPRNT TCP host (serial bridge; blank = controller IP)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding DprntTcpHost}"/></StackPanel>
+                                                </UniformGrid>
+                                                <TextBlock Text="ON_OFFSET_LOADER empties the file after each new Offset Loader completion so it holds one setup session; AFTER_READ empties it after every read; NEVER only reads. The DPRNT source and its clear policy are saved together with whichever connection type above you save."
+                                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                <WrapPanel>
+                                                    <StackPanel Style="{StaticResource HaasAdapterSection}" Orientation="Horizontal">
+                                                        <Button Content="Test DPRNT" Command="{Binding TestHaasDprntCommand}"/>
+                                                    </StackPanel>
+                                                    <Button Content="Refresh monitoring" Command="{Binding RefreshHaasMonitorCommand}"/>
+                                                    <Button Content="Reconnect" Command="{Binding ReconnectCncCommand}" Margin="8,0,0,0"/>
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Border>
                                         <Border BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="3" Padding="9" Margin="0,10,0,0">
                                             <TextBlock Text="{Binding HaasDiagnostics}" TextWrapping="Wrap"/>
                                         </Border>
                                         <Expander Header="Protected setup verification (commissioning gated)" Margin="0,10,0,0">
                                             <StackPanel Margin="8">
-                                                <TextBlock Text="These values configure the Server-side contract only. Keep verification disabled until the protected Haas macros and physical Machine behavior are commissioned and proven."
+                                                <TextBlock Text="These values configure the Server-side contract only. Keep verification disabled until the protected macros and physical Machine behavior are commissioned and proven. Variable numbers follow the Machine's NC dialect: Haas NGC #10000–#10999 with an M109 response variable (#500–#549 or #10500–#10549); FANUC and Mazak #500–#999; Okuma OSP common variables VC1–VC200 (enter the number only). Disable verification before changing a Machine's dialect."
                                                            Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                                 <UniformGrid Columns="2">
                                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRINT transport port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding VerificationDprintPort}"/></StackPanel>

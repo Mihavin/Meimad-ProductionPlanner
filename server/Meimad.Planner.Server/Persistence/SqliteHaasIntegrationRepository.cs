@@ -525,7 +525,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 14),
             new HaasMtConnectConfiguration(value.MtConnectPort, value.ConnectionTimeoutMs, value.DprntPort),
             value.TelemetryProvider,
-            value.MacAddress);
+            value.MacAddress,
+            new CncDprntConfiguration(value.DprntSource, value.DprntFilePath, value.DprntFileClearPolicy));
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -546,7 +547,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                 username_secret_id = excluded.username_secret_id,
                 allow_read = 1,
                 allow_write = CASE
-                    WHEN json_extract(excluded.configuration_json, '$.telemetryProvider') = 'MTCONNECT' THEN 0
+                    WHEN json_extract(excluded.configuration_json, '$.telemetryProvider') IN ('MTCONNECT', 'DPRNT') THEN 0
                     ELSE machine_connections.allow_write
                 END,
                 version = machine_connections.version + 1,
@@ -573,7 +574,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
         NullableString(reader, 7), NullableString(reader, 8), reader.GetString(9),
         reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14),
         JsonSerializer.Deserialize<string[]>(reader.GetString(15), JsonOptions) ?? [], reader.GetBoolean(16),
-        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)), reader.GetString(20));
+        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)), reader.GetString(20),
+        reader.GetString(21), NullableString(reader, 22), reader.GetString(23));
 
     private const string SettingsSelect = """
         SELECT h.machine_id, h.host, COALESCE(h.mac_address,''),
@@ -582,7 +584,10 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
                h.connection_timeout_ms, h.stable_program_polls, h.header_line_limit,
                h.header_byte_limit, h.header_part_patterns_json, h.enabled, h.version,
                h.created_at, h.updated_at,
-               COALESCE(json_extract(c.configuration_json, '$.telemetryProvider'), 'MDC')
+               COALESCE(json_extract(c.configuration_json, '$.telemetryProvider'), 'MDC'),
+               COALESCE(json_extract(c.configuration_json, '$.dprnt.source'), 'TCP'),
+               json_extract(c.configuration_json, '$.dprnt.filePath'),
+               COALESCE(json_extract(c.configuration_json, '$.dprnt.clearPolicy'), 'NEVER')
         FROM haas_connection_settings h
         LEFT JOIN machine_connections c ON c.machine_id = h.machine_id
         """;

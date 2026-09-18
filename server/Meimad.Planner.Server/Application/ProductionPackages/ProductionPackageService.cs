@@ -62,11 +62,13 @@ internal sealed class ProductionPackageService(
                     sourcePath, context.GCodeHash!, "NC", cancellationToken);
                 var sourceLines = Encoding.UTF8.GetString(sourceBytes).Split(
                     ["\r\n", "\n", "\r"], StringSplitOptions.None);
+                var dialect = NcDialects.Profile(context.NcDialect);
                 var transformOptions = new NcPackageTransformOptions(
                     context.Verification is not null,
                     context.Verification?.VerifyProgramNumber ?? 9002,
                     context.Verification?.ExpectedMacroVersion ?? 1,
-                    context.Verification?.EventSequenceVariable ?? 10000);
+                    context.Verification?.EventSequenceVariable ?? dialect.PersistentVariables.Minimum,
+                    dialect.Id);
                 int ncId;
                 byte[] transformed;
                 if (NcPackagePlaceholderSchema.IsCanonical(sourceLines))
@@ -94,6 +96,11 @@ internal sealed class ProductionPackageService(
                 }
                 else
                 {
+                    // Legacy V1 markers predate the dialect model and were only ever Haas releases.
+                    if (dialect.Id != NcDialects.HaasNgc)
+                        throw new ProductionPackageBuildException(
+                            "production_package_dialect_legacy_unsupported",
+                            $"A legacy V1 release cannot be built for the {dialect.DisplayName} dialect; re-release the NC as a canonical [[MEIMAD:...]] template.");
                     transformed = NcPackageTemplateTransformer.Transform(
                         sourceLines, transformOptions, out ncId);
                     placeholderProtocolVersion = 1;
@@ -105,27 +112,22 @@ internal sealed class ProductionPackageService(
 
                 if (context.Verification is not null)
                 {
-                    var loader = Encoding.ASCII.GetBytes(string.Join("\r\n", new[]
-                    {
-                        "%",
-                        "O01990 (MEIMAD PACKAGE OFFSET LOADER)",
-                        $"(PRODUCTION PACKAGE {packageNumber})",
-                        $"(PRODUCTION RUN {context.RunNumber!.Value})",
-                        $"(BATCH OPERATION {context.BatchOperationId})",
-                        $"(MACHINE {context.MachineNumber})",
-                        $"(NC RELEASE {ncId})",
-                        $"(OFFSET LOADER RELEASE {offsetLoaderId})",
-                        offsetMode == "MANUAL_DUMMY"
-                            ? "(MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY)"
-                            : "(MEASURED TOOL OFFSETS - VERIFICATION AND RELEASE BINDING)",
-                        $"G65 P{context.Verification.ChallengeProgramNumber} A{releaseToken}. B{ncId}.",
-                        "M30",
-                        "%",
-                        string.Empty
-                    }));
+                    var loader = Encoding.ASCII.GetBytes(string.Join("\r\n", dialect.OffsetLoader(
+                        [
+                            FormattableString.Invariant($"(PRODUCTION PACKAGE {packageNumber})"),
+                            FormattableString.Invariant($"(PRODUCTION RUN {context.RunNumber!.Value})"),
+                            $"(BATCH OPERATION {context.BatchOperationId})",
+                            $"(MACHINE {context.MachineNumber})",
+                            FormattableString.Invariant($"(NC RELEASE {ncId})"),
+                            $"(OFFSET LOADER RELEASE {offsetLoaderId})",
+                            offsetMode == "MANUAL_DUMMY"
+                                ? "(MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY)"
+                                : "(MEASURED TOOL OFFSETS - VERIFICATION AND RELEASE BINDING)"
+                        ],
+                        context.Verification.ChallengeProgramNumber, releaseToken!.Value, ncId)));
                     artifacts.Add(await WriteAsync(
                         staging, packageId, ProductionPackageArtifactTypes.OffsetLoader,
-                        "offset-loader/O01990.nc", loader, offsetLoaderId, cancellationToken));
+                        dialect.OffsetLoaderLogicalPath, loader, offsetLoaderId, cancellationToken));
                 }
             }
 
@@ -157,8 +159,9 @@ internal sealed class ProductionPackageService(
                 partName = context.PartName,
                 operationName = context.OperationName,
                 machineAssignmentId = context.MachineAssignmentId,
-                machine = new { id = context.MachineId, number = context.MachineNumber, name = context.MachineName },
+                machine = new { id = context.MachineId, number = context.MachineNumber, name = context.MachineName, ncDialect = context.NcDialect },
                 executionMode = context.ExecutionMode,
+                ncDialect = context.NcDialect,
                 toolOffsetMode = offsetMode,
                 setupistMustEnterToolOffsetsManually = offsetMode == "MANUAL_DUMMY",
                 serverVerificationEnabled = context.Verification is not null,

@@ -81,15 +81,49 @@ For a released G-code revision:
 
 Releasing a new manufacturing-process revision makes other postprocessor releases non-current for that revision until they are regenerated. Meimad validates the insertion placeholder and stores the Server-assigned hook identity but never overwrites original NC files. Historical releases created before schema v51 remain downloadable, show the hook as unavailable, and cannot support protected NC verification until intentionally re-released with a valid placeholder.
 
-## 5. Haas NGC connection and part identity
+## 5. CNC connection: type, telemetry, and part identity
 
-Use the CNC connection panel in Setup for the Haas machine. Prefer **MTConnect** for read-only monitoring when the machine agent exposes `/current`. MDC remains a separate read-only monitoring/test channel; the application exposes no generic variable read, reset, or write control.
+The CNC Connection panel in Setup starts with one **Connection type** picker: **Haas MDC**, **Haas MTConnect**, **DPRNT only** (no machine telemetry, for example Mazak), or **FANUC FOCAS**. Pick the one protocol the Machine actually uses; the panel below then shows only the fields for that type, and a Machine-side identity/DPRNT section shared by every type sits underneath (see [DPRNT: shared by every connection type](#dprnt-shared-by-every-connection-type)). This replaced an earlier two-step "Adapter Type" plus "Machine telemetry source" pair that made it unclear which combination configured a given machine.
 
-Configure the Planner MachineID mapping with the controller’s fixed IP and MAC, then configure the ports, telemetry, polling, timeout, and optional read-only NC share. Save the configuration and use the connection tests as appropriate. This recognizes the configured controller but does not prove its NC or Offset Loader valid.
+**Haas MDC** and **Haas MTConnect** are read-only Haas NGC monitoring channels; **Haas MTConnect** is preferred when the machine agent exposes `/current`. **DPRNT only** is for a controller with no MDC/MTConnect telemetry — the Machine then reports no machine state, program number, or part counter, and Part identity plus workflow events come from DPRNT alone. **FANUC FOCAS** reads a FANUC control over the FOCAS 2 library (see [FANUC FOCAS connection](#fanuc-focas-connection)). The application exposes no generic variable read, reset, or write control for any type.
 
-The active NC program’s machine-side header/DPRNT `PartName` is the authoritative part identity for monitoring. Do not infer the part from the program number when a valid PartName is present. The persistent CNC Setup/Production variable was removed and changing a CNC variable cannot change Meimad workflow state.
+Configure the Planner MachineID mapping with the controller's fixed IP and MAC, then the type-specific ports/counter source/timeout and the shared DPRNT block, save, and use the connection tests as appropriate. This recognizes the configured controller but does not prove its NC or Offset Loader valid.
+
+The active NC program's machine-side header/DPRNT `PartName` is the authoritative part identity for monitoring. Do not infer the part from the program number when a valid PartName is present. The persistent CNC Setup/Production variable was removed and changing a CNC variable cannot change Meimad workflow state.
+
+### DPRNT: shared by every connection type
+
+DPRNT supplies Part identity and `MEIMAD/` workflow events for every connection type above, so it is configured once, in its own section, rather than repeated per type.
+
+**DPRNT source = TCP or file**
+
+**DPRNT source = TCP** (default) reads the controller's DPRNT output on the DPRNT port. This is the Haas NGC setting (Setting 261 = TCP Port, Setting 263 = port) and also works for a serial-only controller whose RS-232 port is wired to a serial-to-Ethernet bridge configured as a TCP server on that port.
+
+**DPRNT source = FILE** reads a DPRNT text file that the controller writes itself, over a UNC share. Use it for a Mazak Matrix / Matrix 2 control: set DPR14 = 4 so DPRNT lines go to `C:\MC_sdg\print\print.txt` on the control PC, share that folder read-only for the Server service account, and enter the UNC path (for example `\\MAZAK-VARIAXIS\print\print.txt`) as the DPRNT file path. The Server reads only new lines after each poll and re-reads the file from the start if the control rewrote it. Use **Test DPRNT** to confirm the Server can read the file and to see the last PartName it contains.
+
+No G-code deletes that file, so **Empty DPRNT file** says when the Server empties it (the share must then allow write access for the Server service account):
+
+- **ON_OFFSET_LOADER** (recommended): the Server empties the file right after it has read a new Offset Loader completion line. The verification Offset Loader is the first program of every new setup, so the file always holds exactly the current setup session and never grows across jobs.
+- **AFTER_READ**: the Server empties the file after every read that consumed it completely; any `MEIMAD/` events written while the Server was down are still picked up on restart.
+- **NEVER**: the Server only reads; use it when the control keeps the file small itself. After a restart the Server recovers only the current PartName from the end of the file and does not replay old events (this also applies to ON_OFFSET_LOADER).
+
+The file is only emptied after a read that ended on a complete line and only while nothing was appended since, so a line the control writes at the same moment is never lost. A failed emptying (for example a read-only share) is shown as the connection error without stopping monitoring.
+
+Bench auto-start and program-mismatch events still need an active program number from MDC, MTConnect, or FOCAS; with connection type **DPRNT only** the PartName is shown in monitoring and `MEIMAD/` workflow events are ingested, but no Bench is started automatically, and **Test Connection** runs the DPRNT probe.
+
+Selecting **FANUC FOCAS** as the connection type extends the DPRNT source list with **NONE**, which disables DPRNT entirely (no Part identity or workflow events); Haas connection types never offer NONE, since DPRNT is their only source of Part identity below the NC header.
+
+### FANUC FOCAS connection
+
+Select **FANUC FOCAS** as the connection type in the CNC Connection panel; the FANUC fields replace the Haas fields, and the shared DPRNT section below stays the same for every type. Enter the control's fixed IP and MAC, the FOCAS port (8193 unless the control was changed), and the part counter source (parameter 6711 parts count or 6712 total parts). FOCAS is read-only: the Server reads controller state, the executing program, the part counter, spindle/feed, and alarms, and never writes a variable, offset, tool, or program.
+
+The FANUC FOCAS library is licensed by FANUC and is not in version control. A Server built from a repository whose `focas\` folder holds the FANUC files installs them in its own `focas` subfolder automatically; otherwise copy the 64-bit set from your FANUC FOCAS 2 kit (`Fwlib64.dll`, `fwlibe64.dll`, and the control-series `fwlib*64.dll` files) into the Server install folder's `focas` subfolder, then use **Test FOCAS connection**. A missing main library is reported as a failed `focas` check that names the folders that were searched; a missing `fwlibe64.dll` or series library is reported as `EW_NODLL (-15)`.
+
+Part identity and workflow events on a FANUC control come from DPRNT exactly as on Haas: choose **DPRNT source = TCP** for a serial-to-Ethernet bridge wired to the control's RS-232 port (enter the bridge's IP as **DPRNT TCP host** and its listening port as **DPRNT TCP port**; leave the host blank only when the controller itself serves the port), **FILE** for a control or PC front-end that writes DPRNT to a file on a share (enter the UNC path and the **Empty DPRNT file** policy, normally ON_OFFSET_LOADER), or **NONE** when no DPRNT output exists (then only monitoring works and no verification or cycle events can be observed). Optionally tick **Read NC header through FOCAS program upload** so the Server parses the Part identity from the head of the executing program (`//CNC_MEM/USER/PATH1/O<number>` by default) when no DPRNT PartName line exists; commission this on the real control before relying on it. **Refresh monitoring** shows the last normalized snapshot and component health for a FANUC Machine.
 
 The **Protected setup verification** expander stores commissioning configuration only. Keep it disabled until the real Machine passes the bounded V10 no-motion commissioning test. There is no Machine credential field. Offset Loader completion arms the exact binding without a timeout; the timeout begins only when that NC first starts.
+
+Every CNC Machine also has an **NC dialect** in the Machine editor, next to Execution mode: **HAAS_NGC** (default), **FANUC_MACRO_B**, **MAZAK_MATRIX_EIA**, or **OKUMA_OSP**. It selects the syntax of everything the Server writes into a Production Package (the verification call, the event context line, the part-counting blocks, and the Offset Loader program) and the variable numbers the verification configuration accepts: `#10000`–`#10999` plus an M109 response variable on Haas, `#500`–`#999` on FANUC and Mazak, and `1`–`200` (rendered as `VC1`–`VC200`) on Okuma. The dialect cannot be changed while Server Verification is enabled for the Machine: disable it, change the dialect, re-enter the variables for the new control, then enable again. Existing Machines were migrated as HAAS_NGC, so set **MAZAK_MATRIX_EIA** on the Mazak Variaxis and **OKUMA_OSP** on the Okuma Genos before their first package is built; with the wrong dialect the control alarms on `G103`, `DPRNT`, or `#10504` lines. The Offset Loader for an Okuma Machine is `O1990.MIN` (ending in `M02`); every other dialect keeps `O01990.nc`.
 
 The same expander contains **Audited recovery — no verification bypass** for the
 active editor. Enter the Production Run and a reason to invalidate the current
@@ -164,6 +198,18 @@ Use the language selector in the Windows client to switch between English, Hebre
 ### Net Share unavailable
 
 Use a UNC path such as `\\server\share\NC`, grant the Server service account read access, and test from the service context. Do not rely on a drive letter mapped only in your user session.
+
+### DPRNT file unavailable
+
+The monitoring error names the file. Check that the control PC share is reachable from the Server, that the Server service account can read the file (and write it when **Empty DPRNT file** is not NEVER), and that DPR14 = 4 is set on the Mazak control so DPRNT actually writes the file. A DPRNT test program `POPEN` / `DPRNT[TEST-123]` / `PCLOS` should add a `TEST-123` line; **Test DPRNT** then reports it as the last PartName. If the file keeps growing with ON_OFFSET_LOADER, the Offset Loader completion line is not reaching the file: check that the package was built with verification enabled and that the control's DPRNT output is routed to the file.
+
+### DPRNT is connected but the Part never appears
+
+The Server only recognizes a bare part-number line: uppercase letters and digits with at least one `-` or `.` separator (for example `30P647004101-001`). A `PART=` prefix, lowercase letters, an underscore, a Part number without a separator, or a `.CNC` suffix is ignored. Ask the postprocessor writer for `DPRNT[[[MEIMAD:PART_NAME]]]` as in the [NC postprocessor specification](nc-postprocessor-and-macro-specification.md), and check what the control really sent under the Machine's CNC diagnostics.
+
+### FOCAS library not found
+
+The `focas` check reports `FOCAS library Fwlib64.dll was not found` and lists the searched folders. Copy the 64-bit FOCAS 2 library files from the FANUC kit into the Server install folder's `focas` subfolder, or set the `MEIMAD_FOCAS_LIBRARY_DIR` environment variable for the service, then run **Test FOCAS connection** again. `EW_NODLL (-15)` means `Fwlib64.dll` was found but `fwlibe64.dll` or the control-series `fwlib*64.dll` is missing next to it. `EW_SOCKET (-16)` with the library complete means the control did not answer on the FOCAS port: check the fixed IP, that FOCAS/Ethernet is enabled on the control, and that the Server has a route to the machine VLAN.
 
 ### Operation cannot start
 

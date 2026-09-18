@@ -8,7 +8,7 @@
     <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
     <RootNamespace>Meimad.Planner.Server</RootNamespace>
     <AssemblyName>Meimad.Planner.Server</AssemblyName>
-    <Version>0.1.112</Version>
+    <Version>0.1.115</Version>
     <!-- Keep disposable local publish intermediates out of the SDK source glob. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);.publish-temp\**</DefaultItemExcludes>
   </PropertyGroup>
@@ -18,6 +18,22 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      FANUC FOCAS 2 library (Fwlib64.dll, fwlibe64.dll, fwlib*64.dll). It is FANUC-licensed and
+      kept out of version control; when the repository's focas\ folder holds it, the build copies
+      it into the Server's focas\ subfolder and the installer payload picks it up from there.
+      The Server is x64-only, so only the "*64.dll" binaries (FANUC's own 64-bit naming
+      convention: Fwlib64.dll, fwlibe64.dll, and the 64-bit control-series libraries) are taken;
+      the focas\ folder may also hold unrelated 32-bit copies, sample-project source, or other
+      platform binaries that must not ship.
+    -->
+    <None Include="..\..\focas\*64.dll"
+          Link="focas\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

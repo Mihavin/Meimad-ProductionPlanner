@@ -45,6 +45,7 @@ using Meimad.Planner.Server.Application.Downtimes;
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.JobPackages;
 using Meimad.Planner.Server.Application.GCode;
+using Meimad.Planner.Server.Application.Fanuc;
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Application.LegacyImport;
@@ -72,6 +73,7 @@ using Meimad.Planner.Server.Domain.ResourcePlanning;
 using Meimad.Planner.Server.Domain.ProductionRuns;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
+using Meimad.Planner.Server.Infrastructure.Fanuc;
 using Meimad.Planner.Server.Infrastructure.Haas;
 using Meimad.Planner.Server.Infrastructure.Cnc;
 using Meimad.Planner.Server.Infrastructure.MtConnect;
@@ -236,9 +238,11 @@ public static class ServerApplication
         builder.Services.AddSingleton<ManufacturingProgramService>();
         builder.Services.AddSingleton<INcHeaderParser, NcHeaderParser>();
         builder.Services.AddSingleton<IHaasMdcClientFactory, HaasMdcClientFactory>();
+        builder.Services.AddSingleton<IFocasClientFactory, FocasClientFactory>();
         builder.Services.AddHttpClient<IMtConnectClient, MtConnectHttpClient>(client =>
             client.Timeout = Timeout.InfiniteTimeSpan);
         builder.Services.AddSingleton<IHaasMtConnectReader, HaasMtConnectReader>();
+        builder.Services.AddSingleton<IHaasDprntProbe, HaasDprntProbe>();
         builder.Services.AddSingleton<LocalNetShareHaasProgramReader>();
         builder.Services.AddSingleton<IHaasProgramReader>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());
         builder.Services.AddSingleton<INcProgramFileProvider>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());

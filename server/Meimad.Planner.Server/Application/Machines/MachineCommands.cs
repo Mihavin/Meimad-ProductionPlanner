@@ -17,7 +17,8 @@ internal sealed record CreateMachineCommand(
     int? UsableToolPositions = null,
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
-    double? MachineTimeFactor = null);
+    double? MachineTimeFactor = null,
+    string? NcDialect = null);
 
 internal readonly record struct MachineField<T>(bool IsSpecified, T Value)
 {
@@ -43,4 +44,5 @@ internal sealed record UpdateMachineCommand(
     MachineField<int?> UsableToolPositions = default,
     MachineField<double?> RapidRateMillimetersPerMinute = default,
     MachineField<double?> ToolChangeTimeSeconds = default,
-    MachineField<double?> MachineTimeFactor = default);
+    MachineField<double?> MachineTimeFactor = default,
+    MachineField<string?> NcDialect = default);

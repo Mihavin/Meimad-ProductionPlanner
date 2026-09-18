@@ -14,6 +14,9 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
     private NetworkStream? stream;
     private readonly StringBuilder pending = new();
 
+    /// <summary>True while the read-only DPRNT socket is open after the latest drain.</summary>
+    internal bool Connected => client?.Connected == true;
+
     internal async Task<HaasDprntDrainResult> DrainAsync(string host, int port, int timeoutMs, CancellationToken token)
     {
         try
@@ -40,8 +43,9 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
             var lines = text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
             pending.Clear();
             pending.Append(lines[^1]);
-            foreach (var line in lines[..^1])
+            foreach (var raw in lines[..^1])
             {
+                var line = StripControlCharacters(raw);
                 if (TryParsePartName(line, out var value)) latest = value;
                 else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
                     eventLines.Add(line.Trim());
@@ -53,6 +57,17 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
             await DisposeConnectionAsync();
             return new(null, []);
         }
+    }
+
+    /// <summary>
+    /// Removes ASCII control codes that some controls wrap around DPRNT output: FANUC emits
+    /// DC2 (0x12) on <c>POPEN</c> and DC4 (0x14) on <c>PCLOS</c>, and a serial bridge may add
+    /// NUL padding. Tabs are kept; line terminators were already consumed by the line split.
+    /// </summary>
+    internal static string StripControlCharacters(string line)
+    {
+        if (line.All(character => character >= ' ' && character != '' || character == '\t')) return line;
+        return new string(line.Where(character => character >= ' ' && character != '' || character == '\t').ToArray());
     }
 
     internal static bool TryParsePartName(string? line, out string? partName)
