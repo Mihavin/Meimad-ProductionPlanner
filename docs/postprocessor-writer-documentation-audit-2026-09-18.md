@@ -189,8 +189,15 @@ per control instead of documenting a Haas-only limitation.
 - Verification variable ranges are validated per dialect in the service and in the v76
   SQLite triggers, so a mapping can never be stored for the wrong control.
 - The specification's SolidCAM and Cimatron examples were rewritten in real GPPL
-  (`@start_program` … `output "..."` … `endp`) and GPP `.exf` (`BEGINNING OF PROGRAM:` …
-  `OUTPUT \J "..." ;`) syntax; the earlier examples used an invented pseudo-syntax.
+  (`@start_program` … `{ nl, '...' }` … `endp`) and GPP `.exf` (`BEGINNING OF TAPE:` …
+  `OUTPUT \J "..." ;`) syntax; the earlier examples used an invented pseudo-syntax. A
+  first SolidCAM correction still used an invented `output "\J"` form and was replaced
+  (2026-09-18, verified against the GPPL IDE project's syntax reference) with the real
+  brace-block output `{ nl, '...' }` / `{ nb, ... }`. The Cimatron block names, `OUTPUT
+  \J "..." ;` statement, and `;` terminator were already correct; the same pass replaced
+  its invented `{ }` source comments with the real `*`-prefixed `.exf` comment line
+  (confirmed against a real production Cimatron GPP2 post file) and documented that a
+  Meimad token must use `OUTPUT \J`, never the N-numbered `OUTPUT $`.
 - Server tests cover the transformer per dialect, the Okuma package end to end, the
   verification ranges per dialect, the v76 triggers, and the Machine API dialect rules.
 - Still open: the exact OSP `PUT`/`WRITE` statement form and output device on the

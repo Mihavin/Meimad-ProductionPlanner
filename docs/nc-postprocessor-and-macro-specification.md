@@ -709,43 +709,46 @@ sequence `5`), which the Server renders as `VC1`…`VC5`.
 
 ## 7. SolidCAM GPPL examples
 
-SolidCAM posts are GPPL procedures: a block starts with `@name`, ends with `endp`, and
-`output` appends its arguments to the **current** NC line. A new NC line is started with
-the `"\J"` argument. Without `"\J"` the whole header would land on one line and the
-Server would reject the release (the hook must be on its own line). Print the Meimad
-tokens as literal strings; do not bind them to job, part, or user fields.
+SolidCAM posts are GPPL procedures: a procedure begins with `@name` and ends with `endp`.
+Output is written with brace blocks, not an `output` command. `{ nl, ... }` emits its
+comma-separated items on a new line, and `{ nb, ... }` emits them on a new numbered block
+(with the sequence N-number). String literals use single quotes, and a literal placed
+directly before a variable concatenates (`{ nl, 'O' program_number }`). Use `{ nl, ... }`
+for every Meimad line, so each token lands on its own line with no N-number, and write the
+tokens as literal strings, never bound to job, part, or user fields. Source comments start
+with `;`.
 
 ### 7.1 Haas, FANUC, and Mazak posts (macro-B controls)
 
 ```text
 ; ---- Meimad canonical header: literal tokens, no CAM values ----
 @start_program
-    output "%"
-    output "\J" "O" program_number
-    output "\J" "(PART: [[MEIMAD:PART_NAME]])"
-    output "\J" "(OPERATION: [[MEIMAD:OPERATION_NAME]])"
-    output "\J" "(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])"
-    output "\J" "(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])"
-    output "\J" "(MACHINE: [[MEIMAD:MACHINE_ID]])"
-    output "\J" "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])"
-    output "\J" "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])"
-    output "\J" "[[MEIMAD:VERIFICATION_HOOK]]"
+    { nl, '%' }
+    { nl, 'O' program_number }
+    { nl, '(PART: [[MEIMAD:PART_NAME]])' }
+    { nl, '(OPERATION: [[MEIMAD:OPERATION_NAME]])' }
+    { nl, '(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])' }
+    { nl, '(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])' }
+    { nl, '(MACHINE: [[MEIMAD:MACHINE_ID]])' }
+    { nl, '(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])' }
+    { nl, '(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])' }
+    { nl, '[[MEIMAD:VERIFICATION_HOOK]]' }
 ; FANUC family only: open the print channel after the hook
-    output "\J" "POPEN"
-    output "\J" "[[MEIMAD:EVENT_CONTEXT]]"
-    output "\J" "DPRNT[[[MEIMAD:PART_NAME]]]"
-    output "\J" "[[MEIMAD:CYCLE_START]]"
-    output "\J" "G90 G17 G40 G49 G80"
+    { nl, 'POPEN' }
+    { nl, '[[MEIMAD:EVENT_CONTEXT]]' }
+    { nl, 'DPRNT[[[MEIMAD:PART_NAME]]]' }
+    { nl, '[[MEIMAD:CYCLE_START]]' }
+    { nl, 'G90 G17 G40 G49 G80' }
 endp
 
 ; ---- tools, motion, cycles: the normal SolidCAM procedures, unchanged ----
 
 @end_program
-    output "\J" "[[MEIMAD:CYCLE_END]]"
+    { nl, '[[MEIMAD:CYCLE_END]]' }
 ; FANUC family only: close the print channel before M30
-    output "\J" "PCLOS"
-    output "\J" "M30"
-    output "\J" "%"
+    { nl, 'PCLOS' }
+    { nl, 'M30' }
+    { nl, '%' }
 endp
 ```
 
@@ -758,24 +761,25 @@ in-program probing procedure after the last tool, `CYCLE_END` stays after it.
 
 ```text
 @start_program
-    output "(PART: [[MEIMAD:PART_NAME]])"
-    output "\J" "(OPERATION: [[MEIMAD:OPERATION_NAME]])"
-    output "\J" "(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])"
-    output "\J" "(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])"
-    output "\J" "(MACHINE: [[MEIMAD:MACHINE_ID]])"
-    output "\J" "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])"
-    output "\J" "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])"
-    output "\J" "[[MEIMAD:VERIFICATION_HOOK]]"
-    output "\J" "[[MEIMAD:EVENT_CONTEXT]]"
-    output "\J" "PUT '[[MEIMAD:PART_NAME]]'"
-    output "\J" "WRITE C"
-    output "\J" "[[MEIMAD:CYCLE_START]]"
-    output "\J" "G15 H1"
+    { nl, '(PART: [[MEIMAD:PART_NAME]])' }
+    { nl, '(OPERATION: [[MEIMAD:OPERATION_NAME]])' }
+    { nl, '(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])' }
+    { nl, '(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])' }
+    { nl, '(MACHINE: [[MEIMAD:MACHINE_ID]])' }
+    { nl, '(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])' }
+    { nl, '(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])' }
+    { nl, '[[MEIMAD:VERIFICATION_HOOK]]' }
+    { nl, '[[MEIMAD:EVENT_CONTEXT]]' }
+; the OSP PUT text contains single quotes, so this literal is double-quoted
+    { nl, "PUT '[[MEIMAD:PART_NAME]]'" }
+    { nl, 'WRITE C' }
+    { nl, '[[MEIMAD:CYCLE_START]]' }
+    { nl, 'G15 H1' }
 endp
 
 @end_program
-    output "\J" "[[MEIMAD:CYCLE_END]]"
-    output "\J" "M02"
+    { nl, '[[MEIMAD:CYCLE_END]]' }
+    { nl, 'M02' }
 endp
 ```
 
@@ -791,15 +795,24 @@ by the transfer tool, never by the post (section 6.4).
   defines them; Meimad does not read them.
 - Do not use `part_name`, job or user text, or any SolidCAM variable in place of a Meimad
   token, and do not add HTTP, database, environment, or file lookups to the post.
-- Strings in GPPL are double-quoted; the tokens contain only `[`, `]`, `:`, `_`, and
-  letters, none of which needs escaping.
+- GPPL string literals use single quotes. The tokens contain only `[`, `]`, `:`, `_`, and
+  letters, which are literal inside a GPPL string. When the line's own text contains a
+  single quote, as in the Okuma `PUT '...'`, write that literal with double quotes instead
+  (`{ nl, "PUT '[[MEIMAD:PART_NAME]]'" }`).
+- `{ nl, ... }` outputs a line with no sequence number, which is what every Meimad header,
+  hook, and print line needs. Use `{ nb, ... }` only where the post already adds N-numbers
+  to real motion blocks; do not put an N-number on a Meimad token line.
 
 ## 8. Cimatron GPP examples
 
 Cimatron GPP posts are `.exf` execution files made of named blocks. The tape-level blocks
 are `BEGINNING OF TAPE:` (once, at the start of the NC file) and `END OF TAPE:` (once, at
-the end); `OUTPUT \J "text" ;` writes a literal on a new line and every statement ends
-with `;`. Emit the tokens before any executable modal or motion block.
+the end). `OUTPUT \J "text" ;` writes a literal on a new line with no sequence number;
+`OUTPUT $ "text" ;` writes a new line that does get one (used for the real N-numbered
+motion blocks, never for a Meimad token). `OUTPUT "text" ;` without `\J` or `$` continues
+the current line. String literals are double-quoted, items concatenate by a space between
+them, and every statement ends with `;`. A `.exf` source comment line starts with `*`, not
+with `{ }` or `//`. Emit the tokens before any executable modal or motion block.
 
 ### 8.1 Haas, FANUC, and Mazak posts (macro-B controls)
 
@@ -815,17 +828,19 @@ BEGINNING OF TAPE:
         OUTPUT \J "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])" ;
         OUTPUT \J "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])" ;
         OUTPUT \J "[[MEIMAD:VERIFICATION_HOOK]]" ;
-        OUTPUT \J "POPEN" ;                       { FANUC family only }
+* FANUC family only: open the print channel after the hook
+        OUTPUT \J "POPEN" ;
         OUTPUT \J "[[MEIMAD:EVENT_CONTEXT]]" ;
         OUTPUT \J "DPRNT[[[MEIMAD:PART_NAME]]]" ;
         OUTPUT \J "[[MEIMAD:CYCLE_START]]" ;
         OUTPUT \J "G90 G17 G40 G49 G80" ;
 
-{ TOOL CHANGE:, LINEAR MOTION:, CIRCULAR MOTION:, cycles: the existing post blocks, unchanged }
+* TOOL CHANGE:, LINEAR MOTION:, CIRCULAR MOTION:, cycles: the existing post blocks, unchanged
 
 END OF TAPE:
         OUTPUT \J "[[MEIMAD:CYCLE_END]]" ;
-        OUTPUT \J "PCLOS" ;                       { FANUC family only }
+* FANUC family only: close the print channel before M30
+        OUTPUT \J "PCLOS" ;
         OUTPUT \J "M30" ;
         OUTPUT \J "%" ;
 ```
@@ -862,10 +877,13 @@ END OF TAPE:
 - Do not substitute Cimatron `PART_NAME`, the procedure name, the document name, or user
   text for the Meimad name placeholders. Those CAM values may remain in unrelated CAM
   comments, but they are never Meimad authority.
-- Block names above are those of the classic GPP `.exf`; a GPP2 post keeps the same
-  `OUTPUT \J "..." ;` statement, so check the sample `.exf` shipped with your Cimatron
-  version for the exact block names it uses.
-- Braces `{ }` are GPP comments in the listing above and are not written to the NC file.
+- Block names above are those of the classic GPP `.exf`; a GPP2 (`.ex2`) post keeps the
+  same `OUTPUT \J "..." ;` statement and block markers, so check the sample post shipped
+  with your Cimatron version for the exact block names it uses.
+- Never write a Meimad token with `OUTPUT $`. That form adds the block's N sequence
+  number, which turns a token line into two tokens on the same physical line and fails
+  release validation (`verification_placeholder_not_first` for the hook, or a malformed
+  placeholder for any other key). `OUTPUT \J` is correct for every line shown above.
 
 ## 9. Common mistakes and what the Server does with them
 
@@ -882,7 +900,8 @@ END OF TAPE:
 | neither cycle marker | both, exactly once | `production_package_cycle_marker_required` |
 | `G65 P9002 A1234. (MEIMAD VERIFY V1)` written by the post | `[[MEIMAD:VERIFICATION_HOOK]]` | Release rejected: active verification content |
 | `(PART: 30P647004101-001)` typed in the post | `(PART: [[MEIMAD:PART_NAME]])` | Passes validation, but the header lies; the Server never cross-checks it |
-| SolidCAM `output "..."` lines without `"\J"` | `output "\J" "..."` | Everything on one line; rejected as malformed or `verification_placeholder_not_first` |
+| SolidCAM Meimad line in a `{ nb, ... }` block | `{ nl, '...' }` | The block prefixes an N sequence number, so the token is not a standalone line (`verification_placeholder_not_first`) |
+| SolidCAM `output "..."` (invented, not GPPL) | `{ nl, '...' }` | The post does not compile; GPPL has no `output` command |
 | `DPRNT[[[MEIMAD:OPERATION_NAME]]]` | Operation name in a `( )` comment only | Prints an unreadable line; ignored |
 
 ## 10. Validation failures
