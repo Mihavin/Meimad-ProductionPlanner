@@ -319,6 +319,8 @@ receipts on the Server, validate hardware range, and apply bounded retention.
 
 The Server MSI bundles the client MSI of the same version with a JSON manifest under `client-installer\`, and `ClientInstallerService` serves them on `/api/v1/client-installer` (manifest) and `/api/v1/client-installer/download` (file with checksum header) after recomputing the SHA-256 and checking it against the manifest. Upgrading the Server therefore brings every client PC to the Server's version at the next client start; the separate client MSI remains for first installations.
 
+`ClientPortalPushHostedService` (`Application/ClientPortal/`) is the Server-hosted bridge to the separate cloud customer portal (`C:\VisualCodeWork\meimad-client-cloud-portal`, Firebase Auth + Firestore + a Cloud Run ingest endpoint). When `ClientPortal:Enabled` is true it reads, on `ClientPortal:PollIntervalSeconds`, the Cases whose `customer` exactly matches each configured `ClientPortal:Customers` entry and their current Orders through the same repositories the API uses, and POSTs only Order Number, Part Number, Case name, quantity, Work Finish Date, Server-derived status, and `updatedAt` to `ClientPortal:IngestUrl` with the ingest shared secret as a bearer token. It never reads Machine, Batch, Setup, or Edit Mode state, never writes locally, and holds no Google credential; the portal's Firestore rules, not the Server, decide which signed-in customer sees what. A rejected or failed push is logged and retried on the next cycle. Disabled by default, so an unconfigured Server sends nothing.
+
 ```mermaid
 flowchart TB
     subgraph Host[Designated factory Windows host]

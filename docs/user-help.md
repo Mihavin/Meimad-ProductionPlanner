@@ -250,6 +250,24 @@ Verify that the Case preview or machine picture path is inside an allowed Server
 - Treat Timeline and TV as read-only projections. Treat E-Ink package/planning content as read-only; `SEND_TO_QC` is the only approved tablet command.
 - Record the exact machine, operation, Batch, and time when reporting a problem.
 
+### Customer portal push (optional)
+
+The Server can push each customer's Order status to the cloud customer portal so customers can see their own Orders online without any access to the factory network. It is off unless the administrator enables it in `appsettings.json` next to the Server:
+
+```json
+"ClientPortal": {
+  "Enabled": true,
+  "IngestUrl": "https://meimad-ingest-832857266466.us-central1.run.app/ingest/orders",
+  "SharedSecretFile": "client-portal-secret.txt",
+  "PollIntervalSeconds": 300,
+  "Customers": [
+    { "Customer": "<exact Customer value of the Cases>", "CustomerId": "<portal customer id>" }
+  ]
+}
+```
+
+`client-portal-secret.txt` (next to the Server executable, not in `appsettings.json`) holds the portal's ingest secret; `CustomerId` is the id used when the customer's portal login was created. Only Order Number, Part Number, Case name, quantity, delivery date, and status are sent; Machines, backlog, setup, and every other planning field stay inside the factory. Restart the service after changing the section. The Server log shows one line per customer per push, or the reason a push was rejected.
+
 ## 10. Current implementation notes
 
 The Server APIs and execution model support Production Runs, including multi-output planning data. Some Windows Timeline/Planning Board and TV/E-Ink cards do not yet render every Production Run field; where a Run-specific field is absent, use the operation card and Server projection as the authoritative view. The application does not yet provide automatic scheduling, ERP inventory authority, public Internet access, or native mobile editing. `SEND_TO_QC` is implemented in the Server, Windows QC flow, browser simulator, and compiled firmware; its physical tablet gesture/display behavior remains uncommissioned. Every other E-Ink write-back remains excluded.
