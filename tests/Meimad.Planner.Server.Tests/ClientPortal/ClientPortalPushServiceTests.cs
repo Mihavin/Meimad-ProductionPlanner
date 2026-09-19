@@ -49,6 +49,43 @@ public sealed class ClientPortalPushServiceTests
     }
 
     [Fact]
+    public async Task A_kitaron_managed_orders_live_status_is_pushed_not_the_stale_stored_one()
+    {
+        // Regression: reported as "an order pending production shows as complete in the
+        // customer portal." The stored `status` column is this Server's own last explicit
+        // write; Kitaron's `kitaron_status` can move independently and is what the desktop
+        // client and REST API actually show (OrderContracts.FromDomain). CollectAsync used to
+        // read order.Status directly, bypassing that reconciliation entirely, so a
+        // Kitaron-managed Order the Server's own column still called "complete" -- while
+        // Kitaron had already reopened it to "active" -- was pushed to the customer as
+        // "complete".
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO cases (id, part_number, name, working_folder_path, customer) VALUES
+                    ('case-acme', '4341-1271-001', 'Missile bracket', 'C:\Cases\A', 'Acme Fabrication Ltd');
+                INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status, kitaron_status, kitaron_history_only) VALUES
+                    ('o-1', 'case-acme', '7000152684/41625', 25, '2026-08-15', 'complete', 'active', 0);
+                INSERT INTO kitaron_sync_links (source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at) VALUES
+                    ('order', 'kitaron-key-1', 'o-1', 1, 'hash-1', '2026-08-15T00:00:00Z', '2026-09-19T00:00:00Z');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        await MapAsync(fixture.Database, ("Acme Fabrication Ltd", "acme"));
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, """{"ordersWritten":1,"ordersRemoved":0}"""));
+        var service = Build(fixture.Database, handler, Options());
+
+        await service.PushAllAsync(CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        using var body = JsonDocument.Parse(request.Body);
+        var order = Assert.Single(body.RootElement.GetProperty("orders").EnumerateArray());
+        Assert.Equal("active", order.GetProperty("status").GetString());
+    }
+
+    [Fact]
     public async Task A_rejected_push_is_reported_not_thrown_and_other_customers_still_go()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
