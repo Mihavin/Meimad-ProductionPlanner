@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using Meimad.Planner.Client.Windows.Views;
 using OCCSharp;
 
@@ -29,6 +30,50 @@ public sealed class StepViewerControlTests
         {
             File.Delete(stepPath);
         }
+    }
+
+    [Fact]
+    public void Auto_fit_does_not_spin_the_dispatcher_while_the_viewer_has_no_layout_size()
+    {
+        // Regression: a model loaded into a viewer with no layout size yet (the embedded
+        // viewer sits in a TabItem, so this is every load while another tab is showing)
+        // used to make AutoFitCurrentModelOnce re-post itself on the dispatcher without
+        // end, pegging a core until the tab was opened. Under that code the ContextIdle
+        // drain below never returned; this test then fails on the join timeout.
+        using var box = new BRepPrimAPI_MakeBox(10, 20, 30);
+        using var shape = box.Shape();
+        var model = StepSolidMeshLoader.Tessellate(shape);
+
+        Exception? error = null;
+        var fitsBeforeLayout = -1;
+        var fitsAfterLayout = -1;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var viewer = new StepViewerControl { Width = 640, Height = 420 };
+                viewer.LoadModel(model, "box.step");
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                fitsBeforeLayout = viewer.FitInvocationCount;
+
+                viewer.Measure(new Size(640, 420));
+                viewer.Arrange(new Rect(0, 0, 640, 420));
+                viewer.UpdateLayout();
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                fitsAfterLayout = viewer.FitInvocationCount;
+            }
+            catch (Exception exception)
+            {
+                error = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "the dispatcher never went idle: auto-fit is re-posting itself in a loop");
+        Assert.Null(error);
+        Assert.Equal(0, fitsBeforeLayout);
+        Assert.Equal(1, fitsAfterLayout);
     }
 
     [Fact]

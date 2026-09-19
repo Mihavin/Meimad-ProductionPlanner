@@ -193,9 +193,12 @@ public partial class StepViewerControl : UserControl
     /// cancel. This keeps the app responsive while the file loads; call sites reached
     /// automatically (not from an explicit "open a file" user action) should always prefer this.
     /// </summary>
-    public async Task LoadFileAsync(string path)
+    public async Task LoadFileAsync(string path, CancellationToken cancellationToken = default)
     {
-        var (parsed, fallbackReason) = await LoadNativeAsync(path).ConfigureAwait(true);
+        var (parsed, fallbackReason) = await LoadNativeAsync(path, cancellationToken).ConfigureAwait(true);
+        // The native load cannot be interrupted, but the result can still be discarded: if the
+        // caller moved on (another Case was selected) while this file was parsing, don't draw it.
+        cancellationToken.ThrowIfCancellationRequested();
         ApplyModel(parsed, path, fallbackReason);
     }
 
@@ -210,18 +213,21 @@ public partial class StepViewerControl : UserControl
     }
 
     /// <summary>Async counterpart of <see cref="AddFile"/> -- see its remarks.</summary>
-    public async Task<string> AddFileAsync(string path, string label, string kind, Color? color = null, double opacity = 1)
+    public async Task<string> AddFileAsync(string path, string label, string kind, Color? color = null, double opacity = 1, CancellationToken cancellationToken = default)
     {
-        var (parsed, _) = await LoadNativeAsync(path).ConfigureAwait(true);
+        var (parsed, _) = await LoadNativeAsync(path, cancellationToken).ConfigureAwait(true);
+        cancellationToken.ThrowIfCancellationRequested();
         return AddLayer(parsed, path, label, kind, color, opacity);
     }
 
-    private static async Task<(StepModelData Model, string? FallbackReason)> LoadNativeAsync(string path)
+    private static async Task<(StepModelData Model, string? FallbackReason)> LoadNativeAsync(string path, CancellationToken cancellationToken)
     {
-        await NativeStepLoadGate.WaitAsync().ConfigureAwait(true);
+        await NativeStepLoadGate.WaitAsync(cancellationToken).ConfigureAwait(true);
         try
         {
-            return await Task.Run(() => ReadFileWithFallback(path)).ConfigureAwait(true);
+            // A cancelled token stops a queued load from ever starting; one already inside the
+            // native call runs to completion and its result is dropped by the caller.
+            return await Task.Run(() => ReadFileWithFallback(path), cancellationToken).ConfigureAwait(true);
         }
         finally
         {
@@ -576,6 +582,13 @@ public partial class StepViewerControl : UserControl
             return;
         }
 
+        // The viewer has no layout size yet -- typically because it sits in a collapsed or
+        // hidden panel. Retry exactly once, deferred until after the pending layout pass. If
+        // it still has no size then, stop: Viewer_SizeChanged calls back here the moment the
+        // viewer is finally laid out, so nothing is lost by waiting. This used to re-post
+        // itself unconditionally, which for a viewer that never got a size became a
+        // delay-less dispatcher loop: it pegged a CPU core and made the whole client crawl
+        // (reported as "freezing") for as long as a model stayed loaded.
         if (autoFitScheduled)
         {
             return;
@@ -585,7 +598,10 @@ public partial class StepViewerControl : UserControl
         Dispatcher.BeginInvoke(() =>
         {
             autoFitScheduled = false;
-            AutoFitCurrentModelOnce();
+            if (!hasAutoFitForCurrentModel && HasModel && ViewerRoot.ActualWidth > 1 && ViewerRoot.ActualHeight > 1)
+            {
+                FitToWindow();
+            }
         }, DispatcherPriority.Loaded);
     }
 

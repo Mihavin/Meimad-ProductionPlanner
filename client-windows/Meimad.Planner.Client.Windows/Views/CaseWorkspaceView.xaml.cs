@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO;
+using System.Threading;
 using System.Windows.Controls;
 using System.Windows;
 using Meimad.Planner.Client.Windows.Presentation;
@@ -9,6 +10,25 @@ namespace Meimad.Planner.Client.Windows.Views;
 
 public partial class CaseWorkspaceView : UserControl
 {
+    // Outstanding 3D model loads for the currently selected Case. Cancelled (and replaced)
+    // whenever the selection changes or a new load starts, so a model that finishes parsing
+    // after the user has already moved to another Case is discarded instead of drawn.
+    private CancellationTokenSource? modelLoads;
+
+    private CancellationToken BeginModelLoad()
+    {
+        CancelModelLoads();
+        modelLoads = new CancellationTokenSource();
+        return modelLoads.Token;
+    }
+
+    private void CancelModelLoads()
+    {
+        modelLoads?.Cancel();
+        modelLoads?.Dispose();
+        modelLoads = null;
+    }
+
     public CaseWorkspaceView()
     {
         InitializeComponent();
@@ -32,6 +52,7 @@ public partial class CaseWorkspaceView : UserControl
             newViewModel.ModelFilesLoaded += CaseWorkspace_ModelFilesLoaded;
             newViewModel.ConfirmBatchRemoval = ConfirmBatchRemoval;
         }
+        CancelModelLoads();
         StepViewer.ClearModel();
         UpdateStepSnapshotState();
     }
@@ -48,6 +69,7 @@ public partial class CaseWorkspaceView : UserControl
         {
             if (e.PropertyName == nameof(CaseWorkspaceViewModel.SelectedCase))
             {
+                CancelModelLoads();
                 StepViewer.ClearModel();
             }
             UpdateStepSnapshotState();
@@ -74,9 +96,13 @@ public partial class CaseWorkspaceView : UserControl
             // malformed file can take a long time (or, in the worst case, effectively hang inside
             // the native OpenCascade call); this at least keeps the rest of the app usable while
             // that happens instead of freezing the whole window.
-            await StepViewer.LoadFileAsync(dialog.FileName);
+            await StepViewer.LoadFileAsync(dialog.FileName, BeginModelLoad());
             StepDisplayModeCombo.SelectedIndex = 0;
             StepBoundingBoxToggle.IsChecked = false;
+        }
+        catch (OperationCanceledException)
+        {
+            return; // the Case changed while the file was loading; its result was discarded
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException
@@ -112,6 +138,7 @@ public partial class CaseWorkspaceView : UserControl
         // no Case) is selected by the time it comes back.
         var caseId = viewModel.SelectedCase?.CaseId;
         bool IsStale() => DataContext != viewModel || viewModel.SelectedCase?.CaseId != caseId;
+        var token = BeginModelLoad();
 
         StepViewer.ClearModel();
         var failures = new List<string>();
@@ -121,7 +148,11 @@ public partial class CaseWorkspaceView : UserControl
             string? loadError = null;
             try
             {
-                layerId = await StepViewer.AddFileAsync(item.FilePath, item.Label, item.Kind, null, ModelFileKinds.DefaultOpacity(item.Kind));
+                layerId = await StepViewer.AddFileAsync(item.FilePath, item.Label, item.Kind, null, ModelFileKinds.DefaultOpacity(item.Kind), token);
+            }
+            catch (OperationCanceledException)
+            {
+                return; // superseded by a newer selection or load
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
@@ -168,9 +199,13 @@ public partial class CaseWorkspaceView : UserControl
         {
             try
             {
-                await StepViewer.LoadFileAsync(item.FilePath);
+                await StepViewer.LoadFileAsync(item.FilePath, BeginModelLoad());
                 item.LoadError = null;
                 UpdateStepSnapshotState();
+            }
+            catch (OperationCanceledException)
+            {
+                return; // the Case changed while the file was loading; its result was discarded
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException

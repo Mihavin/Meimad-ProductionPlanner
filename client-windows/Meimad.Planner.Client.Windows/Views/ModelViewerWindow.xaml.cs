@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -17,6 +18,9 @@ public partial class ModelViewerWindow : Window
     private static readonly Dictionary<string, ModelViewerWindow> OpenWindows = new(StringComparer.Ordinal);
     private readonly ModelViewerViewModel viewModel;
     private bool suppressResultSelection;
+    // Outstanding model loads for this window; cancelled by a reload or by closing the window
+    // so a model that finishes parsing afterwards is discarded rather than drawn.
+    private CancellationTokenSource? modelLoads;
 
     internal ModelViewerWindow(ModelViewerViewModel viewModel)
     {
@@ -30,6 +34,7 @@ public partial class ModelViewerWindow : Window
         Closed += (_, _) =>
         {
             OpenWindows.Remove(viewModel.CaseId);
+            modelLoads?.Cancel();
             Viewer.ClearModel();
         };
     }
@@ -60,6 +65,11 @@ public partial class ModelViewerWindow : Window
 
     private async Task LoadModelsIntoViewerAsync()
     {
+        modelLoads?.Cancel();
+        modelLoads?.Dispose();
+        modelLoads = new CancellationTokenSource();
+        var token = modelLoads.Token;
+
         Viewer.ClearModel();
         foreach (var item in viewModel.Files)
         {
@@ -71,13 +81,17 @@ public partial class ModelViewerWindow : Window
         // StepViewerControl.AddFileAsync) -- a large or slow model no longer freezes this window.
         foreach (var item in viewModel.Files.OrderByDescending(file => file.IsPrimary).ThenBy(file => file.File.SortOrder))
         {
-            await LoadItemAsync(item);
+            await LoadItemAsync(item, token);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
         }
         UpdateMeasurementState();
         UpdateReferenceState();
     }
 
-    private async Task LoadItemAsync(ModelFileItemViewModel item)
+    private async Task LoadItemAsync(ModelFileItemViewModel item, CancellationToken cancellationToken)
     {
         item.VisibilityChanged -= Item_VisibilityChanged;
         try
@@ -87,13 +101,18 @@ public partial class ModelViewerWindow : Window
                 item.Label,
                 item.Kind,
                 color: null,
-                opacity: ModelFileKinds.DefaultOpacity(item.Kind));
+                opacity: ModelFileKinds.DefaultOpacity(item.Kind),
+                cancellationToken: cancellationToken);
             item.LoadError = null;
             if (!item.IsVisible)
             {
                 Viewer.SetLayerVisible(item.LayerId, false);
             }
             item.VisibilityChanged += Item_VisibilityChanged;
+        }
+        catch (OperationCanceledException)
+        {
+            return; // reload or window close superseded this load
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException
@@ -137,7 +156,7 @@ public partial class ModelViewerWindow : Window
             var item = await viewModel.AddAsync(path, kind, caseOperationId: null);
             if (item is not null)
             {
-                await LoadItemAsync(item);
+                await LoadItemAsync(item, modelLoads?.Token ?? CancellationToken.None);
                 viewModel.SelectedFile = item;
             }
         }
