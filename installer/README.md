@@ -1,6 +1,6 @@
 # Windows installers
 
-Current package version: `0.1.118`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
+Current package version: `0.1.119`. Increase it for every distributed rebuild so Windows Installer performs a real major upgrade instead of merely reconfiguring an older payload.
 
 The repository builds two independent 64-bit Windows Installer packages:
 
@@ -60,10 +60,10 @@ Uninstalling or upgrading the Server does not remove these mutable-data folders.
 
 ## Bundled client installer and client auto-update
 
-Since 0.1.118 the Server MSI carries the matching client MSI. `build-installers.ps1` builds the client MSI first, copies it into the Server payload as `client-installer\Meimad-Planner-Client-Setup.msi`, and writes `client-installer\Meimad-Planner-Client-Setup.json` next to it:
+Since 0.1.119 the Server MSI carries the matching client MSI. `build-installers.ps1` builds the client MSI first, copies it into the Server payload as `client-installer\Meimad-Planner-Client-Setup.msi`, and writes `client-installer\Meimad-Planner-Client-Setup.json` next to it:
 
 ```json
-{"fileName":"Meimad-Planner-Client-Setup.msi","version":"0.1.118","sha256":"…","byteLength":107358447,"builtAt":"2026-09-18T09:14:00Z"}
+{"fileName":"Meimad-Planner-Client-Setup.msi","version":"0.1.119","sha256":"…","byteLength":107358447,"builtAt":"2026-09-18T09:14:00Z"}
 ```
 
 The installed Server serves both through `GET /api/v1/client-installer` (manifest) and `GET /api/v1/client-installer/download` (MSI with `X-Meimad-Checksum-SHA256`). It recomputes the SHA-256 from the file and offers the MSI only when the manifest describes it, so a hand-edited folder is never distributed. The folder and file name are configurable (`ClientInstaller:Folder`, `ClientInstaller:FileName`), and a Server upgrade replaces the bundled MSI like any other payload file.
@@ -74,4 +74,4 @@ Release consequence: upgrading the Server is enough to bring every client PC to 
 
 ## Customer portal push (Server)
 
-Since 0.1.118 the Server can push customer-safe Order status to the cloud customer portal (`ClientPortal` section in `appsettings.json`, disabled by default). Because `appsettings.json` is a permanent, never-overwritten component, an upgraded Server keeps its existing file and does not gain the new section automatically; add it by hand (see `docs/user-help.md`, "Customer portal push"). The secret belongs in the file named by `ClientPortal:SharedSecretFile`, next to the executable, never in `appsettings.json`.
+Since 0.1.119 the Server can push customer-safe Order status to the cloud customer portal (`ClientPortal` section in `appsettings.json`, disabled by default). Because `appsettings.json` is a permanent, never-overwritten component, an upgraded Server keeps its existing file and does not gain the new section automatically; add it by hand (see `docs/user-help.md`, "Customer portal push"). The secret belongs in the file named by `ClientPortal:SharedSecretFile`, next to the executable, never in `appsettings.json`.

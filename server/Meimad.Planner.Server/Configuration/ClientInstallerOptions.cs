@@ -44,7 +44,16 @@ public sealed class ClientInstallerOptions
         {
             Folder = configured.Folder,
             FileName = configured.FileName,
-            ResolvedFolder = ServerStoragePathResolver.Resolve(configured.Folder, contentRootPath)
+            // Deliberately NOT ServerStoragePathResolver.Resolve(): that helper redirects a
+            // relative path from a Program Files content root to ProgramData, which is right
+            // for writable runtime data (backups, E-Ink packages, GCode releases) but wrong
+            // here. The client MSI and its manifest are a read-only payload the installer
+            // places directly next to the Server executable (build-installers.ps1 harvests
+            // client-installer\ into INSTALLFOLDER), so this must resolve next to the exe,
+            // not into ProgramData where nothing was ever placed.
+            ResolvedFolder = Path.IsPathFullyQualified(configured.Folder)
+                ? Path.GetFullPath(configured.Folder)
+                : Path.GetFullPath(Path.Combine(contentRootPath, configured.Folder))
         };
     }
 }
