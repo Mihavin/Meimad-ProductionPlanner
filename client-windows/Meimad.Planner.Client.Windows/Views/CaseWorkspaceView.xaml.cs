@@ -54,7 +54,7 @@ public partial class CaseWorkspaceView : UserControl
         }
     }
 
-    private void OpenStep_Click(object sender, RoutedEventArgs e)
+    private async void OpenStep_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
@@ -70,7 +70,11 @@ public partial class CaseWorkspaceView : UserControl
 
         try
         {
-            StepViewer.LoadFile(dialog.FileName);
+            // Off the UI thread -- see StepViewerControl.LoadFileAsync's remarks. A large or
+            // malformed file can take a long time (or, in the worst case, effectively hang inside
+            // the native OpenCascade call); this at least keeps the rest of the app usable while
+            // that happens instead of freezing the whole window.
+            await StepViewer.LoadFileAsync(dialog.FileName);
             StepDisplayModeCombo.SelectedIndex = 0;
             StepBoundingBoxToggle.IsChecked = false;
         }
@@ -86,24 +90,38 @@ public partial class CaseWorkspaceView : UserControl
 
     // ------------------------------------------------------------ linked model files
 
-    private void CaseWorkspace_ModelFilesLoaded(object? sender, EventArgs e) => LoadLinkedModelsIntoViewer();
+    private async void CaseWorkspace_ModelFilesLoaded(object? sender, EventArgs e) => await LoadLinkedModelsIntoViewerAsync();
 
-    /// <summary>Draws every linked file: the primary part model first, then stock/fixtures translucent.</summary>
-    private void LoadLinkedModelsIntoViewer()
+    /// <summary>
+    /// Draws every linked file: the primary part model first, then stock/fixtures translucent.
+    /// Runs automatically right after a Case's model files are loaded (see
+    /// CaseWorkspace_ModelFilesLoaded), which used to mean selecting any Case with a linked STEP
+    /// file froze the whole application for as long as that file took to parse and tessellate --
+    /// each file's heavy native OpenCascade work now runs off the UI thread (see
+    /// StepViewerControl.AddFileAsync), so the app stays responsive even for a large or slow model.
+    /// </summary>
+    private async Task LoadLinkedModelsIntoViewerAsync()
     {
         if (DataContext is not CaseWorkspaceViewModel viewModel)
         {
             return;
         }
 
+        // The user may switch to a different Case while a previous one's linked models are still
+        // loading in the background; a stale result must never be drawn into whatever Case (or
+        // no Case) is selected by the time it comes back.
+        var caseId = viewModel.SelectedCase?.CaseId;
+        bool IsStale() => DataContext != viewModel || viewModel.SelectedCase?.CaseId != caseId;
+
         StepViewer.ClearModel();
         var failures = new List<string>();
         foreach (var item in viewModel.ModelFiles.OrderByDescending(file => file.IsPrimary).ThenBy(file => file.File.SortOrder))
         {
+            string? layerId = null;
+            string? loadError = null;
             try
             {
-                item.LayerId = StepViewer.AddFile(item.FilePath, item.Label, item.Kind, null, ModelFileKinds.DefaultOpacity(item.Kind));
-                item.LoadError = null;
+                layerId = await StepViewer.AddFileAsync(item.FilePath, item.Label, item.Kind, null, ModelFileKinds.DefaultOpacity(item.Kind));
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
@@ -111,12 +129,26 @@ public partial class CaseWorkspaceView : UserControl
                 or FormatException
                 or InvalidOperationException)
             {
-                item.LayerId = null;
-                item.LoadError = exception is FileNotFoundException or DirectoryNotFoundException
+                loadError = exception is FileNotFoundException or DirectoryNotFoundException
                     ? "File not found at the linked path."
                     : exception.Message;
-                failures.Add($"{item.Label}: {item.LoadError}");
             }
+
+            if (IsStale())
+            {
+                return;
+            }
+            item.LayerId = layerId;
+            item.LoadError = loadError;
+            if (loadError is not null)
+            {
+                failures.Add($"{item.Label}: {loadError}");
+            }
+        }
+
+        if (IsStale())
+        {
+            return;
         }
         StepDisplayModeCombo.SelectedIndex = 0;
         StepProjectionCombo.SelectedIndex = 0;
@@ -128,15 +160,15 @@ public partial class CaseWorkspaceView : UserControl
         UpdateStepSnapshotState();
     }
 
-    private void LoadModelFiles_Click(object sender, RoutedEventArgs e) => LoadLinkedModelsIntoViewer();
+    private async void LoadModelFiles_Click(object sender, RoutedEventArgs e) => await LoadLinkedModelsIntoViewerAsync();
 
-    private void ModelFilesList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private async void ModelFilesList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel { SelectedModelFile: { } item })
         {
             try
             {
-                StepViewer.LoadFile(item.FilePath);
+                await StepViewer.LoadFileAsync(item.FilePath);
                 item.LoadError = null;
                 UpdateStepSnapshotState();
             }
@@ -179,7 +211,7 @@ public partial class CaseWorkspaceView : UserControl
         {
             await viewModel.AddModelFileAsync(path, kind, caseOperationId: null);
         }
-        LoadLinkedModelsIntoViewer();
+        await LoadLinkedModelsIntoViewerAsync();
     }
 
     private async void SetPrimaryModelFile_Click(object sender, RoutedEventArgs e)

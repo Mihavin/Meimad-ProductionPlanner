@@ -55,10 +55,10 @@ public partial class ModelViewerWindow : Window
     private async Task LoadAsync()
     {
         await viewModel.LoadAsync();
-        LoadModelsIntoViewer();
+        await LoadModelsIntoViewerAsync();
     }
 
-    private void LoadModelsIntoViewer()
+    private async Task LoadModelsIntoViewerAsync()
     {
         Viewer.ClearModel();
         foreach (var item in viewModel.Files)
@@ -66,21 +66,23 @@ public partial class ModelViewerWindow : Window
             item.LayerId = null;
             item.LoadError = null;
         }
-        // The primary part model first so the camera orbits around it; overlays follow.
+        // The primary part model first so the camera orbits around it; overlays follow. Each
+        // file's native OpenCascade parse/tessellation runs off the UI thread (see
+        // StepViewerControl.AddFileAsync) -- a large or slow model no longer freezes this window.
         foreach (var item in viewModel.Files.OrderByDescending(file => file.IsPrimary).ThenBy(file => file.File.SortOrder))
         {
-            LoadItem(item);
+            await LoadItemAsync(item);
         }
         UpdateMeasurementState();
         UpdateReferenceState();
     }
 
-    private void LoadItem(ModelFileItemViewModel item)
+    private async Task LoadItemAsync(ModelFileItemViewModel item)
     {
         item.VisibilityChanged -= Item_VisibilityChanged;
         try
         {
-            item.LayerId = Viewer.AddFile(
+            item.LayerId = await Viewer.AddFileAsync(
                 item.FilePath,
                 item.Label,
                 item.Kind,
@@ -135,7 +137,7 @@ public partial class ModelViewerWindow : Window
             var item = await viewModel.AddAsync(path, kind, caseOperationId: null);
             if (item is not null)
             {
-                LoadItem(item);
+                await LoadItemAsync(item);
                 viewModel.SelectedFile = item;
             }
         }

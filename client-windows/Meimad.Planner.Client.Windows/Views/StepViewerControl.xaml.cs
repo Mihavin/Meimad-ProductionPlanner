@@ -171,6 +171,20 @@ public partial class StepViewerControl : UserControl
     }
 
     /// <summary>
+    /// Async counterpart of <see cref="LoadFile"/>: parses and tessellates the model on a
+    /// background thread instead of the UI thread. A large or geometrically complex STEP file can
+    /// take a long time to read and mesh through OpenCascade -- doing that synchronously used to
+    /// freeze the entire application for however long it took, with no way to switch away or
+    /// cancel. This keeps the app responsive while the file loads; call sites reached
+    /// automatically (not from an explicit "open a file" user action) should always prefer this.
+    /// </summary>
+    public async Task LoadFileAsync(string path)
+    {
+        var (parsed, fallbackReason) = await Task.Run(() => ReadFileWithFallback(path)).ConfigureAwait(true);
+        ApplyModel(parsed, path, fallbackReason);
+    }
+
+    /// <summary>
     /// Adds a STEP or STL file as an extra layer (rest material stock, fixture, ...) without
     /// disturbing the current camera. Returns the layer id.
     /// </summary>
@@ -178,6 +192,19 @@ public partial class StepViewerControl : UserControl
     {
         var parsed = ReadFile(path, out _);
         return AddLayer(parsed, path, label, kind, color, opacity);
+    }
+
+    /// <summary>Async counterpart of <see cref="AddFile"/> -- see its remarks.</summary>
+    public async Task<string> AddFileAsync(string path, string label, string kind, Color? color = null, double opacity = 1)
+    {
+        var (parsed, _) = await Task.Run(() => ReadFileWithFallback(path)).ConfigureAwait(true);
+        return AddLayer(parsed, path, label, kind, color, opacity);
+    }
+
+    private static (StepModelData Model, string? FallbackReason) ReadFileWithFallback(string path)
+    {
+        var model = ReadFile(path, out var fallbackReason);
+        return (model, fallbackReason);
     }
 
     internal void LoadModel(StepModelData model, string displayPath) => ApplyModel(model, displayPath, null);
