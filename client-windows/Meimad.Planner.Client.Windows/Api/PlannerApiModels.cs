@@ -764,6 +764,20 @@ internal sealed record MachineTypeUpdate(
     string Name,
     IReadOnlyList<string> Capabilities);
 
+/// <summary>One Customer pushed to the cloud customer portal, and its portal customer id.</summary>
+internal sealed record ClientPortalCustomerMapping(
+    string CustomerId,
+    string Customer,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    public string DisplayName => $"{Customer}  ->  {CustomerId}";
+}
+
+internal sealed record ClientPortalCustomerCreate(string Customer, string CustomerId);
+
+internal sealed record ClientPortalCustomerUpdate(string Customer);
+
 internal sealed record PlannerPostprocessor(
     string PostprocessorId,
     string Name,

@@ -205,7 +205,7 @@ public sealed class ServerApplicationTests
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
 
-            Assert.Equal(76L, (long)(await command.ExecuteScalarAsync())!);
+            Assert.Equal(77L, (long)(await command.ExecuteScalarAsync())!);
         }
         finally
         {

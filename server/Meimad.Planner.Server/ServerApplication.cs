@@ -12,6 +12,7 @@ using Meimad.Planner.Server.Api.EInk;
 using Meimad.Planner.Server.Api.JobPackages;
 using Meimad.Planner.Server.Api.GCode;
 using Meimad.Planner.Server.Api.Haas;
+using Meimad.Planner.Server.Api.ClientPortal;
 using Meimad.Planner.Server.Api.Kitaron;
 using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
@@ -145,6 +146,8 @@ public static class ServerApplication
         builder.Services.AddSingleton(clientInstallerOptions);
         builder.Services.AddSingleton<ClientInstallerService>();
         builder.Services.AddSingleton(clientPortalOptions);
+        builder.Services.AddSingleton<IClientPortalCustomerRepository, SqliteClientPortalCustomerRepository>();
+        builder.Services.AddSingleton<ClientPortalCustomerService>();
         builder.Services.AddHttpClient<ClientPortalPushService>(client =>
             client.Timeout = TimeSpan.FromSeconds(clientPortalOptions.RequestTimeoutSeconds));
         builder.Services.AddHostedService<ClientPortalPushHostedService>();
@@ -410,6 +413,7 @@ public static class ServerApplication
         application.MapManufacturingProgramEndpoints();
         application.MapLegacyImportEndpoints();
         application.MapKitaronConnectionEndpoints();
+        application.MapClientPortalCustomerEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();
         application.MapStructuredEventLogEndpoints();

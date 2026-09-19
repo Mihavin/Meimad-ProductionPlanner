@@ -4,6 +4,7 @@ using System.Text.Json;
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.Orders;
 using Meimad.Planner.Server.Configuration;
+using Meimad.Planner.Server.Domain.ClientPortal;
 using Meimad.Planner.Server.Domain.Orders;
 
 namespace Meimad.Planner.Server.Application.ClientPortal;
@@ -16,9 +17,12 @@ namespace Meimad.Planner.Server.Application.ClientPortal;
 /// customer-safe fields. It never reads Machines, Batches, Setup, or Edit Mode state,
 /// never writes anything locally, and holds no cloud credential beyond the ingest
 /// shared secret.
+/// The customer mapping is read from the database on every cycle, so a mapping added or
+/// removed from Setup takes effect on the next cycle without restarting the Server.
 /// </summary>
 internal sealed class ClientPortalPushService(
     ClientPortalOptions options,
+    IClientPortalCustomerRepository customers,
     ICaseRepository cases,
     IOrderRepository orders,
     HttpClient httpClient,
@@ -131,8 +135,9 @@ internal sealed class ClientPortalPushService(
 
     internal async Task<IReadOnlyList<CustomerPushResult>> PushAllAsync(CancellationToken cancellationToken)
     {
-        var results = new List<CustomerPushResult>(options.Customers.Length);
-        foreach (var customer in options.Customers)
+        var mapped = await customers.ListAsync(cancellationToken);
+        var results = new List<CustomerPushResult>(mapped.Count);
+        foreach (var customer in mapped)
         {
             results.Add(await PushCustomerAsync(customer, cancellationToken));
         }
@@ -150,15 +155,17 @@ internal sealed class ClientPortalPushHostedService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!options.Enabled || options.Customers.Length == 0)
+        if (!options.Enabled)
         {
-            logger.LogInformation("Client portal push is disabled or has no customers configured.");
+            logger.LogInformation("Client portal push is disabled.");
             return;
         }
 
+        // The mapped customers are read per cycle, not here: Setup can add the first one
+        // (or remove the last one) while the Server runs, and a cycle with none is a no-op.
         logger.LogInformation(
-            "Client portal push enabled: {Count} customer(s) to {Url} every {Seconds}s.",
-            options.Customers.Length, options.IngestUrl, options.PollIntervalSeconds);
+            "Client portal push enabled: pushing mapped customer(s) to {Url} every {Seconds}s.",
+            options.IngestUrl, options.PollIntervalSeconds);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(options.PollIntervalSeconds));
         while (!stoppingToken.IsCancellationRequested)
         {

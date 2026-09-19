@@ -64,6 +64,17 @@ public partial class SetupView : UserControl
         }
     }
 
+    private async void DeleteClientPortalCustomer_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SetupViewModel { SelectedClientPortalCustomer: { } customer } viewModel
+            && Confirm(
+                $"Stop pushing Customer {customer.Customer} to the cloud portal as {customer.CustomerId}?",
+                "Remove portal customer"))
+        {
+            await viewModel.DeleteSelectedClientPortalCustomerAsync();
+        }
+    }
+
     private async void DeleteResource_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is SetupViewModel { SelectedResource: { } resource } viewModel

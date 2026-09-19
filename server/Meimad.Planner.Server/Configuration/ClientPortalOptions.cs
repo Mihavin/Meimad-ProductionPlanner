@@ -6,6 +6,8 @@ namespace Meimad.Planner.Server.Configuration;
 /// the Server unless <c>ClientPortal:Enabled</c> is true and at least one customer
 /// is mapped. The Server needs no Google credential for this; it only holds the
 /// portal's ingest shared secret, which can call one ingest endpoint and nothing else.
+/// Which Customers are pushed is no longer configured here: that mapping lives in the
+/// <c>client_portal_customers</c> table and is managed from the Windows client's Setup screen.
 /// </summary>
 public sealed class ClientPortalOptions
 {
@@ -25,9 +27,6 @@ public sealed class ClientPortalOptions
     public int PollIntervalSeconds { get; init; } = 300;
 
     public int RequestTimeoutSeconds { get; init; } = 30;
-
-    /// <summary>Which customers are pushed, and under which portal customer id.</summary>
-    public ClientPortalCustomer[] Customers { get; init; } = [];
 
     internal string ResolvedSharedSecret { get; private init; } = string.Empty;
 
@@ -69,26 +68,6 @@ public sealed class ClientPortalOptions
             throw new InvalidOperationException("ClientPortal poll interval (30-86400 s) or request timeout (5-300 s) is out of range.");
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var customer in configured.Customers)
-        {
-            if (string.IsNullOrWhiteSpace(customer.Customer) || string.IsNullOrWhiteSpace(customer.CustomerId))
-            {
-                throw new InvalidOperationException("Every ClientPortal:Customers entry needs both Customer and CustomerId.");
-            }
-
-            if (!ClientPortalCustomer.IsValidCustomerId(customer.CustomerId))
-            {
-                throw new InvalidOperationException(
-                    $"ClientPortal customer id '{customer.CustomerId}' must be 1-64 lowercase letters, digits, '-' or '_'.");
-            }
-
-            if (!seen.Add(customer.CustomerId))
-            {
-                throw new InvalidOperationException($"ClientPortal customer id '{customer.CustomerId}' is listed twice.");
-            }
-        }
-
         return new ClientPortalOptions
         {
             Enabled = true,
@@ -97,24 +76,7 @@ public sealed class ClientPortalOptions
             SharedSecretFile = configured.SharedSecretFile,
             PollIntervalSeconds = configured.PollIntervalSeconds,
             RequestTimeoutSeconds = configured.RequestTimeoutSeconds,
-            Customers = configured.Customers.Select(c => new ClientPortalCustomer
-            {
-                Customer = c.Customer.Trim(),
-                CustomerId = c.CustomerId.Trim()
-            }).ToArray(),
             ResolvedSharedSecret = secret
         };
     }
-}
-
-public sealed class ClientPortalCustomer
-{
-    /// <summary>The exact Case.customer value (matched case-insensitively, otherwise exactly).</summary>
-    public string Customer { get; init; } = string.Empty;
-
-    /// <summary>The portal's customer id (Firestore document id and Firebase Auth claim).</summary>
-    public string CustomerId { get; init; } = string.Empty;
-
-    internal static bool IsValidCustomerId(string value) =>
-        value.Length is >= 1 and <= 64 && value.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c is '-' or '_');
 }

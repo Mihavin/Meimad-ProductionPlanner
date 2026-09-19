@@ -597,6 +597,44 @@
                 </Grid>
             </TabItem>
 
+            <TabItem ToolTip="Choose which Customers the Server pushes to the cloud customer portal">
+                <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource UsersButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Client Portal" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8">
+                                <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewClientPortalCustomerCommand}" Margin="8,0,0,0"/>
+                                <TextBlock Text="PUSHED CUSTOMERS" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding ClientPortalCustomers}" SelectedItem="{Binding SelectedClientPortalCustomer}" DisplayMemberPath="DisplayName"/>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                        <StackPanel IsEnabled="{Binding IsEditor}">
+                            <TextBlock Text="{Binding ClientPortalCustomerFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <StackPanel Style="{StaticResource SetupField}">
+                                <TextBlock Text="Customer name (exactly as it appears on the Case)" Style="{StaticResource SetupFieldLabel}"/>
+                                <TextBox Text="{Binding ClientPortalCustomerName}"/>
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource SetupField}">
+                                <TextBlock Text="Portal customer id (lowercase letters, digits, - or _)" Style="{StaticResource SetupFieldLabel}"/>
+                                <TextBox Text="{Binding ClientPortalCustomerId}" IsReadOnly="{Binding IsEditingClientPortalCustomer}"/>
+                            </StackPanel>
+                            <TextBlock Text="The portal customer id is the portal's own key and cannot be changed once mapped; remove the row and add it again to change it."
+                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Save portal customer" Command="{Binding SaveClientPortalCustomerCommand}"/>
+                                <Button Content="Remove portal customer" Click="DeleteClientPortalCustomer_Click" Margin="0"/>
+                            </StackPanel>
+                            <TextBlock Text="The Server pushes only customer-safe Order status for these Customers, on the next push cycle - no restart needed. Creating the customer's portal login is still a separate manual step in the portal project."
+                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Resource Types &amp; Skills" ToolTip="Manage data-driven Skills, Workstations, and External Resources">
                 <Grid Margin="8" DataContext="{Binding ResourceMasterData}">
                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>

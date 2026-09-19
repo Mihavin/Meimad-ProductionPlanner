@@ -138,6 +138,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string? editingMachineTypeId;
     private string machineTypeName = string.Empty;
     private string machineTypeCapabilitiesText = string.Empty;
+    private ClientPortalCustomerMapping? selectedClientPortalCustomer;
+    private string? editingClientPortalCustomerId;
+    private string clientPortalCustomerName = string.Empty;
+    private string clientPortalCustomerId = string.Empty;
     private PlannerPostprocessor? selectedPostprocessor;
     private string? editingPostprocessorId;
     private string postprocessorName = string.Empty;
@@ -247,6 +251,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveMachineTypeCommand = new AsyncCommand(SaveMachineTypeAsync, CanSaveMachineType);
         DeleteMachineTypeCommand = new AsyncCommand(DeleteSelectedMachineTypeAsync, CanDeleteMachineType);
 
+        NewClientPortalCustomerCommand = new AsyncCommand(BeginNewClientPortalCustomerAsync, CanManage);
+        SaveClientPortalCustomerCommand = new AsyncCommand(SaveClientPortalCustomerAsync, CanSaveClientPortalCustomer);
+        DeleteClientPortalCustomerCommand = new AsyncCommand(DeleteSelectedClientPortalCustomerAsync, CanDeleteClientPortalCustomer);
+
         NewPostprocessorCommand = new AsyncCommand(BeginNewPostprocessorAsync, CanManage);
         SavePostprocessorCommand = new AsyncCommand(SavePostprocessorAsync, CanSavePostprocessor);
         DeletePostprocessorCommand = new AsyncCommand(DeleteSelectedPostprocessorAsync, CanDeletePostprocessor);
@@ -301,6 +309,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public ObservableCollection<PlannerMachineType> MachineTypes { get; } = [];
     public ObservableCollection<PlannerPostprocessor> Postprocessors { get; } = [];
+    public ObservableCollection<ClientPortalCustomerMapping> ClientPortalCustomers { get; } = [];
     public ObservableCollection<MachinePostprocessorOption> MachinePostprocessors { get; } = [];
 
     public ObservableCollection<PlannerResource> Resources { get; } = [];
@@ -350,6 +359,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand NewMachineTypeCommand { get; }
     public AsyncCommand SaveMachineTypeCommand { get; }
     public AsyncCommand DeleteMachineTypeCommand { get; }
+    public AsyncCommand NewClientPortalCustomerCommand { get; }
+    public AsyncCommand SaveClientPortalCustomerCommand { get; }
+    public AsyncCommand DeleteClientPortalCustomerCommand { get; }
     public AsyncCommand NewPostprocessorCommand { get; }
     public AsyncCommand SavePostprocessorCommand { get; }
     public AsyncCommand DeletePostprocessorCommand { get; }
@@ -669,6 +681,41 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string MachineTypeCapabilitiesText { get => machineTypeCapabilitiesText; set => SetField(ref machineTypeCapabilitiesText, value); }
     public string MachineTypeFormHeading => editingMachineTypeId is null ? "New machine type" : "Edit machine type";
 
+    public ClientPortalCustomerMapping? SelectedClientPortalCustomer
+    {
+        get => selectedClientPortalCustomer;
+        set
+        {
+            if (SetField(ref selectedClientPortalCustomer, value) && value is not null)
+            {
+                PopulateClientPortalCustomerForm(value);
+            }
+
+            RaiseCommandStates();
+        }
+    }
+
+    /// <summary>The exact Case.customer value the Server matches case-insensitively when pushing.</summary>
+    public string ClientPortalCustomerName
+    {
+        get => clientPortalCustomerName;
+        set => SetField(ref clientPortalCustomerName, value);
+    }
+
+    /// <summary>The portal customer id: 1-64 lowercase letters, digits, hyphen or underscore.</summary>
+    public string ClientPortalCustomerId
+    {
+        get => clientPortalCustomerId;
+        set => SetField(ref clientPortalCustomerId, value);
+    }
+
+    /// <summary>The portal customer id is the portal's own key and is fixed once the row exists.</summary>
+    public bool IsEditingClientPortalCustomer => editingClientPortalCustomerId is not null;
+
+    public string ClientPortalCustomerFormHeading => editingClientPortalCustomerId is null
+        ? "New portal customer"
+        : "Edit portal customer";
+
     public PlannerPostprocessor? SelectedPostprocessor
     {
         get => selectedPostprocessor;
@@ -853,6 +900,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         var downtimeId = SelectedDowntime?.DowntimeId;
         var machineTypeId = SelectedMachineType?.MachineTypeId;
         var postprocessorId = SelectedPostprocessor?.PostprocessorId;
+        var clientPortalCustomerSelection = SelectedClientPortalCustomer?.CustomerId;
         var resourceId = SelectedResource?.ResourceId;
         var israeliHolidayId = SelectedIsraeliHoliday?.IsraeliHolidayId;
         IsBusy = true;
@@ -863,13 +911,15 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var downtimesTask = apiClient.ListDowntimesAsync();
             var machineTypesTask = apiClient.ListMachineTypesAsync();
             var postprocessorsTask = apiClient.ListPostprocessorsAsync();
+            var clientPortalCustomersTask = apiClient.ListClientPortalCustomersAsync();
             var setupCalendarTask = apiClient.GetSetupCalendarAsync();
             var masterCalendarTask = apiClient.GetMasterCalendarAsync();
             var resourcesTask = apiClient.ListResourcesAsync();
             var holidaysTask = apiClient.ListIsraeliHolidaysAsync();
             var reportSettingsTask = apiClient.GetReportEmailSettingsAsync();
             var resourceMasterDataTask = ResourceMasterData.RefreshAsync();
-            await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, postprocessorsTask, setupCalendarTask, masterCalendarTask,
+            await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, postprocessorsTask,
+                clientPortalCustomersTask, setupCalendarTask, masterCalendarTask,
                 resourcesTask, holidaysTask, reportSettingsTask, resourceMasterDataTask);
 
             Replace(WorkingCalendars, await calendarsTask);
@@ -883,6 +933,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             Replace(Downtimes, await downtimesTask);
             Replace(MachineTypes, await machineTypesTask);
             Replace(Postprocessors, await postprocessorsTask);
+            Replace(ClientPortalCustomers, await clientPortalCustomersTask);
             Replace(Resources, await resourcesTask);
             Replace(IsraeliHolidays, await holidaysTask);
             var setup = await setupCalendarTask;
@@ -898,6 +949,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
                 ?? MachineTypes.FirstOrDefault();
             SelectedPostprocessor = Postprocessors.FirstOrDefault(value => value.PostprocessorId == postprocessorId)
                 ?? Postprocessors.FirstOrDefault();
+            SelectedClientPortalCustomer = ClientPortalCustomers
+                .FirstOrDefault(value => value.CustomerId == clientPortalCustomerSelection);
             SelectedResource = Resources.FirstOrDefault(value => value.ResourceId == resourceId)
                 ?? Resources.FirstOrDefault();
             SelectedIsraeliHoliday = IsraeliHolidays.FirstOrDefault(value => value.IsraeliHolidayId == israeliHolidayId)
@@ -1719,6 +1772,93 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         }
     }
 
+    internal Task BeginNewClientPortalCustomerAsync()
+    {
+        editingClientPortalCustomerId = null;
+        selectedClientPortalCustomer = null;
+        OnPropertyChanged(nameof(SelectedClientPortalCustomer));
+        ClientPortalCustomerName = string.Empty;
+        ClientPortalCustomerId = string.Empty;
+        OnPropertyChanged(nameof(ClientPortalCustomerFormHeading));
+        OnPropertyChanged(nameof(IsEditingClientPortalCustomer));
+        StatusMessage = "Enter the Customer name and the portal customer id it is pushed under.";
+        RaiseCommandStates();
+        return Task.CompletedTask;
+    }
+
+    internal async Task SaveClientPortalCustomerAsync()
+    {
+        if (!CanSaveClientPortalCustomer()) return;
+        var customer = ClientPortalCustomerName.Trim();
+        var portalId = ClientPortalCustomerId.Trim();
+        if (customer.Length == 0)
+        {
+            StatusMessage = "A Customer name is required.";
+            return;
+        }
+
+        if (editingClientPortalCustomerId is null && !IsValidPortalCustomerId(portalId))
+        {
+            StatusMessage = "The portal customer id must be 1-64 lowercase letters, digits, - or _.";
+            return;
+        }
+
+        var savedId = editingClientPortalCustomerId ?? portalId;
+        var succeeded = false;
+        IsBusy = true;
+        try
+        {
+            if (editingClientPortalCustomerId is null)
+            {
+                await apiClient!.CreateClientPortalCustomerAsync(
+                    new ClientPortalCustomerCreate(customer, portalId), clientId);
+            }
+            else
+            {
+                // The portal customer id is the portal's own key, so only the Customer name is
+                // editable; changing the id means removing the row and adding it again.
+                await apiClient!.UpdateClientPortalCustomerAsync(
+                    editingClientPortalCustomerId, new ClientPortalCustomerUpdate(customer), clientId);
+            }
+
+            succeeded = true;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (succeeded)
+        {
+            SelectedClientPortalCustomer = null;
+            await RefreshAsync();
+            SelectedClientPortalCustomer = ClientPortalCustomers
+                .FirstOrDefault(value => value.CustomerId == savedId);
+            StatusMessage = $"Customer {customer} is pushed to the portal as {savedId}.";
+        }
+    }
+
+    internal async Task DeleteSelectedClientPortalCustomerAsync()
+    {
+        if (!CanDeleteClientPortalCustomer()) return;
+        var deleting = SelectedClientPortalCustomer!;
+        if (await TryDeleteAsync(() => apiClient!.DeleteClientPortalCustomerAsync(deleting.CustomerId, clientId)))
+        {
+            await BeginNewClientPortalCustomerAsync();
+            await RefreshAsync();
+            StatusMessage = $"Customer {deleting.Customer} is no longer pushed to the portal.";
+        }
+    }
+
+    private static bool IsValidPortalCustomerId(string value) =>
+        value.Length is >= 1 and <= 64
+        && value.All(character =>
+            char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character) || character is '-' or '_');
+
     internal Task BeginNewPostprocessorAsync()
     {
         editingPostprocessorId = null;
@@ -2286,6 +2426,15 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(MachineTypeFormHeading));
     }
 
+    private void PopulateClientPortalCustomerForm(ClientPortalCustomerMapping value)
+    {
+        editingClientPortalCustomerId = value.CustomerId;
+        ClientPortalCustomerName = value.Customer;
+        ClientPortalCustomerId = value.CustomerId;
+        OnPropertyChanged(nameof(ClientPortalCustomerFormHeading));
+        OnPropertyChanged(nameof(IsEditingClientPortalCustomer));
+    }
+
     private void PopulatePostprocessorForm(PlannerPostprocessor value)
     {
         editingPostprocessorId = value.PostprocessorId;
@@ -2562,6 +2711,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         && SelectedDowntime is { DowntimeType: "breakdown", Status: "active" };
     private bool CanSaveMachineType() => CanManage();
     private bool CanDeleteMachineType() => CanManage() && SelectedMachineType is not null;
+    private bool CanSaveClientPortalCustomer() => CanManage();
+    private bool CanDeleteClientPortalCustomer() => CanManage() && SelectedClientPortalCustomer is not null;
     private bool CanSavePostprocessor() => CanManage();
     private bool CanDeletePostprocessor() => CanManage() && SelectedPostprocessor is not null;
     private bool CanEditSelectedResource() => CanManage() && SelectedResource is not null;
@@ -2612,6 +2763,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         NewMachineTypeCommand.RaiseCanExecuteChanged();
         SaveMachineTypeCommand.RaiseCanExecuteChanged();
         DeleteMachineTypeCommand.RaiseCanExecuteChanged();
+        NewClientPortalCustomerCommand.RaiseCanExecuteChanged();
+        SaveClientPortalCustomerCommand.RaiseCanExecuteChanged();
+        DeleteClientPortalCustomerCommand.RaiseCanExecuteChanged();
         NewPostprocessorCommand.RaiseCanExecuteChanged();
         SavePostprocessorCommand.RaiseCanExecuteChanged();
         DeletePostprocessorCommand.RaiseCanExecuteChanged();

@@ -16,8 +16,9 @@ public sealed class ClientPortalPushServiceTests
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
+        await MapAsync(fixture.Database, ("Acme Fabrication Ltd", "acme"));
         var handler = new StubHandler(_ => Json(HttpStatusCode.OK, """{"ordersWritten":2,"ordersRemoved":1}"""));
-        var service = Build(fixture.Database, handler, Options(("Acme Fabrication Ltd", "acme")));
+        var service = Build(fixture.Database, handler, Options());
 
         var results = await service.PushAllAsync(CancellationToken.None);
 
@@ -56,7 +57,8 @@ public sealed class ClientPortalPushServiceTests
         var handler = new StubHandler(_ => ++calls == 1
             ? Json(HttpStatusCode.NotFound, """{"error":{"code":"unknown_customer"}}""")
             : Json(HttpStatusCode.OK, """{"ordersWritten":0,"ordersRemoved":0}"""));
-        var service = Build(fixture.Database, handler, Options(("Acme Fabrication Ltd", "acme"), ("Nobody Co", "nobody")));
+        await MapAsync(fixture.Database, ("Acme Fabrication Ltd", "acme"), ("Nobody Co", "nobody"));
+        var service = Build(fixture.Database, handler, Options());
 
         var results = await service.PushAllAsync(CancellationToken.None);
 
@@ -80,11 +82,12 @@ public sealed class ClientPortalPushServiceTests
         Assert.Contains("https", Assert.Throws<InvalidOperationException>(
             () => ClientPortalOptions.FromConfiguration(plainHttp, Path.GetTempPath())).Message);
 
-        var badId = Configuration(
+        // The customer mapping is no longer configuration: a leftover ClientPortal:Customers array
+        // is ignored rather than validated, because the list now lives in client_portal_customers.
+        var leftoverCustomers = Configuration(
             ("ClientPortal:Enabled", "true"), ("ClientPortal:IngestUrl", "https://x.example/i"), ("ClientPortal:SharedSecret", "s"),
             ("ClientPortal:Customers:0:Customer", "Acme"), ("ClientPortal:Customers:0:CustomerId", "Not A Slug"));
-        Assert.Contains("customer id", Assert.Throws<InvalidOperationException>(
-            () => ClientPortalOptions.FromConfiguration(badId, Path.GetTempPath())).Message);
+        Assert.True(ClientPortalOptions.FromConfiguration(leftoverCustomers, Path.GetTempPath()).Enabled);
 
         var secretFile = Path.Combine(Path.GetTempPath(), $"portal-secret-{Guid.NewGuid():N}.txt");
         File.WriteAllText(secretFile, "  from-file \r\n");
@@ -92,10 +95,8 @@ public sealed class ClientPortalPushServiceTests
         {
             var fromFile = ClientPortalOptions.FromConfiguration(Configuration(
                 ("ClientPortal:Enabled", "true"), ("ClientPortal:IngestUrl", "https://x.example/i"),
-                ("ClientPortal:SharedSecretFile", secretFile),
-                ("ClientPortal:Customers:0:Customer", " Acme "), ("ClientPortal:Customers:0:CustomerId", "acme")), Path.GetTempPath());
+                ("ClientPortal:SharedSecretFile", secretFile)), Path.GetTempPath());
             Assert.Equal("from-file", fromFile.ResolvedSharedSecret);
-            Assert.Equal("Acme", fromFile.Customers.Single().Customer);
         }
         finally
         {
@@ -120,25 +121,27 @@ public sealed class ClientPortalPushServiceTests
     }
 
     private static ClientPortalPushService Build(SqliteDatabase database, StubHandler handler, ClientPortalOptions options) =>
-        new(options, new SqliteCaseRepository(database), new SqliteOrderRepository(database),
+        new(options, new SqliteClientPortalCustomerRepository(database),
+            new SqliteCaseRepository(database), new SqliteOrderRepository(database),
             new HttpClient(handler), NullLogger<ClientPortalPushService>.Instance);
 
-    private static ClientPortalOptions Options(params (string Customer, string CustomerId)[] customers)
+    /// <summary>Maps the customers that are pushed; this is database state now, not configuration.</summary>
+    internal static async Task MapAsync(SqliteDatabase database, params (string Customer, string CustomerId)[] customers)
     {
-        var pairs = new List<(string, string)>
+        var service = new ClientPortalCustomerService(
+            new SqliteClientPortalCustomerRepository(database), TimeProvider.System);
+        foreach (var customer in customers)
         {
+            await service.CreateAsync(customer.CustomerId, customer.Customer);
+        }
+    }
+
+    private static ClientPortalOptions Options() => ClientPortalOptions.FromConfiguration(
+        Configuration(
             ("ClientPortal:Enabled", "true"),
             ("ClientPortal:IngestUrl", "https://ingest.example/ingest/orders"),
-            ("ClientPortal:SharedSecret", "s3cret")
-        };
-        for (var i = 0; i < customers.Length; i++)
-        {
-            pairs.Add(($"ClientPortal:Customers:{i}:Customer", customers[i].Customer));
-            pairs.Add(($"ClientPortal:Customers:{i}:CustomerId", customers[i].CustomerId));
-        }
-
-        return ClientPortalOptions.FromConfiguration(Configuration(pairs.ToArray()), Path.GetTempPath());
-    }
+            ("ClientPortal:SharedSecret", "s3cret")),
+        Path.GetTempPath());
 
     private static IConfiguration Configuration(params (string Key, string Value)[] pairs) =>
         new ConfigurationBuilder().AddInMemoryCollection(pairs.Select(p => new KeyValuePair<string, string?>(p.Key, p.Value))).Build();

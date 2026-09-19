@@ -438,6 +438,31 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    // The client-portal push mapping is admin configuration on the Server: no Edit Mode
+    // generation header and no If-Match, unlike the machine-types calls above.
+    Task<IReadOnlyList<ClientPortalCustomerMapping>> ListClientPortalCustomersAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<ClientPortalCustomerMapping>>([]);
+
+    Task<ClientPortalCustomerMapping> CreateClientPortalCustomerAsync(
+        ClientPortalCustomerCreate create,
+        string clientId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<ClientPortalCustomerMapping> UpdateClientPortalCustomerAsync(
+        string customerId,
+        ClientPortalCustomerUpdate update,
+        string clientId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task DeleteClientPortalCustomerAsync(
+        string customerId,
+        string clientId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerPostprocessor>> ListPostprocessorsAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerPostprocessor>>([]);
@@ -2202,6 +2227,49 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             clientId,
             editGeneration,
             cancellationToken);
+
+    public async Task<IReadOnlyList<ClientPortalCustomerMapping>> ListClientPortalCustomersAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<ClientPortalCustomerMapping>("api/v1/client-portal/customers", cancellationToken);
+
+    public async Task<ClientPortalCustomerMapping> CreateClientPortalCustomerAsync(
+        ClientPortalCustomerCreate create,
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/client-portal/customers", clientId);
+        request.Content = JsonContent.Create(create);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ClientPortalCustomerMapping>(response, cancellationToken);
+    }
+
+    public async Task<ClientPortalCustomerMapping> UpdateClientPortalCustomerAsync(
+        string customerId,
+        ClientPortalCustomerUpdate update,
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Put,
+            $"api/v1/client-portal/customers/{Uri.EscapeDataString(customerId)}",
+            clientId);
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ClientPortalCustomerMapping>(response, cancellationToken);
+    }
+
+    public async Task DeleteClientPortalCustomerAsync(
+        string customerId,
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Delete,
+            $"api/v1/client-portal/customers/{Uri.EscapeDataString(customerId)}",
+            clientId);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
 
     public async Task<IReadOnlyList<PlannerPostprocessor>> ListPostprocessorsAsync(
         CancellationToken cancellationToken = default) =>
