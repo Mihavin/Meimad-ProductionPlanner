@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -171,6 +172,20 @@ public partial class StepViewerControl : UserControl
     }
 
     /// <summary>
+    /// Guards every native OpenCascade call (through <see cref="ReadFile"/>) so at most one runs
+    /// at a time, process-wide. OCCSharp/OpenCascade is not documented or verified thread-safe for
+    /// concurrent use, and several StepViewerControl instances can genuinely be tessellating at
+    /// once -- the embedded viewer in the Case workspace plus one or more detached "View in 3D"
+    /// windows, which the app explicitly allows to be open simultaneously (see
+    /// ModelViewerWindow.Open). Before LoadFileAsync/AddFileAsync existed, every load ran
+    /// synchronously on the UI thread, which serialized them for free (only one could ever be
+    /// running at a time); moving the work to background threads removed that accidental
+    /// serialization; this restores it explicitly instead of leaving concurrent native calls to
+    /// chance.
+    /// </summary>
+    private static readonly SemaphoreSlim NativeStepLoadGate = new(1, 1);
+
+    /// <summary>
     /// Async counterpart of <see cref="LoadFile"/>: parses and tessellates the model on a
     /// background thread instead of the UI thread. A large or geometrically complex STEP file can
     /// take a long time to read and mesh through OpenCascade -- doing that synchronously used to
@@ -180,7 +195,7 @@ public partial class StepViewerControl : UserControl
     /// </summary>
     public async Task LoadFileAsync(string path)
     {
-        var (parsed, fallbackReason) = await Task.Run(() => ReadFileWithFallback(path)).ConfigureAwait(true);
+        var (parsed, fallbackReason) = await LoadNativeAsync(path).ConfigureAwait(true);
         ApplyModel(parsed, path, fallbackReason);
     }
 
@@ -197,8 +212,21 @@ public partial class StepViewerControl : UserControl
     /// <summary>Async counterpart of <see cref="AddFile"/> -- see its remarks.</summary>
     public async Task<string> AddFileAsync(string path, string label, string kind, Color? color = null, double opacity = 1)
     {
-        var (parsed, _) = await Task.Run(() => ReadFileWithFallback(path)).ConfigureAwait(true);
+        var (parsed, _) = await LoadNativeAsync(path).ConfigureAwait(true);
         return AddLayer(parsed, path, label, kind, color, opacity);
+    }
+
+    private static async Task<(StepModelData Model, string? FallbackReason)> LoadNativeAsync(string path)
+    {
+        await NativeStepLoadGate.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            return await Task.Run(() => ReadFileWithFallback(path)).ConfigureAwait(true);
+        }
+        finally
+        {
+            NativeStepLoadGate.Release();
+        }
     }
 
     private static (StepModelData Model, string? FallbackReason) ReadFileWithFallback(string path)
