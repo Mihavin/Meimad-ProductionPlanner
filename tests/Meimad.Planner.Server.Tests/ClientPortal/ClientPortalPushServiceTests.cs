@@ -48,26 +48,43 @@ public sealed class ClientPortalPushServiceTests
             first.EnumerateObject().Select(p => p.Name).ToArray());
     }
 
-    [Fact]
-    public async Task A_kitaron_managed_orders_live_status_is_pushed_not_the_stale_stored_one()
+    [Theory]
+    // Reported: "an order pending production shows as complete in the customer portal."
+    // The stored `status` column is this Server's own last explicit write; Kitaron's
+    // `kitaron_status` can move independently and is more current. CollectAsync used to read
+    // order.Status directly, bypassing that reconciliation entirely, so a Kitaron-managed
+    // Order the Server's own column still called "complete" -- while Kitaron had already
+    // reopened it to "active" -- was pushed to the customer as "complete".
+    [InlineData("complete", "active", "active")]
+    // Regression #2, found immediately after fixing #1 above: Kitaron's own status vocabulary
+    // (active/inactive/cancelled) is not the portal's four contract tokens. Kitaron's
+    // "inactive" means "the delivery row is closed/supplied" (see KitaronMappingService's
+    // "orders"/"status" catalog entry), not "inactive" in any portal sense -- and the naive fix
+    // for #1 forwarded it raw. The portal's ingest service validates a customer's whole push as
+    // one atomic batch, so one Order with an unrecognized status token rejected ALL of that
+    // customer's Orders -- this took a real customer's sync down for over eleven hours before
+    // it was noticed, the first time one of their Orders went Kitaron-"inactive".
+    [InlineData("active", "inactive", "complete")]
+    [InlineData("active", "cancelled", "cancelled")]
+    // Kitaron "active" only means "not yet closed" -- it does not distinguish queued from
+    // currently running, so the Server's own richer Status is used instead of collapsing
+    // everything Kitaron-active to the portal's "active" token.
+    [InlineData("in_production", "active", "in_production")]
+    // A stored Status of complete/cancelled would contradict Kitaron's still-open "active"
+    // signal, and is exactly the kind of staleness this mechanism exists to correct.
+    [InlineData("cancelled", "active", "active")]
+    public async Task Kitaron_managed_orders_push_a_valid_portal_token_derived_from_both_signals(
+        string storedStatus, string kitaronStatus, string expectedPortalStatus)
     {
-        // Regression: reported as "an order pending production shows as complete in the
-        // customer portal." The stored `status` column is this Server's own last explicit
-        // write; Kitaron's `kitaron_status` can move independently and is what the desktop
-        // client and REST API actually show (OrderContracts.FromDomain). CollectAsync used to
-        // read order.Status directly, bypassing that reconciliation entirely, so a
-        // Kitaron-managed Order the Server's own column still called "complete" -- while
-        // Kitaron had already reopened it to "active" -- was pushed to the customer as
-        // "complete".
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await using (var connection = await fixture.Database.OpenConnectionAsync())
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = """
+            command.CommandText = $"""
                 INSERT INTO cases (id, part_number, name, working_folder_path, customer) VALUES
                     ('case-acme', '4341-1271-001', 'Missile bracket', 'C:\Cases\A', 'Acme Fabrication Ltd');
                 INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status, kitaron_status, kitaron_history_only) VALUES
-                    ('o-1', 'case-acme', '7000152684/41625', 25, '2026-08-15', 'complete', 'active', 0);
+                    ('o-1', 'case-acme', '7000152684/41625', 25, '2026-08-15', '{storedStatus}', '{kitaronStatus}', 0);
                 INSERT INTO kitaron_sync_links (source_entity, source_key, target_id, owns_target, source_hash, first_seen_at, last_seen_at) VALUES
                     ('order', 'kitaron-key-1', 'o-1', 1, 'hash-1', '2026-08-15T00:00:00Z', '2026-09-19T00:00:00Z');
                 """;
@@ -82,7 +99,11 @@ public sealed class ClientPortalPushServiceTests
         var request = Assert.Single(handler.Requests);
         using var body = JsonDocument.Parse(request.Body);
         var order = Assert.Single(body.RootElement.GetProperty("orders").EnumerateArray());
-        Assert.Equal("active", order.GetProperty("status").GetString());
+        var pushedStatus = order.GetProperty("status").GetString();
+        Assert.Equal(expectedPortalStatus, pushedStatus);
+        // The bug's real-world impact: the ingest service rejects the whole batch if this isn't
+        // one of exactly these four tokens. Assert the invariant directly, not just the value.
+        Assert.Contains(pushedStatus, new[] { "active", "in_production", "complete", "cancelled" });
     }
 
     [Fact]

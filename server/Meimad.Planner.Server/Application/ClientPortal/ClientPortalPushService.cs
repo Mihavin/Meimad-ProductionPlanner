@@ -69,7 +69,7 @@ internal sealed class ClientPortalPushService(
                     plannerCase.Name,
                     order.Quantity,
                     order.WorkFinishDate.ToString("yyyy-MM-dd"),
-                    order.EffectiveStatusToken(),
+                    order.PortalStatusToken(),
                     order.UpdatedAt.ToUniversalTime().ToString("O")));
             }
         }

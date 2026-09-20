@@ -186,7 +186,7 @@ internal sealed record OrderResponse(
         order.OrderNumber,
         order.Quantity,
         order.WorkFinishDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        order.EffectiveStatusToken(),
+        order.DisplayStatusToken(),
         order.Notes,
         order.Price,
         order.IsKitaronManaged,
