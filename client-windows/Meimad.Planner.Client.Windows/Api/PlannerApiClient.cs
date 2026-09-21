@@ -444,6 +444,12 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<ClientPortalCustomerMapping>>([]);
 
+    /// <summary>Distinct Customer values across all Cases (GET /api/v1/cases/customers), so the
+    /// Client Portal Setup tab can pick one from a list instead of retyping it exactly.</summary>
+    Task<IReadOnlyList<string>> ListCaseCustomersAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
     Task<ClientPortalCustomerMapping> CreateClientPortalCustomerAsync(
         ClientPortalCustomerCreate create,
         string clientId,
@@ -2231,6 +2237,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public async Task<IReadOnlyList<ClientPortalCustomerMapping>> ListClientPortalCustomersAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<ClientPortalCustomerMapping>("api/v1/client-portal/customers", cancellationToken);
+
+    public async Task<IReadOnlyList<string>> ListCaseCustomersAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<string>("api/v1/cases/customers", cancellationToken);
 
     public async Task<ClientPortalCustomerMapping> CreateClientPortalCustomerAsync(
         ClientPortalCustomerCreate create,

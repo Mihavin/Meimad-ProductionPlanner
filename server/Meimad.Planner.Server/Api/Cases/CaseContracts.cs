@@ -432,6 +432,9 @@ internal sealed record CaseResponse(
 
 internal sealed record CaseListResponse(IReadOnlyList<CaseResponse> Items, string? NextCursor);
 
+/// <summary>GET /api/v1/cases/customers: distinct Customer values across all Cases, sorted.</summary>
+internal sealed record CaseCustomerListResponse(IReadOnlyList<string> Items);
+
 internal sealed record CaseOperationResponse(
     string CaseOperationId,
     string CaseId,

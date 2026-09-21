@@ -615,8 +615,10 @@
                         <StackPanel IsEnabled="{Binding IsEditor}">
                             <TextBlock Text="{Binding ClientPortalCustomerFormHeading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10"/>
                             <StackPanel Style="{StaticResource SetupField}">
-                                <TextBlock Text="Customer name (exactly as it appears on the Case)" Style="{StaticResource SetupFieldLabel}"/>
-                                <TextBox Text="{Binding ClientPortalCustomerName}"/>
+                                <TextBlock Text="Customer name (pick one from an existing Case, or type it exactly as it appears on the Case)" Style="{StaticResource SetupFieldLabel}"/>
+                                <ComboBox IsEditable="True" ItemsSource="{Binding KnownCustomerNames}"
+                                          Text="{Binding ClientPortalCustomerName, UpdateSourceTrigger=PropertyChanged}"
+                                          ToolTip="The list holds every distinct Customer on the Server's Cases. The push matches this value against the Case exactly, so picking from the list avoids a typo that would silently push nothing."/>
                             </StackPanel>
                             <StackPanel Style="{StaticResource SetupField}">
                                 <TextBlock Text="Portal customer id (lowercase letters, digits, - or _)" Style="{StaticResource SetupFieldLabel}"/>

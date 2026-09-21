@@ -310,6 +310,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public ObservableCollection<PlannerMachineType> MachineTypes { get; } = [];
     public ObservableCollection<PlannerPostprocessor> Postprocessors { get; } = [];
     public ObservableCollection<ClientPortalCustomerMapping> ClientPortalCustomers { get; } = [];
+    /// <summary>Distinct Customer values on existing Cases, offered as the choices for a portal
+    /// mapping's Customer name (the push matches the Case's customer exactly, so a typo means
+    /// nothing is pushed). Free text is still allowed for a Customer with no Case yet.</summary>
+    public ObservableCollection<string> KnownCustomerNames { get; } = [];
     public ObservableCollection<MachinePostprocessorOption> MachinePostprocessors { get; } = [];
 
     public ObservableCollection<PlannerResource> Resources { get; } = [];
@@ -912,6 +916,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var machineTypesTask = apiClient.ListMachineTypesAsync();
             var postprocessorsTask = apiClient.ListPostprocessorsAsync();
             var clientPortalCustomersTask = apiClient.ListClientPortalCustomersAsync();
+            var knownCustomerNamesTask = apiClient.ListCaseCustomersAsync();
             var setupCalendarTask = apiClient.GetSetupCalendarAsync();
             var masterCalendarTask = apiClient.GetMasterCalendarAsync();
             var resourcesTask = apiClient.ListResourcesAsync();
@@ -919,7 +924,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var reportSettingsTask = apiClient.GetReportEmailSettingsAsync();
             var resourceMasterDataTask = ResourceMasterData.RefreshAsync();
             await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, postprocessorsTask,
-                clientPortalCustomersTask, setupCalendarTask, masterCalendarTask,
+                clientPortalCustomersTask, knownCustomerNamesTask, setupCalendarTask, masterCalendarTask,
                 resourcesTask, holidaysTask, reportSettingsTask, resourceMasterDataTask);
 
             Replace(WorkingCalendars, await calendarsTask);
@@ -934,6 +939,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             Replace(MachineTypes, await machineTypesTask);
             Replace(Postprocessors, await postprocessorsTask);
             Replace(ClientPortalCustomers, await clientPortalCustomersTask);
+            Replace(KnownCustomerNames, await knownCustomerNamesTask);
             Replace(Resources, await resourcesTask);
             Replace(IsraeliHolidays, await holidaysTask);
             var setup = await setupCalendarTask;

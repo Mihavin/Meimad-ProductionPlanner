@@ -19,6 +19,8 @@ internal static class CaseEndpoints
         var cases = endpoints.MapGroup("/api/v1/cases");
         cases.MapPost(string.Empty, CreateAsync);
         cases.MapGet(string.Empty, ListAsync);
+        // Literal segment; ASP.NET Core routes it ahead of the {caseId} template by precedence.
+        cases.MapGet("/customers", ListCustomersAsync);
         cases.MapGet("/{caseId}", GetByIdAsync);
         cases.MapGet("/{caseId}/operations", ListOperationsAsync);
         cases.MapPost("/{caseId}/operations", CreateOperationAsync);
@@ -51,6 +53,24 @@ internal static class CaseEndpoints
         return Results.Ok(new CaseListResponse(
             items.Select(CaseResponse.FromDomain).ToArray(),
             null));
+    }
+
+    /// <summary>
+    /// The distinct Customer values across all Cases, for picking one from a list instead of
+    /// retyping it -- e.g. the Client Portal Setup tab, where the value must match a Case's
+    /// customer exactly (the portal push matches exactly, case-insensitively). Blank customers
+    /// are skipped; matching is case-insensitive so "Acme" and "acme" collapse to the first seen.
+    /// </summary>
+    private static async Task<IResult> ListCustomersAsync(CaseService service, CancellationToken cancellationToken)
+    {
+        var items = await service.ListAsync(null, null, null, CaseSortOrder.CustomerName, cancellationToken);
+        var customers = items
+            .Select(item => (item.Customer ?? string.Empty).Trim())
+            .Where(customer => customer.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(customer => customer, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return Results.Ok(new CaseCustomerListResponse(customers));
     }
 
     private static bool TryParseSort(string? value, out CaseSortOrder sortOrder)

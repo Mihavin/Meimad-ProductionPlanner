@@ -44,8 +44,9 @@ public sealed class ClientPortalPushServiceTests
         Assert.DoesNotContain(orders, o => o.GetProperty("orderNumber").GetString() == "WO-OTHER");
         // Only the customer-safe field set, nothing else.
         Assert.Equal(
-            new[] { "orderNumber", "partNumber", "description", "quantity", "workFinishDate", "status", "updatedAt" },
+            new[] { "orderNumber", "partNumber", "description", "quantity", "workFinishDate", "status", "updatedAt", "batches" },
             first.EnumerateObject().Select(p => p.Name).ToArray());
+        Assert.Empty(first.GetProperty("batches").EnumerateArray());
     }
 
     [Theory]
@@ -104,6 +105,58 @@ public sealed class ClientPortalPushServiceTests
         // The bug's real-world impact: the ingest service rejects the whole batch if this isn't
         // one of exactly these four tokens. Assert the invariant directly, not just the value.
         Assert.Contains(pushedStatus, new[] { "active", "in_production", "complete", "cancelled" });
+    }
+
+    [Fact]
+    public async Task Batches_are_pushed_under_the_orders_they_are_allocated_to_with_only_safe_fields()
+    {
+        await using var fixture = await TemporaryDatabase.CreateAsync();
+        await using (var connection = await fixture.Database.OpenConnectionAsync())
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO cases (id, part_number, name, working_folder_path, customer) VALUES
+                    ('case-acme', 'P-1', 'Bracket', 'C:\Cases\A', 'Acme Fabrication Ltd');
+                INSERT INTO orders (id, case_id, order_reference, quantity, work_finish_date, status) VALUES
+                    ('o-1', 'case-acme', 'WO-1', 10, '2026-10-01', 'in_production'),
+                    ('o-2', 'case-acme', 'WO-2', 5, '2026-10-02', 'active');
+                INSERT INTO case_operations (id, case_id, operation_number, route_position, name) VALUES
+                    ('cop-1', 'case-acme', 10, 0, 'Mill'),
+                    ('cop-2', 'case-acme', 20, 1, 'Deburr');
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity) VALUES
+                    ('b-1', 'case-acme', 'B-100', 'in_production', 10);
+                INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position, name, required_machine_type, setup_seconds, cycle_seconds, status) VALUES
+                    ('bop-1', 'b-1', 'cop-1', 10, 0, 'Mill', 'VMC', 1800, 90, 'complete'),
+                    ('bop-2', 'b-1', 'cop-2', 20, 1, 'Deburr', NULL, NULL, NULL, 'not_started');
+                INSERT INTO batch_allocations (id, production_batch_id, allocation_type, order_id, quantity) VALUES
+                    ('al-1', 'b-1', 'order', 'o-1', 6),
+                    ('al-2', 'b-1', 'stock', NULL, 4);
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        await MapAsync(fixture.Database, ("Acme Fabrication Ltd", "acme"));
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, """{"ordersWritten":2,"ordersRemoved":0}"""));
+        var service = Build(fixture.Database, handler, Options());
+
+        await service.PushAllAsync(CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        using var body = JsonDocument.Parse(request.Body);
+        var orders = body.RootElement.GetProperty("orders").EnumerateArray().ToList();
+        var first = orders.Single(o => o.GetProperty("orderNumber").GetString() == "WO-1");
+        var batch = Assert.Single(first.GetProperty("batches").EnumerateArray());
+        Assert.Equal("B-100", batch.GetProperty("batchNumber").GetString());
+        Assert.Equal(6, batch.GetProperty("quantity").GetInt32()); // this Order's share, not the batch's 10
+        Assert.Equal("in_production", batch.GetProperty("status").GetString());
+        Assert.Equal(1, batch.GetProperty("operationsDone").GetInt32());
+        Assert.Equal(2, batch.GetProperty("operationsTotal").GetInt32());
+        // Never a machine, a queue position, or any time -- the batch row has all of those.
+        Assert.Equal(
+            new[] { "batchNumber", "quantity", "status", "operationsDone", "operationsTotal" },
+            batch.EnumerateObject().Select(p => p.Name).ToArray());
+        // The stock allocation belongs to no Order, and WO-2 has no batch at all.
+        var second = orders.Single(o => o.GetProperty("orderNumber").GetString() == "WO-2");
+        Assert.Empty(second.GetProperty("batches").EnumerateArray());
     }
 
     [Fact]
@@ -181,6 +234,7 @@ public sealed class ClientPortalPushServiceTests
     private static ClientPortalPushService Build(SqliteDatabase database, StubHandler handler, ClientPortalOptions options) =>
         new(options, new SqliteClientPortalCustomerRepository(database),
             new SqliteCaseRepository(database), new SqliteOrderRepository(database),
+            new SqliteProductionBatchRepository(database),
             new HttpClient(handler), NullLogger<ClientPortalPushService>.Instance);
 
     /// <summary>Maps the customers that are pushed; this is database state now, not configuration.</summary>
