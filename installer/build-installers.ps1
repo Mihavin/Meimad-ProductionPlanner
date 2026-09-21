@@ -173,13 +173,47 @@ $serverPackage = Join-Path $installerRoot "server\Package.wxs"
 $clientPayloadAuthoring = Join-Path $installerRoot "obj\generated\ClientPayload.wxs"
 $serverPayloadAuthoring = Join-Path $installerRoot "obj\generated\ServerPayload.wxs"
 
+function Set-SharedVersionFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$OldVersion,
+        [Parameter(Mandatory)][string]$NewVersion
+    )
+
+    $content = Get-Content -LiteralPath $Path -Raw
+    $escapedOld = [regex]::Escape($OldVersion)
+    $updated = $content `
+        -replace "(?<=<Version>)$escapedOld(?=</Version>)", $NewVersion `
+        -replace "(?<=Version=`")$escapedOld(?=`")", $NewVersion
+    if ($updated -eq $content) {
+        throw "Could not find a '<Version>$OldVersion</Version>' or 'Version=`"$OldVersion`"' to replace in $Path."
+    }
+    [System.IO.File]::WriteAllText($Path, $updated, [System.Text.UTF8Encoding]::new($false))
+}
+
+# Every build gets its own, strictly increasing version -- building the exact same
+# Major.Minor.Build twice (which is what happened before this) makes the client's
+# auto-update logic (ClientUpdatePolicy.Evaluate, comparing only Major.Minor.Build)
+# decide the client already matches the Server and silently skip the update, even
+# though the actual binaries differ. The shared version lives in four files that must
+# always agree (asserted below); bump all four together from whatever they currently
+# say, so there is exactly one source of truth to read and nothing to remember to edit.
+$previousVersionText = ([xml](Get-Content -LiteralPath $clientProject -Raw)).Project.PropertyGroup.Version
+$previousVersion = [Version]$previousVersionText
+$nextVersionText = "{0}.{1}.{2}" -f $previousVersion.Major, $previousVersion.Minor, ($previousVersion.Build + 1)
+Write-Host "Bumping shared version: $previousVersionText -> $nextVersionText"
+Set-SharedVersionFile -Path $clientProject -OldVersion $previousVersionText -NewVersion $nextVersionText
+Set-SharedVersionFile -Path $serverProject -OldVersion $previousVersionText -NewVersion $nextVersionText
+Set-SharedVersionFile -Path $clientPackage -OldVersion $previousVersionText -NewVersion $nextVersionText
+Set-SharedVersionFile -Path $serverPackage -OldVersion $previousVersionText -NewVersion $nextVersionText
+
 $clientApplicationVersion = ([xml](Get-Content -LiteralPath $clientProject -Raw)).Project.PropertyGroup.Version
 $serverApplicationVersion = ([xml](Get-Content -LiteralPath $serverProject -Raw)).Project.PropertyGroup.Version
 $clientPackageVersion = ([xml](Get-Content -LiteralPath $clientPackage -Raw)).Wix.Package.Version
 $serverPackageVersion = ([xml](Get-Content -LiteralPath $serverPackage -Raw)).Wix.Package.Version
 $versions = @($clientApplicationVersion, $serverApplicationVersion, $clientPackageVersion, $serverPackageVersion)
 if (@($versions | Sort-Object -Unique).Count -ne 1) {
-    throw "Client, Server, and MSI versions must match. Found: $($versions -join ', ')."
+    throw "Client, Server, and MSI versions must match after the version bump. Found: $($versions -join ', ')."
 }
 
 Write-Host "Building Meimad Production Planner version $clientPackageVersion..."
