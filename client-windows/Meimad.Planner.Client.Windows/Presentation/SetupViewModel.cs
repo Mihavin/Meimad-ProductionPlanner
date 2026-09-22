@@ -85,6 +85,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string dprntTcpHost = string.Empty;
     private string dprntFilePath = string.Empty;
     private string dprntFileClearPolicy = "ON_OFFSET_LOADER";
+    private string dprntFtpUsername = string.Empty;
+    private string dprntFtpPassword = string.Empty;
     private string focasHost = string.Empty;
     private string focasMacAddress = string.Empty;
     private string focasPort = "8193";
@@ -599,13 +601,17 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// connection type, so it is configured once here rather than once per vendor panel.
     /// </summary>
     public string DprntSource { get => dprntSource; set => SetField(ref dprntSource, value); }
-    public IReadOnlyList<string> DprntSources => ShowsFocasConfiguration ? ["TCP", "FILE", "NONE"] : ["TCP", "FILE"];
+    public IReadOnlyList<string> DprntSources => ShowsFocasConfiguration ? ["TCP", "FILE", "FTP", "NONE"] : ["TCP", "FILE"];
     public string DprntTcpPort { get => dprntTcpPort; set => SetField(ref dprntTcpPort, value); }
     /// <summary>Serial-to-Ethernet bridge address for the TCP source; blank means the controller itself (FANUC FOCAS connections only).</summary>
     public string DprntTcpHost { get => dprntTcpHost; set => SetField(ref dprntTcpHost, value); }
+    /// <summary>Also the FTP source's remote file path on the controller's embedded FTP server.</summary>
     public string DprntFilePath { get => dprntFilePath; set => SetField(ref dprntFilePath, value); }
     public string DprntFileClearPolicy { get => dprntFileClearPolicy; set => SetField(ref dprntFileClearPolicy, value); }
     public IReadOnlyList<string> DprntClearPolicies { get; } = ["ON_OFFSET_LOADER", "NEVER", "AFTER_READ"];
+    /// <summary>Login for the FTP source, when the controller's embedded FTP server requires one (FANUC FOCAS connections only).</summary>
+    public string DprntFtpUsername { get => dprntFtpUsername; set => SetField(ref dprntFtpUsername, value); }
+    public string DprntFtpPassword { get => dprntFtpPassword; set => SetField(ref dprntFtpPassword, value); }
     public string FocasHost { get => focasHost; set => SetField(ref focasHost, value); }
     public string FocasMacAddress { get => focasMacAddress; set => SetField(ref focasMacAddress, value); }
     public string FocasPort { get => focasPort; set => SetField(ref focasPort, value); }
@@ -1318,7 +1324,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         {
             var configuration = new FocasConnectionConfiguration(
                 FocasHost.Trim(), NullIfBlank(FocasMacAddress), port, timeout, FocasPartCounterSource,
-                new FocasDprntConfiguration(DprntSource, NullIfBlank(DprntFilePath), DprntFileClearPolicy, dprntPort, NullIfBlank(DprntTcpHost)),
+                new FocasDprntConfiguration(DprntSource, NullIfBlank(DprntFilePath), DprntFileClearPolicy, dprntPort,
+                    NullIfBlank(DprntTcpHost), NullIfBlank(DprntFtpUsername), NullIfBlank(DprntFtpPassword)),
                 new FocasProgramAccessConfiguration(
                     FocasProgramUploadEnabled ? "FOCAS_PROGRAM_UPLOAD" : "NONE",
                     FocasProgramUploadEnabled, FocasProgramFolder.Trim()));
@@ -1351,6 +1358,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DprntTcpHost = configuration?.Dprnt?.Host ?? string.Empty;
         DprntFilePath = configuration?.Dprnt?.FilePath ?? string.Empty;
         DprntFileClearPolicy = configuration?.Dprnt?.ClearPolicy ?? "NEVER";
+        DprntFtpUsername = configuration?.Dprnt?.FtpUsername ?? string.Empty;
+        DprntFtpPassword = configuration?.Dprnt?.FtpPassword ?? string.Empty;
         FocasProgramUploadEnabled = configuration?.ProgramAccess?.Enabled ?? false;
         FocasProgramFolder = configuration?.ProgramAccess?.ProgramFolder ?? "//CNC_MEM/USER/PATH1/";
         FocasPollingIntervalMs = value.PollingIntervalMs.ToString(CultureInfo.InvariantCulture);
@@ -2395,6 +2404,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         DprntTcpHost = string.Empty;
         DprntFilePath = string.Empty;
         DprntFileClearPolicy = "ON_OFFSET_LOADER";
+        DprntFtpUsername = string.Empty;
+        DprntFtpPassword = string.Empty;
         ResetFocasForm();
         HaasLocalNetShareEnabled = false;
         HaasLocalNetSharePath = string.Empty;

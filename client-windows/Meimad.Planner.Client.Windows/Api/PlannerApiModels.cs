@@ -641,7 +641,8 @@ internal sealed record FocasConnectionConfiguration(
     FocasProgramAccessConfiguration? ProgramAccess);
 
 internal sealed record FocasDprntConfiguration(
-    string Source, string? FilePath, string ClearPolicy, int? Port, string? Host = null);
+    string Source, string? FilePath, string ClearPolicy, int? Port, string? Host = null,
+    string? FtpUsername = null, string? FtpPassword = null);
 
 internal sealed record FocasProgramAccessConfiguration(
     string Provider, bool Enabled, string ProgramFolder);
