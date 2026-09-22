@@ -227,12 +227,13 @@ internal sealed class CncConnectionService(
             ? CncDprntSources.Tcp : value.Source.Trim().ToUpperInvariant();
         if (!CncDprntSources.IsSupported(source) || (source == CncDprntSources.None && !allowNone))
             throw new CncValidationException("configuration.dprnt.source",
-                allowNone ? "DPRNT source must be TCP, FILE, or NONE." : "DPRNT source must be TCP or FILE.");
+                allowNone ? "DPRNT source must be TCP, FILE, FTP, or NONE." : "DPRNT source must be TCP, FILE, or FTP.");
         var filePath = Optional(value.FilePath);
         if (filePath is { Length: > 1024 })
             throw new CncValidationException("configuration.dprnt.filePath", "DPRNT file path must be 1024 characters or fewer.");
-        if (source == CncDprntSources.File && filePath is null)
-            throw new CncValidationException("configuration.dprnt.filePath", "A DPRNT file path is required when the DPRNT source is FILE.");
+        if (source is CncDprntSources.File or CncDprntSources.Ftp && filePath is null)
+            throw new CncValidationException("configuration.dprnt.filePath",
+                "A DPRNT file path is required when the DPRNT source is FILE or FTP.");
         var clearPolicy = string.IsNullOrWhiteSpace(value.ClearPolicy)
             ? CncDprntClearPolicies.Never : value.ClearPolicy.Trim().ToUpperInvariant();
         if (!CncDprntClearPolicies.IsSupported(clearPolicy))
@@ -241,8 +242,14 @@ internal sealed class CncConnectionService(
         if (value.Port is { } port) Range(port, 1, 65535, "configuration.dprnt.port");
         var tcpHost = Optional(value.Host);
         if (tcpHost is not null && (tcpHost.Length > 253 || Uri.CheckHostName(tcpHost) == UriHostNameType.Unknown))
-            throw new CncValidationException("configuration.dprnt.host", "DPRNT TCP host must be an IP address or host name.");
-        return new(source, filePath, clearPolicy, value.Port, tcpHost);
+            throw new CncValidationException("configuration.dprnt.host", "DPRNT host must be an IP address or host name.");
+        var ftpUsername = Optional(value.FtpUsername);
+        if (ftpUsername is { Length: > 256 })
+            throw new CncValidationException("configuration.dprnt.ftpUsername", "DPRNT FTP username must be 256 characters or fewer.");
+        var ftpPassword = Optional(value.FtpPassword);
+        if (ftpPassword is { Length: > 256 })
+            throw new CncValidationException("configuration.dprnt.ftpPassword", "DPRNT FTP password must be 256 characters or fewer.");
+        return new(source, filePath, clearPolicy, value.Port, tcpHost, ftpUsername, ftpPassword);
     }
 
     private static string Required(string? value, string field)

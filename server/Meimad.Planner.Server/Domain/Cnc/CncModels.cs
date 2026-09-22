@@ -110,10 +110,12 @@ internal static class CncDprntSources
     internal const string Tcp = "TCP";
     /// <summary>Mazak Matrix style (DPR14 = 4): the controller appends DPRNT output to a file that the Server reads over a network share.</summary>
     internal const string File = "FILE";
+    /// <summary>Fanuc style: the controller's own embedded FTP server serves the print file the DPRNT statement writes.</summary>
+    internal const string Ftp = "FTP";
     /// <summary>No DPRNT output is read; Part identity can only come from the NC header and no workflow events arrive.</summary>
     internal const string None = "NONE";
 
-    internal static bool IsSupported(string value) => value is Tcp or File or None;
+    internal static bool IsSupported(string value) => value is Tcp or File or Ftp or None;
 }
 
 /// <summary>When the Server empties a controller-written DPRNT file that no G-code ever deletes.</summary>
@@ -135,17 +137,21 @@ internal static class CncDprntClearPolicies
 /// <summary>
 /// DPRNT source shared by every adapter; absent JSON keeps the original Haas TCP behaviour.
 /// <paramref name="Port"/> applies to the TCP source of adapters without a legacy
-/// <c>mtConnect.dprntPort</c>; <paramref name="Host"/> replaces the controller address for
-/// the TCP source when a serial-to-Ethernet bridge with its own address carries the RS-232
-/// DPRNT output; <paramref name="FilePath"/> and <paramref name="ClearPolicy"/> apply to the
-/// FILE source.
+/// <c>mtConnect.dprntPort</c>, and to the FTP source (defaults to 21); <paramref name="Host"/>
+/// replaces the controller address for the TCP and FTP sources when a bridge with its own
+/// address carries the DPRNT output; <paramref name="FilePath"/> and <paramref name="ClearPolicy"/>
+/// apply to the FILE and FTP sources (for FTP, the path of the print file on the controller's
+/// embedded FTP server); <paramref name="FtpUsername"/> and <paramref name="FtpPassword"/> are
+/// the FTP source's login, when the controller's FTP server requires one.
 /// </summary>
 internal sealed record CncDprntConfiguration(
     string Source = CncDprntSources.Tcp,
     string? FilePath = null,
     string ClearPolicy = CncDprntClearPolicies.Never,
     int? Port = null,
-    string? Host = null);
+    string? Host = null,
+    string? FtpUsername = null,
+    string? FtpPassword = null);
 internal sealed record HaasProgramAccessConfiguration(
     string Provider,
     bool Enabled,

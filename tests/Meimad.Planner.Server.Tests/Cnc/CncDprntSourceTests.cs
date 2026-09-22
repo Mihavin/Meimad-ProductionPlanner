@@ -110,6 +110,38 @@ public sealed class CncDprntSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task FTP_source_drains_over_the_controllers_embedded_FTP_server_and_clears_after_read()
+    {
+        await using var server = new FakeFtpServer { FileContent = "30P647004101-001\r\n"u8.ToArray() };
+        await using var source = new CncDprntSource("127.0.0.1", 8080, 3000,
+            new CncDprntConfiguration("FTP", "print.txt", "AFTER_READ", Port: server.Port,
+                FtpUsername: "anonymous", FtpPassword: "x"));
+
+        Assert.True(source.UsesFtp);
+        Assert.Contains("FTP", source.Description, StringComparison.Ordinal);
+
+        var first = await source.DrainAsync(allowClear: true, CancellationToken.None);
+
+        Assert.Equal("30P647004101-001", first.Result.PartName);
+        Assert.Null(first.Error);
+        Assert.NotNull(server.LastUpload);
+        Assert.Empty(server.LastUpload!);
+        Assert.Contains("print.txt", source.SuccessMessage(first), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_unreachable_FTP_server_is_reported_as_unavailable()
+    {
+        await using var source = new CncDprntSource("127.0.0.1", 8080, 500,
+            new CncDprntConfiguration("FTP", "print.txt", "NEVER", Port: 1));
+
+        var result = await source.DrainAsync(allowClear: true, CancellationToken.None);
+
+        Assert.False(result.Available);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
     public async Task NONE_source_is_disabled_and_a_TCP_source_uses_the_configured_port()
     {
         await using var none = new CncDprntSource("192.0.2.1", 8080, 3000, new CncDprntConfiguration("NONE"));
