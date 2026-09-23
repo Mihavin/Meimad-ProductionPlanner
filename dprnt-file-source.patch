@@ -1,0 +1,2174 @@
+From 4225d4761f98164343e6419f415bd34403289005 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 17 Sep 2026 17:36:14 +0300
+Subject: [PATCH 1/3] Add DPRNT file source and DPRNT-only telemetry provider
+ for Mazak Matrix
+
+Planner can now read the controller's DPRNT output either from the existing
+TCP port or by tailing a controller-written print file (Mazak Matrix
+DPR14 = 4, C:\MC_sdg\print\print.txt) over a UNC share, with an opt-in
+truncate-after-read. Telemetry provider DPRNT declares a controller without
+MDC/MTConnect so Part identity and MEIMAD events come from DPRNT lines only.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JMNbrUi8mkQMTaJDLsmBGe
+---
+ .../Api/PlannerApiClient.cs                   |  10 ++
+ .../Api/PlannerApiModels.cs                   |   6 +-
+ .../Presentation/SetupViewModel.cs            |  36 +++-
+ .../Views/SetupView.xaml                      |   6 +
+ docs/api-contract.md                          |   9 +-
+ docs/architecture.md                          |   2 +-
+ docs/user-help.md                             |  14 ++
+ .../Api/Haas/HaasEndpoints.cs                 |  17 +-
+ .../Application/Cnc/CncConnectionService.cs   |  17 +-
+ .../Application/Haas/HaasContracts.cs         |  13 +-
+ .../Haas/HaasIntegrationService.cs            |  44 ++++-
+ .../Domain/Cnc/CncModels.cs                   |   8 +-
+ .../Domain/Haas/HaasModels.cs                 |  20 ++-
+ .../Infrastructure/Cnc/HaasNgcAdapter.cs      | 159 ++++++++++++++++--
+ .../Haas/HaasDprntFileReader.cs               | 148 ++++++++++++++++
+ .../Haas/HaasDprntPartReader.cs               |   3 +
+ .../Infrastructure/Haas/HaasDprntProbe.cs     |  37 ++++
+ .../SqliteHaasIntegrationRepository.cs        |  13 +-
+ .../ServerApplication.cs                      |   1 +
+ .../Api/PlannerApiClientTests.cs              |  47 ++++++
+ .../Presentation/HaasSetupViewTests.cs        |   4 +
+ .../Presentation/SetupViewModelTests.cs       |  21 +++
+ .../Cnc/CncAdapterTests.cs                    | 110 +++++++++++-
+ .../Haas/HaasApiTests.cs                      |  88 ++++++++++
+ .../Haas/HaasDprntFileReaderTests.cs          | 121 +++++++++++++
+ 25 files changed, 910 insertions(+), 44 deletions(-)
+ create mode 100644 server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+ create mode 100644 server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntProbe.cs
+ create mode 100644 tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs
+
+diff --git a/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiClient.cs b/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiClient.cs
+index 63c37e7..dfa443f 100644
+--- a/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiClient.cs
++++ b/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiClient.cs
+@@ -286,6 +286,8 @@ internal interface IPlannerApiClient : IDisposable
+         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+     Task<HaasConnectionTest> TestHaasNetShareAsync(
+         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
++    Task<HaasConnectionTest> TestHaasDprntAsync(
++        string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+     Task<HaasMachineMonitor> GetHaasMonitorAsync(
+         string machineId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+     Task<CncVerificationSettings> GetCncVerificationSettingsAsync(
+@@ -1724,6 +1726,14 @@ internal sealed class PlannerApiClient : IPlannerApiClient
+         return await ReadHaasConnectionTestAsync(response, cancellationToken);
+     }
+ 
++    public async Task<HaasConnectionTest> TestHaasDprntAsync(
++        string machineId, CancellationToken cancellationToken = default)
++    {
++        using var response = await httpClient.PostAsync(
++            $"api/v1/machines/{Uri.EscapeDataString(machineId)}/haas/test-dprnt", null, cancellationToken);
++        return await ReadHaasConnectionTestAsync(response, cancellationToken);
++    }
++
+     public async Task<HaasMachineMonitor> GetHaasMonitorAsync(
+         string machineId, CancellationToken cancellationToken = default)
+     {
+diff --git a/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiModels.cs b/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiModels.cs
+index a930364..de24036 100644
+--- a/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiModels.cs
++++ b/client-windows/Meimad.Planner.Client.Windows/Api/PlannerApiModels.cs
+@@ -464,7 +464,8 @@ internal sealed record HaasConnectionSettings(
+     string PartCounterSource,
+     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
+     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
+-    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC");
++    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = "MDC",
++    string DprntSource = "TCP", string? DprntFilePath = null, bool DprntFileTruncateAfterRead = false);
+ 
+ internal sealed record HaasConnectionUpdate(
+     string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
+@@ -472,7 +473,8 @@ internal sealed record HaasConnectionUpdate(
+     string PartCounterSource,
+     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
+     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
+-    bool Enabled, int Version, string TelemetryProvider);
++    bool Enabled, int Version, string TelemetryProvider,
++    string DprntSource = "TCP", string? DprntFilePath = null, bool DprntFileTruncateAfterRead = false);
+ 
+ internal sealed record HaasConnectionTest(
+     bool Succeeded, string Message, string? ProgramNumber, string? MachineStatus,
+diff --git a/client-windows/Meimad.Planner.Client.Windows/Presentation/SetupViewModel.cs b/client-windows/Meimad.Planner.Client.Windows/Presentation/SetupViewModel.cs
+index dac1089..80f9ef5 100644
+--- a/client-windows/Meimad.Planner.Client.Windows/Presentation/SetupViewModel.cs
++++ b/client-windows/Meimad.Planner.Client.Windows/Presentation/SetupViewModel.cs
+@@ -79,6 +79,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+     private string haasMtConnectPort = "8082";
+     private string haasDprntPort = "8080";
+     private string haasTelemetryProvider = "MTCONNECT";
++    private string haasDprntSource = "TCP";
++    private string haasDprntFilePath = string.Empty;
++    private bool haasDprntFileTruncateAfterRead;
+     private bool haasLocalNetShareEnabled;
+     private string haasLocalNetSharePath = string.Empty;
+     private string haasCredentialsReference = string.Empty;
+@@ -212,6 +215,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+         TestHaasMtConnectCommand = new AsyncCommand(TestHaasMtConnectAsync, CanReadHaas);
+         TestHaasMdcCommand = new AsyncCommand(TestHaasMdcAsync, CanReadHaas);
+         TestHaasNetShareCommand = new AsyncCommand(TestHaasNetShareAsync, CanReadHaas);
++        TestHaasDprntCommand = new AsyncCommand(TestHaasDprntAsync, CanReadHaas);
+         RefreshHaasMonitorCommand = new AsyncCommand(RefreshHaasMonitorAsync, CanReadHaas);
+         ReconnectCncCommand = new AsyncCommand(ReconnectCncAsync, CanManageHaas);
+         LoadVerificationConfigurationCommand = new AsyncCommand(LoadVerificationConfigurationAsync, CanReadHaas);
+@@ -314,6 +318,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+     public AsyncCommand TestHaasMtConnectCommand { get; }
+     public AsyncCommand TestHaasMdcCommand { get; }
+     public AsyncCommand TestHaasNetShareCommand { get; }
++    public AsyncCommand TestHaasDprntCommand { get; }
+     public AsyncCommand RefreshHaasMonitorCommand { get; }
+     public AsyncCommand ReconnectCncCommand { get; }
+     public AsyncCommand LoadVerificationConfigurationCommand { get; }
+@@ -513,7 +518,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+     public string HaasMtConnectPort { get => haasMtConnectPort; set => SetField(ref haasMtConnectPort, value); }
+     public string HaasDprntPort { get => haasDprntPort; set => SetField(ref haasDprntPort, value); }
+     public string HaasTelemetryProvider { get => haasTelemetryProvider; set => SetField(ref haasTelemetryProvider, value); }
+-    public IReadOnlyList<string> HaasTelemetryProviders { get; } = ["MTCONNECT", "MDC"];
++    public IReadOnlyList<string> HaasTelemetryProviders { get; } = ["MTCONNECT", "MDC", "DPRNT"];
++    public string HaasDprntSource { get => haasDprntSource; set => SetField(ref haasDprntSource, value); }
++    public IReadOnlyList<string> HaasDprntSources { get; } = ["TCP", "FILE"];
++    public string HaasDprntFilePath { get => haasDprntFilePath; set => SetField(ref haasDprntFilePath, value); }
++    public bool HaasDprntFileTruncateAfterRead { get => haasDprntFileTruncateAfterRead; set => SetField(ref haasDprntFileTruncateAfterRead, value); }
+     public bool HaasLocalNetShareEnabled { get => haasLocalNetShareEnabled; set => SetField(ref haasLocalNetShareEnabled, value); }
+     public string HaasLocalNetSharePath { get => haasLocalNetSharePath; set => SetField(ref haasLocalNetSharePath, value); }
+     public string HaasCredentialsReference { get => haasCredentialsReference; set => SetField(ref haasCredentialsReference, value); }
+@@ -1132,7 +1141,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+                     NullIfBlank(HaasLocalNetSharePath), NullIfBlank(HaasCredentialsReference),
+                     HaasPartCounterSource, polling, timeout, 2, 50, 32768,
+                     [@"\bPART(?:\s+NAME)?\s*[:=]\s*([^()\r\n]+)"], HaasEnabled, haasSettingsVersion,
+-                    HaasTelemetryProvider),
++                    HaasTelemetryProvider, HaasDprntSource, HaasDprntFilePath.Trim(), HaasDprntFileTruncateAfterRead),
+                 clientId, editGeneration);
+             PopulateHaasConfiguration(value);
+             HaasDiagnostics = "Haas NGC configuration saved by the Server.";
+@@ -1271,9 +1280,19 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+     });
+ 
+     internal Task TestHaasConnectionAsync() =>
+-        string.Equals(HaasTelemetryProvider, "MTCONNECT", StringComparison.OrdinalIgnoreCase)
+-            ? TestHaasMtConnectAsync()
+-            : TestHaasMdcAsync();
++        string.Equals(HaasTelemetryProvider, "DPRNT", StringComparison.OrdinalIgnoreCase)
++            ? TestHaasDprntAsync()
++            : string.Equals(HaasTelemetryProvider, "MTCONNECT", StringComparison.OrdinalIgnoreCase)
++                ? TestHaasMtConnectAsync()
++                : TestHaasMdcAsync();
++
++    internal Task TestHaasDprntAsync() => RunHaasReadAsync(async () =>
++    {
++        var result = await apiClient!.TestHaasDprntAsync(SelectedMachine!.MachineId);
++        HaasDiagnostics = result.Succeeded
++            ? $"DPRNT: Connected | {result.Message}"
++            : $"DPRNT: {result.Message}";
++    });
+ 
+     internal Task TestHaasMtConnectAsync() => RunHaasReadAsync(async () =>
+     {
+@@ -2019,6 +2038,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+         HaasMtConnectPort = value.MtConnectPort.ToString(CultureInfo.InvariantCulture);
+         HaasDprntPort = value.DprntPort.ToString(CultureInfo.InvariantCulture);
+         HaasTelemetryProvider = value.TelemetryProvider;
++        HaasDprntSource = value.DprntSource;
++        HaasDprntFilePath = value.DprntFilePath ?? string.Empty;
++        HaasDprntFileTruncateAfterRead = value.DprntFileTruncateAfterRead;
+         HaasLocalNetShareEnabled = value.LocalNetShareEnabled;
+         HaasLocalNetSharePath = value.LocalNetSharePath ?? string.Empty;
+         HaasCredentialsReference = value.CredentialsReference ?? string.Empty;
+@@ -2037,6 +2059,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+         HaasMtConnectPort = "8082";
+         HaasDprntPort = "8080";
+         HaasTelemetryProvider = "MTCONNECT";
++        HaasDprntSource = "TCP";
++        HaasDprntFilePath = string.Empty;
++        HaasDprntFileTruncateAfterRead = false;
+         HaasLocalNetShareEnabled = false;
+         HaasLocalNetSharePath = string.Empty;
+         HaasCredentialsReference = string.Empty;
+@@ -2386,6 +2411,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
+         TestHaasMtConnectCommand.RaiseCanExecuteChanged();
+         TestHaasMdcCommand.RaiseCanExecuteChanged();
+         TestHaasNetShareCommand.RaiseCanExecuteChanged();
++        TestHaasDprntCommand.RaiseCanExecuteChanged();
+         RefreshHaasMonitorCommand.RaiseCanExecuteChanged();
+         ReconnectCncCommand.RaiseCanExecuteChanged();
+         NewPlannedMaintenanceCommand.RaiseCanExecuteChanged();
+diff --git a/client-windows/Meimad.Planner.Client.Windows/Views/SetupView.xaml b/client-windows/Meimad.Planner.Client.Windows/Views/SetupView.xaml
+index 6372c31..a4a0058 100644
+--- a/client-windows/Meimad.Planner.Client.Windows/Views/SetupView.xaml
++++ b/client-windows/Meimad.Planner.Client.Windows/Views/SetupView.xaml
+@@ -305,6 +305,8 @@
+                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="MTConnect Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasMtConnectPort}"/></StackPanel>
+                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT PartName Port" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasDprntPort}"/></StackPanel>
+                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Machine telemetry source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasTelemetryProviders}" SelectedItem="{Binding HaasTelemetryProvider}"/></StackPanel>
++                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasDprntSources}" SelectedItem="{Binding HaasDprntSource}"/></StackPanel>
++                                            <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="DPRNT file path (UNC, FILE source)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasDprntFilePath}"/></StackPanel>
+                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Part counter source" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding HaasPartCounterSources}" SelectedItem="{Binding HaasPartCounterSource}"/></StackPanel>
+                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Polling interval (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasPollingIntervalMs}"/></StackPanel>
+                                             <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Connection timeout (ms)" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding HaasConnectionTimeoutMs}"/></StackPanel>
+@@ -313,8 +315,11 @@
+                                         </UniformGrid>
+                                         <TextBlock Text="MTConnect and DPRNT are read-only. Set the DPRNT output port configured on the Haas. Workflow state is owned by immutable Server events, not a persistent CNC variable."
+                                                    Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
++                                        <TextBlock Text="DPRNT source TCP reads the controller (or a serial-to-Ethernet bridge) on the DPRNT port. DPRNT source FILE tails a controller-written print file over a UNC share, for example a Mazak Matrix print.txt with DPR14 = 4; the Server service account needs read access, and write access only when the file is cleared after each read. Telemetry source DPRNT means no MTConnect/MDC: Part identity and workflow events come from DPRNT lines only."
++                                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                             <CheckBox Content="Local Net Share enabled" IsChecked="{Binding HaasLocalNetShareEnabled}" Margin="0,0,18,0"/>
++                                            <CheckBox Content="Clear DPRNT file after each read" IsChecked="{Binding HaasDprntFileTruncateAfterRead}" Margin="0,0,18,0"/>
+                                             <CheckBox Content="Enable Server polling" IsChecked="{Binding HaasEnabled}"/>
+                                         </StackPanel>
+                                         <WrapPanel>
+@@ -324,6 +329,7 @@
+                                             <Button Content="Test MTConnect" Command="{Binding TestHaasMtConnectCommand}"/>
+                                             <Button Content="Test MDC" Command="{Binding TestHaasMdcCommand}"/>
+                                             <Button Content="Test Net Share" Command="{Binding TestHaasNetShareCommand}"/>
++                                            <Button Content="Test DPRNT" Command="{Binding TestHaasDprntCommand}"/>
+                                             <Button Content="Refresh monitoring" Command="{Binding RefreshHaasMonitorCommand}" Margin="0"/>
+                                             <Button Content="Reconnect" Command="{Binding ReconnectCncCommand}" Margin="8,0,0,0"/>
+                                         </WrapPanel>
+diff --git a/docs/api-contract.md b/docs/api-contract.md
+index d349719..2903f90 100644
+--- a/docs/api-contract.md
++++ b/docs/api-contract.md
+@@ -1360,15 +1360,20 @@ The following Machine-scoped endpoints are implemented. Connection mutation requ
+ | Method | Route | Behavior |
+ |---|---|---|
+ | `GET` | `/api/v1/machines/{machineId}/haas/connection` | Read settings; an unconfigured Machine returns defaults with `version: 0`. |
+-| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update the fixed controller IP and MAC identity mapping, explicit `telemetryProvider` (`MDC` or `MTCONNECT`), ports, read-only share reference, counter source, poll/timeout/debounce/header limits and patterns. No Machine credential is accepted. |
++| `PUT` | `/api/v1/machines/{machineId}/haas/connection` | Create/update the fixed controller IP and MAC identity mapping, explicit `telemetryProvider` (`MDC`, `MTCONNECT`, or `DPRNT`), ports, `dprntSource` (`TCP` or `FILE`) with `dprntFilePath` and `dprntFileTruncateAfterRead`, read-only share reference, counter source, poll/timeout/debounce/header limits and patterns. No Machine credential is accepted. A request that omits the DPRNT source fields keeps the stored values. |
+ | `POST` | `/api/v1/machines/{machineId}/haas/test-mtconnect` | Fetch unfiltered `/probe` and `/current`, validate MTConnect XML/device availability, and return typed program/state/counter diagnostics without changing planning state. |
+ | `POST` | `/api/v1/machines/{machineId}/haas/test-mdc` | Read typed Q500 status without changing planning state. |
+ | `POST` | `/api/v1/machines/{machineId}/haas/test-net-share` | Read the active machine-side bounded header and parse Part identity. |
++| `POST` | `/api/v1/machines/{machineId}/haas/test-dprnt` | Probe the configured DPRNT source once: open the TCP port, or read the DPRNT file and report its last part-number-shaped line. Never truncates the file and never changes planning state. |
+ | `GET` | `/api/v1/machines/{machineId}/haas/monitor` | Return settings, last snapshot, active/latest Bench, state intervals/events, and actual Setup/Production seconds. |
+ 
+ The `/haas/*` routes remain compatibility/commissioning endpoints. New monitoring and configuration consumers use the protocol-independent CNC contract.
+ 
+-`dprntPort` defaults to `8080`. The Server persistently subscribes to this read-only Haas DPRNT output and accepts a complete part-number-shaped line as the preferred `MachineHeaderPartName`; it never derives Part identity from a filename or O-number.
++`dprntPort` defaults to `8080`. With `dprntSource: "TCP"` (default) the Server persistently subscribes to this read-only Haas DPRNT output and accepts a complete part-number-shaped line as the preferred `MachineHeaderPartName`; it never derives Part identity from a filename or O-number. A serial-only controller behind a serial-to-Ethernet bridge in TCP-server mode uses the same source.
++
++`dprntSource: "FILE"` tails a controller-written DPRNT text file at `dprntFilePath` (a UNC path readable by the Server service account), for example the Mazak Matrix `C:\MC_sdg\print\print.txt` produced by DPR14 = 4. Only lines appended since the previous poll are consumed; a file the controller rewrote or shortened is read again from the start; an unterminated last line waits for its terminator. Line semantics are identical to the TCP source (part-number lines and `MEIMAD/` event lines). `dprntFileTruncateAfterRead: true` empties the file after a poll that consumed it completely, only when its length is still exactly what was read, and requires write access; the failure of a truncation is reported in `lastError` without stopping ingestion. An unreadable file marks the `DPRNT` component `UNAVAILABLE` and the connection `DEGRADED` (`OFFLINE` for the `DPRNT` telemetry provider).
++
++`telemetryProvider: "DPRNT"` declares a controller with no MDC/MTConnect telemetry (for example Mazak Matrix 2). The snapshot then carries no machine state, active program, or part counter (`UNSUPPORTED`), Part identity comes only from DPRNT lines, `allowWrite` is forced to `false`, and the connection is `ONLINE` once the DPRNT source is readable and a PartName has been seen.
+ 
+ ### 7.5 CNC connection platform
+ 
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 08e661e..07ddfde 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -202,7 +202,7 @@ modes, and counter persistence before the v6 commissioning retest.
+ 
+ All CNC networking is server-side: `CNC Machine -> protocol provider(s) -> ICncMachineAdapter -> CncConnectionManager -> normalized MachineSnapshot -> BenchAutomationService/API/WebSocket -> client`. Browser and Windows clients never open MDC, SMB, MTConnect, OPC UA, or vendor TCP connections. The Server/CNC Worker must have an approved network route to the machine VLAN; frontend computers do not need that route.
+ 
+-`MachineConnection.adapterType` is independent of Machine model/type. The registry exposes `HAAS_NGC` as implemented and the separate generic `MTCONNECT`, `OPCUA`, and `CUSTOM` adapters as unsupported future choices. `HAAS_NGC.telemetryProvider=MTCONNECT` is an implemented Haas sub-provider and does not select the generic adapter. Enabling an unsupported adapter is rejected. One primary connection per Machine is enforced for MVP, while connection IDs preserve a later path to multiple connections.
++`MachineConnection.adapterType` is independent of Machine model/type. The registry exposes `HAAS_NGC` as implemented and the separate generic `MTCONNECT`, `OPCUA`, and `CUSTOM` adapters as unsupported future choices. `HAAS_NGC.telemetryProvider=MTCONNECT` is an implemented Haas sub-provider and does not select the generic adapter. `HAAS_NGC.telemetryProvider=DPRNT` is the implemented no-telemetry sub-provider for controllers that only emit DPRNT (Mazak Matrix 2): no machine state, program, or counter is read and Part identity comes from DPRNT lines alone. The DPRNT source is independent of the telemetry provider: `dprnt.source=TCP` (Haas port or a serial-to-Ethernet bridge) or `dprnt.source=FILE` (a controller-written print file such as Mazak `print.txt`, tailed over a UNC share, optionally emptied after each consumed read). Both live in `configuration_json`; no schema migration was needed. Enabling an unsupported adapter is rejected. One primary connection per Machine is enforced for MVP, while connection IDs preserve a later path to multiple connections.
+ 
+ The singleton connection manager reconciles configuration changes and owns one isolated worker per enabled Machine. A failed/completed lease is restarted on reconciliation and cannot terminate another. A configuration/provider change cancels and joins the old worker before its replacement starts, preventing a late old-provider snapshot from overwriting the new provider. Workers use bounded 1/2/5/10/30-second reconnect backoff, persist one efficient current snapshot, retain raw diagnostics for the configured 1-90 day window, and publish only meaningful normalized changes. Haas is a composite adapter: the explicitly selected MDC or MTConnect provider supplies normalized observations, while optional `INcProgramFileProvider` access supplies a bounded header. Full MTConnect XML is bounded during parsing but is not persisted every poll; diagnostics retain a compact selected-observation/sequence payload. Agent `creationTime` remains diagnostic evidence, while Server receipt time owns persistence, retention, and automation timestamps. Failure of an optional capability yields `DEGRADED` without discarding other fresh provider data.
+ 
+diff --git a/docs/user-help.md b/docs/user-help.md
+index 932278b..46f0ef9 100644
+--- a/docs/user-help.md
++++ b/docs/user-help.md
+@@ -89,6 +89,16 @@ Configure the Planner MachineID mapping with the controller’s fixed IP and MAC
+ 
+ The active NC program’s machine-side header/DPRNT `PartName` is the authoritative part identity for monitoring. Do not infer the part from the program number when a valid PartName is present. The persistent CNC Setup/Production variable was removed and changing a CNC variable cannot change Meimad workflow state.
+ 
++### DPRNT source: TCP or file
++
++**DPRNT source = TCP** (default) reads the controller's DPRNT output on the DPRNT port. This is the Haas NGC setting (Setting 261 = TCP Port, Setting 263 = port) and also works for a serial-only controller whose RS-232 port is wired to a serial-to-Ethernet bridge configured as a TCP server on that port.
++
++**DPRNT source = FILE** reads a DPRNT text file that the controller writes itself, over a UNC share. Use it for a Mazak Matrix / Matrix 2 control: set DPR14 = 4 so DPRNT lines go to `C:\MC_sdg\print\print.txt` on the control PC, share that folder read-only for the Server service account, and enter the UNC path (for example `\\MAZAK-VARIAXIS\print\print.txt`) as the DPRNT file path. The Server reads only new lines after each poll and re-reads the file from the start if the control rewrote it. Use **Test DPRNT** to confirm the Server can read the file and to see the last PartName it contains.
++
++No G-code deletes that file. Tick **Clear DPRNT file after each read** if the file must not grow on the control; the Server then empties the file after it has consumed it (the share must allow write access). Leave it unticked if the control keeps the file small itself.
++
++**Machine telemetry source = DPRNT** is for controls without MDC/MTConnect (Mazak Matrix 2). The Machine then reports no machine state, program number, or part counter; Part identity and workflow events come from DPRNT lines only, and **Test Connection** runs the DPRNT probe.
++
+ The **Protected setup verification** expander stores commissioning configuration only. Keep it disabled until the real Machine passes the bounded V10 no-motion commissioning test. There is no Machine credential field. Offset Loader completion arms the exact binding without a timeout; the timeout begins only when that NC first starts.
+ 
+ The same expander contains **Audited recovery — no verification bypass** for the
+@@ -165,6 +175,10 @@ Use the language selector in the Windows client to switch between English, Hebre
+ 
+ Use a UNC path such as `\\server\share\NC`, grant the Server service account read access, and test from the service context. Do not rely on a drive letter mapped only in your user session.
+ 
++### DPRNT file unavailable
++
++The monitoring error names the file. Check that the control PC share is reachable from the Server, that the Server service account can read the file (and write it when clearing after read is enabled), and that DPR14 = 4 is set on the Mazak control so DPRNT actually writes the file. A DPRNT test program `POPEN` / `DPRNT[TEST-123]` / `PCLOS` should add a `TEST-123` line; **Test DPRNT** then reports it as the last PartName.
++
+ ### Operation cannot start
+ 
+ Check that it is first in the machine backlog, the machine is available, material is verified/reserved, required tools and tool table are ready, the G-code revision is released, workers/calendars are available, and no dependency or compatibility conflict blocks it.
+diff --git a/server/Meimad.Planner.Server/Api/Haas/HaasEndpoints.cs b/server/Meimad.Planner.Server/Api/Haas/HaasEndpoints.cs
+index 7b6060b..4589025 100644
+--- a/server/Meimad.Planner.Server/Api/Haas/HaasEndpoints.cs
++++ b/server/Meimad.Planner.Server/Api/Haas/HaasEndpoints.cs
+@@ -14,6 +14,7 @@ internal static class HaasEndpoints
+         group.MapPost("/test-mtconnect", TestMtConnectAsync);
+         group.MapPost("/test-mdc", TestMdcAsync);
+         group.MapPost("/test-net-share", TestNetShareAsync);
++        group.MapPost("/test-dprnt", TestDprntAsync);
+         group.MapGet("/monitor", ReadMonitorAsync);
+     }
+ 
+@@ -42,7 +43,8 @@ internal static class HaasEndpoints
+                 request.PartCounterSource, request.PollingIntervalMs, request.ConnectionTimeoutMs,
+              request.StableProgramPolls, request.HeaderLineLimit, request.HeaderByteLimit,
+                 request.HeaderPartPatterns, request.Enabled, request.Version,
+-                request.TelemetryProvider), authority!, token);
++                request.TelemetryProvider, request.DprntSource, request.DprntFilePath,
++                request.DprntFileTruncateAfterRead), authority!, token);
+             return Results.Ok(Response(value));
+         }
+         catch (HaasValidationException exception)
+@@ -74,6 +76,10 @@ internal static class HaasEndpoints
+         string machineId, HaasIntegrationService service, CancellationToken token) =>
+         TestResult(await service.TestNetShareAsync(machineId, token));
+ 
++    private static async Task<IResult> TestDprntAsync(
++        string machineId, HaasIntegrationService service, CancellationToken token) =>
++        TestResult(await service.TestDprntAsync(machineId, token));
++
+     private static async Task<IResult> ReadMonitorAsync(
+         string machineId, HttpContext context, HaasIntegrationService service, CancellationToken token)
+     {
+@@ -94,7 +100,8 @@ internal static class HaasEndpoints
+         value.PartCounterSource,
+         value.PollingIntervalMs, value.ConnectionTimeoutMs, value.StableProgramPolls,
+         value.HeaderLineLimit, value.HeaderByteLimit, value.HeaderPartPatterns,
+-        value.Enabled, value.Version, value.UpdatedAt, value.TelemetryProvider);
++        value.Enabled, value.Version, value.UpdatedAt, value.TelemetryProvider,
++        value.DprntSource, value.DprntFilePath, value.DprntFileTruncateAfterRead);
+ }
+ 
+ internal sealed record HaasConnectionUpdateRequest(
+@@ -104,7 +111,8 @@ internal sealed record HaasConnectionUpdateRequest(
+     string? PartCounterSource,
+     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
+     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string>? HeaderPartPatterns,
+-    bool Enabled, int Version, string? TelemetryProvider);
++    bool Enabled, int Version, string? TelemetryProvider,
++    string? DprntSource = null, string? DprntFilePath = null, bool? DprntFileTruncateAfterRead = null);
+ 
+ internal sealed record HaasConnectionResponse(
+     string MachineId, string Host, string MacAddress,
+@@ -113,4 +121,5 @@ internal sealed record HaasConnectionResponse(
+     string PartCounterSource,
+     int PollingIntervalMs, int ConnectionTimeoutMs, int StableProgramPolls,
+     int HeaderLineLimit, int HeaderByteLimit, IReadOnlyList<string> HeaderPartPatterns,
+-    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = HaasTelemetryProviders.Mdc);
++    bool Enabled, int Version, DateTimeOffset? UpdatedAt, string TelemetryProvider = HaasTelemetryProviders.Mdc,
++    string DprntSource = HaasDprntSources.Tcp, string? DprntFilePath = null, bool DprntFileTruncateAfterRead = false);
+diff --git a/server/Meimad.Planner.Server/Application/Cnc/CncConnectionService.cs b/server/Meimad.Planner.Server/Application/Cnc/CncConnectionService.cs
+index b8f4bc6..7f066d7 100644
+--- a/server/Meimad.Planner.Server/Application/Cnc/CncConnectionService.cs
++++ b/server/Meimad.Planner.Server/Application/Cnc/CncConnectionService.cs
+@@ -118,9 +118,23 @@ internal sealed class CncConnectionService(
+         var telemetryProvider = string.IsNullOrWhiteSpace(value.TelemetryProvider)
+             ? HaasTelemetryProviders.Mdc : value.TelemetryProvider.Trim().ToUpperInvariant();
+         if (!HaasTelemetryProviders.IsSupported(telemetryProvider))
+-            throw new CncValidationException("configuration.telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
++            throw new CncValidationException("configuration.telemetryProvider", "Telemetry provider must be MDC, MTCONNECT, or DPRNT.");
+         if (telemetryProvider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
+             throw new CncValidationException("configuration.mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
++        HaasDprntConfiguration? dprnt = null;
++        if (value.Dprnt is { } dprntValue)
++        {
++            var dprntSource = string.IsNullOrWhiteSpace(dprntValue.Source)
++                ? HaasDprntSources.Tcp : dprntValue.Source.Trim().ToUpperInvariant();
++            if (!HaasDprntSources.IsSupported(dprntSource))
++                throw new CncValidationException("configuration.dprnt.source", "DPRNT source must be TCP or FILE.");
++            var dprntFilePath = Optional(dprntValue.FilePath);
++            if (dprntFilePath is { Length: > 1024 })
++                throw new CncValidationException("configuration.dprnt.filePath", "DPRNT file path must be 1024 characters or fewer.");
++            if (dprntSource == HaasDprntSources.File && dprntFilePath is null)
++                throw new CncValidationException("configuration.dprnt.filePath", "A DPRNT file path is required when the DPRNT source is FILE.");
++            dprnt = new(dprntSource, dprntFilePath, dprntValue.TruncateAfterRead);
++        }
+         if (update.AllowWrite)
+             throw new CncValidationException("allowWrite",
+                 "Direct CNC variable writes are disabled; protected setup verification executes on the controller.");
+@@ -132,6 +146,7 @@ internal sealed class CncConnectionService(
+         var sanitized = value with
+         {
+             TelemetryProvider = telemetryProvider,
++            Dprnt = dprnt,
+             ProgramAccess = value.ProgramAccess with
+             {
+                 UsernameSecretId = Optional(update.UsernameSecretId),
+diff --git a/server/Meimad.Planner.Server/Application/Haas/HaasContracts.cs b/server/Meimad.Planner.Server/Application/Haas/HaasContracts.cs
+index c436cdc..2e81310 100644
+--- a/server/Meimad.Planner.Server/Application/Haas/HaasContracts.cs
++++ b/server/Meimad.Planner.Server/Application/Haas/HaasContracts.cs
+@@ -25,6 +25,14 @@ internal interface IHaasMdcClientFactory
+     IHaasMdcClient Create(HaasConnectionSettings settings);
+ }
+ 
++/// <summary>One-shot, side-effect-free read of the configured DPRNT source for Setup diagnostics.</summary>
++internal interface IHaasDprntProbe
++{
++    Task<HaasDprntProbeResult> ProbeAsync(HaasConnectionSettings settings, CancellationToken cancellationToken = default);
++}
++
++internal sealed record HaasDprntProbeResult(bool Available, string Message, string? PartName);
++
+ internal interface IHaasMtConnectReader
+ {
+     Task<HaasMtConnectRead> ReadAsync(
+@@ -87,7 +95,10 @@ internal sealed record HaasSettingsUpdate(
+     IReadOnlyList<string>? HeaderPartPatterns,
+     bool Enabled,
+     int ExpectedVersion,
+-    string? TelemetryProvider);
++    string? TelemetryProvider,
++    string? DprntSource = null,
++    string? DprntFilePath = null,
++    bool? DprntFileTruncateAfterRead = null);
+ 
+ internal sealed class HaasValidationException(string field, string message) : Exception(message)
+ {
+diff --git a/server/Meimad.Planner.Server/Application/Haas/HaasIntegrationService.cs b/server/Meimad.Planner.Server/Application/Haas/HaasIntegrationService.cs
+index a7a34f2..766164e 100644
+--- a/server/Meimad.Planner.Server/Application/Haas/HaasIntegrationService.cs
++++ b/server/Meimad.Planner.Server/Application/Haas/HaasIntegrationService.cs
+@@ -11,7 +11,8 @@ internal sealed class HaasIntegrationService(
+     IHaasMtConnectReader mtConnectReader,
+     IHaasProgramReader programReader,
+     INcHeaderParser headerParser,
+-    TimeProvider timeProvider)
++    TimeProvider timeProvider,
++    IHaasDprntProbe? dprntProbe = null)
+ {
+     internal async Task<HaasConnectionSettings?> GetSettingsAsync(
+         string machineId, CancellationToken token = default) =>
+@@ -40,7 +41,21 @@ internal sealed class HaasIntegrationService(
+             ?? current?.TelemetryProvider
+             ?? HaasTelemetryProviders.Mdc;
+         if (!HaasTelemetryProviders.IsSupported(telemetryProvider))
+-            throw new HaasValidationException("telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
++            throw new HaasValidationException("telemetryProvider", "Telemetry provider must be MDC, MTCONNECT, or DPRNT.");
++        // A pre-DPRNT-source client omits these fields; keep the explicit Server-side choice.
++        var dprntSource = update.DprntSource?.Trim().ToUpperInvariant()
++            ?? current?.DprntSource
++            ?? HaasDprntSources.Tcp;
++        if (!HaasDprntSources.IsSupported(dprntSource))
++            throw new HaasValidationException("dprntSource", "DPRNT source must be TCP or FILE.");
++        var dprntFilePath = update.DprntFilePath is null ? current?.DprntFilePath : Optional(update.DprntFilePath);
++        if (dprntFilePath is { Length: > 1024 })
++            throw new HaasValidationException("dprntFilePath", "DPRNT file path must be 1024 characters or fewer.");
++        if (dprntSource == HaasDprntSources.File && string.IsNullOrWhiteSpace(dprntFilePath))
++            throw new HaasValidationException("dprntFilePath", "A DPRNT file path (UNC share path to the controller's print file) is required when the DPRNT source is FILE.");
++        var dprntFileTruncateAfterRead = update.DprntFileTruncateAfterRead
++            ?? current?.DprntFileTruncateAfterRead
++            ?? false;
+         var counterSource = update.PartCounterSource?.Trim().ToUpperInvariant() ?? string.Empty;
+         if (!HaasPartCounterSources.IsSupported(counterSource))
+             throw new HaasValidationException("partCounterSource", "Part counter source must be Q500, M30_COUNTER_1, or M30_COUNTER_2.");
+@@ -63,10 +78,28 @@ internal sealed class HaasIntegrationService(
+             counterSource,
+             update.PollingIntervalMs, update.ConnectionTimeoutMs, update.StableProgramPolls,
+             update.HeaderLineLimit, update.HeaderByteLimit, patterns, update.Enabled,
+-            current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now, telemetryProvider);
++            current?.Version + 1 ?? 1, current?.CreatedAt ?? now, now, telemetryProvider,
++            dprntSource, dprntFilePath, dprntFileTruncateAfterRead);
+         return await repository.UpsertSettingsAsync(value, update.ExpectedVersion, authority, token);
+     }
+ 
++    /// <summary>Reads the configured DPRNT source once without truncating or changing planning state.</summary>
++    internal async Task<HaasConnectionTest> TestDprntAsync(string machineId, CancellationToken token = default)
++    {
++        var settings = await RequiredSettingsAsync(machineId, token);
++        if (dprntProbe is null)
++            return new HaasConnectionTest(false, "DPRNT probing is not available on this Server.", null, null, null, null);
++        try
++        {
++            var probe = await dprntProbe.ProbeAsync(settings, token);
++            return new HaasConnectionTest(probe.Available, probe.Message, null, null, null, null);
++        }
++        catch (Exception exception) when (exception is not OperationCanceledException)
++        {
++            return new HaasConnectionTest(false, Safe(exception.Message), null, null, null, null);
++        }
++    }
++
+     internal async Task<HaasConnectionTest> TestMdcAsync(string machineId, CancellationToken token = default)
+     {
+         var settings = await RequiredSettingsAsync(machineId, token);
+@@ -112,6 +145,11 @@ internal sealed class HaasIntegrationService(
+         try
+         {
+             string? program;
++            if (string.Equals(settings.TelemetryProvider, HaasTelemetryProviders.DprntOnly, StringComparison.OrdinalIgnoreCase))
++            {
++                throw new HaasProgramHeaderUnavailableException(
++                    "A DPRNT-only connection reports no active program, so the machine-side NC header cannot be located.");
++            }
+             if (UsesMtConnect(settings))
+             {
+                 program = (await ReadMtConnectAsync(settings, token)).ProgramNumber;
+diff --git a/server/Meimad.Planner.Server/Domain/Cnc/CncModels.cs b/server/Meimad.Planner.Server/Domain/Cnc/CncModels.cs
+index ce7b937..aec4922 100644
+--- a/server/Meimad.Planner.Server/Domain/Cnc/CncModels.cs
++++ b/server/Meimad.Planner.Server/Domain/Cnc/CncModels.cs
+@@ -99,6 +99,11 @@ internal sealed record MachineConnection(
+ 
+ internal sealed record HaasMdcConfiguration(int Port, int TimeoutMs);
+ internal sealed record HaasMtConnectConfiguration(int Port, int TimeoutMs, int DprntPort = 8080);
++/// <summary>DPRNT source; absent JSON keeps the original TCP behaviour.</summary>
++internal sealed record HaasDprntConfiguration(
++    string Source = "TCP",
++    string? FilePath = null,
++    bool TruncateAfterRead = false);
+ internal sealed record HaasProgramAccessConfiguration(
+     string Provider,
+     bool Enabled,
+@@ -122,7 +127,8 @@ internal sealed record HaasNgcConnectionConfiguration(
+     HaasMonitoringConfiguration Monitoring,
+     HaasMtConnectConfiguration? MtConnect = null,
+     string TelemetryProvider = "MDC",
+-    string? MacAddress = null);
++    string? MacAddress = null,
++    HaasDprntConfiguration? Dprnt = null);
+ 
+ internal sealed record CncFreshValue<T>(T? Value, DateTimeOffset? ReadAt, bool Stale);
+ internal sealed record CncProgramSnapshot(
+diff --git a/server/Meimad.Planner.Server/Domain/Haas/HaasModels.cs b/server/Meimad.Planner.Server/Domain/Haas/HaasModels.cs
+index 74368a3..3a7f77d 100644
+--- a/server/Meimad.Planner.Server/Domain/Haas/HaasModels.cs
++++ b/server/Meimad.Planner.Server/Domain/Haas/HaasModels.cs
+@@ -29,8 +29,21 @@ internal static class HaasTelemetryProviders
+ {
+     internal const string Mdc = "MDC";
+     internal const string MtConnect = "MTCONNECT";
++    /// <summary>No machine telemetry; Part identity and workflow events come only from the DPRNT source.</summary>
++    internal const string DprntOnly = "DPRNT";
+ 
+-    internal static bool IsSupported(string value) => value is Mdc or MtConnect;
++    internal static bool IsSupported(string value) => value is Mdc or MtConnect or DprntOnly;
++}
++
++/// <summary>Where the Server reads the controller's DPRNT output from.</summary>
++internal static class HaasDprntSources
++{
++    /// <summary>Haas NGC style: the controller (or a serial-to-Ethernet bridge) accepts a TCP connection on <c>dprntPort</c>.</summary>
++    internal const string Tcp = "TCP";
++    /// <summary>Mazak Matrix style (DPR14 = 4): the controller appends DPRNT output to a file that the Server reads over a network share.</summary>
++    internal const string File = "FILE";
++
++    internal static bool IsSupported(string value) => value is Tcp or File;
+ }
+ 
+ internal sealed record HaasConnectionSettings(
+@@ -54,7 +67,10 @@ internal sealed record HaasConnectionSettings(
+     int Version,
+     DateTimeOffset CreatedAt,
+     DateTimeOffset UpdatedAt,
+-    string TelemetryProvider = HaasTelemetryProviders.Mdc);
++    string TelemetryProvider = HaasTelemetryProviders.Mdc,
++    string DprntSource = HaasDprntSources.Tcp,
++    string? DprntFilePath = null,
++    bool DprntFileTruncateAfterRead = false);
+ 
+ internal sealed record HaasProgramStatus(
+     string? ProgramNumber,
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs b/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
+index ad1d88c..180dc3e 100644
+--- a/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
++++ b/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
+@@ -19,6 +19,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+     private readonly INcHeaderParser headerParser;
+     private readonly TimeProvider timeProvider;
+     private readonly HaasDprntPartReader dprntPartReader = new();
++    private readonly HaasDprntFileReader dprntFileReader = new();
+     private string? candidateProgram;
+     private int candidatePolls;
+     private string? cachedProgram;
+@@ -52,28 +53,30 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+     public CncAdapterType AdapterType => CncAdapterType.HaasNgc;
+ 
+     public CncAdapterCapabilities GetCapabilities() => new(
+-        connection.AllowRead,
++        connection.AllowRead && !UsesDprntOnly,
+         connection.AllowRead,
+         connection.AllowRead && configuration.ProgramAccess.Enabled
+             && configuration.ProgramAccess.Provider == "HAAS_LOCAL_NET_SHARE",
+         false,
+         false,
+-        connection.AllowRead,
++        connection.AllowRead && !UsesDprntOnly,
+         false, false, false, false, false, false, false);
+ 
+     public async Task ConnectAsync(CancellationToken cancellationToken = default)
+     {
++        if (UsesDprntOnly) return;
+         if (UsesMtConnect)
+             pendingMtConnectRead = await ReadMtConnectAsync(cancellationToken);
+         else
+             await client.ConnectAsync(cancellationToken);
+     }
+ 
+-    public Task DisconnectAsync(CancellationToken cancellationToken = default) => UsesMtConnect
++    public Task DisconnectAsync(CancellationToken cancellationToken = default) => UsesMtConnect || UsesDprntOnly
+         ? Task.CompletedTask : client.DisconnectAsync(cancellationToken);
+ 
+     public async Task<CncConnectionTestResult> TestConnectionAsync(CancellationToken token = default)
+     {
++        if (UsesDprntOnly) return await TestDprntConnectionAsync(token);
+         if (UsesMtConnect) return await TestMtConnectConnectionAsync(token);
+         var checks = new List<CncAdapterCheck>();
+         HaasProgramStatus? status = null;
+@@ -208,12 +211,11 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+         };
+         string? error = null;
+         var program = status.ProgramNumber;
+-        var dprnt = await dprntPartReader.DrainAsync(configuration.Host,
+-            (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort,
+-            connection.ConnectionTimeoutMs, token);
+-        foreach (var eventLine in dprnt.EventLines)
++        var dprnt = await DrainDprntAsync(allowTruncate: true, token);
++        foreach (var eventLine in dprnt.Result.EventLines)
+             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
+-        var dprntPart = dprnt.PartName;
++        ApplyDprntFileHealth(dprnt, components, health, ref error);
++        var dprntPart = dprnt.Result.PartName;
+ 
+         if (program != candidateProgram)
+         {
+@@ -306,6 +308,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+     {
+         if (!connection.AllowRead)
+             throw new InvalidOperationException("Read access is disabled for this CNC connection.");
++        if (UsesDprntOnly) return await ReadDprntOnlySnapshotAsync(token);
+         if (UsesMtConnect) return await ReadMtConnectSnapshotAsync(token);
+         var at = timeProvider.GetUtcNow();
+         var status = await client.GetMachineStatusAsync(token);
+@@ -339,11 +342,10 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+                 error ??= Safe(exception.Message);
+             }
+         }
+-        var dprnt = await dprntPartReader.DrainAsync(configuration.Host,
+-            (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort,
+-            connection.ConnectionTimeoutMs, token);
+-        foreach (var eventLine in dprnt.EventLines)
++        var dprnt = await DrainDprntAsync(allowTruncate: true, token);
++        foreach (var eventLine in dprnt.Result.EventLines)
+             raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
++        ApplyDprntFileHealth(dprnt, components, health, ref error);
+ 
+         var program = status.ProgramNumber;
+         if (program != candidateProgram)
+@@ -367,9 +369,9 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+             if (!cachedPartFromDprnt) cachedPart = new(null, null, false);
+             cachedHeaderPath = new(null, null, false);
+         }
+-        if (dprnt.PartName is not null)
++        if (dprnt.Result.PartName is not null)
+         {
+-            cachedPart = new(dprnt.PartName, at, false);
++            cachedPart = new(dprnt.Result.PartName, at, false);
+             cachedPartFromDprnt = true;
+             cachedHeaderPath = new(null, null, false);
+             components["DPRNT"] = CncComponentStates.Available;
+@@ -491,6 +493,120 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+         HaasTelemetryProviders.MtConnect,
+         StringComparison.OrdinalIgnoreCase);
+ 
++    private bool UsesDprntOnly => string.Equals(
++        configuration.TelemetryProvider,
++        HaasTelemetryProviders.DprntOnly,
++        StringComparison.OrdinalIgnoreCase);
++
++    private HaasDprntConfiguration DprntConfiguration => configuration.Dprnt ?? new();
++
++    private bool UsesDprntFile => string.Equals(
++        DprntConfiguration.Source, HaasDprntSources.File, StringComparison.OrdinalIgnoreCase);
++
++    private int DprntPort =>
++        (configuration.MtConnect ?? new HaasMtConnectConfiguration(8082, connection.ConnectionTimeoutMs)).DprntPort;
++
++    /// <summary>Reads new DPRNT lines from the configured source without letting a file fault abort the poll.</summary>
++    private async Task<DprntObservation> DrainDprntAsync(bool allowTruncate, CancellationToken token)
++    {
++        if (!UsesDprntFile)
++        {
++            var tcp = await dprntPartReader.DrainAsync(
++                configuration.Host, DprntPort, connection.ConnectionTimeoutMs, token);
++            return new(tcp, dprntPartReader.Connected,
++                dprntPartReader.Connected ? null : $"DPRNT TCP port {DprntPort} on {configuration.Host} is not connected.");
++        }
++        var path = DprntConfiguration.FilePath!;
++        try
++        {
++            var file = await dprntFileReader.DrainAsync(
++                path, allowTruncate && DprntConfiguration.TruncateAfterRead, token);
++            return new(file, true, dprntFileReader.LastTruncateError);
++        }
++        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
++        {
++            return new(new(null, []), false, Safe($"DPRNT file '{path}' is unavailable: {exception.Message}"));
++        }
++    }
++
++    /// <summary>A configured DPRNT file is a required source, so its fault degrades the Machine snapshot.</summary>
++    private void ApplyDprntFileHealth(
++        DprntObservation dprnt, Dictionary<string, string> components, Dictionary<string, string> health, ref string? error)
++    {
++        if (!UsesDprntFile) return;
++        var state = dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable;
++        components["DPRNT"] = state;
++        health["dprntFile"] = state;
++        if (dprnt.Error is not null) error ??= dprnt.Error;
++    }
++
++    private async Task<CncAdapterSnapshot> ReadDprntOnlySnapshotAsync(CancellationToken token)
++    {
++        var at = timeProvider.GetUtcNow();
++        var dprnt = await DrainDprntAsync(allowTruncate: true, token);
++        var raw = new List<RawCncTelemetry>();
++        foreach (var eventLine in dprnt.Result.EventLines)
++            raw.Add(new(MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at, "DPRINT_EVENT", eventLine));
++        if (dprnt.Result.PartName is not null)
++        {
++            cachedPart = new(dprnt.Result.PartName, at, false);
++            cachedPartFromDprnt = true;
++        }
++        var dprntState = dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable;
++        var components = new Dictionary<string, string>(StringComparer.Ordinal)
++        {
++            ["DPRNT"] = dprntState,
++            ["MTCONNECT"] = CncComponentStates.Unsupported,
++            ["MDC"] = CncComponentStates.Unsupported,
++            ["PROGRAM_ACCESS"] = CncComponentStates.Unsupported
++        };
++        var health = new Dictionary<string, string>(StringComparer.Ordinal)
++        {
++            ["machineState"] = CncComponentStates.Unsupported,
++            ["activeProgram"] = CncComponentStates.Unsupported,
++            ["partCounter"] = CncComponentStates.Unsupported,
++            ["programHeader"] = cachedPart.Value is null
++                ? CncComponentStates.Unavailable : CncComponentStates.Available
++        };
++        if (UsesDprntFile) health["dprntFile"] = dprntState;
++        var connectionStatus = !dprnt.Available ? CncConnectionStates.Offline
++            : cachedPart.Value is null ? CncConnectionStates.Degraded : CncConnectionStates.Online;
++        var snapshot = new MachineSnapshot(
++            MachineId, ConnectionId, CncAdapterTypes.HaasNgc, at,
++            connectionStatus,
++            dprnt.Available ? at : null,
++            new(null, null, false),
++            new(new(null, null, false), cachedPart, new(null, null, false)),
++            new(null, null, false),
++            new(null, null, null, null),
++            components,
++            health,
++            dprnt.Error is null ? null : Safe(dprnt.Error));
++        return new(snapshot, raw);
++    }
++
++    private async Task<CncConnectionTestResult> TestDprntConnectionAsync(CancellationToken token)
++    {
++        var dprnt = await DrainDprntAsync(allowTruncate: false, token);
++        var checks = new List<CncAdapterCheck>
++        {
++            new("dprnt", dprnt.Available,
++                dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable,
++                dprnt.Available
++                    ? UsesDprntFile
++                        ? $"DPRNT file '{DprntConfiguration.FilePath}' is readable"
++                          + (dprnt.Result.PartName is null ? "." : $"; last PartName {dprnt.Result.PartName}.")
++                        : $"DPRNT TCP port {DprntPort} accepted the read-only connection."
++                    : dprnt.Error ?? "The DPRNT source is unavailable."),
++            new("programAccess", true, CncComponentStates.Unsupported,
++                "A DPRNT-only connection has no machine telemetry; Part identity comes from DPRNT lines.")
++        };
++        return new(dprnt.Available,
++            dprnt.Available ? CncConnectionStates.Online : CncConnectionStates.Offline, checks);
++    }
++
++    private sealed record DprntObservation(HaasDprntDrainResult Result, bool Available, string? Error);
++
+     private static HaasConnectionSettings ToLegacySettings(
+         MachineConnection connection, HaasNgcConnectionConfiguration config, DateTimeOffset now) => new(
+             connection.MachineId, config.Host, config.MacAddress!, config.Mdc.Port, config.MtConnect?.Port ?? 8082,
+@@ -502,7 +618,10 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+             config.ProgramAccess.HeaderByteLimit, config.ProgramAccess.HeaderPartPatterns,
+             connection.Enabled, connection.Version, connection.CreatedAt, now,
+             string.IsNullOrWhiteSpace(config.TelemetryProvider)
+-                ? HaasTelemetryProviders.Mdc : config.TelemetryProvider);
++                ? HaasTelemetryProviders.Mdc : config.TelemetryProvider,
++            config.Dprnt?.Source ?? HaasDprntSources.Tcp,
++            config.Dprnt?.FilePath,
++            config.Dprnt?.TruncateAfterRead ?? false);
+ 
+     private static void Validate(HaasNgcConnectionConfiguration value)
+     {
+@@ -523,9 +642,17 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+         var provider = string.IsNullOrWhiteSpace(value.TelemetryProvider)
+             ? HaasTelemetryProviders.Mdc : value.TelemetryProvider.Trim().ToUpperInvariant();
+         if (!HaasTelemetryProviders.IsSupported(provider))
+-            throw new CncValidationException("telemetryProvider", "Telemetry provider must be MDC or MTCONNECT.");
++            throw new CncValidationException("telemetryProvider", "Telemetry provider must be MDC, MTCONNECT, or DPRNT.");
+         if (provider == HaasTelemetryProviders.MtConnect && value.MtConnect is null)
+             throw new CncValidationException("mtConnect", "MTConnect configuration is required when MTCONNECT is the telemetry provider.");
++        if (value.Dprnt is not null)
++        {
++            var source = value.Dprnt.Source?.Trim().ToUpperInvariant() ?? string.Empty;
++            if (!HaasDprntSources.IsSupported(source))
++                throw new CncValidationException("dprnt.source", "DPRNT source must be TCP or FILE.");
++            if (source == HaasDprntSources.File && string.IsNullOrWhiteSpace(value.Dprnt.FilePath))
++                throw new CncValidationException("dprnt.filePath", "A DPRNT file path is required when the DPRNT source is FILE.");
++        }
+     }
+ 
+     private static string Safe(string value) => value.Length <= 500 ? value : value[..500];
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+new file mode 100644
+index 0000000..64aa19d
+--- /dev/null
++++ b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+@@ -0,0 +1,148 @@
++using System.Text;
++
++namespace Meimad.Planner.Server.Infrastructure.Haas;
++
++/// <summary>
++/// Tails a controller-written DPRNT text file (for example the Mazak Matrix
++/// <c>print.txt</c> written when DPR14 = 4) over a network share. Only lines
++/// appended since the previous poll are returned; a file that was rewritten,
++/// shortened, or emptied by the controller is read again from the start.
++/// Read errors propagate to the caller, which owns the availability decision.
++/// </summary>
++internal sealed class HaasDprntFileReader
++{
++    private const int FingerprintLength = 256;
++    private const int MaximumBytesPerPoll = 1024 * 1024;
++    private long offset;
++    private byte[] fingerprint = [];
++    private DateTime lastWriteTimeUtc;
++    private readonly StringBuilder pending = new();
++
++    /// <summary>Set when the optional post-read truncation failed; cleared by the next successful truncation or read without truncation.</summary>
++    internal string? LastTruncateError { get; private set; }
++
++    internal async Task<HaasDprntDrainResult> DrainAsync(string path, bool truncateAfterRead, CancellationToken token)
++    {
++        for (var attempt = 1; ; attempt++)
++        {
++            try
++            {
++                return await DrainOnceAsync(path, truncateAfterRead, token);
++            }
++            catch (IOException exception) when (attempt < 3 && IsSharingViolation(exception))
++            {
++                // The controller briefly holds the file exclusively while it appends a line.
++                await Task.Delay(100, token);
++            }
++        }
++    }
++
++    private async Task<HaasDprntDrainResult> DrainOnceAsync(string path, bool truncateAfterRead, CancellationToken token)
++    {
++        long length;
++        byte[] head;
++        byte[] buffer;
++        DateTime writeTime;
++        await using (var stream = new FileStream(path, new FileStreamOptions
++        {
++            Mode = FileMode.Open,
++            Access = FileAccess.Read,
++            Share = FileShare.ReadWrite | FileShare.Delete,
++            Options = FileOptions.Asynchronous
++        }))
++        {
++            length = stream.Length;
++            writeTime = File.GetLastWriteTimeUtc(path);
++            if (length == 0)
++            {
++                Reset(keepPartialLine: false);
++                lastWriteTimeUtc = writeTime;
++                if (!truncateAfterRead) LastTruncateError = null;
++                return new(null, []);
++            }
++            head = new byte[(int)Math.Min(length, FingerprintLength)];
++            await stream.ReadExactlyAsync(head, token);
++            var rewritten = length < offset
++                || !StartsWith(head, fingerprint)
++                || (length == offset && writeTime != lastWriteTimeUtc);
++            if (rewritten) Reset(keepPartialLine: false);
++            lastWriteTimeUtc = writeTime;
++            if (length == offset)
++            {
++                if (!truncateAfterRead) LastTruncateError = null;
++                return new(null, []);
++            }
++            var count = (int)Math.Min(length - offset, MaximumBytesPerPoll);
++            buffer = new byte[count];
++            stream.Position = offset;
++            await stream.ReadExactlyAsync(buffer, token);
++            offset += count;
++            fingerprint = head;
++        }
++
++        pending.Append(Encoding.UTF8.GetString(buffer).Replace("\0", string.Empty, StringComparison.Ordinal));
++        string? latest = null;
++        var eventLines = new List<string>();
++        var text = pending.ToString();
++        var lines = text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
++        pending.Clear();
++        pending.Append(lines[^1]);
++        foreach (var line in lines[..^1])
++        {
++            if (HaasDprntPartReader.TryParsePartName(line, out var value)) latest = value;
++            else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
++                eventLines.Add(line.Trim());
++        }
++
++        if (truncateAfterRead && offset == length)
++            TruncateConsumedFile(path, length);
++        else if (!truncateAfterRead)
++            LastTruncateError = null;
++        return new(latest, eventLines);
++    }
++
++    /// <summary>
++    /// Empties the file only when it still ends exactly where this reader stopped, so a
++    /// line the controller appended between the read and the truncation is never lost.
++    /// </summary>
++    private void TruncateConsumedFile(string path, long consumedLength)
++    {
++        try
++        {
++            using var stream = new FileStream(path, new FileStreamOptions
++            {
++                Mode = FileMode.Open,
++                Access = FileAccess.ReadWrite,
++                Share = FileShare.ReadWrite | FileShare.Delete
++            });
++            if (stream.Length != consumedLength) return;
++            stream.SetLength(0);
++            LastTruncateError = null;
++            Reset(keepPartialLine: true);
++            lastWriteTimeUtc = File.GetLastWriteTimeUtc(path);
++        }
++        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
++        {
++            LastTruncateError = "DPRNT file could not be truncated after reading: " + Safe(exception.Message);
++        }
++    }
++
++    private void Reset(bool keepPartialLine)
++    {
++        offset = 0;
++        fingerprint = [];
++        if (!keepPartialLine) pending.Clear();
++    }
++
++    /// <summary>Windows ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33).</summary>
++    private static bool IsSharingViolation(IOException exception) => (exception.HResult & 0xFFFF) is 32 or 33;
++
++    private static bool StartsWith(byte[] head, byte[] prefix)
++    {
++        if (prefix.Length == 0) return true;
++        if (head.Length < prefix.Length) return false;
++        return head.AsSpan(0, prefix.Length).SequenceEqual(prefix);
++    }
++
++    private static string Safe(string value) => value.Length <= 400 ? value : value[..400];
++}
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntPartReader.cs b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntPartReader.cs
+index d4efdc0..cec9db1 100644
+--- a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntPartReader.cs
++++ b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntPartReader.cs
+@@ -14,6 +14,9 @@ internal sealed class HaasDprntPartReader : IAsyncDisposable
+     private NetworkStream? stream;
+     private readonly StringBuilder pending = new();
+ 
++    /// <summary>True while the read-only DPRNT socket is open after the latest drain.</summary>
++    internal bool Connected => client?.Connected == true;
++
+     internal async Task<HaasDprntDrainResult> DrainAsync(string host, int port, int timeoutMs, CancellationToken token)
+     {
+         try
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntProbe.cs b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntProbe.cs
+new file mode 100644
+index 0000000..2900d0e
+--- /dev/null
++++ b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntProbe.cs
+@@ -0,0 +1,37 @@
++using Meimad.Planner.Server.Application.Haas;
++using Meimad.Planner.Server.Domain.Haas;
++
++namespace Meimad.Planner.Server.Infrastructure.Haas;
++
++/// <summary>Setup-time DPRNT check. Never truncates the file and never shares the polling reader's state.</summary>
++internal sealed class HaasDprntProbe : IHaasDprntProbe
++{
++    public async Task<HaasDprntProbeResult> ProbeAsync(
++        HaasConnectionSettings settings, CancellationToken cancellationToken = default)
++    {
++        if (string.Equals(settings.DprntSource, HaasDprntSources.File, StringComparison.OrdinalIgnoreCase))
++        {
++            var path = settings.DprntFilePath;
++            if (string.IsNullOrWhiteSpace(path))
++                return new(false, "A DPRNT file path is not configured for this Machine.", null);
++            try
++            {
++                var result = await new HaasDprntFileReader().DrainAsync(path, truncateAfterRead: false, cancellationToken);
++                var message = result.PartName is null
++                    ? $"DPRNT file '{path}' is readable; it contains no part-number-shaped line yet."
++                    : $"DPRNT file '{path}' is readable; last PartName is {result.PartName}.";
++                return new(true, message, result.PartName);
++            }
++            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
++            {
++                return new(false, $"DPRNT file '{path}' is unavailable to the Server service account: {exception.Message}", null);
++            }
++        }
++
++        await using var reader = new HaasDprntPartReader();
++        await reader.DrainAsync(settings.Host, settings.DprntPort, settings.ConnectionTimeoutMs, cancellationToken);
++        return reader.Connected
++            ? new(true, $"DPRNT TCP port {settings.DprntPort} on {settings.Host} accepted the read-only connection.", null)
++            : new(false, $"DPRNT TCP port {settings.DprntPort} on {settings.Host} refused or dropped the connection.", null);
++    }
++}
+diff --git a/server/Meimad.Planner.Server/Persistence/SqliteHaasIntegrationRepository.cs b/server/Meimad.Planner.Server/Persistence/SqliteHaasIntegrationRepository.cs
+index de543aa..2c28300 100644
+--- a/server/Meimad.Planner.Server/Persistence/SqliteHaasIntegrationRepository.cs
++++ b/server/Meimad.Planner.Server/Persistence/SqliteHaasIntegrationRepository.cs
+@@ -525,7 +525,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
+                 14),
+             new HaasMtConnectConfiguration(value.MtConnectPort, value.ConnectionTimeoutMs, value.DprntPort),
+             value.TelemetryProvider,
+-            value.MacAddress);
++            value.MacAddress,
++            new HaasDprntConfiguration(value.DprntSource, value.DprntFilePath, value.DprntFileTruncateAfterRead));
+         await using var command = connection.CreateCommand();
+         command.Transaction = transaction;
+         command.CommandText = """
+@@ -546,7 +547,7 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
+                 username_secret_id = excluded.username_secret_id,
+                 allow_read = 1,
+                 allow_write = CASE
+-                    WHEN json_extract(excluded.configuration_json, '$.telemetryProvider') = 'MTCONNECT' THEN 0
++                    WHEN json_extract(excluded.configuration_json, '$.telemetryProvider') IN ('MTCONNECT', 'DPRNT') THEN 0
+                     ELSE machine_connections.allow_write
+                 END,
+                 version = machine_connections.version + 1,
+@@ -573,7 +574,8 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
+         NullableString(reader, 7), NullableString(reader, 8), reader.GetString(9),
+         reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14),
+         JsonSerializer.Deserialize<string[]>(reader.GetString(15), JsonOptions) ?? [], reader.GetBoolean(16),
+-        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)), reader.GetString(20));
++        reader.GetInt32(17), Parse(reader.GetString(18)), Parse(reader.GetString(19)), reader.GetString(20),
++        reader.GetString(21), NullableString(reader, 22), reader.GetInt64(23) != 0);
+ 
+     private const string SettingsSelect = """
+         SELECT h.machine_id, h.host, COALESCE(h.mac_address,''),
+@@ -582,7 +584,10 @@ internal sealed class SqliteHaasIntegrationRepository(SqliteDatabase database) :
+                h.connection_timeout_ms, h.stable_program_polls, h.header_line_limit,
+                h.header_byte_limit, h.header_part_patterns_json, h.enabled, h.version,
+                h.created_at, h.updated_at,
+-               COALESCE(json_extract(c.configuration_json, '$.telemetryProvider'), 'MDC')
++               COALESCE(json_extract(c.configuration_json, '$.telemetryProvider'), 'MDC'),
++               COALESCE(json_extract(c.configuration_json, '$.dprnt.source'), 'TCP'),
++               json_extract(c.configuration_json, '$.dprnt.filePath'),
++               COALESCE(json_extract(c.configuration_json, '$.dprnt.truncateAfterRead'), 0)
+         FROM haas_connection_settings h
+         LEFT JOIN machine_connections c ON c.machine_id = h.machine_id
+         """;
+diff --git a/server/Meimad.Planner.Server/ServerApplication.cs b/server/Meimad.Planner.Server/ServerApplication.cs
+index f837c2c..8b26049 100644
+--- a/server/Meimad.Planner.Server/ServerApplication.cs
++++ b/server/Meimad.Planner.Server/ServerApplication.cs
+@@ -237,6 +237,7 @@ public static class ServerApplication
+         builder.Services.AddHttpClient<IMtConnectClient, MtConnectHttpClient>(client =>
+             client.Timeout = Timeout.InfiniteTimeSpan);
+         builder.Services.AddSingleton<IHaasMtConnectReader, HaasMtConnectReader>();
++        builder.Services.AddSingleton<IHaasDprntProbe, HaasDprntProbe>();
+         builder.Services.AddSingleton<LocalNetShareHaasProgramReader>();
+         builder.Services.AddSingleton<IHaasProgramReader>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());
+         builder.Services.AddSingleton<INcProgramFileProvider>(services => services.GetRequiredService<LocalNetShareHaasProgramReader>());
+diff --git a/tests/Meimad.Planner.Client.Windows.Tests/Api/PlannerApiClientTests.cs b/tests/Meimad.Planner.Client.Windows.Tests/Api/PlannerApiClientTests.cs
+index 43c93f7..1ab0532 100644
+--- a/tests/Meimad.Planner.Client.Windows.Tests/Api/PlannerApiClientTests.cs
++++ b/tests/Meimad.Planner.Client.Windows.Tests/Api/PlannerApiClientTests.cs
+@@ -1432,6 +1432,53 @@ public sealed class PlannerApiClientTests
+         Assert.Contains("\"telemetryProvider\":\"MTCONNECT\"", handler.Requests[0].Body, StringComparison.Ordinal);
+     }
+ 
++    [Fact]
++    public async Task Haas_connection_update_serializes_the_DPRNT_file_source_and_reads_it_back()
++    {
++        var handler = new RecordingHandler(Json(HttpStatusCode.OK, """
++            {
++              "machineId": "machine-mazak",
++              "host": "192.168.0.60",
++              "macAddress": "00:11:22:33:44:55",
++              "mdcPort": 5051,
++              "mtConnectPort": 8082,
++              "dprntPort": 8080,
++              "localNetShareEnabled": false,
++              "localNetSharePath": null,
++              "credentialsReference": null,
++              "partCounterSource": "Q500",
++              "pollingIntervalMs": 2000,
++              "connectionTimeoutMs": 3000,
++              "stableProgramPolls": 2,
++              "headerLineLimit": 50,
++              "headerByteLimit": 32768,
++              "headerPartPatterns": ["PART"],
++              "enabled": true,
++              "version": 2,
++              "updatedAt": "2026-09-17T12:00:00Z",
++              "telemetryProvider": "DPRNT",
++              "dprntSource": "FILE",
++              "dprntFilePath": "\\\\MAZAK-VARIAXIS\\MC_sdg\\print\\print.txt",
++              "dprntFileTruncateAfterRead": true
++            }
++            """));
++        using var api = CreateClient(handler);
++        var update = new HaasConnectionUpdate(
++            "192.168.0.60", "00:11:22:33:44:55", 5051, 8082, 8080, false, null, null,
++            "Q500", 2000, 3000, 2, 50, 32768,
++            ["PART"], true, 1, "DPRNT", "FILE", @"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", true);
++
++        var result = await api.UpdateHaasConnectionAsync("machine-mazak", update, "windows-1", 19);
++
++        Assert.Equal("DPRNT", result.TelemetryProvider);
++        Assert.Equal("FILE", result.DprntSource);
++        Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", result.DprntFilePath);
++        Assert.True(result.DprntFileTruncateAfterRead);
++        Assert.Contains("\"dprntSource\":\"FILE\"", handler.Requests[0].Body, StringComparison.Ordinal);
++        Assert.Contains("\"dprntFileTruncateAfterRead\":true", handler.Requests[0].Body, StringComparison.Ordinal);
++        Assert.Contains("MC_sdg", handler.Requests[0].Body, StringComparison.Ordinal);
++    }
++
+     [Fact]
+     public async Task Haas_connection_test_still_surfaces_standard_API_error_envelopes()
+     {
+diff --git a/tests/Meimad.Planner.Client.Windows.Tests/Presentation/HaasSetupViewTests.cs b/tests/Meimad.Planner.Client.Windows.Tests/Presentation/HaasSetupViewTests.cs
+index 6951af4..9dc4ecb 100644
+--- a/tests/Meimad.Planner.Client.Windows.Tests/Presentation/HaasSetupViewTests.cs
++++ b/tests/Meimad.Planner.Client.Windows.Tests/Presentation/HaasSetupViewTests.cs
+@@ -15,6 +15,10 @@ public sealed class HaasSetupViewTests
+         Assert.Contains("Content=\"Test MTConnect\" Command=\"{Binding TestHaasMtConnectCommand}\"", xaml, StringComparison.Ordinal);
+         Assert.Contains("Content=\"Test MDC\" Command=\"{Binding TestHaasMdcCommand}\"", xaml, StringComparison.Ordinal);
+         Assert.Contains("TestHaasNetShareCommand", xaml, StringComparison.Ordinal);
++        Assert.Contains("ItemsSource=\"{Binding HaasDprntSources}\" SelectedItem=\"{Binding HaasDprntSource}\"", xaml, StringComparison.Ordinal);
++        Assert.Contains("Text=\"{Binding HaasDprntFilePath}\"", xaml, StringComparison.Ordinal);
++        Assert.Contains("IsChecked=\"{Binding HaasDprntFileTruncateAfterRead}\"", xaml, StringComparison.Ordinal);
++        Assert.Contains("Content=\"Test DPRNT\" Command=\"{Binding TestHaasDprntCommand}\"", xaml, StringComparison.Ordinal);
+         Assert.DoesNotContain("ReadHaasVariableCommand", xaml, StringComparison.Ordinal);
+         Assert.DoesNotContain("Production Variable", xaml, StringComparison.Ordinal);
+         Assert.Contains("direct macro writes are disabled", xaml, StringComparison.OrdinalIgnoreCase);
+diff --git a/tests/Meimad.Planner.Client.Windows.Tests/Presentation/SetupViewModelTests.cs b/tests/Meimad.Planner.Client.Windows.Tests/Presentation/SetupViewModelTests.cs
+index 7e1a908..b3de5e9 100644
+--- a/tests/Meimad.Planner.Client.Windows.Tests/Presentation/SetupViewModelTests.cs
++++ b/tests/Meimad.Planner.Client.Windows.Tests/Presentation/SetupViewModelTests.cs
+@@ -158,6 +158,15 @@ public sealed class SetupViewModelTests
+         Assert.Equal(1, api.MtConnectTestCount);
+         Assert.Equal(1, api.MdcTestCount);
+         Assert.StartsWith("MDC: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
++
++        viewModel.HaasTelemetryProvider = "DPRNT";
++        await viewModel.TestHaasConnectionAsync();
++
++        Assert.Equal(1, api.MtConnectTestCount);
++        Assert.Equal(1, api.MdcTestCount);
++        Assert.Equal(1, api.DprntTestCount);
++        Assert.StartsWith("DPRNT: Connected", viewModel.HaasDiagnostics, StringComparison.Ordinal);
++        Assert.Contains("30P647004101-001", viewModel.HaasDiagnostics, StringComparison.Ordinal);
+     }
+ 
+     [Fact]
+@@ -453,6 +462,8 @@ public sealed class SetupViewModelTests
+         internal EmployeeCalendarExceptionCreate? LastResourceExceptionCreate { get; private set; }
+         internal int MtConnectTestCount { get; private set; }
+         internal int MdcTestCount { get; private set; }
++        internal int DprntTestCount { get; private set; }
++        internal HaasConnectionUpdate? LastHaasConnectionUpdate { get; private set; }
+ 
+         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
+             CancellationToken cancellationToken = default) =>
+@@ -602,6 +613,16 @@ public sealed class SetupViewModelTests
+                 true, "MDC connection succeeded.", "O1500", "RUNNING", 9300, null));
+         }
+ 
++        public Task<HaasConnectionTest> TestHaasDprntAsync(
++            string machineId,
++            CancellationToken cancellationToken = default)
++        {
++            DprntTestCount++;
++            return Task.FromResult(new HaasConnectionTest(
++                true, @"DPRNT file '\\mazak\print\print.txt' is readable; last PartName is 30P647004101-001.",
++                null, null, null, null));
++        }
++
+         public Task<IReadOnlyList<MachineDowntime>> ListDowntimesAsync(string? machineId = null, CancellationToken cancellationToken = default) =>
+             Task.FromResult<IReadOnlyList<MachineDowntime>>(downtimes.Where(value => machineId is null || value.MachineId == machineId).ToArray());
+ 
+diff --git a/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs b/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs
+index 222aefc..a8c4d1e 100644
+--- a/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs
++++ b/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs
+@@ -187,7 +187,113 @@ public sealed class CncAdapterTests
+         Assert.Equal(CncComponentStates.Available, snapshot.Snapshot.ComponentHealth["MDC"]);
+     }
+ 
+-    private static MachineConnection Connection(string telemetryProvider = "MDC", bool programAccess = true)
++    [Fact]
++    public async Task DPRNT_only_adapter_reads_part_identity_and_events_from_a_controller_print_file()
++    {
++        var directory = Directory.CreateTempSubdirectory("MeimadPlanner.DprntAdapter");
++        try
++        {
++            var path = Path.Combine(directory.FullName, "print.txt");
++            await File.WriteAllTextAsync(path, "30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\n");
++            var mtConnect = new FakeHaasMtConnectReader { Error = new InvalidOperationException("must not be used") };
++            await using var adapter = new HaasNgcAdapter(
++                Connection("DPRNT", programAccess: false, dprnt: new("FILE", path, false)),
++                new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }), mtConnect,
++                new FakeHaasProgramReader("unused.nc", []),
++                new NcHeaderParser(), TimeProvider.System);
++
++            await adapter.ConnectAsync();
++            var first = await adapter.ReadSnapshotAsync();
++            var quiet = await adapter.ReadSnapshotAsync();
++            var test = await adapter.TestConnectionAsync();
++
++            Assert.Equal(0, mtConnect.CallCount);
++            Assert.False(adapter.GetCapabilities().CanReadMachineState);
++            Assert.False(adapter.GetCapabilities().CanReadPartCounter);
++            Assert.Equal(CncConnectionStates.Online, first.Snapshot.ConnectionStatus);
++            Assert.Null(first.Snapshot.MachineState.Value);
++            Assert.Null(first.Snapshot.Program.ProgramNumber.Value);
++            Assert.Equal("30P647004101-001", first.Snapshot.Program.PartName.Value);
++            Assert.Null(first.Snapshot.PartCounter.Value);
++            Assert.Equal(CncComponentStates.Available, first.Snapshot.ComponentHealth["DPRNT"]);
++            Assert.Equal(CncComponentStates.Unsupported, first.Snapshot.ComponentHealth["MTCONNECT"]);
++            Assert.Equal(CncComponentStates.Unsupported, first.Snapshot.CapabilityHealth["machineState"]);
++            Assert.Single(first.RawTelemetry, value => value.Operation == "DPRINT_EVENT" && value.RawPayload == "MEIMAD/V/1/OLC/AAA");
++            Assert.Equal("30P647004101-001", quiet.Snapshot.Program.PartName.Value);
++            Assert.Empty(quiet.RawTelemetry);
++            Assert.True(test.OverallSuccess);
++            Assert.Contains(test.Checks, value => value.Id == "dprnt" && value.Succeeded);
++            Assert.False((await adapter.ReadPartCounterAsync()).Supported);
++        }
++        finally
++        {
++            directory.Delete(true);
++        }
++    }
++
++    [Fact]
++    public async Task DPRNT_only_adapter_reports_a_missing_print_file_as_offline_without_throwing()
++    {
++        var path = Path.Combine(Path.GetTempPath(), "MeimadPlanner.DprntMissing", Guid.NewGuid().ToString("N"), "print.txt");
++        await using var adapter = new HaasNgcAdapter(
++            Connection("DPRNT", programAccess: false, dprnt: new("FILE", path, true)),
++            new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }),
++            new FakeHaasMtConnectReader(),
++            new FakeHaasProgramReader("unused.nc", []),
++            new NcHeaderParser(), TimeProvider.System);
++
++        var snapshot = await adapter.ReadSnapshotAsync();
++        var test = await adapter.TestConnectionAsync();
++
++        Assert.Equal(CncConnectionStates.Offline, snapshot.Snapshot.ConnectionStatus);
++        Assert.Null(snapshot.Snapshot.LastSeenAt);
++        Assert.Null(snapshot.Snapshot.Program.PartName.Value);
++        Assert.Equal(CncComponentStates.Unavailable, snapshot.Snapshot.ComponentHealth["DPRNT"]);
++        Assert.Contains("print.txt", snapshot.Snapshot.LastError, StringComparison.Ordinal);
++        Assert.False(test.OverallSuccess);
++        Assert.Equal(CncConnectionStates.Offline, test.ConnectionStatus);
++    }
++
++    [Fact]
++    public async Task MTConnect_adapter_with_a_DPRNT_file_source_degrades_when_the_file_is_unreadable()
++    {
++        var path = Path.Combine(Path.GetTempPath(), "MeimadPlanner.DprntMissing", Guid.NewGuid().ToString("N"), "print.txt");
++        var mtConnect = new FakeHaasMtConnectReader
++        {
++            Result = new("dev1", "VF-3SS", "AVAILABLE", "ACTIVE", "AUTOMATIC",
++                "1500.CNC", 9302, DateTimeOffset.UtcNow, 4200m, 1250m, 0, "{}")
++        };
++        await using var adapter = new HaasNgcAdapter(
++            Connection("MTCONNECT", programAccess: false, dprnt: new("FILE", path, false)),
++            new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }), mtConnect,
++            new FakeHaasProgramReader("unused.nc", []),
++            new NcHeaderParser(), TimeProvider.System);
++
++        var snapshot = await adapter.ReadSnapshotAsync();
++
++        Assert.Equal(CncConnectionStates.Degraded, snapshot.Snapshot.ConnectionStatus);
++        Assert.Equal("ACTIVE", snapshot.Snapshot.MachineState.Value);
++        Assert.Equal(CncComponentStates.Unavailable, snapshot.Snapshot.ComponentHealth["DPRNT"]);
++        Assert.Equal(CncComponentStates.Unavailable, snapshot.Snapshot.CapabilityHealth["dprntFile"]);
++        Assert.Contains("print.txt", snapshot.Snapshot.LastError, StringComparison.Ordinal);
++    }
++
++    [Fact]
++    public void Adapter_rejects_a_FILE_DPRNT_source_without_a_path_and_an_unknown_provider()
++    {
++        var factory = new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true });
++        Assert.Throws<CncValidationException>(() => new HaasNgcAdapter(
++            Connection("DPRNT", programAccess: false, dprnt: new("FILE", null, false)),
++            factory, new FakeHaasMtConnectReader(), new FakeHaasProgramReader("unused.nc", []),
++            new NcHeaderParser(), TimeProvider.System));
++        Assert.Throws<CncValidationException>(() => new HaasNgcAdapter(
++            Connection("SERIAL", programAccess: false),
++            factory, new FakeHaasMtConnectReader(), new FakeHaasProgramReader("unused.nc", []),
++            new NcHeaderParser(), TimeProvider.System));
++    }
++
++    private static MachineConnection Connection(
++        string telemetryProvider = "MDC", bool programAccess = true, HaasDprntConfiguration? dprnt = null)
+     {
+         var now = DateTimeOffset.UtcNow;
+         var configuration = new HaasNgcConnectionConfiguration(
+@@ -196,7 +302,7 @@ public sealed class CncAdapterTests
+                 programAccess ? @"\\haas\User Data" : null, null, null,
+                 50, 32768, NcHeaderParser.DefaultPartPatterns),
+             new("Q500"), new(500, 2, 30000, 14),
+-            new(8082, 3000), telemetryProvider, "44:B1:76:B0:26:68");
++            new(8082, 3000), telemetryProvider, "44:B1:76:B0:26:68", dprnt);
+         return new("cnc-machine-a", "machine-a", CncAdapterType.HaasNgc, true,
+             CncConnectionStates.Offline, null, null, null, null, 500, 3000, 30000,
+             true, false, JsonSerializer.Serialize(configuration, CncJson.Options),
+diff --git a/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs b/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs
+index 686b563..bc49069 100644
+--- a/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs
++++ b/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs
+@@ -238,6 +238,94 @@ public sealed class HaasApiTests
+         });
+     }
+ 
++    [Fact]
++    public async Task DPRNT_file_source_round_trips_and_survives_a_pre_source_client_save()
++    {
++        await RunAsync(async (application, client) =>
++        {
++            await SeedAsync(application.Services);
++            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "haas-client");
++            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
++
++            using var rejected = await client.PutAsJsonAsync(
++                "/api/v1/machines/machine-haas/haas/connection", new
++                {
++                    host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
++                    telemetryProvider = "DPRNT", dprntSource = "FILE",
++                    localNetShareEnabled = false, partCounterSource = "Q500",
++                    pollingIntervalMs = 2000, connectionTimeoutMs = 3000, stableProgramPolls = 2,
++                    headerLineLimit = 50, headerByteLimit = 32768,
++                    headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
++                    enabled = false, version = 0
++                });
++            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
++            Assert.Contains("dprntFilePath", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
++
++            using var saved = await client.PutAsJsonAsync(
++                "/api/v1/machines/machine-haas/haas/connection", new
++                {
++                    host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
++                    telemetryProvider = "DPRNT", dprntSource = "FILE",
++                    dprntFilePath = @"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", dprntFileTruncateAfterRead = true,
++                    localNetShareEnabled = false, partCounterSource = "Q500",
++                    pollingIntervalMs = 2000, connectionTimeoutMs = 3000, stableProgramPolls = 2,
++                    headerLineLimit = 50, headerByteLimit = 32768,
++                    headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
++                    enabled = false, version = 0
++                });
++            saved.EnsureSuccessStatusCode();
++            using (var json = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()))
++            {
++                Assert.Equal("DPRNT", json.RootElement.GetProperty("telemetryProvider").GetString());
++                Assert.Equal("FILE", json.RootElement.GetProperty("dprntSource").GetString());
++                Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt",
++                    json.RootElement.GetProperty("dprntFilePath").GetString());
++                Assert.True(json.RootElement.GetProperty("dprntFileTruncateAfterRead").GetBoolean());
++            }
++
++            // A Windows client built before the DPRNT source fields omits them and must not reset them.
++            using var legacySaved = await client.PutAsJsonAsync(
++                "/api/v1/machines/machine-haas/haas/connection", new
++                {
++                    host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
++                    localNetShareEnabled = false, partCounterSource = "Q500",
++                    pollingIntervalMs = 2500, connectionTimeoutMs = 3000, stableProgramPolls = 2,
++                    headerLineLimit = 50, headerByteLimit = 32768,
++                    headerPartPatterns = new[] { @"PART\s*[:=]\s*([^()]+)" },
++                    enabled = false, version = 1
++                });
++            legacySaved.EnsureSuccessStatusCode();
++
++            using var read = await client.GetAsync("/api/v1/machines/machine-haas/haas/connection");
++            read.EnsureSuccessStatusCode();
++            using (var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync()))
++            {
++                Assert.Equal("DPRNT", json.RootElement.GetProperty("telemetryProvider").GetString());
++                Assert.Equal("FILE", json.RootElement.GetProperty("dprntSource").GetString());
++                Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt",
++                    json.RootElement.GetProperty("dprntFilePath").GetString());
++                Assert.True(json.RootElement.GetProperty("dprntFileTruncateAfterRead").GetBoolean());
++                Assert.Equal(2500, json.RootElement.GetProperty("pollingIntervalMs").GetInt32());
++                Assert.Equal(2, json.RootElement.GetProperty("version").GetInt32());
++            }
++
++            using var generic = await client.GetAsync("/api/v1/machines/machine-haas/cnc-connection");
++            generic.EnsureSuccessStatusCode();
++            using var genericJson = JsonDocument.Parse(await generic.Content.ReadAsStringAsync());
++            Assert.False(genericJson.RootElement.GetProperty("allowWrite").GetBoolean());
++            var dprnt = genericJson.RootElement.GetProperty("configuration").GetProperty("dprnt");
++            Assert.Equal("FILE", dprnt.GetProperty("source").GetString());
++            Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", dprnt.GetProperty("filePath").GetString());
++            Assert.True(dprnt.GetProperty("truncateAfterRead").GetBoolean());
++
++            using var probe = await client.PostAsync("/api/v1/machines/machine-haas/haas/test-dprnt", null);
++            Assert.Equal(HttpStatusCode.BadGateway, probe.StatusCode);
++            using var probeJson = JsonDocument.Parse(await probe.Content.ReadAsStringAsync());
++            Assert.False(probeJson.RootElement.GetProperty("succeeded").GetBoolean());
++            Assert.Contains("print.txt", probeJson.RootElement.GetProperty("message").GetString(), StringComparison.Ordinal);
++        });
++    }
++
+     private static async Task SeedAsync(IServiceProvider services)
+     {
+         var database = services.GetRequiredService<SqliteDatabase>();
+diff --git a/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs b/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs
+new file mode 100644
+index 0000000..d3269a3
+--- /dev/null
++++ b/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs
+@@ -0,0 +1,121 @@
++using System.Text;
++using Meimad.Planner.Server.Infrastructure.Haas;
++
++namespace Meimad.Planner.Server.Tests.Haas;
++
++public sealed class HaasDprntFileReaderTests : IDisposable
++{
++    private readonly string path = Path.Combine(
++        Path.GetTempPath(), "MeimadPlanner.Dprnt", Guid.NewGuid().ToString("N"), "print.txt");
++
++    public HaasDprntFileReaderTests() => Directory.CreateDirectory(Path.GetDirectoryName(path)!);
++
++    [Fact]
++    public async Task Returns_only_lines_appended_since_the_previous_poll()
++    {
++        await File.WriteAllTextAsync(path, "30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\n");
++        var reader = new HaasDprntFileReader();
++
++        var first = await reader.DrainAsync(path, false, CancellationToken.None);
++        var quiet = await reader.DrainAsync(path, false, CancellationToken.None);
++        await File.AppendAllTextAsync(path, "16E2509-7PSOFI-1\r\n");
++        var second = await reader.DrainAsync(path, false, CancellationToken.None);
++
++        Assert.Equal("30P647004101-001", first.PartName);
++        Assert.Equal(new[] { "MEIMAD/V/1/OLC/AAA" }, first.EventLines);
++        Assert.Null(quiet.PartName);
++        Assert.Empty(quiet.EventLines);
++        Assert.Equal("16E2509-7PSOFI-1", second.PartName);
++        Assert.Empty(second.EventLines);
++        Assert.Equal("30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\n16E2509-7PSOFI-1\r\n",
++            await File.ReadAllTextAsync(path));
++    }
++
++    [Fact]
++    public async Task Holds_an_unterminated_line_until_the_controller_finishes_it()
++    {
++        await File.WriteAllTextAsync(path, "30P6470");
++        var reader = new HaasDprntFileReader();
++
++        var partial = await reader.DrainAsync(path, false, CancellationToken.None);
++        await File.AppendAllTextAsync(path, "04101-001\r\n");
++        var complete = await reader.DrainAsync(path, false, CancellationToken.None);
++
++        Assert.Null(partial.PartName);
++        Assert.Equal("30P647004101-001", complete.PartName);
++    }
++
++    [Fact]
++    public async Task Rereads_a_file_the_controller_rewrote_from_the_start()
++    {
++        await File.WriteAllTextAsync(path, "30P647004101-001\r\n");
++        var reader = new HaasDprntFileReader();
++        await reader.DrainAsync(path, false, CancellationToken.None);
++
++        // Overwrite mode: same length, different content.
++        await File.WriteAllTextAsync(path, "30P647004101-002\r\n");
++        var rewrittenSameLength = await reader.DrainAsync(path, false, CancellationToken.None);
++        // Overwrite mode: shorter content.
++        await File.WriteAllTextAsync(path, "AB-1\r\n");
++        var rewrittenShorter = await reader.DrainAsync(path, false, CancellationToken.None);
++        // Overwrite mode: longer content with a different prefix.
++        await File.WriteAllTextAsync(path, "16E2509-7PSOFI-1\r\nMEIMAD/V/1/CST/BBB\r\n");
++        var rewrittenLonger = await reader.DrainAsync(path, false, CancellationToken.None);
++
++        Assert.Equal("30P647004101-002", rewrittenSameLength.PartName);
++        Assert.Equal("AB-1", rewrittenShorter.PartName);
++        Assert.Equal("16E2509-7PSOFI-1", rewrittenLonger.PartName);
++        Assert.Equal(new[] { "MEIMAD/V/1/CST/BBB" }, rewrittenLonger.EventLines);
++    }
++
++    [Fact]
++    public async Task Optional_truncation_empties_the_consumed_file_and_keeps_tailing()
++    {
++        await File.WriteAllTextAsync(path, "30P647004101-001\r\n");
++        var reader = new HaasDprntFileReader();
++
++        var first = await reader.DrainAsync(path, true, CancellationToken.None);
++        var emptied = new FileInfo(path).Length;
++        var quiet = await reader.DrainAsync(path, true, CancellationToken.None);
++        await File.AppendAllTextAsync(path, "16E2509-7PSOFI-1\r\n");
++        var second = await reader.DrainAsync(path, true, CancellationToken.None);
++
++        Assert.Equal("30P647004101-001", first.PartName);
++        Assert.Equal(0L, emptied);
++        Assert.Null(reader.LastTruncateError);
++        Assert.Null(quiet.PartName);
++        Assert.Equal("16E2509-7PSOFI-1", second.PartName);
++        Assert.Equal(0L, new FileInfo(path).Length);
++    }
++
++    [Fact]
++    public async Task Ignores_padding_nulls_and_non_part_lines()
++    {
++        await File.WriteAllBytesAsync(path, Encoding.ASCII.GetBytes("\0\0Part Name: X\r\n1500.CNC\r\nO1500\r\n30P647004101-001\r\n"));
++        var reader = new HaasDprntFileReader();
++
++        var result = await reader.DrainAsync(path, false, CancellationToken.None);
++
++        Assert.Equal("30P647004101-001", result.PartName);
++        Assert.Empty(result.EventLines);
++    }
++
++    [Fact]
++    public async Task Empty_or_missing_file_is_reported_without_inventing_a_part()
++    {
++        await File.WriteAllTextAsync(path, string.Empty);
++        var reader = new HaasDprntFileReader();
++
++        var empty = await reader.DrainAsync(path, false, CancellationToken.None);
++        Assert.Null(empty.PartName);
++        Assert.Empty(empty.EventLines);
++
++        File.Delete(path);
++        await Assert.ThrowsAnyAsync<IOException>(() => reader.DrainAsync(path, false, CancellationToken.None));
++    }
++
++    public void Dispose()
++    {
++        try { Directory.Delete(Path.GetDirectoryName(path)!, true); } catch { }
++    }
++}
+-- 
+2.43.0
+
+
+From f8e49fab03e4ef0e294c2d844e4860a0df6ae84b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 17 Sep 2026 18:00:09 +0300
+Subject: [PATCH 2/3] Harden DPRNT file tailing: tail fingerprint, bounded
+ catch-up, safe truncation
+
+Detect rewrites by comparing the bytes just before the consumed offset instead
+of the share-cached last-write time; a fresh reader without truncation reads only
+the file tail for the current PartName and replays no historical events; never
+truncate while a line is unterminated; expose dprnt in the public CNC
+configuration; test the DPRNT file in every connection test; mark the DPRNT-only
+PartName stale while the source is offline.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JMNbrUi8mkQMTaJDLsmBGe
+---
+ docs/api-contract.md                          |   2 +-
+ docs/user-help.md                             |   4 +-
+ .../Api/Cnc/CncEndpoints.cs                   |   1 +
+ .../Infrastructure/Cnc/HaasNgcAdapter.cs      |  25 ++-
+ .../Haas/HaasDprntFileReader.cs               | 160 ++++++++++++------
+ .../Cnc/CncAdapterTests.cs                    |   8 +-
+ .../Haas/HaasApiTests.cs                      |  12 +-
+ .../Haas/HaasDprntFileReaderTests.cs          |  59 ++++++-
+ 8 files changed, 203 insertions(+), 68 deletions(-)
+
+diff --git a/docs/api-contract.md b/docs/api-contract.md
+index 2903f90..465a59b 100644
+--- a/docs/api-contract.md
++++ b/docs/api-contract.md
+@@ -1371,7 +1371,7 @@ The `/haas/*` routes remain compatibility/commissioning endpoints. New monitorin
+ 
+ `dprntPort` defaults to `8080`. With `dprntSource: "TCP"` (default) the Server persistently subscribes to this read-only Haas DPRNT output and accepts a complete part-number-shaped line as the preferred `MachineHeaderPartName`; it never derives Part identity from a filename or O-number. A serial-only controller behind a serial-to-Ethernet bridge in TCP-server mode uses the same source.
+ 
+-`dprntSource: "FILE"` tails a controller-written DPRNT text file at `dprntFilePath` (a UNC path readable by the Server service account), for example the Mazak Matrix `C:\MC_sdg\print\print.txt` produced by DPR14 = 4. Only lines appended since the previous poll are consumed; a file the controller rewrote or shortened is read again from the start; an unterminated last line waits for its terminator. Line semantics are identical to the TCP source (part-number lines and `MEIMAD/` event lines). `dprntFileTruncateAfterRead: true` empties the file after a poll that consumed it completely, only when its length is still exactly what was read, and requires write access; the failure of a truncation is reported in `lastError` without stopping ingestion. An unreadable file marks the `DPRNT` component `UNAVAILABLE` and the connection `DEGRADED` (`OFFLINE` for the `DPRNT` telemetry provider).
++`dprntSource: "FILE"` tails a controller-written DPRNT text file at `dprntFilePath` (a UNC path readable by the Server service account), for example the Mazak Matrix `C:\MC_sdg\print\print.txt` produced by DPR14 = 4. Only lines appended since the previous poll are consumed; a file the controller rewrote or shortened is read again from the start; an unterminated last line waits for its terminator. Line semantics are identical to the TCP source (part-number lines and `MEIMAD/` event lines). A new reader (Server start, reconnect, or connection edit) cannot know which part of an existing file was already ingested: without truncation it reads only the last 64 KB to recover the current PartName and replays no historical `MEIMAD/` events; with truncation enabled everything still in the file is unconsumed by definition and is replayed, so events emitted while the Server was down are not lost. `dprntFileTruncateAfterRead: true` empties the file after a poll that consumed it completely and ended on a line terminator, only when its length is still exactly what was read, and requires write access; the failure of a truncation is reported in `lastError` without stopping ingestion. An unreadable file marks the `DPRNT` component `UNAVAILABLE` and the connection `DEGRADED` (`OFFLINE` for the `DPRNT` telemetry provider).
+ 
+ `telemetryProvider: "DPRNT"` declares a controller with no MDC/MTConnect telemetry (for example Mazak Matrix 2). The snapshot then carries no machine state, active program, or part counter (`UNSUPPORTED`), Part identity comes only from DPRNT lines, `allowWrite` is forced to `false`, and the connection is `ONLINE` once the DPRNT source is readable and a PartName has been seen.
+ 
+diff --git a/docs/user-help.md b/docs/user-help.md
+index 46f0ef9..4137dec 100644
+--- a/docs/user-help.md
++++ b/docs/user-help.md
+@@ -95,7 +95,9 @@ The active NC program’s machine-side header/DPRNT `PartName` is the authoritat
+ 
+ **DPRNT source = FILE** reads a DPRNT text file that the controller writes itself, over a UNC share. Use it for a Mazak Matrix / Matrix 2 control: set DPR14 = 4 so DPRNT lines go to `C:\MC_sdg\print\print.txt` on the control PC, share that folder read-only for the Server service account, and enter the UNC path (for example `\\MAZAK-VARIAXIS\print\print.txt`) as the DPRNT file path. The Server reads only new lines after each poll and re-reads the file from the start if the control rewrote it. Use **Test DPRNT** to confirm the Server can read the file and to see the last PartName it contains.
+ 
+-No G-code deletes that file. Tick **Clear DPRNT file after each read** if the file must not grow on the control; the Server then empties the file after it has consumed it (the share must allow write access). Leave it unticked if the control keeps the file small itself.
++No G-code deletes that file. Tick **Clear DPRNT file after each read** if the file must not grow on the control; the Server then empties the file after it has consumed it (the share must allow write access), and any `MEIMAD/` events written while the Server was down are still picked up from the file on restart. Leave it unticked if the control keeps the file small itself; the Server then recovers only the current PartName from the end of the file after a restart and does not replay old events.
++
++Bench auto-start and program-mismatch events still need an active program number from MDC or MTConnect; with **Machine telemetry source = DPRNT** the PartName is shown in monitoring and `MEIMAD/` workflow events are ingested, but no Bench is started automatically.
+ 
+ **Machine telemetry source = DPRNT** is for controls without MDC/MTConnect (Mazak Matrix 2). The Machine then reports no machine state, program number, or part counter; Part identity and workflow events come from DPRNT lines only, and **Test Connection** runs the DPRNT probe.
+ 
+diff --git a/server/Meimad.Planner.Server/Api/Cnc/CncEndpoints.cs b/server/Meimad.Planner.Server/Api/Cnc/CncEndpoints.cs
+index 36bf0be..7fe1f23 100644
+--- a/server/Meimad.Planner.Server/Api/Cnc/CncEndpoints.cs
++++ b/server/Meimad.Planner.Server/Api/Cnc/CncEndpoints.cs
+@@ -184,6 +184,7 @@ internal static class CncEndpoints
+             value.Mdc,
+             value.MtConnect,
+             value.TelemetryProvider,
++            value.Dprnt,
+             programAccess = new
+             {
+                 value.ProgramAccess.Provider,
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs b/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
+index 180dc3e..a05af2c 100644
+--- a/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
++++ b/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
+@@ -55,7 +55,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+     public CncAdapterCapabilities GetCapabilities() => new(
+         connection.AllowRead && !UsesDprntOnly,
+         connection.AllowRead,
+-        connection.AllowRead && configuration.ProgramAccess.Enabled
++        connection.AllowRead && !UsesDprntOnly && configuration.ProgramAccess.Enabled
+             && configuration.ProgramAccess.Provider == "HAAS_LOCAL_NET_SHARE",
+         false,
+         false,
+@@ -119,6 +119,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+             }
+         }
+ 
++        await AddDprntFileCheckAsync(checks, token);
+         var mdcOkay = checks.First(value => value.Id == "mdc").Succeeded;
+         var failedOptional = checks.Any(value => !value.Succeeded);
+         var statusValue = !mdcOkay ? CncConnectionStates.Offline
+@@ -126,6 +127,19 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+         return new(mdcOkay && !failedOptional, statusValue, checks);
+     }
+ 
++    /// <summary>A configured DPRNT file is part of the connection test for every telemetry provider.</summary>
++    private async Task AddDprntFileCheckAsync(List<CncAdapterCheck> checks, CancellationToken token)
++    {
++        if (!UsesDprntFile) return;
++        var dprnt = await DrainDprntAsync(allowTruncate: false, token);
++        checks.Add(new("dprntFile", dprnt.Available,
++            dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable,
++            dprnt.Available
++                ? $"DPRNT file '{DprntConfiguration.FilePath}' is readable"
++                  + (dprnt.Result.PartName is null ? "." : $"; last PartName {dprnt.Result.PartName}.")
++                : dprnt.Error ?? "The DPRNT file is unavailable."));
++    }
++
+     private async Task<CncConnectionTestResult> TestMtConnectConnectionAsync(CancellationToken token)
+     {
+         var checks = new List<CncAdapterCheck>();
+@@ -174,6 +188,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+             }
+         }
+ 
++        await AddDprntFileCheckAsync(checks, token);
+         var providerOkay = checks.First(value => value.Id == "mtconnect").Succeeded;
+         var failedOptional = checks.Any(value => !value.Succeeded);
+         var connectionStatus = !providerOkay ? CncConnectionStates.Offline
+@@ -552,6 +567,10 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+             cachedPart = new(dprnt.Result.PartName, at, false);
+             cachedPartFromDprnt = true;
+         }
++        else if (!dprnt.Available)
++        {
++            cachedPart = cachedPart with { Stale = cachedPart.Value is not null };
++        }
+         var dprntState = dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable;
+         var components = new Dictionary<string, string>(StringComparer.Ordinal)
+         {
+@@ -565,7 +584,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+             ["machineState"] = CncComponentStates.Unsupported,
+             ["activeProgram"] = CncComponentStates.Unsupported,
+             ["partCounter"] = CncComponentStates.Unsupported,
+-            ["programHeader"] = cachedPart.Value is null
++            ["programHeader"] = cachedPart.Value is null || cachedPart.Stale
+                 ? CncComponentStates.Unavailable : CncComponentStates.Available
+         };
+         if (UsesDprntFile) health["dprntFile"] = dprntState;
+@@ -599,7 +618,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+                         : $"DPRNT TCP port {DprntPort} accepted the read-only connection."
+                     : dprnt.Error ?? "The DPRNT source is unavailable."),
+             new("programAccess", true, CncComponentStates.Unsupported,
+-                "A DPRNT-only connection has no machine telemetry; Part identity comes from DPRNT lines.")
++                "A DPRNT-only connection has no machine telemetry or NC header access; Part identity comes from DPRNT lines.")
+         };
+         return new(dprnt.Available,
+             dprnt.Available ? CncConnectionStates.Online : CncConnectionStates.Offline, checks);
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+index 64aa19d..83e8e29 100644
+--- a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
++++ b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+@@ -9,13 +9,24 @@ namespace Meimad.Planner.Server.Infrastructure.Haas;
+ /// shortened, or emptied by the controller is read again from the start.
+ /// Read errors propagate to the caller, which owns the availability decision.
+ /// </summary>
++/// <remarks>
++/// A fresh reader does not know which part of an existing file was already
++/// consumed. When the reader is allowed to truncate the file, everything in it
++/// is unconsumed by definition and is replayed. Otherwise the initial catch-up
++/// only reads the last <see cref="InitialTailBytes"/> to recover the current
++/// PartName and deliberately emits no historical <c>MEIMAD/</c> event lines.
++/// </remarks>
+ internal sealed class HaasDprntFileReader
+ {
+-    private const int FingerprintLength = 256;
+-    private const int MaximumBytesPerPoll = 1024 * 1024;
++    private const int TailFingerprintLength = 64;
++    private const int InitialTailBytes = 64 * 1024;
++    private const int ChunkBytes = 256 * 1024;
++    private const int MaximumBytesPerPoll = 4 * 1024 * 1024;
+     private long offset;
+-    private byte[] fingerprint = [];
+-    private DateTime lastWriteTimeUtc;
++    private byte[] tailFingerprint = [];
++    private bool initialized;
++    private bool catchingUp;
++    private bool skipPartialFirstLine;
+     private readonly StringBuilder pending = new();
+ 
+     /// <summary>Set when the optional post-read truncation failed; cleared by the next successful truncation or read without truncation.</summary>
+@@ -39,10 +50,9 @@ internal sealed class HaasDprntFileReader
+ 
+     private async Task<HaasDprntDrainResult> DrainOnceAsync(string path, bool truncateAfterRead, CancellationToken token)
+     {
++        string? latest = null;
++        var eventLines = new List<string>();
+         long length;
+-        byte[] head;
+-        byte[] buffer;
+-        DateTime writeTime;
+         await using (var stream = new FileStream(path, new FileStreamOptions
+         {
+             Mode = FileMode.Open,
+@@ -52,39 +62,98 @@ internal sealed class HaasDprntFileReader
+         }))
+         {
+             length = stream.Length;
+-            writeTime = File.GetLastWriteTimeUtc(path);
+-            if (length == 0)
++            if (!initialized)
+             {
+-                Reset(keepPartialLine: false);
+-                lastWriteTimeUtc = writeTime;
+-                if (!truncateAfterRead) LastTruncateError = null;
+-                return new(null, []);
++                initialized = true;
++                if (!truncateAfterRead)
++                {
++                    catchingUp = true;
++                    if (length > InitialTailBytes)
++                    {
++                        offset = length - InitialTailBytes;
++                        skipPartialFirstLine = true;
++                    }
++                }
+             }
+-            head = new byte[(int)Math.Min(length, FingerprintLength)];
+-            await stream.ReadExactlyAsync(head, token);
+-            var rewritten = length < offset
+-                || !StartsWith(head, fingerprint)
+-                || (length == offset && writeTime != lastWriteTimeUtc);
+-            if (rewritten) Reset(keepPartialLine: false);
+-            lastWriteTimeUtc = writeTime;
+-            if (length == offset)
++            else if (length < offset || !await TailMatchesAsync(stream, token))
++            {
++                // The controller rewrote or emptied the file: its content is new.
++                Reset();
++            }
++
++            var total = 0;
++            while (offset < length && total < MaximumBytesPerPoll)
+             {
+-                if (!truncateAfterRead) LastTruncateError = null;
+-                return new(null, []);
++                var count = (int)Math.Min(Math.Min(length - offset, ChunkBytes), MaximumBytesPerPoll - total);
++                var buffer = new byte[count];
++                stream.Position = offset;
++                await stream.ReadExactlyAsync(buffer, token);
++                offset += count;
++                total += count;
++                RememberTail(buffer);
++                AppendText(buffer);
++                ParsePendingLines(ref latest, eventLines);
+             }
+-            var count = (int)Math.Min(length - offset, MaximumBytesPerPoll);
+-            buffer = new byte[count];
+-            stream.Position = offset;
+-            await stream.ReadExactlyAsync(buffer, token);
+-            offset += count;
+-            fingerprint = head;
+         }
+ 
+-        pending.Append(Encoding.UTF8.GetString(buffer).Replace("\0", string.Empty, StringComparison.Ordinal));
+-        string? latest = null;
+-        var eventLines = new List<string>();
+-        var text = pending.ToString();
+-        var lines = text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
++        if (length == 0) Reset();
++        var consumed = offset == length;
++        if (catchingUp)
++        {
++            // Historical event lines were most likely ingested before this reader existed.
++            eventLines.Clear();
++            if (consumed) catchingUp = false;
++        }
++        if (truncateAfterRead && consumed && length > 0 && pending.Length == 0)
++            TruncateConsumedFile(path, length);
++        else if (!truncateAfterRead)
++            LastTruncateError = null;
++        return new(latest, eventLines);
++    }
++
++    private async Task<bool> TailMatchesAsync(FileStream stream, CancellationToken token)
++    {
++        if (tailFingerprint.Length == 0 || offset < tailFingerprint.Length) return tailFingerprint.Length == 0;
++        var current = new byte[tailFingerprint.Length];
++        stream.Position = offset - tailFingerprint.Length;
++        await stream.ReadExactlyAsync(current, token);
++        return current.AsSpan().SequenceEqual(tailFingerprint);
++    }
++
++    private void RememberTail(byte[] buffer)
++    {
++        if (buffer.Length >= TailFingerprintLength)
++        {
++            tailFingerprint = buffer[^TailFingerprintLength..];
++            return;
++        }
++        var combined = new byte[tailFingerprint.Length + buffer.Length];
++        tailFingerprint.CopyTo(combined, 0);
++        buffer.CopyTo(combined, tailFingerprint.Length);
++        tailFingerprint = combined.Length <= TailFingerprintLength
++            ? combined
++            : combined[^TailFingerprintLength..];
++    }
++
++    private void AppendText(byte[] buffer)
++    {
++        var text = Encoding.UTF8.GetString(buffer)
++            .Replace("\0", string.Empty, StringComparison.Ordinal)
++            .Replace("﻿", string.Empty, StringComparison.Ordinal);
++        if (skipPartialFirstLine)
++        {
++            // The catch-up window starts mid-line; drop the fragment before the first terminator.
++            var terminator = text.IndexOfAny(['\r', '\n']);
++            if (terminator < 0) return;
++            text = text[terminator..];
++            skipPartialFirstLine = false;
++        }
++        pending.Append(text);
++    }
++
++    private void ParsePendingLines(ref string? latest, List<string> eventLines)
++    {
++        var lines = pending.ToString().Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
+         pending.Clear();
+         pending.Append(lines[^1]);
+         foreach (var line in lines[..^1])
+@@ -93,12 +162,6 @@ internal sealed class HaasDprntFileReader
+             else if (line.TrimStart().StartsWith("MEIMAD/", StringComparison.Ordinal))
+                 eventLines.Add(line.Trim());
+         }
+-
+-        if (truncateAfterRead && offset == length)
+-            TruncateConsumedFile(path, length);
+-        else if (!truncateAfterRead)
+-            LastTruncateError = null;
+-        return new(latest, eventLines);
+     }
+ 
+     /// <summary>
+@@ -118,8 +181,7 @@ internal sealed class HaasDprntFileReader
+             if (stream.Length != consumedLength) return;
+             stream.SetLength(0);
+             LastTruncateError = null;
+-            Reset(keepPartialLine: true);
+-            lastWriteTimeUtc = File.GetLastWriteTimeUtc(path);
++            Reset();
+         }
+         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+         {
+@@ -127,22 +189,16 @@ internal sealed class HaasDprntFileReader
+         }
+     }
+ 
+-    private void Reset(bool keepPartialLine)
++    private void Reset()
+     {
+         offset = 0;
+-        fingerprint = [];
+-        if (!keepPartialLine) pending.Clear();
++        tailFingerprint = [];
++        skipPartialFirstLine = false;
++        pending.Clear();
+     }
+ 
+     /// <summary>Windows ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33).</summary>
+     private static bool IsSharingViolation(IOException exception) => (exception.HResult & 0xFFFF) is 32 or 33;
+ 
+-    private static bool StartsWith(byte[] head, byte[] prefix)
+-    {
+-        if (prefix.Length == 0) return true;
+-        if (head.Length < prefix.Length) return false;
+-        return head.AsSpan(0, prefix.Length).SequenceEqual(prefix);
+-    }
+-
+     private static string Safe(string value) => value.Length <= 400 ? value : value[..400];
+ }
+diff --git a/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs b/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs
+index a8c4d1e..eacd5d5 100644
+--- a/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs
++++ b/tests/Meimad.Planner.Server.Tests/Cnc/CncAdapterTests.cs
+@@ -197,7 +197,7 @@ public sealed class CncAdapterTests
+             await File.WriteAllTextAsync(path, "30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\n");
+             var mtConnect = new FakeHaasMtConnectReader { Error = new InvalidOperationException("must not be used") };
+             await using var adapter = new HaasNgcAdapter(
+-                Connection("DPRNT", programAccess: false, dprnt: new("FILE", path, false)),
++                Connection("DPRNT", programAccess: false, dprnt: new("FILE", path, true)),
+                 new FakeHaasMdcClientFactory(new FakeHaasMdcClient { Disconnected = true }), mtConnect,
+                 new FakeHaasProgramReader("unused.nc", []),
+                 new NcHeaderParser(), TimeProvider.System);
+@@ -224,6 +224,8 @@ public sealed class CncAdapterTests
+             Assert.True(test.OverallSuccess);
+             Assert.Contains(test.Checks, value => value.Id == "dprnt" && value.Succeeded);
+             Assert.False((await adapter.ReadPartCounterAsync()).Supported);
++            Assert.False(adapter.GetCapabilities().CanReadProgramHeader);
++            Assert.Equal(0L, new FileInfo(path).Length);
+         }
+         finally
+         {
+@@ -270,12 +272,16 @@ public sealed class CncAdapterTests
+             new NcHeaderParser(), TimeProvider.System);
+ 
+         var snapshot = await adapter.ReadSnapshotAsync();
++        var test = await adapter.TestConnectionAsync();
+ 
+         Assert.Equal(CncConnectionStates.Degraded, snapshot.Snapshot.ConnectionStatus);
+         Assert.Equal("ACTIVE", snapshot.Snapshot.MachineState.Value);
+         Assert.Equal(CncComponentStates.Unavailable, snapshot.Snapshot.ComponentHealth["DPRNT"]);
+         Assert.Equal(CncComponentStates.Unavailable, snapshot.Snapshot.CapabilityHealth["dprntFile"]);
+         Assert.Contains("print.txt", snapshot.Snapshot.LastError, StringComparison.Ordinal);
++        Assert.False(test.OverallSuccess);
++        Assert.Equal(CncConnectionStates.Degraded, test.ConnectionStatus);
++        Assert.Contains(test.Checks, value => value.Id == "dprntFile" && !value.Succeeded);
+     }
+ 
+     [Fact]
+diff --git a/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs b/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs
+index bc49069..e5de5c8 100644
+--- a/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs
++++ b/tests/Meimad.Planner.Server.Tests/Haas/HaasApiTests.cs
+@@ -241,6 +241,8 @@ public sealed class HaasApiTests
+     [Fact]
+     public async Task DPRNT_file_source_round_trips_and_survives_a_pre_source_client_save()
+     {
++        // A local path that does not exist keeps the probe fast on Windows (no SMB name resolution).
++        var printFile = Path.Combine(Path.GetTempPath(), "MeimadPlanner.DprntApi", Guid.NewGuid().ToString("N"), "print.txt");
+         await RunAsync(async (application, client) =>
+         {
+             await SeedAsync(application.Services);
+@@ -266,7 +268,7 @@ public sealed class HaasApiTests
+                 {
+                     host = "192.168.0.60", macAddress = "00:11:22:33:44:55", mdcPort = 5051, mtConnectPort = 8082,
+                     telemetryProvider = "DPRNT", dprntSource = "FILE",
+-                    dprntFilePath = @"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", dprntFileTruncateAfterRead = true,
++                    dprntFilePath = printFile, dprntFileTruncateAfterRead = true,
+                     localNetShareEnabled = false, partCounterSource = "Q500",
+                     pollingIntervalMs = 2000, connectionTimeoutMs = 3000, stableProgramPolls = 2,
+                     headerLineLimit = 50, headerByteLimit = 32768,
+@@ -278,8 +280,7 @@ public sealed class HaasApiTests
+             {
+                 Assert.Equal("DPRNT", json.RootElement.GetProperty("telemetryProvider").GetString());
+                 Assert.Equal("FILE", json.RootElement.GetProperty("dprntSource").GetString());
+-                Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt",
+-                    json.RootElement.GetProperty("dprntFilePath").GetString());
++                Assert.Equal(printFile, json.RootElement.GetProperty("dprntFilePath").GetString());
+                 Assert.True(json.RootElement.GetProperty("dprntFileTruncateAfterRead").GetBoolean());
+             }
+ 
+@@ -302,8 +303,7 @@ public sealed class HaasApiTests
+             {
+                 Assert.Equal("DPRNT", json.RootElement.GetProperty("telemetryProvider").GetString());
+                 Assert.Equal("FILE", json.RootElement.GetProperty("dprntSource").GetString());
+-                Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt",
+-                    json.RootElement.GetProperty("dprntFilePath").GetString());
++                Assert.Equal(printFile, json.RootElement.GetProperty("dprntFilePath").GetString());
+                 Assert.True(json.RootElement.GetProperty("dprntFileTruncateAfterRead").GetBoolean());
+                 Assert.Equal(2500, json.RootElement.GetProperty("pollingIntervalMs").GetInt32());
+                 Assert.Equal(2, json.RootElement.GetProperty("version").GetInt32());
+@@ -315,7 +315,7 @@ public sealed class HaasApiTests
+             Assert.False(genericJson.RootElement.GetProperty("allowWrite").GetBoolean());
+             var dprnt = genericJson.RootElement.GetProperty("configuration").GetProperty("dprnt");
+             Assert.Equal("FILE", dprnt.GetProperty("source").GetString());
+-            Assert.Equal(@"\\MAZAK-VARIAXIS\MC_sdg\print\print.txt", dprnt.GetProperty("filePath").GetString());
++            Assert.Equal(printFile, dprnt.GetProperty("filePath").GetString());
+             Assert.True(dprnt.GetProperty("truncateAfterRead").GetBoolean());
+ 
+             using var probe = await client.PostAsync("/api/v1/machines/machine-haas/haas/test-dprnt", null);
+diff --git a/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs b/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs
+index d3269a3..b826611 100644
+--- a/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs
++++ b/tests/Meimad.Planner.Server.Tests/Haas/HaasDprntFileReaderTests.cs
+@@ -18,19 +18,70 @@ public sealed class HaasDprntFileReaderTests : IDisposable
+ 
+         var first = await reader.DrainAsync(path, false, CancellationToken.None);
+         var quiet = await reader.DrainAsync(path, false, CancellationToken.None);
+-        await File.AppendAllTextAsync(path, "16E2509-7PSOFI-1\r\n");
++        await File.AppendAllTextAsync(path, "16E2509-7PSOFI-1\r\nMEIMAD/V/1/CST/BBB\r\n");
+         var second = await reader.DrainAsync(path, false, CancellationToken.None);
+ 
++        // A fresh reader recovers the current PartName but never replays historical events.
+         Assert.Equal("30P647004101-001", first.PartName);
+-        Assert.Equal(new[] { "MEIMAD/V/1/OLC/AAA" }, first.EventLines);
++        Assert.Empty(first.EventLines);
+         Assert.Null(quiet.PartName);
+         Assert.Empty(quiet.EventLines);
+         Assert.Equal("16E2509-7PSOFI-1", second.PartName);
+-        Assert.Empty(second.EventLines);
+-        Assert.Equal("30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\n16E2509-7PSOFI-1\r\n",
++        Assert.Equal(new[] { "MEIMAD/V/1/CST/BBB" }, second.EventLines);
++        Assert.Equal("30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\n16E2509-7PSOFI-1\r\nMEIMAD/V/1/CST/BBB\r\n",
+             await File.ReadAllTextAsync(path));
+     }
+ 
++    [Fact]
++    public async Task Fresh_reader_with_truncation_replays_everything_the_file_still_holds()
++    {
++        await File.WriteAllTextAsync(path, "30P647004101-001\r\nMEIMAD/V/1/OLC/AAA\r\nMEIMAD/V/1/CST/BBB\r\n");
++        var reader = new HaasDprntFileReader();
++
++        var first = await reader.DrainAsync(path, true, CancellationToken.None);
++
++        Assert.Equal("30P647004101-001", first.PartName);
++        Assert.Equal(new[] { "MEIMAD/V/1/OLC/AAA", "MEIMAD/V/1/CST/BBB" }, first.EventLines);
++        Assert.Equal(0L, new FileInfo(path).Length);
++    }
++
++    [Fact]
++    public async Task Fresh_reader_without_truncation_starts_from_the_tail_of_a_large_file()
++    {
++        var builder = new StringBuilder();
++        for (var index = 0; index < 8000; index++)
++            builder.Append("OLD-PART-").Append(index).Append("\r\nMEIMAD/V/1/OLC/").Append(index).Append("\r\n");
++        builder.Append("30P647004101-001\r\n");
++        await File.WriteAllTextAsync(path, builder.ToString());
++        var reader = new HaasDprntFileReader();
++
++        var first = await reader.DrainAsync(path, false, CancellationToken.None);
++        await File.AppendAllTextAsync(path, "MEIMAD/V/1/CST/NEW\r\n");
++        var second = await reader.DrainAsync(path, false, CancellationToken.None);
++
++        Assert.Equal("30P647004101-001", first.PartName);
++        Assert.Empty(first.EventLines);
++        Assert.Null(second.PartName);
++        Assert.Equal(new[] { "MEIMAD/V/1/CST/NEW" }, second.EventLines);
++    }
++
++    [Fact]
++    public async Task Truncation_waits_while_the_controller_is_still_writing_a_line()
++    {
++        await File.WriteAllTextAsync(path, "30P647004101-001\r\n16E25");
++        var reader = new HaasDprntFileReader();
++
++        var partial = await reader.DrainAsync(path, true, CancellationToken.None);
++        var untouched = new FileInfo(path).Length;
++        await File.AppendAllTextAsync(path, "09-7PSOFI-1\r\n");
++        var complete = await reader.DrainAsync(path, true, CancellationToken.None);
++
++        Assert.Equal("30P647004101-001", partial.PartName);
++        Assert.Equal(23L, untouched);
++        Assert.Equal("16E2509-7PSOFI-1", complete.PartName);
++        Assert.Equal(0L, new FileInfo(path).Length);
++    }
++
+     [Fact]
+     public async Task Holds_an_unterminated_line_until_the_controller_finishes_it()
+     {
+-- 
+2.43.0
+
+
+From e21c020a96c28a62746aa4b0b4664885ade791e8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 17 Sep 2026 18:06:25 +0300
+Subject: [PATCH 3/3] DPRNT file: fail the MTConnect connection test on an
+ unreadable file, clear stale PartName on recovery
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JMNbrUi8mkQMTaJDLsmBGe
+---
+ .../Infrastructure/Cnc/HaasNgcAdapter.cs                   | 7 ++++++-
+ .../Infrastructure/Haas/HaasDprntFileReader.cs             | 4 ++--
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs b/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
+index a05af2c..b74aea0 100644
+--- a/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
++++ b/server/Meimad.Planner.Server/Infrastructure/Cnc/HaasNgcAdapter.cs
+@@ -193,7 +193,7 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+         var failedOptional = checks.Any(value => !value.Succeeded);
+         var connectionStatus = !providerOkay ? CncConnectionStates.Offline
+             : failedOptional ? CncConnectionStates.Degraded : CncConnectionStates.Online;
+-        return new(providerOkay, connectionStatus, checks);
++        return new(providerOkay && !failedOptional, connectionStatus, checks);
+     }
+ 
+     private async Task<CncAdapterSnapshot> ReadMtConnectSnapshotAsync(CancellationToken token)
+@@ -571,6 +571,11 @@ internal sealed class HaasNgcAdapter : ICncMachineAdapter
+         {
+             cachedPart = cachedPart with { Stale = cachedPart.Value is not null };
+         }
++        else if (UsesDprntFile && cachedPart.Stale)
++        {
++            // Lines written during a file outage are still in the file and were consumed by this drain.
++            cachedPart = cachedPart with { Stale = false };
++        }
+         var dprntState = dprnt.Available ? CncComponentStates.Available : CncComponentStates.Unavailable;
+         var components = new Dictionary<string, string>(StringComparer.Ordinal)
+         {
+diff --git a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+index 83e8e29..c2f71eb 100644
+--- a/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
++++ b/server/Meimad.Planner.Server/Infrastructure/Haas/HaasDprntFileReader.cs
+@@ -113,7 +113,7 @@ internal sealed class HaasDprntFileReader
+ 
+     private async Task<bool> TailMatchesAsync(FileStream stream, CancellationToken token)
+     {
+-        if (tailFingerprint.Length == 0 || offset < tailFingerprint.Length) return tailFingerprint.Length == 0;
++        if (tailFingerprint.Length == 0) return true;
+         var current = new byte[tailFingerprint.Length];
+         stream.Position = offset - tailFingerprint.Length;
+         await stream.ReadExactlyAsync(current, token);
+@@ -139,7 +139,7 @@ internal sealed class HaasDprntFileReader
+     {
+         var text = Encoding.UTF8.GetString(buffer)
+             .Replace("\0", string.Empty, StringComparison.Ordinal)
+-            .Replace("﻿", string.Empty, StringComparison.Ordinal);
++            .Replace("\uFEFF", string.Empty, StringComparison.Ordinal);
+         if (skipPartialFirstLine)
+         {
+             // The catch-up window starts mid-line; drop the fragment before the first terminator.
+-- 
+2.43.0
+
