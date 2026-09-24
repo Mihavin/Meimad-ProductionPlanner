@@ -80,7 +80,9 @@
     elements.badge.className = `meimad-mode-badge ${state.readOnly ? "read-only" : "editable"}`;
     elements.badge.title = state.readOnly
       ? `${state.source || "Immutable Server release"}. The release cannot be changed; "Save copy as" keeps a local copy.`
-      : "Local program. Save it, then release it through the Release G-code form.";
+      : state.savesToCaseFolder
+        ? "Local program. Save puts it in the Case Working Folder, in the Gcode folder of the revision it becomes. Release it from here or through the Release G-code form."
+        : "Local program. Save it, then release it through the Release G-code form.";
     elements.newFile.hidden = Boolean(state.readOnly);
     elements.openFile.hidden = Boolean(state.readOnly);
     elements.saveFile.hidden = Boolean(state.readOnly);
@@ -243,7 +245,7 @@
   function openReleaseDialog() {
     if (!state.canRelease || state.readOnly) return;
     const context = state.release || {};
-    elements.releaseOperation.textContent = `${context.operation ? `${context.operation}. ` : ""}Releases the saved program as a new G-code release of this Operation. The Server checks the Meimad canonical format first; nothing is uploaded when the check fails. Edit Mode in the Planner is required.`;
+    elements.releaseOperation.textContent = `${context.operation ? `${context.operation}. ` : ""}Releases the saved program as a new G-code release of this Operation. The Server checks the Meimad canonical format first; nothing is uploaded when the check fails. Edit Mode in the Planner is required.${state.savesToCaseFolder ? " Before the upload, the program is saved in the Case Working Folder, in the Gcode folder of the new revision." : ""}`;
     elements.releasePostprocessor.replaceChildren();
     for (const target of context.postprocessors || []) {
       const option = document.createElement("option");

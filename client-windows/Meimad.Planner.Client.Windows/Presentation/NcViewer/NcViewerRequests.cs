@@ -42,7 +42,16 @@ internal static class NcViewerRequests
             SourceDescription: Describe(release),
             NcDialect: NcViewerDialects.Resolve(machines, machineId, release?.PostprocessorId),
             FormatService: FormatService(api),
-            MachineSelection: NcViewerMachines.Resolve(machines, machineId, release?.PostprocessorId));
+            MachineSelection: NcViewerMachines.Resolve(machines, machineId, release?.PostprocessorId),
+            ProgramFolders: NcProgramFolders.ForOperation(
+                api,
+                caseId,
+                caseOperationId,
+                release?.PostprocessorId,
+                source: release is null
+                    ? null
+                    : new NcProgramRevision(release.ProcessRevisionNumber, release.PostprocessorId,
+                        release.PostprocessorName, release.PostSpecificRevision)));
     }
 
     /// <summary>The Server's stateless "Apply Meimad Planner Format".</summary>

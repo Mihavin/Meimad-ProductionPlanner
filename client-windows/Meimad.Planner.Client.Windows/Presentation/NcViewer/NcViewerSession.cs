@@ -1,7 +1,9 @@
 using System.IO;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Localization;
 using Meimad.Planner.NcEngine;
 
@@ -13,6 +15,8 @@ namespace Meimad.Planner.Client.Windows.Presentation.NcViewer;
 /// keeps the document, runs the NC engine on a background thread, and answers on the UI thread.
 /// It never writes to the Server: releases stay immutable, and a formatted or edited program is
 /// only a local file until the planner releases it through the normal Release G-code form.
+/// A program of a Case Operation is saved in the Case Working Folder, in the revision folder of
+/// the release it becomes (see <see cref="NcProgramFolders"/>).
 /// </summary>
 internal sealed class NcViewerSession : IDisposable
 {
@@ -187,9 +191,9 @@ internal sealed class NcViewerSession : IDisposable
             case "openFile":
                 return OpenDocument();
             case "saveFile":
-                return SaveDocument(Text(args, 0), saveAs: false);
+                return await SaveDocumentAsync(Text(args, 0), saveAs: false);
             case "saveFileAs":
-                return SaveDocument(Text(args, 0), saveAs: true);
+                return await SaveDocumentAsync(Text(args, 0), saveAs: true);
             case "getSettings":
             case "openSettings":
                 return await PublicSettingsAsync();
@@ -253,7 +257,7 @@ internal sealed class NcViewerSession : IDisposable
         return PublicDocumentState(includeText: true);
     }
 
-    private object SaveDocument(string editorText, bool saveAs)
+    private async Task<object> SaveDocumentAsync(string editorText, bool saveAs)
     {
         if (readOnly)
         {
@@ -261,7 +265,9 @@ internal sealed class NcViewerSession : IDisposable
             {
                 throw new InvalidOperationException("This is an immutable Server release. Use \"Save copy as\" to keep a local copy.");
             }
-            var copyPath = ui.ChooseSaveFile(documentName, DefaultProgramFolder(), "Save a local copy of the release");
+            // A copy of a release starts in that release's own revision folder.
+            var releaseFolder = await SourceReleaseFolderAsync();
+            var copyPath = ui.ChooseSaveFile(documentName, releaseFolder ?? DefaultProgramFolder(), "Save a local copy of the release");
             if (copyPath is null) return new { canceled = true };
             WriteDocument(copyPath, text);
             SendStatus($"Copy saved to {copyPath}. The Server release is unchanged.", "success");
@@ -269,9 +275,29 @@ internal sealed class NcViewerSession : IDisposable
         }
 
         text = NcTextFile.Normalize(editorText);
-        var target = saveAs || filePath is null
-            ? ui.ChooseSaveFile(documentName, filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath), "Save NC program")
-            : filePath;
+        string? target;
+        if (request.ProgramFolders is not null)
+        {
+            // A modified program of a Case Operation goes to the revision folder of the release it
+            // becomes; "Save as" opens that folder. When the folder cannot be resolved the status
+            // bar says why and a file dialog keeps the edits from being lost.
+            var folder = await NextReleaseFolderAsync(null, null);
+            if (folder is null || saveAs)
+            {
+                target = ui.ChooseSaveFile(documentName, folder?.Path ?? DefaultProgramFolder(), "Save NC program");
+            }
+            else
+            {
+                target = Path.Combine(folder.Path, documentName);
+                if (!ConfirmTarget(target)) return new { canceled = true };
+            }
+        }
+        else
+        {
+            target = saveAs || filePath is null
+                ? ui.ChooseSaveFile(documentName, filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath), "Save NC program")
+                : filePath;
+        }
         if (target is null) return new { canceled = true };
         WriteDocument(target, text);
         filePath = target;
@@ -394,20 +420,35 @@ internal sealed class NcViewerSession : IDisposable
     {
         if (request.UseForRelease is null) throw new InvalidOperationException("This viewer was not opened from a G-code release form.");
         if (!readOnly) text = NcTextFile.Normalize(editorText);
-        var path = filePath;
-        if (path is null || dirty || readOnly)
+        string? path;
+        if (request.ProgramFolders is not null)
         {
-            path = ui.ChooseSaveFile(readOnly ? FormattedCopyName(documentName) : documentName,
-                filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath),
-                "Save the NC program to release");
-            if (path is null) return new { canceled = true };
-            WriteDocument(path, text);
-            filePath = path;
-            documentName = Path.GetFileName(path);
-            readOnly = false;
-            dirty = false;
-            SendDocumentState();
-            SendMeimadMode();
+            // Saved in the revision folder of the release the Release G-code form creates. When the
+            // form releases it with another postprocessor or scope, the file moves to that folder.
+            NcProgramFolder folder;
+            try
+            {
+                folder = await request.ProgramFolders.NextReleaseAsync(null, null);
+            }
+            catch (Exception exception) when (IsFolderFailure(exception))
+            {
+                throw new InvalidOperationException(FolderFailure(exception), exception);
+            }
+            path = Path.Combine(folder.Path, readOnly ? FormattedCopyName(documentName) : documentName);
+            if (!ConfirmTarget(path)) return new { canceled = true };
+            SaveReleasedCopy(path);
+        }
+        else
+        {
+            path = filePath;
+            if (path is null || dirty || readOnly)
+            {
+                path = ui.ChooseSaveFile(readOnly ? FormattedCopyName(documentName) : documentName,
+                    filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath),
+                    "Save the NC program to release");
+                if (path is null) return new { canceled = true };
+                SaveReleasedCopy(path);
+            }
         }
         var message = await request.UseForRelease(path);
         SendStatus(message, "success");
@@ -473,26 +514,50 @@ internal sealed class NcViewerSession : IDisposable
             }
         }
 
-        var path = filePath;
-        if (path is null || dirty || readOnly)
+        var postprocessorId = OptionText(options, "postprocessorId") ?? request.ReleaseContext.DefaultPostprocessorId ?? string.Empty;
+        var changeScope = OptionText(options, "changeScope")
+            ?? (request.ReleaseContext.HasActiveProcessRevision ? NcProgramFolders.LocalPostRevision : NcProgramFolders.NewProcessRevision);
+        string? path;
+        if (request.ProgramFolders is not null)
         {
-            path = ui.ChooseSaveFile(readOnly ? FormattedCopyName(documentName) : documentName,
-                filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath),
-                "Save the NC program to release");
-            if (path is null) return new { released = false, canceled = true };
-            WriteDocument(path, text);
-            filePath = path;
-            documentName = Path.GetFileName(path);
-            readOnly = false;
-            dirty = false;
-            SendDocumentState();
-            SendMeimadMode();
+            // The released program must be in the Case Working Folder: it is saved in the folder of
+            // the release it becomes before anything is uploaded.
+            NcProgramFolder folder;
+            try
+            {
+                folder = await request.ProgramFolders.NextReleaseAsync(
+                    string.IsNullOrEmpty(postprocessorId) ? null : postprocessorId, changeScope);
+            }
+            catch (Exception exception) when (IsFolderFailure(exception))
+            {
+                var reason = FolderFailure(exception);
+                SendStatus($"Not released: {reason}", "error");
+                return new { released = false, message = $"Not released: {reason}" };
+            }
+            path = Path.Combine(folder.Path, readOnly ? FormattedCopyName(documentName) : documentName);
+            if (filePath is null || !NcProgramFolders.SamePath(path, filePath) || dirty || readOnly)
+            {
+                if (!ConfirmTarget(path)) return new { released = false, canceled = true };
+                SaveReleasedCopy(path);
+            }
+        }
+        else
+        {
+            path = filePath;
+            if (path is null || dirty || readOnly)
+            {
+                path = ui.ChooseSaveFile(readOnly ? FormattedCopyName(documentName) : documentName,
+                    filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath),
+                    "Save the NC program to release");
+                if (path is null) return new { released = false, canceled = true };
+                SaveReleasedCopy(path);
+            }
         }
 
         var command = new NcViewerReleaseCommand(
             path,
-            OptionText(options, "postprocessorId") ?? request.ReleaseContext.DefaultPostprocessorId ?? string.Empty,
-            OptionText(options, "changeScope") ?? (request.ReleaseContext.HasActiveProcessRevision ? "LOCAL_POST_REVISION" : "NEW_PROCESS_REVISION"),
+            postprocessorId,
+            changeScope,
             OptionText(options, "releaseComment") ?? string.Empty,
             OptionText(options, "processChangeDescription"),
             OptionFlag(options, "confirmNewProcessRevision"),
@@ -501,6 +566,14 @@ internal sealed class NcViewerSession : IDisposable
             OptionText(options, "toolTableFilePath"),
             request.ReleaseContext.HasActiveProcessRevision);
         var outcome = await request.ReleaseToServer(command, CancellationToken.None);
+        if (outcome.FilePath is { } releasedPath && !NcProgramFolders.SamePath(releasedPath, path))
+        {
+            // The Server assigned other numbers than expected: the program moved to their folder.
+            path = releasedPath;
+            filePath = releasedPath;
+            documentName = Path.GetFileName(releasedPath);
+            SendDocumentState();
+        }
         SendStatus(outcome.Message, outcome.Succeeded ? "success" : "error");
         return new
         {
@@ -512,6 +585,79 @@ internal sealed class NcViewerSession : IDisposable
             path
         };
     }
+
+    /// <summary>Writes the program the release uses and makes it the saved document.</summary>
+    private void SaveReleasedCopy(string path)
+    {
+        WriteDocument(path, text);
+        filePath = path;
+        documentName = Path.GetFileName(path);
+        readOnly = false;
+        dirty = false;
+        SendDocumentState();
+        SendMeimadMode();
+    }
+
+    /// <summary>
+    /// The revision folder of the release the program becomes, or null when it cannot be resolved
+    /// (offline, no Case Working Folder, the folder cannot be created); the status bar says why.
+    /// </summary>
+    private async Task<NcProgramFolder?> NextReleaseFolderAsync(string? postprocessorId, string? changeScope)
+    {
+        if (request.ProgramFolders is null) return null;
+        try
+        {
+            return await request.ProgramFolders.NextReleaseAsync(postprocessorId, changeScope);
+        }
+        catch (Exception exception) when (IsFolderFailure(exception))
+        {
+            SendStatus(FolderFailure(exception), "warning");
+            return null;
+        }
+    }
+
+    /// <summary>The revision folder of the release this document shows, when it comes from one.</summary>
+    private async Task<string?> SourceReleaseFolderAsync()
+    {
+        if (request.ProgramFolders?.Source is not { } source) return null;
+        try
+        {
+            return (await request.ProgramFolders.ReleaseFolderAsync(source)).Path;
+        }
+        catch (Exception exception) when (IsFolderFailure(exception))
+        {
+            SendStatus(FolderFailure(exception), "warning");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A revision folder may already hold a file of the same name. This document's own file and a
+    /// file with identical content are replaced silently; any other file only after asking.
+    /// </summary>
+    private bool ConfirmTarget(string target)
+    {
+        if (!File.Exists(target)) return true;
+        if (filePath is not null && NcProgramFolders.SamePath(target, filePath)) return true;
+        try
+        {
+            var bytes = NcTextFile.Encode(text, lineEnding, hasBom, encodingName);
+            if (File.ReadAllBytes(target).AsSpan().SequenceEqual(bytes)) return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable: ask like for any other file.
+        }
+        return ui.ConfirmReplaceFile(target);
+    }
+
+    private static bool IsFolderFailure(Exception exception) => exception is InvalidOperationException
+        or IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException
+        or PlannerApiException or NotSupportedException;
+
+    private static string FolderFailure(Exception exception) => exception is InvalidOperationException
+        ? exception.Message
+        : $"The Case G-code folder is unavailable: {exception.Message}";
 
     private static string? OptionText(JsonElement options, string name)
     {
@@ -899,6 +1045,7 @@ internal sealed class NcViewerSession : IDisposable
         context = request.ContextTitle,
         canFormat = request.FormatService is not null,
         canUseForRelease = request.UseForRelease is not null,
+        savesToCaseFolder = request.ProgramFolders is not null,
         dialect = dialect ?? NcViewerDialects.Default,
         dialectKnown = dialect is not null,
         dialects = NcViewerDialects.All.Select(option => new { id = option.Id, name = option.Name }),

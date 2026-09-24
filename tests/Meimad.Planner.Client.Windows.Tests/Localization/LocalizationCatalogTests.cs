@@ -125,6 +125,33 @@ public sealed class LocalizationCatalogTests
     }
 
     [Theory]
+    [InlineData("he")]
+    [InlineData("ru")]
+    public void Nc_program_folder_messages_are_translated_and_keep_their_paths(string language)
+    {
+        const string folder = @"C:\Cases\PN-100\Gcode\Bearing housing\10\1\HAAS_4X\3";
+        var released = LocalizationService.Current.Translate(
+            language,
+            $"Released O1500.nc: process r1, HAAS_4X post r3. The program is saved in {folder}.");
+        var refused = LocalizationService.Current.Translate(
+            language,
+            "Not released: This Case has no Working Folder. Set the Case Working Folder, then save again.");
+        var replace = LocalizationService.Current.Translate(
+            language,
+            $"The revision folder already has a different file with this name:{Environment.NewLine}{folder}\\O1500.nc{Environment.NewLine}Replace it?");
+
+        Assert.Contains(folder, released, StringComparison.Ordinal);
+        Assert.DoesNotContain("Released", released, StringComparison.Ordinal);
+        Assert.DoesNotContain("The program is saved in", released, StringComparison.Ordinal);
+        Assert.DoesNotContain("Not released", refused, StringComparison.Ordinal);
+        Assert.DoesNotContain("Working Folder", refused, StringComparison.Ordinal);
+        var lines = replace.Split(Environment.NewLine);
+        Assert.Equal(3, lines.Length);
+        Assert.Equal($@"{folder}\O1500.nc", lines[1]);
+        Assert.DoesNotContain("Replace it?", lines[2], StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("he", "עובד בקרת איכות")]
     [InlineData("ru", "контролёра ОТК")]
     public void Inserted_labels_are_translated_without_touching_identifiers(string language, string role)

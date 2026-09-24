@@ -189,6 +189,200 @@ public sealed class NcViewerSessionTests : IDisposable
         Assert.Equal("Released O1500.nc: process r1, HAAS_4X post r2.", (await ui.NextEventAsync("app:status")).GetProperty("message").GetString());
     });
 
+    [Fact]
+    public void Save_puts_a_case_program_in_the_revision_folder_of_the_release_it_becomes() => SingleThread.Run(async () =>
+    {
+        // No save path: a file dialog would cancel the save.
+        var ui = new FakeUi();
+        var workingFolder = Path.Combine(folder, "Case WF");
+        using var session = Session(Request(readOnly: false) with { ProgramFolders = Folders(workingFolder) }, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+
+        var state = await ui.InvokeAsync(session, "saveFile", MillProgram.Replace("X360.", "X420.", StringComparison.Ordinal));
+
+        var expected = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "3", "O1500.nc");
+        Assert.Equal(expected, state.GetProperty("filePath").GetString());
+        Assert.Contains("X420.", File.ReadAllText(expected), StringComparison.Ordinal);
+        Assert.False(session.IsDirty);
+        Assert.Null(ui.LastSaveDirectory);
+    });
+
+    [Fact]
+    public void Save_as_opens_the_revision_folder_and_a_copy_of_a_release_opens_its_own_folder() => SingleThread.Run(async () =>
+    {
+        var workingFolder = Path.Combine(folder, "Case WF");
+        var ui = new FakeUi { SavePath = Path.Combine(folder, "chosen.nc") };
+        using (var editable = Session(Request(readOnly: false) with { ProgramFolders = Folders(workingFolder) }, ui))
+        {
+            await ui.InvokeAsync(editable, "getInitialState");
+            await ui.InvokeAsync(editable, "saveFileAs", MillProgram);
+            Assert.Equal(Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "3"), ui.LastSaveDirectory);
+        }
+
+        var releaseFolders = new NcProgramFolders(
+            _ => Task.FromResult(new NcProgramLocation(workingFolder, "Bearing housing", 10, Catalog())),
+            "post-haas",
+            source: new NcProgramRevision(1, "post-haas", "HAAS_4X", 2));
+        var copyUi = new FakeUi { SavePath = Path.Combine(folder, "copy.nc") };
+        using var release = Session(Request(readOnly: true) with { ProgramFolders = releaseFolders }, copyUi);
+        await copyUi.InvokeAsync(release, "getInitialState");
+
+        await copyUi.InvokeAsync(release, "saveFileAs", MillProgram);
+
+        var own = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "2");
+        Assert.Equal(own, copyUi.LastSaveDirectory);
+        Assert.True(Directory.Exists(own));
+    });
+
+    [Fact]
+    public void Without_a_case_working_folder_save_says_why_and_asks_where_to_save() => SingleThread.Run(async () =>
+    {
+        var target = Path.Combine(folder, "O1500.nc");
+        var ui = new FakeUi { SavePath = target };
+        using var session = Session(Request(readOnly: false) with { ProgramFolders = Folders(" ") }, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+
+        await ui.InvokeAsync(session, "saveFile", MillProgram);
+
+        Assert.True(File.Exists(target));
+        Assert.Contains("no Working Folder", (await ui.NextEventAsync("app:status")).GetProperty("message").GetString(), StringComparison.Ordinal);
+    });
+
+    [Fact]
+    public void A_different_file_in_the_revision_folder_is_replaced_only_after_asking() => SingleThread.Run(async () =>
+    {
+        var workingFolder = Path.Combine(folder, "Case WF");
+        var target = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "3", "O1500.nc");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(target, "another draft");
+        var ui = new FakeUi { ConfirmReplace = false };
+        using var session = Session(Request(readOnly: false) with { ProgramFolders = Folders(workingFolder) }, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+
+        var declined = await ui.InvokeAsync(session, "saveFile", MillProgram);
+
+        Assert.True(declined.GetProperty("canceled").GetBoolean());
+        Assert.Equal("another draft", File.ReadAllText(target));
+        Assert.Equal([target], ui.ReplacePrompts);
+    });
+
+    [Fact]
+    public void Use_for_release_saves_a_case_program_in_its_revision_folder() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi();
+        var workingFolder = Path.Combine(folder, "Case WF");
+        string? handedOver = null;
+        var request = Request(readOnly: false) with
+        {
+            ProgramFolders = Folders(workingFolder),
+            UseForRelease = path =>
+            {
+                handedOver = path;
+                return Task.FromResult("selected");
+            }
+        };
+        using var session = Session(request, ui);
+
+        await ui.InvokeAsync(session, "meimadUseForRelease", "O1500\nG0 X0\nM30\n");
+
+        var expected = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "3", "O1500.nc");
+        Assert.Equal(expected, handedOver);
+        Assert.Equal("O1500\r\nG0 X0\r\nM30\r\n", File.ReadAllText(expected));
+        Assert.Null(ui.LastSaveDirectory);
+    });
+
+    [Fact]
+    public void Release_saves_the_program_in_the_folder_of_the_new_revision_before_the_upload() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi();
+        var workingFolder = Path.Combine(folder, "Case WF");
+        var assigned = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "4", "O1500.nc");
+        string? uploadedFrom = null;
+        var savedBeforeUpload = false;
+        var request = Request(readOnly: false) with
+        {
+            ValidateService = (_, _) => Task.FromResult(new NcTemplateValidation(true, null, null)),
+            ReleaseContext = ReleaseContext(),
+            ProgramFolders = Folders(workingFolder),
+            ReleaseToServer = (command, _) =>
+            {
+                uploadedFrom = command.FilePath;
+                savedBeforeUpload = File.Exists(command.FilePath);
+                // The Server assigned post r4, so the Case moved the program to that folder.
+                Directory.CreateDirectory(Path.GetDirectoryName(assigned)!);
+                File.Move(command.FilePath, assigned);
+                return Task.FromResult(new NcViewerReleaseOutcome(true, "Released O1500.nc", "release-4", 1, 4, assigned));
+            }
+        };
+        using var session = Session(request, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+
+        var result = await ui.InvokeAsync(session, "meimadRelease", MillProgram, new
+        {
+            postprocessorId = "post-haas",
+            changeScope = "LOCAL_POST_REVISION",
+            releaseComment = "Feed corrected",
+            confirmToolTable = true
+        });
+
+        Assert.Equal(Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X", "3", "O1500.nc"), uploadedFrom);
+        Assert.True(savedBeforeUpload);
+        Assert.True(result.GetProperty("released").GetBoolean());
+        Assert.Equal(assigned, result.GetProperty("path").GetString());
+        Assert.Null(ui.LastSaveDirectory);
+    });
+
+    [Fact]
+    public void Release_is_refused_when_the_program_cannot_be_saved_in_the_case_working_folder() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi { SavePath = Path.Combine(folder, "O1500.nc") };
+        var released = false;
+        var request = Request(readOnly: false) with
+        {
+            ValidateService = (_, _) => Task.FromResult(new NcTemplateValidation(true, null, null)),
+            ReleaseContext = ReleaseContext(),
+            ProgramFolders = Folders(string.Empty),
+            ReleaseToServer = (_, _) =>
+            {
+                released = true;
+                return Task.FromResult(new NcViewerReleaseOutcome(true, "unexpected"));
+            }
+        };
+        using var session = Session(request, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+
+        var result = await ui.InvokeAsync(session, "meimadRelease", MillProgram, new { postprocessorId = "post-haas", releaseComment = "v2", confirmToolTable = true });
+
+        Assert.False(result.GetProperty("released").GetBoolean());
+        Assert.Contains("Working Folder", result.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.False(released);
+        Assert.False(File.Exists(Path.Combine(folder, "O1500.nc")));
+    });
+
+    private static NcProgramFolders Folders(string workingFolder) => new(
+        _ => Task.FromResult(new NcProgramLocation(workingFolder, "Bearing housing", 10, Catalog())),
+        "post-haas");
+
+    /// <summary>Process r1 is active; HAAS_4X has post revisions 1 and 2, so its next is 3.</summary>
+    private static PlannerGCodeCatalog Catalog()
+    {
+        var tools = new PlannerToolTableRelease(
+            "tools-1", 1, "tools.csv", 10, new string('a', 64), DateTimeOffset.UtcNow, "planner", "Initial tools");
+        var process = new PlannerProcessRevision("process-1", 1, true, DateTimeOffset.UtcNow, "planner", "Initial", 1, tools);
+        PlannerGCodeRelease Release(string id, int localRevision) => new(
+            id, "process-1", 1, "post-haas", "HAAS_4X", localRevision, "O1500.nc", 100, new string('b', 64),
+            DateTimeOffset.UtcNow, "planner", "LOCAL_POST_REVISION", "comment", "tools-1", true, true);
+        return new PlannerGCodeCatalog(
+            "operation-1",
+            process,
+            [process],
+            [
+                new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "current", null, null),
+                new PlannerPostprocessorReleaseStatus("post-doosan", "Doosan 3X", true, "missing", null, null)
+            ],
+            [Release("release-1", 1), Release("release-2", 2)]);
+    }
+
     private static NcViewerReleaseContext ReleaseContext() => new(
         "PN-1 · OP10 Mill",
         [new NcViewerReleaseTarget("post-haas", "HAAS_4X", "Current"), new NcViewerReleaseTarget("post-doosan", "Doosan 3X", "Missing — release required")],
@@ -361,7 +555,21 @@ public sealed class NcViewerSessionTests : IDisposable
         public void PublishModel(string token, byte[] utf8Json) => Models[token] = utf8Json;
         public string? ToolTablePath { get; init; }
         public string? ChooseOpenFile(string? initialDirectory) => null;
-        public string? ChooseSaveFile(string suggestedName, string? initialDirectory, string title) => SavePath;
+        public string? LastSaveDirectory { get; private set; }
+        public bool ConfirmReplace { get; init; } = true;
+        public List<string> ReplacePrompts { get; } = [];
+
+        public string? ChooseSaveFile(string suggestedName, string? initialDirectory, string title)
+        {
+            LastSaveDirectory = initialDirectory;
+            return SavePath;
+        }
+
+        public bool ConfirmReplaceFile(string path)
+        {
+            ReplacePrompts.Add(path);
+            return ConfirmReplace;
+        }
         public string? ChooseFolder(string title, string? initialDirectory) => null;
         public string? ChooseToolTableFile(string? initialDirectory) => ToolTablePath;
         public bool ConfirmDiscardChanges(string documentName) => true;

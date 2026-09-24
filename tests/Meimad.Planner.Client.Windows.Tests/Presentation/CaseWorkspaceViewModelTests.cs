@@ -207,6 +207,74 @@ public sealed class CaseWorkspaceViewModelTests
         }
     }
 
+    [Fact]
+    public async Task Released_programs_saved_in_the_operation_gcode_folder_end_in_their_revision_folder()
+    {
+        var workingFolder = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Workspace.Tests", Guid.NewGuid().ToString("N"));
+        var tools = new PlannerToolTableRelease(
+            "tools-1", 1, "tools.csv", 10, new string('a', 64),
+            DateTimeOffset.UtcNow, "planner", "Initial tools");
+        var process = new PlannerProcessRevision(
+            "process-1", 1, true, DateTimeOffset.UtcNow,
+            "planner", "Initial process", 1, tools);
+        var api = new FakeApiClient(CreateCase() with { WorkingFolderPath = workingFolder });
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            ActiveProcessRevision = process,
+            ProcessRevisions = [process],
+            Postprocessors = [new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "missing", null, null)]
+        };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+        await viewModel.RefreshGCodeAsync();
+        var caseId = viewModel.SelectedCase!.CaseId;
+        var operationId = viewModel.SelectedOperation!.CaseOperationId;
+        var revisionFolder = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "1", "HAAS_4X");
+
+        try
+        {
+            // The editor saves into the Operation's revision folders, created when missing.
+            var editor = await viewModel.CreateNcEditorRequestAsync(editSelectedFile: false);
+            var next = await editor!.ProgramFolders!.NextReleaseAsync(null, null);
+            Assert.Equal(Path.Combine(revisionFolder, "1"), next.Path);
+            Assert.True(Directory.Exists(next.Path));
+
+            // A program saved for other numbers moves to the folder of the release the Server made
+            // (this fake always assigns post revision 1).
+            var drafted = Path.Combine(revisionFolder, "2", "PN-100-OP10.nc");
+            Directory.CreateDirectory(Path.GetDirectoryName(drafted)!);
+            File.WriteAllText(drafted, "O1\nM30\n");
+            var outcome = await viewModel.ReleaseFromViewerAsync(caseId, operationId, new(
+                drafted, "post-haas", "LOCAL_POST_REVISION", "Moved to its revision", null,
+                ConfirmNewProcessRevision: false, ReuseActiveToolTable: true, ConfirmToolTable: true,
+                ToolTableFilePath: null, HasActiveProcessRevision: true));
+
+            var released = Path.Combine(revisionFolder, "1", "PN-100-OP10.nc");
+            Assert.True(outcome.Succeeded, outcome.Message);
+            Assert.Equal(released, outcome.FilePath);
+            Assert.True(File.Exists(released));
+            Assert.False(File.Exists(drafted));
+            Assert.Contains("The program is saved in", outcome.Message, StringComparison.Ordinal);
+
+            // The Release G-code form moves a program from the Operation's folder the same way.
+            var formProgram = Path.Combine(revisionFolder, "3", "form.nc");
+            Directory.CreateDirectory(Path.GetDirectoryName(formProgram)!);
+            File.WriteAllText(formProgram, "O2\nM30\n");
+            viewModel.GCodeFilePath = formProgram;
+            viewModel.GCodeReleaseComment = "Released from the form";
+            viewModel.ConfirmToolTable = true;
+            await viewModel.ReleaseGCodeAsync();
+            Assert.True(File.Exists(Path.Combine(revisionFolder, "1", "form.nc")));
+            Assert.Contains("The program is saved in", viewModel.StatusMessage, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(workingFolder)) Directory.Delete(workingFolder, recursive: true);
+        }
+    }
+
     private static PlannerNcMachineCycleEstimate Estimate(string machineId, double seconds) => new(
         machineId, "nc-v1", 50, 100, 5, 1, 4, 2, 12000, 4, 1,
         seconds, seconds, [], "HIGH", DateTimeOffset.UtcNow);

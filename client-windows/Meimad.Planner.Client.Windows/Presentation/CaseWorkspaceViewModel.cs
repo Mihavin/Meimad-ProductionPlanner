@@ -1666,12 +1666,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     !newRevision || string.IsNullOrWhiteSpace(command.ToolTableFilePath) ? null : command.ToolTableFilePath),
                 clientId,
                 editGeneration);
+            var placed = await PlaceReleasedProgramAsync(caseId, caseOperationId, command.FilePath, released);
             outcome = new(
                 true,
-                $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.",
+                $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{placed.Note}",
                 released.GCodeReleaseId,
                 released.ProcessRevisionNumber,
-                released.PostSpecificRevision);
+                released.PostSpecificRevision,
+                placed.Path);
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -1752,7 +1754,35 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             MachineSelection: viewerMachine,
             ValidateService: client is null ? null : (text, token) => client.ValidateNcTemplateAsync(text, token),
             ReleaseContext: client is null ? null : ViewerReleaseContext(context),
-            ReleaseToServer: client is null ? null : (command, _) => ReleaseFromViewerAsync(caseId, operationId, command));
+            ReleaseToServer: client is null ? null : (command, _) => ReleaseFromViewerAsync(caseId, operationId, command),
+            ProgramFolders: client is null
+                ? null
+                : NcViewer.NcProgramFolders.ForOperation(
+                    client, caseId, operationId, SelectedReleasePostprocessor?.PostprocessorId, GCodeChangeScope));
+    }
+
+    /// <summary>
+    /// After a release, a program saved under the Operation's G-code folder in the Case Working
+    /// Folder moves to the folder of the numbers the Server assigned; a file from anywhere else
+    /// stays where it is. A placement problem never undoes the release: the note reports it.
+    /// </summary>
+    private async Task<(string? Path, string Note)> PlaceReleasedProgramAsync(
+        string caseId, string caseOperationId, string filePath, PlannerGCodeRelease released)
+    {
+        if (apiClient is null || string.IsNullOrWhiteSpace(filePath)) return (null, string.Empty);
+        try
+        {
+            var folders = NcViewer.NcProgramFolders.ForOperation(apiClient, caseId, caseOperationId, released.PostprocessorId);
+            var placement = await folders.PlaceReleasedProgramAsync(filePath, new NcViewer.NcProgramRevision(
+                released.ProcessRevisionNumber, released.PostprocessorId, released.PostprocessorName, released.PostSpecificRevision));
+            return placement.InOperationFolder
+                ? (placement.Path, $" The program is saved in {Path.GetDirectoryName(placement.Path)}.")
+                : (placement.Path, string.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception) || exception is InvalidOperationException)
+        {
+            return (null, $" The program file was not moved to its revision folder: {exception.Message}");
+        }
     }
 
     internal string UseEditorFileForRelease(string caseId, string caseOperationId, string path)
@@ -1864,6 +1894,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             return;
         }
 
+        string? releasedMessage = null;
         IsBusy = true;
         try
         {
@@ -1886,7 +1917,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                         : ToolTableFilePath),
                 clientId,
                 editGeneration);
-            StatusMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.";
+            var placed = await PlaceReleasedProgramAsync(
+                SelectedCase.CaseId, SelectedOperation.CaseOperationId, GCodeFilePath, released);
+            releasedMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{placed.Note}";
+            StatusMessage = releasedMessage;
             GCodeFilePath = string.Empty;
             ToolTableFilePath = string.Empty;
             GCodeReleaseComment = string.Empty;
@@ -1904,6 +1938,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
 
         await RefreshGCodeAsync();
+        // The history grid shows the new release; the status keeps the release message.
+        if (releasedMessage is not null) StatusMessage = releasedMessage;
     }
 
     internal Task SelectCaseAsync(CasePoolItemViewModel item)

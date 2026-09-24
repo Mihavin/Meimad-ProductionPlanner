@@ -33,6 +33,10 @@ namespace Meimad.Planner.Client.Windows.Presentation.NcViewer;
 /// Releases the saved program to the Server as a new G-code release of that Operation, with the
 /// same rules as the Release G-code form (Edit Mode, comment, confirmations). Null hides the action.
 /// </param>
+/// <param name="ProgramFolders">
+/// The Case Operation's revision folders in the Case Working Folder. Save, "Use for G-code
+/// release" and "Release to Server" write the program there; null keeps the file dialogs.
+/// </param>
 internal sealed record NcViewerOpenRequest(
     string ContextTitle,
     string DocumentName,
@@ -46,7 +50,8 @@ internal sealed record NcViewerOpenRequest(
     string? MachineSelection = null,
     Func<string, CancellationToken, Task<NcTemplateValidation>>? ValidateService = null,
     NcViewerReleaseContext? ReleaseContext = null,
-    Func<NcViewerReleaseCommand, CancellationToken, Task<NcViewerReleaseOutcome>>? ReleaseToServer = null)
+    Func<NcViewerReleaseCommand, CancellationToken, Task<NcViewerReleaseOutcome>>? ReleaseToServer = null,
+    NcProgramFolders? ProgramFolders = null)
 {
     /// <summary>The upstream viewer's blank program.</summary>
     internal const string BlankProgram = "%\nO0001\n\nM30\n%\n";
@@ -83,13 +88,18 @@ internal sealed record NcViewerReleaseCommand(
     string? ToolTableFilePath,
     bool HasActiveProcessRevision);
 
-/// <summary>Result of a viewer release; <see cref="Message"/> is shown in the viewer either way.</summary>
+/// <summary>
+/// Result of a viewer release; <see cref="Message"/> is shown in the viewer either way.
+/// <see cref="FilePath"/> is where the released program is after the release, when it moved to
+/// the folder of the numbers the Server assigned.
+/// </summary>
 internal sealed record NcViewerReleaseOutcome(
     bool Succeeded,
     string Message,
     string? ReleaseId = null,
     int? ProcessRevisionNumber = null,
-    int? PostSpecificRevision = null);
+    int? PostSpecificRevision = null,
+    string? FilePath = null);
 
 internal sealed record NcDialectOption(string Id, string Name);
 
@@ -179,5 +189,7 @@ internal interface INcViewerHostUi
     /// <summary>A tool-table file (CSV, JSON or Cimatron MHT) for a release.</summary>
     string? ChooseToolTableFile(string? initialDirectory);
     bool ConfirmDiscardChanges(string documentName);
+    /// <summary>Asks before a different file of the same name in a revision folder is replaced.</summary>
+    bool ConfirmReplaceFile(string path);
     void UpdateTitle(string documentName, bool dirty);
 }

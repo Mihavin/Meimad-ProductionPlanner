@@ -225,6 +225,11 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
             $"{documentName} has unsaved changes. Discard them?",
             "NC Viewer", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
+    bool INcViewerHostUi.ConfirmReplaceFile(string path) =>
+        LocalizedMessageBox.Show(this,
+            $"The revision folder already has a different file with this name:{Environment.NewLine}{path}{Environment.NewLine}Replace it?",
+            "NC Viewer", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+
     public void UpdateTitle(string documentName, bool dirty) =>
         Title = $"{documentName}{(dirty ? " *" : string.Empty)} - NC Viewer - {request.ContextTitle}";
 }
