@@ -11,7 +11,8 @@ internal static class NcViewerRequests
     /// <summary>
     /// The immutable release file exactly as stored, shown read-only. The Machine (when the caller
     /// knows the assignment) or the postprocessor's Machines decide the NC dialect and the NC
-    /// viewer machine.
+    /// viewer machine. With the Batch Operation known, the Tool Room's latest tool table drives the
+    /// preview's tools.
     /// </summary>
     internal static async Task<NcViewerOpenRequest> ForReleaseAsync(
         IPlannerApiClient api,
@@ -20,9 +21,22 @@ internal static class NcViewerRequests
         string releaseId,
         string? machineId,
         string contextTitle,
+        string? batchOperationId = null,
         CancellationToken cancellationToken = default)
     {
         var bytes = await api.ReadGCodeFileBytesAsync(caseId, caseOperationId, releaseId, cancellationToken);
+        NcViewerToolRoomTable? toolRoomTable = null;
+        if (batchOperationId is not null)
+        {
+            try
+            {
+                toolRoomTable = NcViewerToolRoomTable.From(await api.GetToolPreparationAsync(batchOperationId, cancellationToken));
+            }
+            catch (Exception exception) when (IsTransient(exception))
+            {
+                // No released tool table or an offline Server: the viewer infers the tools from the program.
+            }
+        }
         PlannerGCodeRelease? release = null;
         try
         {
@@ -51,7 +65,8 @@ internal static class NcViewerRequests
                 source: release is null
                     ? null
                     : new NcProgramRevision(release.ProcessRevisionNumber, release.PostprocessorId,
-                        release.PostprocessorName, release.PostSpecificRevision)));
+                        release.PostprocessorName, release.PostSpecificRevision)),
+            ToolRoomTable: toolRoomTable);
     }
 
     /// <summary>The Server's stateless "Apply Meimad Planner Format".</summary>

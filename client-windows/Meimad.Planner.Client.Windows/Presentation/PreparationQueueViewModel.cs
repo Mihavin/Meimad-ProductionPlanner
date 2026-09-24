@@ -138,7 +138,8 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         {
             var request = await NcViewer.NcViewerRequests.ForReleaseAsync(
                 client, caseId, operationId, releaseId, item.MachineId,
-                $"{item.PartText} · {item.OperationText} · {item.MachineText}");
+                $"{item.PartText} · {item.OperationText} · {item.MachineText}",
+                item.BatchOperationId);
             ActionRequested?.Invoke(this, new("VIEW_NC_READ_ONLY", item, request));
             Status = "NC release opened read-only in the NC viewer.";
         });

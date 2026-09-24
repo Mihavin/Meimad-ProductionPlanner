@@ -81,6 +81,10 @@ internal sealed class ToolShapePreview : FrameworkElement
             };
             switch (segment.Kind)
             {
+                case "GAP":
+                    // The undescribed part of the assembly: only the spindle axis down to the cutter.
+                    context.DrawLine(DefaultPen, new Point(centerX, top), new Point(centerX, top + height));
+                    continue;
                 case "HOLDER":
                 {
                     // Flange at the gauge line, taper below it.

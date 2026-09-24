@@ -151,6 +151,49 @@ public sealed class ProductionReadinessEvaluatorTests
         Assert.True(ready.IsReadyForProduction);
     }
 
+    [Fact]
+    public void Complete_tool_room_measurements_make_tool_offsets_ready_without_a_confirmation_record()
+    {
+        var measured = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
+        {
+            ToolOffsetFacts = [],
+            ToolPreparation = Preparation("tools-1", unmeasured: 0)
+        });
+        Assert.True(measured.IsReadyForProduction);
+        Assert.Equal(ReadinessStates.Ready, Component(measured, "toolOffsets").State);
+        Assert.Contains("tool table version 3", Component(measured, "toolOffsets").Message);
+
+        var incomplete = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
+        {
+            ToolOffsetFacts = [],
+            ToolPreparation = Preparation("tools-1", unmeasured: 1)
+        });
+        Assert.False(incomplete.IsReadyForProduction);
+        Assert.Equal(ReadinessStates.Missing, Component(incomplete, "toolOffsets").State);
+        Assert.Contains("1 of 2 required tool(s)", Component(incomplete, "toolOffsets").Message);
+        Assert.True(Component(incomplete, "toolOffsets").IsBlocking);
+
+        // Measurements saved for an earlier Tool Table release do not count.
+        var olderTable = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
+        {
+            ToolOffsetFacts = [],
+            ToolPreparation = Preparation("tools-0", unmeasured: 0)
+        });
+        Assert.Equal(ReadinessStates.Missing, Component(olderTable, "toolOffsets").State);
+        Assert.Contains("not been confirmed", Component(olderTable, "toolOffsets").Message);
+
+        // A physical confirmation for the exact configuration still counts on its own.
+        var confirmed = ProductionReadinessEvaluator.Evaluate(ReadyContext() with
+        {
+            ToolPreparation = Preparation("tools-1", unmeasured: 2)
+        });
+        Assert.Equal(ReadinessStates.Ready, Component(confirmed, "toolOffsets").State);
+        Assert.Equal("Offsets confirmed", Component(confirmed, "toolOffsets").Message);
+    }
+
+    private static ToolPreparationReadinessFact Preparation(string toolTableId, int unmeasured) => new(
+        toolTableId, 3, 2, unmeasured, DateTimeOffset.Parse("2026-09-24T09:00:00Z"));
+
     private static ProductionReadinessContext ReadyContext() => new(
         "batch-op-1", "assignment-1", "machine-1", "CNC_GCODE",
         new HashSet<string>(["post-a"]), 10,

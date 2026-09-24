@@ -525,6 +525,38 @@ public sealed class NcViewerSessionTests : IDisposable
         Assert.Equal("haas-umc-500", (await ui.NextEventAsync("document:state")).GetProperty("machine").GetProperty("id").GetString());
     });
 
+    [Fact]
+    public void Tool_room_table_replaces_the_inferred_tools_of_the_preview() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi();
+        var preparation = new PlannerToolPreparation(
+            "operation-1", "machine-1", "M01", "Mill", "mill", "HAAS_NGC", "RADIUS", "tools-1", 1, "tools.csv",
+            3, "prep-3", DateTimeOffset.Parse("2026-09-24T09:00:00Z"), "tool-room-1", null, null, "tools-1",
+            [
+                new(1, "T1", "Ball end mill D12", true, "1", 1, 101.5, 12, "BALL_END_MILL",
+                    new Dictionary<string, double> { ["cuttingDiameter"] = 12, ["fluteLength"] = 24 }, null, []),
+                new(2, "T9", "Drill 8.5 (not in this program)", true, "9", 9, 90, 8.5, "DRILL",
+                    new Dictionary<string, double>(), null, [])
+            ]);
+        var request = Request(readOnly: true) with { ToolRoomTable = NcViewerToolRoomTable.From(preparation) };
+        using var session = Session(request, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+        ui.Send(session, "preview:message", new { type = "ready" });
+        await ui.NextEventAsync("preview:render");
+        Assert.Equal("Tool Room tool table v3", (await ui.NextEventAsync("document:state")).GetProperty("toolTablePath").GetString());
+
+        var table = await ui.InvokeAsync(session, "getToolTable");
+
+        var tool = Assert.Single(table.GetProperty("tools").EnumerateArray());
+        Assert.Equal(1, tool.GetProperty("number").GetInt32());
+        Assert.Equal("ball-mill", tool.GetProperty("type").GetString());
+        Assert.Equal(12, tool.GetProperty("diameter").GetDouble());
+        Assert.Equal(101.5, tool.GetProperty("length").GetDouble());
+        Assert.Equal(6, tool.GetProperty("cornerRadius").GetDouble());
+        Assert.Equal("Ball end mill D12", tool.GetProperty("description").GetString());
+        Assert.Equal("Tool Room tool table v3", table.GetProperty("sourcePath").GetString());
+    });
+
     public void Dispose()
     {
         if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);

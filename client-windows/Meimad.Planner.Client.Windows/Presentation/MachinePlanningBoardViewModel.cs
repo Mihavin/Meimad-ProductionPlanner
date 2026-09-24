@@ -974,7 +974,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         var machineText = machine is null ? operation.MachineId : $"{machine.Number} {machine.Name}";
         return await NcViewer.NcViewerRequests.ForReleaseAsync(
             client, operation.CaseId, operationId, releaseId, operation.MachineId,
-            $"{operation.DisplayTitle} · {operation.OperationName} · {machineText}");
+            $"{operation.DisplayTitle} · {operation.OperationName} · {machineText}",
+            operation.BatchOperationId);
     }
 
     internal async Task UndoAsync() =>

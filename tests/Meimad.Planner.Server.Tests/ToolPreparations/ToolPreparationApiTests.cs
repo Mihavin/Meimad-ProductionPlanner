@@ -229,6 +229,36 @@ public sealed class ToolPreparationApiTests
         Assert.Contains("MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Complete_measurements_make_the_tool_offsets_readiness_ready_without_a_manual_confirmation()
+    {
+        await using var server = await TestServer.StartAsync(verificationEnabled: true, confirmOffsets: false);
+        var client = server.Client;
+        var (state, message) = await server.ToolOffsetsAsync();
+        Assert.Equal("MISSING", state);
+        Assert.Contains("not been confirmed", message, StringComparison.Ordinal);
+
+        // T1 measured, T2 (required) not yet: the fact says what is missing.
+        using var partial = await client.PutAsJsonAsync(Route, Update(0, [Tool("T1", 1, 120.5, 10)]));
+        Assert.Equal(HttpStatusCode.OK, partial.StatusCode);
+        (state, message) = await server.ToolOffsetsAsync();
+        Assert.Equal("MISSING", state);
+        Assert.Contains("1 of 2 required tool(s)", message, StringComparison.Ordinal);
+
+        // T3 is optional: the two required tools measured make the offsets ready.
+        using var complete = await client.PutAsJsonAsync(Route, Update(1, MeasuredTools()));
+        Assert.Equal(HttpStatusCode.OK, complete.StatusCode);
+        (state, message) = await server.ToolOffsetsAsync();
+        Assert.Equal("READY", state);
+        Assert.Contains("tool table version 2", message, StringComparison.Ordinal);
+        Assert.Equal(0L, await server.ScalarAsync("SELECT COUNT(*) FROM tool_offset_readiness_records;"));
+
+        // The measured package builds on that readiness without a confirmation record.
+        using var created = await client.PostAsync($"{PackageRoute}?toolOffsetMode=MEASURED", Empty());
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        Assert.Equal(["operation-package"], await server.QueueIdsAsync("SETUP_PENDING"));
+    }
+
     private static StringContent Empty() => new("{}", Encoding.UTF8, "application/json");
 
     private static ToolPreparationRequest Update(int expectedVersion, IReadOnlyList<ToolRequest> tools) =>
@@ -273,7 +303,7 @@ public sealed class ToolPreparationApiTests
         internal WebApplication Application { get; }
         internal HttpClient Client { get; }
 
-        internal static async Task<TestServer> StartAsync(bool verificationEnabled)
+        internal static async Task<TestServer> StartAsync(bool verificationEnabled, bool confirmOffsets = true)
         {
             var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ToolPreparation.Tests", Guid.NewGuid().ToString("N"));
             var releaseRoot = Path.Combine(root, "releases");
@@ -283,7 +313,7 @@ public sealed class ToolPreparationApiTests
                  $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={Path.Combine(root, "packages")}"],
                 webHost => webHost.UseTestServer());
             await application.StartAsync();
-            await SeedAsync(application.Services, releaseRoot, verificationEnabled);
+            await SeedAsync(application.Services, releaseRoot, verificationEnabled, confirmOffsets);
             var client = application.GetTestClient();
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "tool-room-client");
             client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "tool-room-user");
@@ -297,6 +327,19 @@ public sealed class ToolPreparationApiTests
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             return document.RootElement.GetProperty("items").EnumerateArray()
                 .Select(value => value.GetProperty("batchOperationId").GetString()!).ToArray();
+        }
+
+        /// <summary>The Tool Offsets readiness fact of the Tool Room queue item (state, message).</summary>
+        internal async Task<(string State, string Message)> ToolOffsetsAsync()
+        {
+            using var response = await Client.GetAsync("/api/v1/preparation-queues/TOOL_PREPARATION_PENDING");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var item = document.RootElement.GetProperty("items").EnumerateArray()
+                .Single(value => value.GetProperty("batchOperationId").GetString() == "operation-package");
+            var fact = item.GetProperty("readinessFacts").EnumerateArray()
+                .Single(value => value.GetProperty("key").GetString() == "toolOffsets");
+            return (fact.GetProperty("state").GetString()!, fact.GetProperty("message").GetString()!);
         }
 
         internal async Task ExecuteAsync(string sql)
@@ -324,7 +367,7 @@ public sealed class ToolPreparationApiTests
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
 
-        private static async Task SeedAsync(IServiceProvider services, string releaseRoot, bool verificationEnabled)
+        private static async Task SeedAsync(IServiceProvider services, string releaseRoot, bool verificationEnabled, bool confirmOffsets)
         {
             var gcodeRelative = "operations/case-operation-package/gcode/gcode-1/main.nc";
             var toolRelative = "operations/case-operation-package/tool-tables/tools-1/tools.csv";
@@ -399,9 +442,6 @@ public sealed class ToolPreparationApiTests
                 INSERT INTO machine_assignments(id,batch_operation_id,machine_id,backlog_position)
                 VALUES('assignment-package','operation-package','machine-package',0);
                 UPDATE machine_assignments SET selected_gcode_release_id='gcode-1' WHERE id='assignment-package';
-                INSERT INTO tool_offset_readiness_records(id,batch_operation_id,machine_id,process_revision_id,gcode_release_id,
-                    status,confirmed_at,confirmed_by,recorded_at)
-                VALUES('offsets-ready','operation-package','machine-package','process-1','gcode-1','READY',$at,'tool-room',$at);
                 """;
             command.Parameters.AddWithValue("$workingFolder", Path.Combine(releaseRoot, "working"));
             command.Parameters.AddWithValue("$toolPath", toolRelative);
@@ -412,6 +452,19 @@ public sealed class ToolPreparationApiTests
             command.Parameters.AddWithValue("$gcodeHash", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(gcodeBytes)));
             command.Parameters.AddWithValue("$at", now);
             await command.ExecuteNonQueryAsync();
+
+            if (confirmOffsets)
+            {
+                // The Tool Room's physical offset confirmation, as recorded before schema v79 measurements existed.
+                await using var confirmation = connection.CreateCommand();
+                confirmation.CommandText = """
+                    INSERT INTO tool_offset_readiness_records(id,batch_operation_id,machine_id,process_revision_id,gcode_release_id,
+                        status,confirmed_at,confirmed_by,recorded_at)
+                    VALUES('offsets-ready','operation-package','machine-package','process-1','gcode-1','READY',$at,'tool-room',$at);
+                    """;
+                confirmation.Parameters.AddWithValue("$at", now);
+                await confirmation.ExecuteNonQueryAsync();
+            }
 
             if (verificationEnabled)
             {

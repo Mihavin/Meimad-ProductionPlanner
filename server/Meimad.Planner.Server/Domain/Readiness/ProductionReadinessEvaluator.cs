@@ -270,6 +270,23 @@ internal static class ProductionReadinessEvaluator
                 && fact.GCodeReleaseId == expectedGCodeId)
             .OrderByDescending(fact => fact.RecordedAt)
             .FirstOrDefault();
+        // The Tool Room's measurements (schema v79) for the current Tool Table make the offsets
+        // ready without a separate physical confirmation; a recorded confirmation still counts.
+        var measured = context.ToolPreparation is { } preparation
+            && preparation.ToolTableReleaseId == context.ActiveToolTableReleaseId
+            ? preparation
+            : null;
+        if (measured is not null && exact is not { Status: ReadinessStates.Ready })
+        {
+            var complete = measured.UnmeasuredRequiredCount == 0;
+            components.Add(Component(ReadinessComponentKeys.ToolOffsets, "Tool Offsets",
+                complete ? ReadinessStates.Ready : ReadinessStates.Missing,
+                complete
+                    ? $"All {measured.RequiredToolCount} required tool(s) are measured by the Tool Room (tool table version {measured.Version})."
+                    : $"{measured.UnmeasuredRequiredCount} of {measured.RequiredToolCount} required tool(s) still lack a measured length, diameter or offset number (Tool Room version {measured.Version}).",
+                !complete));
+            return;
+        }
         if (exact is null)
         {
             var outdated = context.ToolOffsetFacts.Count > 0;

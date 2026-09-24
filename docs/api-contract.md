@@ -2283,6 +2283,19 @@ a SHA-256 content hash, and returns the merged read. A stale
 tool_preparation_tool_table_changed`. Saved versions are never edited or
 deleted; the Production Package build reads the latest one.
 
+Readiness follows the measurements: the `toolOffsets` component of `GET
+/api/v1/batch-operations/{operationId}/readiness`, of the preparation-queue
+`readinessFacts` and of first Start is `READY` when the latest version was
+saved for the current Tool Table release and every required released tool has
+a measured length, diameter and offset number (`All N required tool(s) are
+measured by the Tool Room (tool table version V).`); an incomplete version is
+`MISSING` and says how many required tools still lack a value; a physical
+confirmation recorded through `readiness-inputs` for the exact configuration
+keeps counting on its own. A save writes no `tool_offset_readiness_records`
+row; the state is projected. The Windows NC viewer reads the same
+representation when it opens a release for a known Batch Operation and applies
+the tools to its preview.
+
 ### 8.13 Windows QC Queue and decision contract
 
 ```http

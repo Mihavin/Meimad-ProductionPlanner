@@ -3,7 +3,8 @@ namespace Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 /// <summary>
 /// One stacked segment of the tool drawing, from the spindle gauge line downwards. Kinds:
 /// HOLDER (taper with flange), CYLINDER, CUTTER (fluted cylinder), BALL (hemisphere tip),
-/// POINT (drill point), CONE (chamfer), DISC (face mill), INSERT (turning insert) and SPHERE (probe).
+/// POINT (drill point), CONE (chamfer), DISC (face mill), INSERT (turning insert), SPHERE (probe)
+/// and GAP (the undescribed assembly between the gauge line and the cutter, drawn as an axis).
 /// </summary>
 internal sealed record ToolShapeSegment(
     string Kind,
@@ -27,8 +28,9 @@ internal sealed record ToolShapeComponent(string ComponentType, string Name, dou
 
 /// <summary>
 /// Builds the schematic from the assembled components (holder, extension, collet, shank, ...) and
-/// the cutter shape and dimensions. Missing dimensions get typical defaults that are marked, so the
-/// picture is always drawable and the Tool Room sees what is still unspecified.
+/// the cutter shape and dimensions. Without components only the cutter hangs from the gauge line.
+/// Missing dimensions get typical defaults that are marked, so the picture is always drawable and
+/// the Tool Room sees what is still unspecified.
 /// </summary>
 internal static class ToolShapeBuilder
 {
@@ -47,13 +49,11 @@ internal static class ToolShapeBuilder
     {
         var segments = new List<ToolShapeSegment>();
         var top = 0.0;
-        var hasHolder = false;
         foreach (var component in components)
         {
             var componentType = component.ComponentType.ToUpperInvariant();
             if (componentType is "CUTTER" or "INSERT") continue; // drawn from the shape below
             var isHolder = componentType == "HOLDER";
-            hasHolder |= isHolder;
             var length = Positive(component.Length) ?? (isHolder ? DefaultHolderLength : DefaultCylinderLength);
             var diameter = Positive(component.Diameter) ?? (isHolder ? DefaultHolderDiameter : DefaultCylinderDiameter);
             segments.Add(new ToolShapeSegment(
@@ -62,15 +62,7 @@ internal static class ToolShapeBuilder
                 IsDefault: component.Length is null || component.Diameter is null));
             top += length;
         }
-        if (!hasHolder)
-        {
-            segments.Insert(0, new ToolShapeSegment("HOLDER", 0, DefaultHolderLength, DefaultHolderDiameter, "Holder", IsDefault: true));
-            for (var index = 1; index < segments.Count; index++)
-            {
-                segments[index] = segments[index] with { Top = segments[index].Top + DefaultHolderLength };
-            }
-            top += DefaultHolderLength;
-        }
+        var assemblyDrawn = segments.Count > 0;
 
         var cuttingDiameter = Positive(Value(shape, "cuttingDiameter")) ?? Positive(measuredDiameter) ?? DefaultCuttingDiameter;
         var shankDiameter = Positive(Value(shape, "shankDiameter")) ?? cuttingDiameter;
@@ -174,6 +166,19 @@ internal static class ToolShapeBuilder
                 top += fluteLength;
                 break;
             }
+        }
+
+        // No assembly described: only the cutter hangs from the gauge line. A measured length that
+        // is longer than the cutter leaves the unspecified part of the assembly as an empty axis.
+        if (!assemblyDrawn && measuredLength is { } measured && measured > top + 0.005)
+        {
+            var gap = measured - top;
+            for (var index = 0; index < segments.Count; index++)
+            {
+                segments[index] = segments[index] with { Top = segments[index].Top + gap };
+            }
+            segments.Insert(0, new ToolShapeSegment("GAP", 0, gap, 0, string.Empty, IsDefault: true));
+            top = measured;
         }
 
         var maximum = segments.Count == 0 ? 0 : segments.Max(segment => segment.Diameter);

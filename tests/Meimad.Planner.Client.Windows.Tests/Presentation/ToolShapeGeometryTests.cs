@@ -5,7 +5,7 @@ namespace Meimad.Planner.Client.Windows.Tests.Presentation;
 public sealed class ToolShapeGeometryTests
 {
     [Fact]
-    public void Drill_gets_shank_flutes_and_point_below_a_default_holder()
+    public void Drill_gets_shank_flutes_and_point_and_the_measured_length_gap_without_a_holder()
     {
         var geometry = ToolShapeBuilder.Build(
             "DRILL",
@@ -15,17 +15,19 @@ public sealed class ToolShapeGeometryTests
             },
             [], measuredLength: 120, measuredDiameter: 10);
 
-        Assert.Equal(["HOLDER", "CYLINDER", "CUTTER", "POINT"], geometry.Segments.Select(segment => segment.Kind));
-        // No holder was described, so a marked default holder sits on the gauge line.
+        Assert.Equal(["GAP", "CYLINDER", "CUTTER", "POINT"], geometry.Segments.Select(segment => segment.Kind));
+        // No component was described: the cutter's tip sits at the measured length and the
+        // undescribed 30 mm above it are an empty axis, not an invented holder.
         Assert.True(geometry.Segments[0].IsDefault);
         Assert.Equal(0, geometry.Segments[0].Top);
-        Assert.Equal(60, geometry.Segments[1].Top);
+        Assert.Equal(30, geometry.Segments[0].Height);
+        Assert.Equal(30, geometry.Segments[1].Top);
         Assert.Equal(40, geometry.Segments[1].Height);
         Assert.Equal(10, geometry.Segments[2].Diameter);
         Assert.Equal(3.0, geometry.Segments[3].Height);
         Assert.Equal(118, geometry.Segments[3].TipAngle);
-        Assert.Equal(150, geometry.TotalLength);
-        Assert.Equal(63, geometry.MaximumDiameter);
+        Assert.Equal(120, geometry.TotalLength);
+        Assert.Equal(10, geometry.MaximumDiameter);
         Assert.Equal(120, geometry.MeasuredLength);
         Assert.Equal(10, geometry.MeasuredDiameter);
         Assert.All(geometry.Segments.Skip(1), segment => Assert.False(segment.IsDefault));
@@ -57,10 +59,31 @@ public sealed class ToolShapeGeometryTests
     {
         var geometry = ToolShapeBuilder.Build("END_MILL", new Dictionary<string, double>(), [], null, null);
 
-        Assert.Equal(["HOLDER", "CYLINDER", "CUTTER"], geometry.Segments.Select(segment => segment.Kind));
+        Assert.Equal(["CYLINDER", "CUTTER"], geometry.Segments.Select(segment => segment.Kind));
         Assert.All(geometry.Segments, segment => Assert.True(segment.IsDefault));
         Assert.Equal(10, geometry.Segments[^1].Diameter);
-        Assert.True(geometry.TotalLength > 60);
+        Assert.True(geometry.TotalLength > 0);
+    }
+
+    [Fact]
+    public void Without_components_the_cutter_hangs_from_the_gauge_line()
+    {
+        var shape = new Dictionary<string, double> { ["cuttingDiameter"] = 10, ["fluteLength"] = 22, ["overallLength"] = 72 };
+
+        var shorter = ToolShapeBuilder.Build("END_MILL", shape, [], measuredLength: 70, measuredDiameter: 10);
+        Assert.Equal(["CYLINDER", "CUTTER"], shorter.Segments.Select(segment => segment.Kind));
+        Assert.Equal(0, shorter.Segments[0].Top);
+        Assert.Equal(72, shorter.TotalLength);
+
+        var longer = ToolShapeBuilder.Build("END_MILL", shape, [], measuredLength: 100, measuredDiameter: 10);
+        Assert.Equal(["GAP", "CYLINDER", "CUTTER"], longer.Segments.Select(segment => segment.Kind));
+        Assert.Equal(28, longer.Segments[0].Height);
+        Assert.Equal(100, longer.TotalLength);
+
+        // A described holder is drawn instead of the gap.
+        var assembled = ToolShapeBuilder.Build("END_MILL", shape, [new("HOLDER", "BT40", 28, 63)], 100, 10);
+        Assert.Equal(["HOLDER", "CYLINDER", "CUTTER"], assembled.Segments.Select(segment => segment.Kind));
+        Assert.Equal(100, assembled.TotalLength);
     }
 
     [Fact]

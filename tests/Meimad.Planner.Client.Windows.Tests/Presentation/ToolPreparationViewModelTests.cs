@@ -176,9 +176,9 @@ public sealed class ToolPreparationViewModelTests
         component.DiameterText = "20";
         tool.Shape = ToolPreparationCatalog.Shape("DRILL");
 
-        // The extension adds a cylinder below the holder and the drill shape adds its point.
-        Assert.Equal(["HOLDER", "CYLINDER", "CYLINDER", "CUTTER", "POINT"], tool.Geometry.Segments.Select(segment => segment.Kind));
-        Assert.Equal(120, tool.Geometry.Segments[1].Height);
+        // The extension is drawn from the gauge line (no invented holder) and the drill shape adds its point.
+        Assert.Equal(["CYLINDER", "CYLINDER", "CUTTER", "POINT"], tool.Geometry.Segments.Select(segment => segment.Kind));
+        Assert.Equal(120, tool.Geometry.Segments[0].Height);
         Assert.True(redraws >= 4);
         Assert.Same(component, tool.SelectedComponent);
         Assert.True(viewModel.RemoveComponentCommand.CanExecute(null));
