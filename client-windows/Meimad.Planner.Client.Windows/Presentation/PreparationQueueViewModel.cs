@@ -21,7 +21,8 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         Stage = stage;
         Title = title;
         Description = description;
-        status = $"Connect to view {title.ToLowerInvariant()}.";
+        // The title stays as written so the status translates through the catalog.
+        status = $"Connect to view {title}.";
         RefreshCommand = new AsyncCommand(RefreshAsync, () => api is not null && !isBusy);
         OpenCaseCommand = new AsyncCommand(() => RequestActionAsync("OPEN_CASE"), CanUseSelected);
         OpenOperationCommand = new AsyncCommand(() => RequestActionAsync("OPEN_OPERATION"), CanUseSelected);
@@ -29,8 +30,9 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
             () => CanUseSelected() && Stage == "PROGRAMMING_PENDING");
         OpenToolTableCommand = new AsyncCommand(OpenToolTableAsync,
             () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
+        // Every queue (NC Creator, Tool Room, Setup) can open the operation's NC release in the viewer.
         ViewNcFileCommand = new AsyncCommand(ViewNcFileAsync,
-            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
+            () => CanUseSelected() && Selected?.GCodeReleaseId is not null);
         CreateProductionPackageCommand = new AsyncCommand(CreateProductionPackageAsync,
             () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
         CreateManualOffsetProductionPackageCommand = new AsyncCommand(CreateManualOffsetProductionPackageAsync,
@@ -104,14 +106,18 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
 
     private async Task ViewNcFileAsync()
     {
-        if (api is null || Selected?.CaseId is null || Selected.CaseOperationId is null
-            || Selected.GCodeReleaseId is null) return;
+        if (api is not { } client
+            || Selected is not { CaseId: { } caseId, CaseOperationId: { } operationId, GCodeReleaseId: { } releaseId } item)
+        {
+            return;
+        }
         await RunActionAsync(async () =>
         {
-            var text = await api.ReadGCodeFileTextAsync(
-                Selected.CaseId, Selected.CaseOperationId, Selected.GCodeReleaseId);
-            ActionRequested?.Invoke(this, new("VIEW_NC_READ_ONLY", Selected, text));
-            Status = "Current NC release opened read-only.";
+            var request = await NcViewer.NcViewerRequests.ForReleaseAsync(
+                client, caseId, operationId, releaseId, item.MachineId,
+                $"{item.PartText} · {item.OperationText} · {item.MachineText}");
+            ActionRequested?.Invoke(this, new("VIEW_NC_READ_ONLY", item, request));
+            Status = "NC release opened read-only in the NC viewer.";
         });
     }
 

@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  >
+  <title>NC Viewer</title>
+  <!--
+    Meimad Production Planner NC viewer page. It is the upstream desktop page
+    (third_party/chevalier-nc-viewer, desktop/index.html) with the Meimad command bar,
+    without the STEP viewer, and with the AI/Codex elements kept only because
+    renderer.js binds them; meimad-viewer.css hides them. meimad-bridge.js replaces the
+    Electron preload and must load before renderer.js and preview.js.
+  -->
+  <link rel="stylesheet" href="../node_modules/codemirror/lib/codemirror.css">
+  <link rel="stylesheet" href="../node_modules/codemirror/addon/dialog/dialog.css">
+  <link rel="stylesheet" href="../media/preview.css">
+  <link rel="stylesheet" href="./desktop.css">
+  <link rel="stylesheet" href="./meimad-viewer.css">
+</head>
+<body>
+  <header class="desktop-commandbar" aria-label="Application toolbar">
+    <div class="brand-lockup" aria-label="Meimad NC Viewer">
+      <div class="brand-mark" aria-hidden="true">M</div>
+      <div class="brand-copy">
+        <strong>NC Viewer</strong>
+        <span>Meimad Production Planner · toolpath preview</span>
+      </div>
+    </div>
+
+    <nav class="file-actions" aria-label="File actions">
+      <button id="newFileButton" class="command-button" type="button" title="New NC program (Ctrl+N)">New</button>
+      <button id="openFileButton" class="command-button" type="button" title="Open a local NC file (Ctrl+O)">Open</button>
+      <button id="saveFileButton" class="command-button primary" type="button" title="Save (Ctrl+S)">Save</button>
+      <button id="saveAsButton" class="command-button" type="button" title="Save as (Ctrl+Shift+S)">Save as</button>
+    </nav>
+
+    <div class="document-identity" title="Current NC document">
+      <span id="dirtyIndicator" class="dirty-indicator" aria-hidden="true"></span>
+      <span id="editorDocumentName" class="document-name">Untitled.NC</span>
+      <span id="meimadModeBadge" class="meimad-mode-badge" role="status"></span>
+    </div>
+
+    <div class="app-actions">
+      <button id="meimadEditCopyButton" class="command-button" type="button" hidden
+              title="Continue on an editable local copy of this release. The Server release is unchanged until the copy is released as a new revision.">Edit copy</button>
+      <button id="meimadFormatButton" class="command-button" type="button"
+              title="Insert the Meimad identity header, verification hook, event context, part-number output line and cycle markers. The Server checks the result.">Apply Meimad Planner Format</button>
+      <button id="meimadUseForReleaseButton" class="command-button" type="button" hidden
+              title="Save this program and select it in the Release G-code form">Use for G-code release</button>
+      <button id="meimadReleaseButton" class="command-button primary" type="button" hidden
+              title="Check the Meimad canonical format, save the program and release it to the Server as a new G-code release of this Operation">Release to Server…</button>
+      <span class="meimad-separator" aria-hidden="true"></span>
+      <button id="showToolTableButton" class="command-button" type="button" title="Edit the active program tool table">Tool table</button>
+      <button
+        id="codexToggleButton"
+        class="command-button codex-toggle-button"
+        type="button"
+        hidden
+        aria-controls="codexPanel"
+        aria-expanded="false"
+      >Codex</button>
+      <button id="showSettingsButton" class="command-button settings-button" type="button" title="Settings (Ctrl+,)">Settings</button>
+    </div>
+  </header>
+
+  <div id="workspace" class="workspace">
+    <section id="editorPane" class="editor-pane" aria-labelledby="sourceHeading">
+      <header class="pane-header">
+        <div>
+          <span class="pane-kicker">SOURCE</span>
+          <h2 id="sourceHeading">NC program</h2>
+        </div>
+        <div class="editor-meta" aria-live="polite">
+          <span id="editorLineCount">1 line</span>
+          <span id="editorEncoding">UTF-8</span>
+        </div>
+      </header>
+      <div id="editorHost" class="editor-host">
+        <textarea id="ncEditor" aria-label="NC program source" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
+    </section>
+
+    <div
+      id="workspaceSplitter"
+      class="workspace-splitter"
+      role="separator"
+      aria-label="Resize source editor and preview"
+      aria-orientation="vertical"
+      aria-valuemin="25"
+      aria-valuemax="70"
+      aria-valuenow="43"
+      tabindex="0"
+    ><span aria-hidden="true"></span></div>
+
+    <section id="previewPane" class="preview-pane" aria-label="Toolpath preview">
+      <header class="toolbar preview-toolbar">
+        <div class="preview-title">
+          <div id="previewEyebrow" class="eyebrow">FANUC LATHE | G18 X-Z | DIAMETER X</div>
+          <h1 id="documentName">Toolpath Preview</h1>
+        </div>
+        <div class="controls preview-controls">
+          <label>Machine
+            <select id="machineSelect" title="Machine and control used to interpret the program"><option value="auto">Auto detect</option></select>
+          </label>
+          <label>Tool
+            <select id="toolFilter"><option value="all">All cutting tools</option></select>
+          </label>
+          <label id="g30XLabel">G30 X dia<input id="g30X" type="number" step="1"></label>
+          <label id="g30ZLabel">G30 Z<input id="g30Z" type="number" step="1"></label>
+          <label>Initial # vars<input id="initialMacros" type="text" spellcheck="false" placeholder="#500=0,#505=0"></label>
+          <label class="check"><input id="showRapids" type="checkbox" checked> Rapids</label>
+          <label class="check"><input id="showG30" type="checkbox"> <span id="showG30Text">G30</span></label>
+          <label class="check"><input id="showCompensated" type="checkbox" checked> Compensation</label>
+          <label class="check meimad-hidden" id="showPolyarcLabel" title="Polyarc envelopes are not used in Meimad Planner"><input id="showPolyarc" type="checkbox" checked disabled> Polyarc</label>
+          <label class="check"><input id="showExtruder" type="checkbox"> Non-cutting</label>
+          <label class="check"><input id="showTool" type="checkbox" checked> Tool</label>
+          <div class="view-controls" role="group" aria-label="View direction">
+            <button type="button" data-view="lathe" data-for="lathe" title="X-Z view (1)">XZ</button>
+            <button type="button" data-view="iso" title="Isometric view (1)">Iso</button>
+            <button type="button" data-view="top" data-for="mill" title="Top view (2)">Top</button>
+            <button type="button" data-view="front" data-for="mill" title="Front view (3)">Front</button>
+            <button type="button" data-view="right" data-for="mill" title="Right view (4)">Right</button>
+          </div>
+          <label id="frameLabel" hidden>Frame
+            <select id="frameSelect" title="Part: toolpath relative to the part. Machine: kinematic model with the table rotating.">
+              <option value="part">Part</option>
+              <option value="machine">Machine</option>
+            </select>
+          </label>
+          <div class="playback-controls" role="group" aria-label="Toolpath playback">
+            <button id="runButton" class="run-button" type="button">Run</button>
+            <button id="pauseButton" type="button" disabled>Pause</button>
+            <button id="restartButton" type="button">Restart</button>
+          </div>
+          <label class="speed-control">Speed
+            <span><input id="speedSlider" type="range" min="1" max="100" step="1" value="10"><output id="speedValue">10x</output></span>
+          </label>
+          <button id="reloadParameters" type="button">Reload data</button>
+          <button id="fitButton" type="button">Fit</button>
+        </div>
+      </header>
+
+      <main class="preview-content">
+        <section class="viewport">
+          <canvas id="toolpathCanvas" aria-label="Three-dimensional toolpath"></canvas>
+          <canvas id="toolpathOverlay" class="viewport-overlay" aria-hidden="true"></canvas>
+          <div id="viewerStatus" class="viewer-status" hidden></div>
+          <div id="tooltip" class="tooltip" hidden></div>
+          <div id="playbackHud" class="playback-hud" aria-live="polite">Ready | 0:00 / 0:00</div>
+        </section>
+        <aside class="preview-sidebar">
+          <section class="card">
+            <h2>Program</h2>
+            <dl id="stats"></dl>
+            <p class="meimad-note">The estimated cycle here uses the viewer's machine definition. The Planner's calculated cycle per part applies each Meimad Machine's configured rapid rate, tool-change time and time factor.</p>
+          </section>
+          <section class="card">
+            <h2>Final macro variables</h2>
+            <dl id="macroVariables"></dl>
+          </section>
+          <section class="card">
+            <h2>Machine</h2>
+            <dl id="machineParameters"></dl>
+          </section>
+          <section id="workOffsetCard" class="card work-offsets" hidden>
+            <h2>Home offsets</h2>
+            <div class="work-offset-wrap">
+              <table class="work-offset-table">
+                <thead id="workOffsetHead"></thead>
+                <tbody id="workOffsetRows"></tbody>
+              </table>
+            </div>
+            <div class="work-offset-editor">
+              <label>Edit <select id="workOffsetSelect" title="Work offset to edit"></select></label>
+              <div id="workOffsetInputs" class="work-offset-inputs"></div>
+              <div class="work-offset-actions">
+                <button id="workOffsetApply" type="button" title="Save these values for this machine on this PC and preview with them">Apply</button>
+                <button id="workOffsetClear" type="button" title="Remove the saved values of this offset">Clear</button>
+              </div>
+              <p id="workOffsetNote" class="work-offset-note"></p>
+            </div>
+          </section>
+          <section class="card">
+            <h2>Tool table</h2>
+            <div class="tool-table-wrap">
+              <table class="tool-table">
+                <thead id="toolTableHead"></thead>
+                <tbody id="toolTableRows"></tbody>
+              </table>
+            </div>
+            <div id="toolTableSource" class="xml-source"></div>
+          </section>
+          <section class="card">
+            <h2>Legend</h2>
+            <div id="legend"></div>
+          </section>
+          <section id="errorCard" class="card error-card" hidden>
+            <h2>Preview errors</h2>
+            <ul id="errors"></ul>
+          </section>
+          <section class="card warning-card">
+            <h2>Preview notes</h2>
+            <ul id="warnings"></ul>
+          </section>
+          <section class="card help">
+            <h2>Navigation</h2>
+            <p>Drag: rotate | Right-drag or Shift-drag: pan | Wheel: zoom at cursor | Double-click: fit | Hover: inspect | Click path: select NC row | Keys 1-4: views.</p>
+          </section>
+        </aside>
+      </main>
+    </section>
+  </div>
+
+  <!-- Codex is not part of Meimad Planner; renderer.js requires these elements. -->
+  <aside id="codexPanel" class="codex-panel" aria-hidden="true" hidden>
+    <button id="codexCloseButton" type="button" hidden></button>
+    <div id="codexScroll">
+      <section id="codexTranscript"><div id="codexEmptyState"></div></section>
+      <ul id="codexSelectedReferences"></ul>
+      <ul id="codexUsedReferences"></ul>
+      <button id="codexSelectReferenceWorkspaceButton" type="button" hidden></button>
+      <button id="codexClearReferenceWorkspaceButton" type="button" hidden></button>
+      <div id="codexReferenceWorkspaceLabel"></div>
+      <p id="codexReferenceWorkspaceStatus"></p>
+      <section id="codexProposalCard" hidden>
+        <p id="codexProposalSummary"></p>
+        <code id="codexProposalProgram"></code>
+        <ul id="codexProposalAssumptions"></ul>
+        <ul id="codexProposalWarnings"></ul>
+        <p id="codexProposalStatus"></p>
+        <button id="codexApplyProposalButton" type="button" hidden></button>
+        <button id="codexDiscardProposalButton" type="button" hidden></button>
+      </section>
+    </div>
+    <form id="codexForm">
+      <button id="codexAttachFileButton" type="button" hidden></button>
+      <button id="codexClearAttachmentsButton" type="button" hidden></button>
+      <div id="codexAttachmentList"></div>
+      <p id="codexAttachmentStatus"></p>
+      <textarea id="codexPrompt" hidden></textarea>
+      <button id="codexNewChatButton" type="button" hidden></button>
+      <button id="codexStopButton" type="button" hidden></button>
+      <button id="codexSendButton" type="submit" hidden></button>
+    </form>
+  </aside>
+
+  <footer class="statusbar" aria-label="Document status">
+    <div class="status-primary">
+      <span id="statusState" class="status-state ready"><i aria-hidden="true"></i><span>Ready</span></span>
+      <span id="statusMessage" role="status" aria-live="polite">Loading the NC program...</span>
+    </div>
+    <div class="status-secondary">
+      <span id="statusXml" title="Active machine and tool data sources">Data: bundled defaults</span>
+      <span id="statusPath" title="Current document source">Not saved</span>
+      <span id="statusPosition">Ln 1, Col 1</span>
+    </div>
+  </footer>
+
+  <dialog id="settingsModal" class="settings-modal" aria-labelledby="settingsTitle">
+    <form id="settingsForm" method="dialog">
+      <header class="modal-header">
+        <div>
+          <span class="pane-kicker">NC VIEWER</span>
+          <h2 id="settingsTitle">Preview settings</h2>
+          <p>Saved on this PC for the NC viewer only. They never change a Server release.</p>
+        </div>
+        <button id="settingsCloseButton" class="icon-button" type="button" aria-label="Close settings" title="Close">&times;</button>
+      </header>
+
+      <div class="modal-body">
+        <section class="settings-section" aria-labelledby="machineSettingsHeading">
+          <h3 id="machineSettingsHeading">Machine &amp; execution</h3>
+          <label for="settingsMachine">Default machine
+            <select id="settingsMachine" name="machine">
+              <option value="auto">Auto detect from the program</option>
+            </select>
+          </label>
+          <div class="settings-grid compact-grid">
+            <label for="settingsG30X">G30 X diameter
+              <input id="settingsG30X" name="g30X" type="number" step="any" required>
+            </label>
+            <label for="settingsG30Z">G30 Z
+              <input id="settingsG30Z" name="g30Z" type="number" step="any" required>
+            </label>
+          </div>
+          <label for="settingsInitialVariables">Initial macro variables
+            <input id="settingsInitialVariables" name="initialVariables" type="text" spellcheck="false" placeholder="#500=0,#505=0">
+          </label>
+          <label for="settingsMachineFile">FANUC CNC parameter data
+            <input id="settingsMachineFile" name="machineParametersFile" type="text" spellcheck="false" placeholder="Bundled CNC-PARA.TXT">
+          </label>
+          <label for="settingsToolFile">Fallback tool table XML
+            <input id="settingsToolFile" name="toolTableFile" type="text" spellcheck="false" placeholder="Tools from the program comments">
+          </label>
+          <div id="settingsProgramMemory"></div>
+          <p class="settings-note">Program memory: G65/M98 programs that are not in the NC file are looked up in the machine's folder by the O number in each file, like the control's Memory drive (Settings 251/252). The viewer only reads the folders listed here.</p>
+        </section>
+
+        <!-- AI tool recognition is not part of Meimad Planner; renderer.js requires these fields. -->
+        <section class="settings-section meimad-hidden" aria-hidden="true">
+          <input id="settingsAiEnabled" name="aiToolRecognitionEnabled" type="checkbox">
+          <input id="settingsAiModel" name="aiModel" type="text">
+          <input id="settingsAiDebounce" name="aiDebounceMs" type="number" min="500" max="30000" step="100" value="1800">
+          <input id="settingsApiKey" type="password" autocomplete="off">
+          <button id="toggleApiKeyButton" type="button"></button>
+          <span id="settingsApiKeyStatus"></span>
+          <button id="clearApiKeyButton" type="button"></button>
+        </section>
+      </div>
+
+      <footer class="modal-footer">
+        <span id="settingsFeedback" class="settings-feedback" role="status" aria-live="polite"></span>
+        <div>
+          <button id="settingsCancelButton" class="command-button" type="button">Cancel</button>
+          <button id="settingsSaveButton" class="command-button primary" type="submit">Save settings</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="toolTableModal" class="settings-modal tool-table-modal" aria-labelledby="toolTableEditorTitle">
+    <form id="toolTableForm" method="dialog">
+      <header class="modal-header">
+        <div>
+          <span class="pane-kicker">ACTIVE PROGRAM</span>
+          <h2 id="toolTableEditorTitle">Tool table editor</h2>
+          <p id="toolTableEditorSource">Loading the active tool definitions...</p>
+        </div>
+        <button id="toolTableCloseButton" class="icon-button" type="button" aria-label="Close tool table editor" title="Close">&times;</button>
+      </header>
+
+      <div class="tool-editor-body">
+        <div class="tool-editor-meta">
+          <label for="toolTableName">Table name
+            <input id="toolTableName" type="text" maxlength="200" required>
+          </label>
+          <label for="toolTableUnits">Units
+            <select id="toolTableUnits">
+              <option value="mm">Millimeters</option>
+              <option value="inch">Inches</option>
+            </select>
+          </label>
+          <p id="toolEditorHint">Edits change the preview in this window only. The released Tool Table on the Server is not changed.</p>
+        </div>
+        <div class="tool-editor-table-wrap">
+          <table class="tool-editor-table">
+            <thead id="toolEditorHead">
+              <tr>
+                <th>Tool</th>
+                <th>Type</th>
+                <th>Nose R</th>
+                <th>TIP</th>
+                <th>Hand</th>
+                <th>Diameter</th>
+                <th>Width</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody id="toolEditorRows"></tbody>
+          </table>
+          <p id="toolEditorEmpty" class="tool-editor-empty" hidden>No T codes were found in this NC program.</p>
+        </div>
+      </div>
+
+      <footer class="modal-footer">
+        <span id="toolTableFeedback" class="settings-feedback" role="status" aria-live="polite"></span>
+        <div>
+          <button id="toolTableRevealButton" class="command-button meimad-hidden" type="button">Show XML</button>
+          <button id="toolTableCancelButton" class="command-button" type="button">Cancel</button>
+          <button id="toolTableSaveButton" class="command-button primary" type="submit">Apply to preview</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="meimadFormatModal" class="settings-modal meimad-format-modal" aria-labelledby="meimadFormatTitle">
+    <form id="meimadFormatForm" method="dialog">
+      <header class="modal-header">
+        <div>
+          <span class="pane-kicker">MEIMAD PLANNER</span>
+          <h2 id="meimadFormatTitle">Apply Meimad Planner Format</h2>
+          <p>Adds the canonical Meimad block: identity header comments, the verification hook, the event context, the part-number output line, and the cycle start/end markers around the part cycle. Cutting code is not changed. The Server fills the placeholders when it builds a Production Package.</p>
+        </div>
+        <button id="meimadFormatCloseButton" class="icon-button" type="button" aria-label="Close" title="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <section class="settings-section">
+          <label for="meimadDialect">Control (NC dialect)
+            <select id="meimadDialect"></select>
+          </label>
+          <p id="meimadDialectNote" class="settings-note"></p>
+          <p id="meimadReleaseNote" class="settings-note" hidden>This release is immutable. The formatted program opens as an unsaved local copy; release it through the Release G-code form.</p>
+        </section>
+        <section id="meimadFormatReport" class="settings-section meimad-report" hidden aria-live="polite">
+          <h3>Result</h3>
+          <p id="meimadValidation" class="meimad-validation"></p>
+          <h4>Changes</h4>
+          <ul id="meimadChanges"></ul>
+          <h4 id="meimadWarningsHeading">Check before releasing</h4>
+          <ul id="meimadWarnings"></ul>
+        </section>
+      </div>
+      <footer class="modal-footer">
+        <span id="meimadFormatFeedback" class="settings-feedback" role="status" aria-live="polite"></span>
+        <div>
+          <button id="meimadFormatCancelButton" class="command-button" type="button">Close</button>
+          <button id="meimadFormatApplyButton" class="command-button primary" type="submit">Apply format</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="meimadReleaseModal" class="settings-modal meimad-format-modal meimad-release-modal" aria-labelledby="meimadReleaseTitle">
+    <form id="meimadReleaseForm" method="dialog">
+      <header class="modal-header">
+        <div>
+          <span class="pane-kicker">MEIMAD PLANNER</span>
+          <h2 id="meimadReleaseTitle">Release to Server</h2>
+          <p id="meimadReleaseOperation">Releases the saved program as a new G-code release of this Operation. The Server first checks the Meimad canonical format; nothing is uploaded when the check fails. Edit Mode in the Planner is required.</p>
+        </div>
+        <button id="meimadReleaseCloseButton" class="icon-button" type="button" aria-label="Close" title="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <section class="settings-section meimad-release-grid">
+          <label for="meimadReleasePostprocessor">Postprocessor
+            <select id="meimadReleasePostprocessor" required></select>
+          </label>
+          <label for="meimadReleaseScope">Change scope
+            <select id="meimadReleaseScope">
+              <option value="LOCAL_POST_REVISION">Local post revision (keeps the active process)</option>
+              <option value="NEW_PROCESS_REVISION">New manufacturing-process revision</option>
+            </select>
+          </label>
+          <label for="meimadReleaseComment" class="meimad-release-wide">Release comment (required)
+            <textarea id="meimadReleaseComment" rows="2" required spellcheck="false"></textarea>
+          </label>
+          <label for="meimadReleaseProcessDescription" class="meimad-release-wide" id="meimadReleaseProcessDescriptionLabel">Process change description (new revision)
+            <textarea id="meimadReleaseProcessDescription" rows="2" spellcheck="false"></textarea>
+          </label>
+          <label for="meimadReleaseToolTable" class="meimad-release-wide">Tool-table file
+            <div class="secret-input-row">
+              <input id="meimadReleaseToolTable" type="text" spellcheck="false" placeholder="Required for a first release, or a new revision without the active tool table">
+              <button id="meimadReleaseToolTableBrowse" class="field-button" type="button">Browse...</button>
+            </div>
+          </label>
+          <p id="meimadReleaseScopeNote" class="settings-note meimad-release-wide"></p>
+        </section>
+        <section class="settings-section meimad-release-checks">
+          <label class="checkbox-row"><input id="meimadReleaseReuseTools" type="checkbox"> Reuse the active physical tool table</label>
+          <label class="checkbox-row"><input id="meimadReleaseConfirmTools" type="checkbox"> I confirm this exact physical tool table</label>
+          <label class="checkbox-row"><input id="meimadReleaseConfirmRevision" type="checkbox"> I confirm creation of a new manufacturing-process revision</label>
+        </section>
+        <section id="meimadReleaseReport" class="settings-section meimad-report" hidden aria-live="polite">
+          <p id="meimadReleaseValidation" class="meimad-validation"></p>
+        </section>
+      </div>
+      <footer class="modal-footer">
+        <span id="meimadReleaseFeedback" class="settings-feedback" role="status" aria-live="polite"></span>
+        <div>
+          <button id="meimadReleaseCheckButton" class="command-button" type="button" title="Run the Server's canonical-format check without releasing">Check format</button>
+          <button id="meimadReleaseCancelButton" class="command-button" type="button">Close</button>
+          <button id="meimadReleaseSubmitButton" class="command-button primary" type="submit">Release</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="./meimad-bridge.js"></script>
+  <script src="./meimad-localization.js"></script>
+  <script src="../node_modules/codemirror/lib/codemirror.js"></script>
+  <script src="./fanuc-mode.js"></script>
+  <script src="../node_modules/codemirror/addon/search/searchcursor.js"></script>
+  <script src="../node_modules/codemirror/addon/dialog/dialog.js"></script>
+  <script src="../node_modules/codemirror/addon/search/search.js"></script>
+  <script src="./renderer.js"></script>
+  <script src="../media/kinematics.js"></script>
+  <script src="../media/model-transport.js"></script>
+  <script src="../media/preview.js"></script>
+  <script src="./meimad-viewer.js"></script>
+</body>
+</html>

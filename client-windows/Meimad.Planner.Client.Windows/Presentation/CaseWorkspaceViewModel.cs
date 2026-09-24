@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Formatting;
+using Meimad.Planner.NcEngine;
 
 namespace Meimad.Planner.Client.Windows.Presentation;
 
@@ -1586,6 +1587,191 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     internal void SetWorkingFolderSelection(string path) => WorkingFolderPath = path;
 
     internal void SetGCodeFileSelection(string path) => GCodeFilePath = path;
+
+    /// <summary>
+    /// A release from the history grid, read-only in the NC viewer. "Edit copy" continues on a
+    /// local copy that can be saved (a local version) or released as a new revision.
+    /// </summary>
+    internal async Task<NcViewer.NcViewerOpenRequest?> CreateReleaseViewerRequestAsync(PlannerGCodeRelease release)
+    {
+        if (apiClient is not { } client || SelectedCase is not { } selectedCase || SelectedOperation is not { } operation)
+        {
+            return null;
+        }
+        var caseId = selectedCase.CaseId;
+        var operationId = operation.CaseOperationId;
+        var context = $"{selectedCase.PartNumber} · OP{operation.OperationNumber:00} {operation.Name}";
+        var request = await NcViewer.NcViewerRequests.ForReleaseAsync(
+            client, caseId, operationId, release.GCodeReleaseId, null, context);
+        return request with
+        {
+            ValidateService = (text, token) => client.ValidateNcTemplateAsync(text, token),
+            ReleaseContext = ViewerReleaseContext(context, release.PostprocessorId),
+            ReleaseToServer = (command, _) => ReleaseFromViewerAsync(caseId, operationId, command)
+        };
+    }
+
+    /// <summary>The Release G-code form's choices, as the NC viewer's "Release to Server" dialog offers them.</summary>
+    private NcViewer.NcViewerReleaseContext ViewerReleaseContext(string operationTitle, string? preferredPostprocessorId = null) => new(
+        operationTitle,
+        GCodePostprocessors
+            .Select(value => new NcViewer.NcViewerReleaseTarget(value.PostprocessorId, value.PostprocessorName, value.StatusText))
+            .ToArray(),
+        preferredPostprocessorId ?? SelectedReleasePostprocessor?.PostprocessorId,
+        ActiveProcessRevision is not null,
+        string.IsNullOrWhiteSpace(ToolTableFilePath) ? null : ToolTableFilePath);
+
+    /// <summary>
+    /// "Release to Server" from the NC viewer: the same command, checks and Edit Mode rule as
+    /// <see cref="ReleaseGCodeAsync"/>, for the saved file the viewer hands over. The Server
+    /// validates the canonical template again and rejects an invalid one.
+    /// </summary>
+    internal async Task<NcViewer.NcViewerReleaseOutcome> ReleaseFromViewerAsync(
+        string caseId, string caseOperationId, NcViewer.NcViewerReleaseCommand command)
+    {
+        if (apiClient is null) return new(false, "Connect to the Meimad Server first.");
+        if (!isEditor) return new(false, "Edit Mode is required: acquire it in the Planner window, then release again.");
+        if (string.IsNullOrWhiteSpace(command.PostprocessorId)) return new(false, "Choose the postprocessor.");
+        if (string.IsNullOrWhiteSpace(command.ReleaseComment)) return new(false, "A release comment is required.");
+        if (!File.Exists(command.FilePath)) return new(false, $"The saved program was not found: {command.FilePath}");
+        if (!command.ConfirmToolTable) return new(false, "Confirm the exact physical tool table used for this release.");
+        var newRevision = command.ChangeScope == "NEW_PROCESS_REVISION";
+        if (!newRevision && command.ChangeScope != "LOCAL_POST_REVISION") return new(false, "Choose the change scope.");
+        if (newRevision && (!command.ConfirmNewProcessRevision || string.IsNullOrWhiteSpace(command.ProcessChangeDescription)))
+        {
+            return new(false, "A new process revision requires confirmation and a process change description.");
+        }
+        var requiresToolUpload = !command.HasActiveProcessRevision || (newRevision && !command.ReuseActiveToolTable);
+        if (requiresToolUpload && !File.Exists(command.ToolTableFilePath ?? string.Empty))
+        {
+            return new(false, "Upload the exact tool table, or explicitly reuse the active tool table for a new process revision.");
+        }
+
+        NcViewer.NcViewerReleaseOutcome outcome;
+        IsBusy = true;
+        try
+        {
+            var released = await apiClient.ReleaseGCodeAsync(
+                caseId,
+                caseOperationId,
+                new GCodeReleaseCreate(
+                    command.PostprocessorId,
+                    command.ChangeScope,
+                    command.ReleaseComment.Trim(),
+                    string.IsNullOrWhiteSpace(command.ProcessChangeDescription) ? null : command.ProcessChangeDescription.Trim(),
+                    command.ConfirmNewProcessRevision,
+                    command.ReuseActiveToolTable,
+                    command.ConfirmToolTable,
+                    command.FilePath,
+                    !newRevision || string.IsNullOrWhiteSpace(command.ToolTableFilePath) ? null : command.ToolTableFilePath),
+                clientId,
+                editGeneration);
+            outcome = new(
+                true,
+                $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.",
+                released.GCodeReleaseId,
+                released.ProcessRevisionNumber,
+                released.PostSpecificRevision);
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            outcome = new(false, FriendlyMessage(exception));
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (SelectedCase?.CaseId == caseId && SelectedOperation?.CaseOperationId == caseOperationId)
+        {
+            // The history grid shows the new release; the status keeps the release message.
+            await RefreshGCodeAsync();
+        }
+        if (outcome.Succeeded) StatusMessage = outcome.Message;
+        return outcome;
+    }
+
+    /// <summary>
+    /// The NC editor for a manually written program of the selected Operation: a new program that
+    /// already carries the Meimad canonical block, or the local file chosen for release. Inside
+    /// the editor any NC file can be opened, edited and saved; "Use for G-code release" saves it
+    /// and puts it in <see cref="GCodeFilePath"/>, and "Release to Server" releases the saved file
+    /// through <see cref="ReleaseFromViewerAsync"/> with the form's comment and confirmations.
+    /// </summary>
+    internal async Task<NcViewer.NcViewerOpenRequest?> CreateNcEditorRequestAsync(bool editSelectedFile)
+    {
+        if (SelectedCase is not { } selectedCase || SelectedOperation is not { } operation) return null;
+        var client = apiClient;
+        var caseId = selectedCase.CaseId;
+        var operationId = operation.CaseOperationId;
+        var context = $"{selectedCase.PartNumber} · OP{operation.OperationNumber:00} {operation.Name}";
+        var machines = client is null
+            ? []
+            : await NcViewer.NcViewerRequests.MachinesAsync(client, CancellationToken.None);
+        var dialect = NcViewer.NcViewerDialects.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
+        var viewerMachine = NcViewer.NcViewerMachines.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
+
+        NcTextDocument document;
+        string name;
+        string? path = null;
+        if (editSelectedFile && File.Exists(GCodeFilePath))
+        {
+            path = GCodeFilePath;
+            name = Path.GetFileName(path);
+            document = NcTextFile.Decode(await File.ReadAllBytesAsync(path));
+        }
+        else
+        {
+            name = NcProgramFileName(selectedCase.PartNumber, operation.OperationNumber);
+            var skeleton = NcViewer.NcViewerOpenRequest.BlankProgram;
+            if (client is not null)
+            {
+                try
+                {
+                    skeleton = (await client.FormatNcTemplateAsync(skeleton, dialect ?? NcViewer.NcViewerDialects.Default)).Text;
+                }
+                catch (Exception exception) when (IsExpected(exception) || exception is NotSupportedException)
+                {
+                    // Offline: start from the plain blank program; the format can be applied later.
+                }
+            }
+            document = NcViewer.NcViewerOpenRequest.NewDocument(skeleton);
+        }
+
+        return new NcViewer.NcViewerOpenRequest(
+            context,
+            name,
+            document,
+            ReadOnly: false,
+            SourceDescription: $"Manual NC program for {context}",
+            FilePath: path,
+            NcDialect: dialect,
+            FormatService: client is null ? null : NcViewer.NcViewerRequests.FormatService(client),
+            UseForRelease: savedPath => Task.FromResult(UseEditorFileForRelease(caseId, operationId, savedPath)),
+            MachineSelection: viewerMachine,
+            ValidateService: client is null ? null : (text, token) => client.ValidateNcTemplateAsync(text, token),
+            ReleaseContext: client is null ? null : ViewerReleaseContext(context),
+            ReleaseToServer: client is null ? null : (command, _) => ReleaseFromViewerAsync(caseId, operationId, command));
+    }
+
+    internal string UseEditorFileForRelease(string caseId, string caseOperationId, string path)
+    {
+        if (SelectedCase?.CaseId != caseId || SelectedOperation?.CaseOperationId != caseOperationId)
+        {
+            return $"Saved {path}. The Cases tab now shows another Operation: select that Case and Operation again and choose this file with Browse… under Release G-code.";
+        }
+        GCodeFilePath = path;
+        StatusMessage = $"{Path.GetFileName(path)} is selected for Release G-code. Add the release comment and confirmations, then release it.";
+        return $"Saved {Path.GetFileName(path)} and selected it in the Release G-code form of {SelectedCase.PartNumber}. Finish the release there.";
+    }
+
+    private static string NcProgramFileName(string partNumber, int operationNumber)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string(partNumber.Select(character => invalid.Contains(character) ? '_' : character).ToArray()).Trim();
+        return $"{(safe.Length == 0 ? "program" : safe)}-OP{operationNumber:00}.nc";
+    }
 
     internal void SetToolTableFileSelection(string path) => ToolTableFilePath = path;
 

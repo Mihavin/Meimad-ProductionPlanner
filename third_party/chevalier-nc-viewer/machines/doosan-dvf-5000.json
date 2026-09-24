@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "id": "doosan-dvf-5000",
+  "name": "Doosan DVF 5000",
+  "manufacturer": "Doosan Machine Tools (DN Solutions)",
+  "model": "DVF 5000",
+  "type": "mill",
+  "control": "fanuc-31i-b-plus-mill",
+  "description": "5-axis vertical machining centre with a FANUC 31i-B5 Plus: X/Y/Z spindle side and a B (tilt, about Y) / C (rotary) table.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "FANUC Series 30i/31i/32i-MODEL B Plus operator's manuals B-64724EN, B-64724EN-2 and parameter manual B-64730EN (DoosanFanuc3xDoc)",
+    "DVF 5000 programs in DoosanDVF5000Memory (post DOOSANDVF5000_5X_TC_TB_RTCP): table B and C, G68.2 + G53.1 3+2 positioning, G43.4 TCP, machine park position G53 X-350. Y225.",
+    "Doosan DVF 5000 published specification: X 625 mm, Y 450 mm, Z 400 mm travels"
+  ],
+  "detection": {
+    "keywords": ["DOOSAN", "DVF"],
+    "codes": ["G68.2", "G68.3", "G68.4", "G53.1", "G53.6", "G43.4", "G43.5", "G5.1", "G05.1", "G54.1", "G54.2", "G08"]
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -350, "max": 275, "rapidRate": 36000, "maxFeed": 30000 },
+    "Y": { "type": "linear", "min": -225, "max": 225, "rapidRate": 36000, "maxFeed": 30000 },
+    "Z": { "type": "linear", "min": 100, "max": 500, "rapidRate": 36000, "maxFeed": 30000 },
+    "B": { "type": "rotary", "min": -120, "max": 120, "rapidRate": 9000, "wrap": false },
+    "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 14400, "wrap": true }
+  },
+  "axisNote": "Travels, rapid rates and the B range are placeholders around the published 625/450/400 mm strokes: the programs place the machine origin between the X/Y ends (G53 X-350. Y225. is the park position) and use B-25.312 to B90. Replace them with the machine's parameters 1320/1321 (stroke limits), 1420 (rapid rates) and 19741-19744 (rotary ranges).",
+  "mrzp": {
+    "x": 0,
+    "y": 0,
+    "z": 0,
+    "rotaryCenterDistance": 0,
+    "verified": false,
+    "label": "Rotary centre (parameters 19700-19714)",
+    "source": "Placeholder: the machine coordinate origin is assumed to lie on the B and C axes. Replace with the table rotation centre of FANUC parameters 19700-19714."
+  },
+  "rotaryConvention": {
+    "verified": true,
+    "note": "B turns the table about +Y and carries C, which turns it about +Z; both follow the ISO primed-axis convention (sense -1 on both nodes).",
+    "evidence": "Every G68.2 plane in the DVF programs matches the B/C the post outputs with it (for example I156. J25.312 K-153.779 with B-25.312 C246. and with B25.312 C66.), which holds only for B about Y carrying C with sense -1."
+  },
+  "referencePositions": {
+    "1": { "X": 275, "Y": 225, "Z": 500, "B": 0, "C": 0 },
+    "2": { "X": -350, "Y": 225, "Z": 500, "B": 0, "C": 0 },
+    "note": "Placeholders for parameters 1240 (G28) and 1241 (G30): G91 G28 Z0 returns Z to the top of its stroke."
+  },
+  "spindle": { "maxRpm": 12000, "taper": "BT40" },
+  "toolChanger": {
+    "type": "arm",
+    "capacity": 30,
+    "changeSeconds": 3.5,
+    "zMachine": 500,
+    "note": "The post retracts with G91 G28 Z0 before M06; the preview also lifts Z to the reference position if it is lower."
+  },
+  "defaultToolLength": 100,
+  "workholding": { "platterDiameter": 500, "platterThickness": 60, "platterTopAboveMrzp": 0 },
+  "workOffsets": {
+    "default": "mrzp",
+    "note": "Work offsets that the program or the initial macro variables do not define (#5221-#5340, #7001+, #14001+) are placed at the rotary centre with B0 C0."
+  },
+  "parameters": {
+    "1401#1": 1,
+    "3401#0": 0,
+    "3404#7": 1,
+    "5004#2": 0,
+    "5114": 1,
+    "5115": 1,
+    "5148": "X+",
+    "5400#0": 0,
+    "5400#7": 0,
+    "6000#3": 0,
+    "11221#0": 1,
+    "13451#1": 1,
+    "19696#5": 0
+  },
+  "parameterNotes": {
+    "1401#1": "LRP = 1 (linear rapids): required for tilted working plane indexing, which the programs use.",
+    "3401#0": "DPI = 0: values without a decimal point are least input increments (0.001 mm).",
+    "3404#7": "M3B = 1: up to three M codes per block (the programs send M11 M39 together).",
+    "5004#2": "ODI = 0: D offsets hold radii.",
+    "5114": "G73 return amount (placeholder).",
+    "5115": "G83 clearance (placeholder).",
+    "5148": "Fine boring / back boring shift direction (placeholder).",
+    "11221#0": "MTW = 1: G68.4 incremental tilted working plane (O999/O1999 use it).",
+    "13451#1": "ATW = 1: G68.2 I0 J0 K0 is accepted (the programs use it for flat operations).",
+    "19696#5": "WKP = 0: tool center point control is programmed in the table coordinate system."
+  },
+  "mCodes": [
+    { "code": "M10", "name": "Rotary axis clamp", "preview": "state", "notes": "The DVF programs send M10 M38 as CLAMP BC." },
+    { "code": "M11", "name": "Rotary axis unclamp", "preview": "state", "notes": "The DVF programs send M11 M39 as UNCLAMP BC before simultaneous 5-axis moves." },
+    { "code": "M38", "name": "Rotary axis clamp", "preview": "state", "notes": "Sent with M10 as CLAMP BC." },
+    { "code": "M39", "name": "Rotary axis unclamp", "preview": "state", "notes": "Sent with M11 as UNCLAMP BC." }
+  ],
+  "kinematics": {
+    "type": "table-table",
+    "description": "X/Y/Z move the spindle relative to the table (drawn on the spindle side); B tilts the table about a line parallel to Y through the rotary centre and carries the C table.",
+    "nodes": [
+      {
+        "id": "base",
+        "label": "Machine base",
+        "geometry": { "shape": "box", "size": [1150, 900, 80], "center": [-37, 0, -330] },
+        "model": null
+      },
+      {
+        "id": "x-carriage",
+        "parent": "base",
+        "label": "X carriage",
+        "type": "linear",
+        "axis": "X",
+        "direction": [1, 0, 0],
+        "geometry": { "shape": "box", "size": [260, 200, 110], "center": [0, 330, 560] },
+        "model": null
+      },
+      {
+        "id": "y-ram",
+        "parent": "x-carriage",
+        "label": "Y ram",
+        "type": "linear",
+        "axis": "Y",
+        "direction": [0, 1, 0],
+        "geometry": { "shape": "box", "size": [220, 520, 100], "center": [0, 170, 460] },
+        "model": null
+      },
+      {
+        "id": "z-head",
+        "parent": "y-ram",
+        "label": "Z spindle head",
+        "type": "linear",
+        "axis": "Z",
+        "direction": [0, 0, 1],
+        "geometry": { "shape": "box", "size": [220, 260, 320], "center": [0, 50, 200] },
+        "model": null
+      },
+      {
+        "id": "spindle",
+        "parent": "z-head",
+        "label": "Spindle (gauge line)",
+        "type": "spindle",
+        "toolMount": true,
+        "geometry": { "shape": "cylinder", "radius": 65, "height": 100, "center": [0, 0, 50], "axis": "z" },
+        "model": null
+      },
+      {
+        "id": "b-cradle",
+        "parent": "base",
+        "label": "B tilting table",
+        "type": "rotary",
+        "axis": "B",
+        "direction": [0, 1, 0],
+        "pivot": "mrzp",
+        "sense": -1,
+        "geometry": { "shape": "box", "size": [600, 560, 80], "center": "mrzp", "offset": [0, 0, -140] },
+        "model": null
+      },
+      {
+        "id": "c-table",
+        "parent": "b-cradle",
+        "label": "C table",
+        "type": "rotary",
+        "axis": "C",
+        "direction": [0, 0, 1],
+        "pivot": "mrzp",
+        "sense": -1,
+        "workpieceMount": true,
+        "geometry": { "shape": "cylinder", "radius": 250, "height": 60, "center": "mrzp", "offset": [0, 0, -30], "axis": "z" },
+        "model": null
+      }
+    ]
+  }
+}

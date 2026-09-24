@@ -46,6 +46,14 @@ internal static partial class MachineValidator
                 "invalid_nc_dialect",
                 "ncDialect must be exactly 'HAAS_NGC', 'FANUC_MACRO_B', 'MAZAK_MATRIX_EIA', or 'OKUMA_OSP'."));
         }
+        var ncViewerMachine = MachineNcViewerMachines.Normalize(values.NcViewerMachine);
+        if (ncViewerMachine is not null && !MachineNcViewerMachines.IsIdentifier(ncViewerMachine))
+        {
+            issues.Add(new MachineValidationIssue(
+                "ncViewerMachine",
+                "invalid_nc_viewer_machine",
+                "ncViewerMachine must be an NC viewer machine id (lower-case letters, digits and hyphens) or null for automatic detection."));
+        }
         var supportedPostprocessorIds = NormalizeIdentifiers(
             values.SupportedPostprocessorIds,
             "supportedPostprocessorIds",
@@ -106,7 +114,8 @@ internal static partial class MachineValidator
             values.RapidRateMillimetersPerMinute,
             values.ToolChangeTimeSeconds,
             machineTimeFactor,
-            ncDialect);
+            ncDialect,
+            ncViewerMachine);
     }
 
     private static IReadOnlyList<string> NormalizeIdentifiers(

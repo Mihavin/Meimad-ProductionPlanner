@@ -106,6 +106,7 @@ public sealed class ViewStartupTests
                 plannerWindow.Show();
                 plannerWindow.UpdateLayout();
                 LocalizationInteractionPerformanceAudit.RunAndAssert(plannerWindow);
+                LocalizationBehaviorAudit.RunAndAssert(plannerWindow);
 
                 var plannerViewModel = Assert.IsType<MainWindowViewModel>(plannerWindow.DataContext);
                 var serverIndicator = Assert.IsType<Ellipse>(plannerWindow.FindName("ServerStatusIndicator"));

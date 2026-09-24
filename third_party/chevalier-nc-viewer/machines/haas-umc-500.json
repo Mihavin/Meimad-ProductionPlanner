@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "id": "haas-umc-500",
+  "name": "Haas UMC-500",
+  "manufacturer": "Haas Automation",
+  "model": "UMC-500",
+  "type": "mill",
+  "control": "haas-ngc-mill",
+  "description": "40-taper 5-axis universal machining centre: bridge-type X/Y/Z spindle head with a B (tilt) / C (rotary) trunnion table.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "Haas UMC series operator's manual supplement - axis definitions, settings 254-257, safe zones",
+    "Haas UMC geometry guide - B axis of rotation is parallel to the Y-Z plane",
+    "Haas UMC-500 published specification: X 610 mm, Y 406 mm, Z 406 mm, B +120/-35 deg, C 360 deg, 400 mm platter"
+  ],
+  "detection": {
+    "keywords": ["HAAS", "UMC"],
+    "codes": ["G234", "G253", "G254", "G255", "G268", "G269", "G187", "G154", "G103"],
+    "default": true
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -610, "max": 0, "rapidRate": 25400, "maxFeed": 21200 },
+    "Y": { "type": "linear", "min": -406, "max": 0, "rapidRate": 25400, "maxFeed": 21200 },
+    "Z": { "type": "linear", "min": -406, "max": 0, "rapidRate": 25400, "maxFeed": 21200 },
+    "B": { "type": "rotary", "min": -35, "max": 120, "rapidRate": 3000, "wrap": false },
+    "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 3000, "wrap": true }
+  },
+  "mrzp": {
+    "x": -305,
+    "y": -203,
+    "z": -460,
+    "rotaryCenterDistance": 0,
+    "verified": false,
+    "source": "Placeholder at the travel centre. Replace with the machine's Settings 255 (X), 256 (Y), 257 (Z) and 254 (5-axis rotary centre distance)."
+  },
+  "rotaryConvention": {
+    "verified": true,
+    "note": "Table axes follow the ISO primed-axis convention: a positive B or C command turns the table so that the tool moves positively about +Y / +Z relative to the part. Flip `sense` on the b-trunnion or c-platter node if a test move on the machine shows the opposite direction.",
+    "evidence": "The machine's orbit-home macro O09013 (HaasUMCmemory/09000) moves a table point p to MRZP + Ry(-B) Rz(-C) (p - MRZP) when it builds G59 for a tilted plane, which is sense -1 on both trunnion nodes."
+  },
+  "spindle": { "maxRpm": 8100, "taper": "CAT40" },
+  "toolChanger": { "type": "side-mount", "capacity": 30, "changeSeconds": 2.8 },
+  "defaultToolLength": 100,
+  "workholding": { "platterDiameter": 400, "platterThickness": 50, "platterTopAboveMrzp": 0 },
+  "workOffsets": {
+    "default": "mrzp",
+    "note": "Work offsets that the program or the initial macro variables do not define (#5221-#5326, #7001+, #14001+) are placed at the MRZP with B0 C0."
+  },
+  "parameterVariables": {
+    "30057.25": 1,
+    "note": "Machine parameters read by macros (#30000-#39999), keyed by macro variable. 30057.25 (parameter 57 bit 25, negative work offsets) must be 1 for the Renishaw macros in the machine memory, which alarm otherwise. Parameters not listed read 0."
+  },
+  "controlSettings": {
+    "9": "MM",
+    "22": 1.27,
+    "27": "X+",
+    "28": "ON",
+    "29": "OFF",
+    "33": "FANUC",
+    "34": 100,
+    "40": "DIAMETER",
+    "45": "OFF",
+    "46": "OFF",
+    "47": "OFF",
+    "48": "OFF",
+    "52": 0,
+    "57": "OFF",
+    "71": 1,
+    "72": 0,
+    "73": "OFF",
+    "79": 100,
+    "108": "OFF",
+    "191": "MEDIUM",
+    "247": "OFF",
+    "335": "OFF"
+  },
+  "kinematics": {
+    "type": "table-table",
+    "description": "X saddle on the bridge, Y ram, Z spindle head; B trunnion tilts about a line parallel to Y through the MRZP and carries the C platter.",
+    "nodes": [
+      {
+        "id": "base",
+        "label": "Machine base",
+        "geometry": { "shape": "box", "size": [1100, 760, 60], "center": [-305, -203, -560] },
+        "model": null
+      },
+      {
+        "id": "x-saddle",
+        "parent": "base",
+        "label": "X saddle",
+        "type": "linear",
+        "axis": "X",
+        "direction": [1, 0, 0],
+        "geometry": { "shape": "box", "size": [220, 180, 90], "center": [0, 60, 420] },
+        "model": null
+      },
+      {
+        "id": "y-ram",
+        "parent": "x-saddle",
+        "label": "Y ram",
+        "type": "linear",
+        "axis": "Y",
+        "direction": [0, 1, 0],
+        "geometry": { "shape": "box", "size": [200, 520, 90], "center": [0, 150, 330] },
+        "model": null
+      },
+      {
+        "id": "z-head",
+        "parent": "y-ram",
+        "label": "Z spindle head",
+        "type": "linear",
+        "axis": "Z",
+        "direction": [0, 0, 1],
+        "geometry": { "shape": "box", "size": [200, 240, 300], "center": [0, 40, 180] },
+        "model": null
+      },
+      {
+        "id": "spindle",
+        "parent": "z-head",
+        "label": "Spindle (gauge line)",
+        "type": "spindle",
+        "toolMount": true,
+        "geometry": { "shape": "cylinder", "radius": 60, "height": 90, "center": [0, 0, 45], "axis": "z" },
+        "model": null
+      },
+      {
+        "id": "b-trunnion",
+        "parent": "base",
+        "label": "B trunnion",
+        "type": "rotary",
+        "axis": "B",
+        "direction": [0, 1, 0],
+        "pivot": "mrzp",
+        "sense": -1,
+        "geometry": { "shape": "box", "size": [480, 460, 70], "center": "mrzp", "offset": [0, 0, -110] },
+        "model": null
+      },
+      {
+        "id": "c-platter",
+        "parent": "b-trunnion",
+        "label": "C platter",
+        "type": "rotary",
+        "axis": "C",
+        "direction": [0, 0, 1],
+        "pivot": "mrzp",
+        "sense": -1,
+        "workpieceMount": true,
+        "geometry": { "shape": "cylinder", "radius": 200, "height": 50, "center": "mrzp", "offset": [0, 0, -25], "axis": "z" },
+        "model": null
+      }
+    ]
+  }
+}

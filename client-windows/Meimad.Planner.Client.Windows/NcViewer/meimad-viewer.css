@@ -1,0 +1,166 @@
+/* Meimad Planner additions to the upstream desktop viewer styles (desktop.css). */
+
+[hidden],
+.meimad-hidden,
+#codexPanel,
+#codexToggleButton {
+  display: none !important;
+}
+
+/* Codex is not part of Meimad Planner: its panel never takes a grid column. */
+body.codex-panel-open {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.meimad-separator {
+  width: 1px;
+  height: 22px;
+  margin: 0 6px;
+  background: var(--app-border-strong);
+}
+
+.meimad-mode-badge {
+  margin-left: 10px;
+  padding: 3px 8px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.meimad-mode-badge:empty {
+  display: none;
+}
+
+.meimad-mode-badge.read-only {
+  color: var(--app-warning);
+  border-color: var(--app-warning);
+}
+
+.meimad-mode-badge.editable {
+  color: var(--app-success);
+  border-color: var(--app-success);
+}
+
+/* A read-only release is visibly distinct from an editable program, not only by color. */
+body.meimad-read-only .editor-pane .pane-kicker::after {
+  content: " · READ-ONLY";
+  color: var(--app-warning);
+}
+
+body.meimad-read-only .CodeMirror-cursor {
+  display: none;
+}
+
+.meimad-note {
+  margin: 8px 0 0;
+  color: var(--app-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.meimad-format-modal {
+  width: min(720px, calc(100vw - 48px));
+}
+
+.meimad-format-modal select {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.meimad-report h3,
+.meimad-report h4 {
+  margin: 10px 0 6px;
+}
+
+.meimad-report ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  user-select: text;
+}
+
+.meimad-report li {
+  padding: 3px 0;
+  line-height: 1.4;
+}
+
+.meimad-marker {
+  display: inline-block;
+  width: 1.4em;
+  font-weight: 700;
+}
+
+.meimad-validation {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 3px;
+  font-weight: 600;
+  user-select: text;
+}
+
+.meimad-validation.valid {
+  color: var(--app-success);
+  border-color: var(--app-success);
+}
+
+.meimad-validation.invalid {
+  color: var(--app-danger);
+  border-color: var(--app-danger);
+}
+
+/* Release to Server dialog: the Release G-code form's fields, two per row. */
+.meimad-release-modal {
+  width: min(820px, calc(100vw - 48px));
+}
+
+.meimad-release-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.meimad-release-grid label {
+  display: block;
+  margin: 0;
+}
+
+.meimad-release-grid select,
+.meimad-release-grid textarea,
+.meimad-release-grid input[type="text"] {
+  width: 100%;
+  margin-top: 6px;
+  box-sizing: border-box;
+}
+
+.meimad-release-grid textarea {
+  resize: vertical;
+  font: inherit;
+}
+
+.meimad-release-wide {
+  grid-column: 1 / -1;
+}
+
+.meimad-release-checks .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.meimad-release-checks .checkbox-row input[disabled] + span,
+.meimad-release-checks .checkbox-row:has(input[disabled]) {
+  color: var(--app-muted);
+}
+
+/* Hebrew: dialogs and notes read right to left; the code editor and toolpath stay left to right. */
+.meimad-rtl dialog,
+.meimad-rtl .meimad-note,
+.meimad-rtl .status-message {
+  direction: rtl;
+  text-align: right;
+}

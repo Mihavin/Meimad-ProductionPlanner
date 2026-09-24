@@ -96,6 +96,9 @@ public sealed class SetupViewModelTests
         viewModel.MachineCapabilitiesText = "probe, high-speed";
         viewModel.MachineExecutionMode = "CNC_GCODE";
         viewModel.MachineNcDialect = "OKUMA_OSP";
+        // The list is the NC engine catalog installed with the client (vendored + Meimad definitions).
+        Assert.Same(NcViewerMachineOption.Auto, viewModel.SelectedNcViewerMachine);
+        viewModel.SelectedNcViewerMachine = viewModel.NcViewerMachines.Single(option => option.Id == "okuma-genos-l200e-m");
         viewModel.MachineUsableToolPositions = "30";
         viewModel.MachineRapidRateMillimetersPerMinute = "24000";
         viewModel.MachineToolChangeTimeSeconds = "4.5";
@@ -109,6 +112,7 @@ public sealed class SetupViewModelTests
         Assert.Equal("5-axis milling", api.LastMachineCreate.ProcessType);
         Assert.Equal("CNC_GCODE", api.LastMachineCreate.ExecutionMode);
         Assert.Equal("OKUMA_OSP", api.LastMachineCreate.NcDialect);
+        Assert.Equal("okuma-genos-l200e-m", api.LastMachineCreate.NcViewerMachine);
         Assert.Equal(["post-default"], api.LastMachineCreate.SupportedPostprocessorIds);
         Assert.Equal(30, api.LastMachineCreate.UsableToolPositions);
         Assert.Equal(24000, api.LastMachineCreate.RapidRateMillimetersPerMinute);

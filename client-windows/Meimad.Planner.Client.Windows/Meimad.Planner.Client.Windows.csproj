@@ -9,8 +9,10 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>Meimad.Planner.Client.Windows</RootNamespace>
     <AssemblyName>Meimad.Planner.Client.Windows</AssemblyName>
-    <Version>0.1.122</Version>
+    <Version>0.1.124</Version>
     <ApplicationIcon>Assets\MeimadPlanner.ico</ApplicationIcon>
+    <!-- Vendored NC viewer UI (third_party/chevalier-nc-viewer); see the NcViewer items below. -->
+    <ChevalierViewerRoot>$(MSBuildThisFileDirectory)..\..\third_party\chevalier-nc-viewer\</ChevalierViewerRoot>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +20,38 @@
     <Resource Include="Assets\MeimadPlanner.ico" />
     <EmbeddedResource Include="Localization\strings.he.json" LogicalName="Meimad.Planner.Client.Windows.Localization.strings.he.json" Type="Non-Resx" WithCulture="false" />
     <EmbeddedResource Include="Localization\strings.ru.json" LogicalName="Meimad.Planner.Client.Windows.Localization.strings.ru.json" Type="Non-Resx" WithCulture="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\Meimad.Planner.NcEngine\Meimad.Planner.NcEngine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!--
+    NC viewer web page: the vendored Chevalier viewer UI (third_party/chevalier-nc-viewer) plus the
+    Meimad page, bridge and styles in NcViewer/. Published under NcViewer/ with the upstream layout
+    (desktop/, media/, node_modules/codemirror, node_modules/three/build) so relative URLs match.
+    The project keeps a single PropertyGroup: installer/build-installers.ps1 reads its Version.
+  -->
+  <ItemGroup>
+    <Content Include="NcViewer\*.html;NcViewer\*.js;NcViewer\*.css"
+             Link="NcViewer\desktop\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)desktop\renderer.js;$(ChevalierViewerRoot)desktop\desktop.css;$(ChevalierViewerRoot)desktop\fanuc-mode.js"
+             Link="NcViewer\desktop\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)media\*.js;$(ChevalierViewerRoot)media\*.css"
+             Link="NcViewer\media\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)vendor\codemirror\**\*"
+             Link="NcViewer\node_modules\codemirror\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)vendor\three\*"
+             Link="NcViewer\node_modules\three\build\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

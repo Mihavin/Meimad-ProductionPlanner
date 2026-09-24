@@ -3,12 +3,14 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Application.Timeline;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Meimad.Planner.Server.Tests.GCode;
 
@@ -520,12 +522,13 @@ public sealed class GCodeReleaseApiTests
 
             var nc = Encoding.UTF8.GetBytes("""
                 (machine-independent released program)
-                N10 G21 G90
-                N20 G0 X6000
-                N30 G1 X6600 F600
-                N40 T1 M6
-                N50 G4 X2
-                N60 M30
+                N10 G21 G90 G17 G54
+                N20 T1 M6
+                N30 G0 X0 Y0 Z100.
+                N40 G0 X300.
+                N50 G1 X360. F60.
+                N60 G4 P2.
+                N70 M30
                 """);
             var release = await ReleaseAsync(
                 client, "post-a", "NEW_PROCESS_REVISION", "NC estimate release",
@@ -543,20 +546,23 @@ public sealed class GCodeReleaseApiTests
                 var analysis = item.GetProperty("ncAnalysis");
                 Assert.Equal("HIGH", analysis.GetProperty("confidence").GetString());
                 Assert.Equal(60d, analysis.GetProperty("feedMotionSeconds").GetDouble(), 6);
-                Assert.Equal(6000d, analysis.GetProperty("rapidDistanceMillimeters").GetDouble(), 6);
+                Assert.Equal(300d, analysis.GetProperty("rapidDistanceMillimeters").GetDouble(), 6);
+                Assert.Equal(1, analysis.GetProperty("toolChangeCount").GetInt32());
+                Assert.Equal(2d, analysis.GetProperty("dwellSeconds").GetDouble(), 6);
+                Assert.StartsWith("nc-engine/", analysis.GetProperty("parserVersion").GetString());
                 Assert.Equal(2, item.GetProperty("machineCycleEstimates").GetArrayLength());
             }
 
             var machineOne = await BoardOperationAsync(client, "machine-1");
             Assert.Equal(300, machineOne.GetProperty("cycleTimePerPartSeconds").GetInt32());
             Assert.Equal("nc_estimate", machineOne.GetProperty("planningCycleTimeSource").GetString());
-            Assert.Equal(132d, machineOne.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+            Assert.Equal(75d, machineOne.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
             Assert.Equal(60d, machineOne.GetProperty("toolLoadingTimeSeconds").GetDouble(), 6);
             Assert.Equal(0d, machineOne.GetProperty("fixtureSetupTimeSeconds").GetDouble(), 6);
-            Assert.Equal(198d, machineOne.GetProperty("firstPieceProveOutTimeSeconds").GetDouble(), 6);
-            Assert.Equal(258d, machineOne.GetProperty("totalSetupTimeSeconds").GetDouble(), 6);
+            Assert.Equal(112.5d, machineOne.GetProperty("firstPieceProveOutTimeSeconds").GetDouble(), 6);
+            Assert.Equal(172.5d, machineOne.GetProperty("totalSetupTimeSeconds").GetDouble(), 6);
             Assert.Equal(0, machineOne.GetProperty("remainingProductionQuantity").GetInt32());
-            Assert.Equal(258d, machineOne.GetProperty("totalPlannedMachineTimeSeconds").GetDouble(), 6);
+            Assert.Equal(172.5d, machineOne.GetProperty("totalPlannedMachineTimeSeconds").GetDouble(), 6);
             Assert.True(machineOne.GetProperty("usesSetupOccupancyEstimate").GetBoolean());
 
             var timelineSource = application.Services.GetRequiredService<ITimelineSourceRepository>();
@@ -565,10 +571,10 @@ public sealed class GCodeReleaseApiTests
                 DateTimeOffset.Parse("2026-08-21T00:00:00Z"),
                 CancellationToken.None);
             var timelineOperation = Assert.Single(timelineSnapshot.Operations);
-            Assert.Equal(132d, timelineOperation.CycleSeconds!.Value, 6);
-            Assert.Equal(258d, timelineOperation.SetupSeconds!.Value, 6);
+            Assert.Equal(75d, timelineOperation.CycleSeconds!.Value, 6);
+            Assert.Equal(172.5d, timelineOperation.SetupSeconds!.Value, 6);
             Assert.Equal(0, timelineOperation.ProductionCycleQuantity);
-            Assert.Equal(258d, timelineOperation.TotalPlannedMachineSeconds!.Value, 6);
+            Assert.Equal(172.5d, timelineOperation.TotalPlannedMachineSeconds!.Value, 6);
             Assert.Equal(300, timelineOperation.ManualCycleSeconds);
             Assert.Equal("nc_estimate", timelineOperation.PlanningCycleTimeSource);
 
@@ -579,7 +585,7 @@ public sealed class GCodeReleaseApiTests
                 move.EnsureSuccessStatusCode();
             }
             var machineTwo = await BoardOperationAsync(client, "machine-2");
-            Assert.Equal(115.2d, machineTwo.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+            Assert.Equal(81d, machineTwo.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
 
             using (var patch = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/machines/machine-2"))
             {
@@ -595,7 +601,7 @@ public sealed class GCodeReleaseApiTests
             }
 
             var recalculated = await BoardOperationAsync(client, "machine-2");
-            Assert.Equal(151.2d, recalculated.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+            Assert.Equal(82.8d, recalculated.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
             Assert.Equal(300, recalculated.GetProperty("cycleTimePerPartSeconds").GetInt32());
 
             await using var auditConnection = await application.Services
@@ -1105,6 +1111,149 @@ public sealed class GCodeReleaseApiTests
             .Single(value => value.GetProperty("postprocessorId").GetString() == postprocessorId)
             .GetProperty("status").GetString()!;
 
+    [Fact]
+    public async Task Meimad_format_returns_a_releasable_canonical_template_without_edit_mode()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            var raw = "%\nO1500\nG90 G17 G40 G49 G80\nT1 M06\nG54 G0 X0 Y0\nG43 H1 Z50.\nG1 Z-5. F200.\nG91 G28 Z0.\nM30\n%\n";
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/v1/nc-programs/meimad-format", new { text = raw, ncDialect = "FANUC_MACRO_B" });
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = json.RootElement;
+            Assert.True(root.GetProperty("validation").GetProperty("isValid").GetBoolean());
+            Assert.True(root.GetProperty("changed").GetBoolean());
+            Assert.Equal("FANUC_MACRO_B", root.GetProperty("ncDialect").GetString());
+            var formatted = root.GetProperty("text").GetString()!;
+            Assert.Contains("\nPOPEN\n[[MEIMAD:EVENT_CONTEXT]]\nDPRNT[[[MEIMAD:PART_NAME]]]\n", formatted, StringComparison.Ordinal);
+            Assert.Contains("\n[[MEIMAD:CYCLE_END]]\nPCLOS\nM30\n", formatted, StringComparison.Ordinal);
+
+            using (var invalid = await client.PostAsJsonAsync(
+                       "/api/v1/nc-programs/meimad-format", new { text = raw, ncDialect = "SIEMENS" }))
+            {
+                Assert.Equal((HttpStatusCode)422, invalid.StatusCode);
+            }
+
+            AddEditorHeaders(client);
+            using var release = await SendReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Formatted in the NC viewer",
+                Encoding.UTF8.GetBytes(formatted), Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false, confirmTools: true,
+                includeVerificationHook: false);
+            Assert.Equal(HttpStatusCode.Created, release.StatusCode);
+        });
+    }
+
+    [Fact]
+    public async Task Nc_program_validation_reports_the_canonical_template_check_without_storing_anything()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            var raw = "%\nO1500\nG90 G17 G40 G49 G80\nT1 M06\nG54 G0 X0 Y0\nG1 Z-5. F200.\nM30\n%\n";
+
+            using var invalid = await client.PostAsJsonAsync("/api/v1/nc-programs/validate", new { text = raw });
+            invalid.EnsureSuccessStatusCode();
+            using var invalidJson = JsonDocument.Parse(await invalid.Content.ReadAsStringAsync());
+            Assert.False(invalidJson.RootElement.GetProperty("isValid").GetBoolean());
+            Assert.StartsWith("production_package_", invalidJson.RootElement.GetProperty("code").GetString(), StringComparison.Ordinal);
+            Assert.False(string.IsNullOrWhiteSpace(invalidJson.RootElement.GetProperty("message").GetString()));
+
+            using var format = await client.PostAsJsonAsync(
+                "/api/v1/nc-programs/meimad-format", new { text = raw, ncDialect = "HAAS_NGC" });
+            format.EnsureSuccessStatusCode();
+            using var formatJson = JsonDocument.Parse(await format.Content.ReadAsStringAsync());
+            var formatted = formatJson.RootElement.GetProperty("text").GetString()!;
+
+            using var valid = await client.PostAsJsonAsync("/api/v1/nc-programs/validate", new { text = formatted });
+            valid.EnsureSuccessStatusCode();
+            using var validJson = JsonDocument.Parse(await valid.Content.ReadAsStringAsync());
+            Assert.True(validJson.RootElement.GetProperty("isValid").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, validJson.RootElement.GetProperty("code").ValueKind);
+
+            using var missing = await client.PostAsJsonAsync("/api/v1/nc-programs/validate", new { });
+            Assert.Equal((HttpStatusCode)422, missing.StatusCode);
+
+            // Nothing was released by either call.
+            using var catalog = await client.GetAsync("/api/v1/cases/case-1/operations/case-op-1/gcode");
+            catalog.EnsureSuccessStatusCode();
+            using var catalogJson = JsonDocument.Parse(await catalog.Content.ReadAsStringAsync());
+            Assert.Equal(0, catalogJson.RootElement.GetProperty("releases").GetArrayLength());
+        });
+    }
+
+    [Fact]
+    public async Task Existing_releases_get_the_nc_engine_analysis_as_their_current_estimate()
+    {
+        // The release is made by a Server that still used the basic parser.
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE machines SET rapid_rate_mm_per_min = 6000, tool_change_time_seconds = 10
+                    WHERE id = 'machine-1';
+                    UPDATE batch_operations SET setup_seconds = 0, cycle_seconds = 300 WHERE id = 'batch-op-1';
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+            var program = "N10 G21 G90 G17 G54\nN20 T1 M6\nN30 G0 X0 Y0 Z100.\nN40 G0 X300.\nN50 G1 X360. F60.\nN60 G4 P2.\nN70 M30\n";
+            var release = await ReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Released before the NC engine",
+                Encoding.UTF8.GetBytes(program), Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false, processDescription: "Initial");
+            Assert.Equal(NcProgramParser.CurrentVersion, await CurrentParserVersionAsync(client, release.ReleaseId));
+
+            using var engine = new NcEngineProgramAnalyzer(NullLogger<NcEngineProgramAnalyzer>.Instance);
+            var backfill = new NcAnalysisBackfillService(
+                application.Services.GetRequiredService<INcAnalysisRepository>(),
+                engine,
+                application.Services.GetRequiredService<GCodeArtifactStore>(),
+                application.Services.GetRequiredService<Meimad.Planner.Server.Configuration.GCodeOptions>(),
+                TimeProvider.System,
+                NullLogger<NcAnalysisBackfillService>.Instance);
+            Assert.Equal(1, await backfill.RunOnceAsync(CancellationToken.None));
+            Assert.Equal(0, await backfill.RunOnceAsync(CancellationToken.None));
+
+            Assert.StartsWith("nc-engine/", await CurrentParserVersionAsync(client, release.ReleaseId), StringComparison.Ordinal);
+            var board = await BoardOperationAsync(client, "machine-1");
+            Assert.Equal("nc_estimate", board.GetProperty("planningCycleTimeSource").GetString());
+            // 60 s feed + 300 mm at 6000 mm/min + 10 s tool change + 2 s dwell.
+            Assert.Equal(75d, board.GetProperty("planningCycleTimePerPartSeconds").GetDouble(), 6);
+        }, services => services.AddSingleton<INcProgramAnalyzer, BasicParserAnalyzer>());
+    }
+
+    private sealed class BasicParserAnalyzer : INcProgramAnalyzer
+    {
+        public string CurrentVersion => NcProgramParser.CurrentVersion;
+
+        public Task<Meimad.Planner.Server.Domain.GCode.NcProgramAnalysis> AnalyzeAsync(
+            string storedPath, IReadOnlyCollection<MachineNcInterpretation> machines, DateTimeOffset analyzedAt,
+            CancellationToken cancellationToken) =>
+            NcProgramParser.ParseAsync(storedPath, analyzedAt, cancellationToken);
+    }
+
+    private static async Task<string?> CurrentParserVersionAsync(HttpClient client, string releaseId)
+    {
+        using var response = await client.GetAsync("/api/v1/cases/case-1/operations/case-op-1/gcode");
+        response.EnsureSuccessStatusCode();
+        using var catalog = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var item = catalog.RootElement.GetProperty("releases").EnumerateArray()
+            .Single(value => value.GetProperty("gCodeReleaseId").GetString() == releaseId);
+        var estimates = item.GetProperty("machineCycleEstimates").EnumerateArray().ToArray();
+        var version = item.GetProperty("ncAnalysis").GetProperty("parserVersion").GetString();
+        Assert.All(estimates, estimate => Assert.Equal(version, estimate.GetProperty("parserVersion").GetString()));
+        return version;
+    }
+
     private static async Task<JsonElement> BoardOperationAsync(HttpClient client, string machineId)
     {
         using var response = await client.GetAsync("/api/v1/planning-board");
@@ -1388,12 +1537,13 @@ public sealed class GCodeReleaseApiTests
     }
 
     private static async Task RunAsync(
-        Func<WebApplication, HttpClient, string, Task> test)
+        Func<WebApplication, HttpClient, string, Task> test,
+        Action<IServiceCollection>? services = null)
     {
         var root = Path.Combine(
             Path.GetTempPath(), "MeimadPlanner.GCode.Tests", Guid.NewGuid().ToString("N"));
         var releaseRoot = Path.Combine(root, "released-gcode");
-        var application = BuildApplication(root, releaseRoot);
+        var application = BuildApplication(root, releaseRoot, services);
         try
         {
             await application.StartAsync();
@@ -1412,7 +1562,8 @@ public sealed class GCodeReleaseApiTests
         }
     }
 
-    private static WebApplication BuildApplication(string root, string releaseRoot) =>
+    private static WebApplication BuildApplication(
+        string root, string releaseRoot, Action<IServiceCollection>? services = null) =>
         ServerApplication.Build(
             [
                 "--Server:Host=127.0.0.1",
@@ -1420,7 +1571,11 @@ public sealed class GCodeReleaseApiTests
                 $"--Database:Path={Path.Combine(root, "test.db")}",
                 $"--GCode:ReleaseRoot={releaseRoot}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost =>
+            {
+                webHost.UseTestServer();
+                if (services is not null) webHost.ConfigureServices(services);
+            });
 
     private sealed record ReleaseResult(
         string ReleaseId,

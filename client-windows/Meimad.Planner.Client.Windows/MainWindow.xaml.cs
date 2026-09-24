@@ -7,6 +7,7 @@ using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Configuration;
 using Meimad.Planner.Client.Windows.Localization;
 using Meimad.Planner.Client.Windows.Presentation;
+using Meimad.Planner.Client.Windows.Presentation.NcViewer;
 using Meimad.Planner.Client.Windows.Views;
 
 namespace Meimad.Planner.Client.Windows;
@@ -63,14 +64,14 @@ public partial class MainWindow : Window
         {
             if (operation is null)
             {
-                MessageBox.Show(this, "The operation is not loaded on the Planning Board yet. Refresh and try again.",
+                LocalizedMessageBox.Show(this, "The operation is not loaded on the Planning Board yet. Refresh and try again.",
                     "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             var context = viewModel.MachinePlanningBoard.CreateModelViewerContext();
             if (context is null)
             {
-                MessageBox.Show(this, "Connect to the Server before opening the 3D viewer.",
+                LocalizedMessageBox.Show(this, "Connect to the Server before opening the 3D viewer.",
                     "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -206,15 +207,15 @@ public partial class MainWindow : Window
                 case "OPEN_TOOL_TABLE" when request.Payload is byte[] toolBytes:
                     ShowReadOnlyText("Current Tool Table", Encoding.UTF8.GetString(toolBytes));
                     break;
-                case "VIEW_NC_READ_ONLY" when request.Payload is string ncText:
-                    ShowReadOnlyText("Current NC release - read only", ncText);
+                case "VIEW_NC_READ_ONLY" when request.Payload is NcViewerOpenRequest ncViewer:
+                    NcViewerWindow.Open(ncViewer);
                     break;
                 case "OPEN_PRODUCTION_PACKAGE" when request.Payload is ProductionPackageInfo package:
                     var picker = new OpenFolderDialog
                     {
                         Title = $"Export Production Package {package.ProductionPackageId}",
                         Multiselect = false
-                    };
+                    }.Localized();
                     if (picker.ShowDialog(this) == true)
                     {
                         await viewModel.SetupQueue.ExportCurrentProductionPackageAsync(package, picker.FolderName);
@@ -225,7 +226,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "Preparation action", MessageBoxButton.OK, MessageBoxImage.Warning);
+            LocalizedMessageBox.Show(this, exception.Message, "Preparation action", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

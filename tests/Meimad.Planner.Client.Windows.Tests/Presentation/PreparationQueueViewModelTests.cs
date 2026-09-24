@@ -97,6 +97,23 @@ public sealed class PreparationQueueViewModelTests
         }
     }
 
+    [Theory]
+    [InlineData("PROGRAMMING_PENDING")]
+    [InlineData("TOOL_PREPARATION_PENDING")]
+    [InlineData("SETUP_PENDING")]
+    public void Every_queue_can_view_the_nc_release_when_one_exists(string stage)
+    {
+        var withRelease = Item() with { Stage = stage, CaseId = "case-1", CaseOperationId = "case-op-1" };
+        var viewModel = new PreparationQueueViewModel(stage, "Queue", "Queue");
+        viewModel.AttachSession(new FakeApiClient([]));
+
+        viewModel.Selected = withRelease;
+        Assert.True(viewModel.ViewNcFileCommand.CanExecute(null));
+
+        viewModel.Selected = withRelease with { GCodeReleaseId = null };
+        Assert.False(viewModel.ViewNcFileCommand.CanExecute(null));
+    }
+
     private static PreparationQueueItem Item() => new(
         "TOOL_PREPARATION_PENDING", "operation-1", "run-1", "assignment-1",
         "machine-1", "M01", "Mill", "PN-1", "Part", "B1", 10, "Rough",

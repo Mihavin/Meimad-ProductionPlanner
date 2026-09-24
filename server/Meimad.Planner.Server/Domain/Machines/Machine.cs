@@ -25,7 +25,8 @@ internal sealed record Machine(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
-    string NcDialect = MachineNcDialects.HaasNgc);
+    string NcDialect = MachineNcDialects.HaasNgc,
+    string? NcViewerMachine = null);
 
 internal sealed record MachineValues(
     string? Number,
@@ -44,7 +45,8 @@ internal sealed record MachineValues(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double? MachineTimeFactor = null,
-    string? NcDialect = null);
+    string? NcDialect = null,
+    string? NcViewerMachine = null);
 
 internal sealed record ValidatedMachineValues(
     string Number,
@@ -63,7 +65,8 @@ internal sealed record ValidatedMachineValues(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
-    string NcDialect = MachineNcDialects.HaasNgc);
+    string NcDialect = MachineNcDialects.HaasNgc,
+    string? NcViewerMachine = null);
 
 internal static class MachineExecutionModes
 {
@@ -88,4 +91,30 @@ internal static class MachineNcDialects
 
     internal static bool IsSupported(string? value) =>
         value is HaasNgc or FanucMacroB or MazakMatrixEia or OkumaOsp;
+}
+
+/// <summary>
+/// The NC engine machine definition (NC viewer machine) a Machine's programs are interpreted
+/// with: an id such as <c>haas-vf-3ss</c> from the installed engine catalog, or null for the
+/// engine's automatic detection. The catalog check happens in <c>MachineService</c>; the value
+/// grammar is the engine registry's.
+/// </summary>
+internal static class MachineNcViewerMachines
+{
+    internal const string Auto = "auto";
+    internal const int MaximumLength = 100;
+
+    /// <summary>Null for blank or "auto"; otherwise the trimmed id.</summary>
+    internal static string? Normalize(string? value)
+    {
+        var normalized = value?.Trim();
+        return string.IsNullOrEmpty(normalized) || string.Equals(normalized, Auto, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : normalized;
+    }
+
+    internal static bool IsIdentifier(string value) =>
+        value.Length is >= 1 and <= MaximumLength
+        && (char.IsAsciiLetterLower(value[0]) || char.IsAsciiDigit(value[0]))
+        && value.All(character => char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character) || character == '-');
 }

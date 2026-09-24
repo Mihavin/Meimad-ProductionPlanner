@@ -60,8 +60,17 @@ Setup contains the factory master data:
 - Employees/resources, roles, machine skills, photos, and availability
 - Material-order report and email settings
 - CNC connection settings and monitoring diagnostics
+- Per Machine: the **NC dialect** (control family of the Server-generated NC blocks) and the **NC viewer machine** (see below)
 
 Edit Mode is required for changes. Keep machine IDs stable, because employee skills, operation requirements, and historical records use them.
+
+### NC viewer
+
+Right-click a G-code release in the Case Operation history, a Machine-assigned operation on the Planning Board, or an item in the NC Creator, Tool Room and Setup Queue tabs and choose **View NC file** to open the program in the NC viewer: a 3D toolpath preview with playback, the program text, the tool table the program implies, and the machine data used for the simulation. A Server release opens **read-only** (the badge says so); *Save copy as* writes a local copy and never changes the release, and **Edit copy** continues on an editable local copy that you can save as a local version or release as a new revision. In the Release G-code form (Case → Operation → Released G-code file), **NC viewer…** opens the viewer in edit mode with the selected file, or with a new program that already carries the Meimad canonical block; inside, *New*/*Open* take any NC file, *Save*/*Save as* keep it locally, **Use for G-code release** selects the saved file in the form, and **Release to Server…** releases it directly: the Server first checks that the Meimad canonical format is present (nothing is uploaded otherwise), the program is saved, and the release dialog asks for the same postprocessor, change scope, comment, tool table and confirmations as the form (Edit Mode is required). **Apply Meimad Planner Format** adds the Meimad header, verification hook, event context, output line and cycle markers for the Machine's NC dialect and shows what changed and whether the result is a valid template.
+
+The preview and the Server's NC cycle-time estimate use the same interpreter and the same **NC viewer machine**, chosen per Machine in Setup: Mazak Variaxis i-500, Okuma Genos L200E-M, Haas ST-25Y, Haas VF-3SS, generic FANUC 0i-MC 3-axis and 4-axis (A along X) mills, or the vendored Haas UMC-500, Doosan DVF 5000 and Chevalier FLC-200MC. *Auto-detect* lets the engine choose from the program and the NC dialect. Okuma OSP programs (LAP cycles, `CALL`, `VC` variables, named labels), Haas one-block lathe cycles and the Variaxis A tilt are translated for the interpreter; the preview reports every translation and every approximation (for example "G86 copy turning is approximated by one G73 pass") in its messages, and rows still refer to your program. Placeholder values in the Meimad machine definitions (rotary centre, reference positions, table height) are marked *(placeholder)* in the machine panel until they are measured on the Machine; toolpath geometry and cycle time do not depend on them, machine-frame positions and travel checks do.
+
+Subprograms a lathe program calls (`M98 P9100`, `G65`, Haas `M97`) are read from the program's folder or the machine's **program memory** folder (viewer Settings, one folder per machine, lathes included; the folder is indexed by each file's `O` number, then its file name). A call that cannot be resolved is shown as a comment and listed in the messages. Viewer settings (default machine, G30 reference, initial macro variables, program-memory folders, home offsets) are per user on this PC and never reach the Server.
 
 ## 3. Normal planning workflow
 
@@ -185,7 +194,7 @@ declared quantity per cycle.
 
 ## 7. Languages and responsiveness
 
-Use the language selector in the Windows client to switch between English, Hebrew, and Russian. If a screen appears stuck, wait for the current request to finish before switching again, then refresh. Avoid opening many Timeline windows or repeatedly refreshing a large horizon; each read-only calculation uses the Server snapshot.
+Use the language selector in the Windows client to switch between English, Hebrew, and Russian. Every window, tab, context menu, message box, file dialog, and the NC viewer follow the choice. Message box buttons follow the Windows display language. Names, Part Numbers, NC programs, paths, and other data stay as entered. Technical codes that help text quotes, such as NC dialects and DPRNT settings, also stay as written. If a screen appears stuck, wait for the current request to finish before switching again, then refresh. Avoid opening many Timeline windows or repeatedly refreshing a large horizon; each read-only calculation uses the Server snapshot.
 
 ## 8. Troubleshooting
 

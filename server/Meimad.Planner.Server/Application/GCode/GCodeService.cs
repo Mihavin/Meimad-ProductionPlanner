@@ -13,6 +13,8 @@ internal sealed class GCodeService
     private readonly GCodeArtifactStore artifactStore;
     private readonly TimeProvider timeProvider;
     private readonly INcHeaderParser headerParser;
+    private readonly INcProgramAnalyzer analyzer;
+    private readonly INcAnalysisRepository analysisRepository;
     private readonly ILogger<GCodeService> logger;
 
     public GCodeService(
@@ -20,12 +22,16 @@ internal sealed class GCodeService
         GCodeArtifactStore artifactStore,
         TimeProvider timeProvider,
         INcHeaderParser headerParser,
+        INcProgramAnalyzer analyzer,
+        INcAnalysisRepository analysisRepository,
         ILogger<GCodeService> logger)
     {
         this.repository = repository;
         this.artifactStore = artifactStore;
         this.timeProvider = timeProvider;
         this.headerParser = headerParser;
+        this.analyzer = analyzer;
+        this.analysisRepository = analysisRepository;
         this.logger = logger;
     }
 
@@ -150,8 +156,11 @@ internal sealed class GCodeService
             NcProgramAnalysis analysis;
             try
             {
-                analysis = await NcProgramParser.ParseAsync(
+                var interpretations = await analysisRepository.ListPostprocessorMachineInterpretationsAsync(
+                    postprocessorId, cancellationToken);
+                analysis = await analyzer.AnalyzeAsync(
                     storedGCodePath,
+                    interpretations,
                     releasedAt,
                     cancellationToken);
             }

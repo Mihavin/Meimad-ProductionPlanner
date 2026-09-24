@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "id": "mazak-variaxis-i-500",
+  "name": "Mazak VARIAXIS i-500",
+  "manufacturer": "Yamazaki Mazak",
+  "model": "VARIAXIS i-500",
+  "type": "mill",
+  "control": "mazak-matrix2-mill",
+  "description": "5-axis vertical machining centre with a MAZATROL MATRIX 2 (EIA/ISO program): X/Y/Z spindle side and an A (tilt, about X) / C (rotary) trunnion table. The tilt axis is programmed as A; the Meimad adapter presents it to the interpreter as B so the tilted-plane (G68.2/G53.1) and tool-centre-point (G43.4) solver can move it.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "Mazak VARIAXIS i-500 published specification: X 350 / Y 550 / Z 510 mm, A -120 to +30 deg, C 360 deg, rapids 60 / 60 / 56 m/min and 18000 deg/min, 12000 rpm 40-taper spindle, 30-tool magazine, 4.5 s chip-to-chip, 500 mm table, 300 kg load",
+    "MAZATROL MATRIX EIA/ISO programming manual: G68.2 tilted working plane, G53.1 tool axis direction control, G43.4 tool tip point control, G54.2 fixture offset"
+  ],
+  "detection": {
+    "keywords": ["MAZAK", "VARIAXIS", "MATRIX"],
+    "codes": ["G61.1", "G43.4", "G68.2", "G53.1", "G54.2", "G05"]
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -175, "max": 175, "rapidRate": 60000, "maxFeed": 42000 },
+    "Y": { "type": "linear", "min": -275, "max": 275, "rapidRate": 60000, "maxFeed": 42000 },
+    "Z": { "type": "linear", "min": 150, "max": 660, "rapidRate": 56000, "maxFeed": 42000 },
+    "B": { "type": "rotary", "min": -120, "max": 30, "rapidRate": 18000, "wrap": false, "programmedAs": "A", "label": "A (tilt about X)" },
+    "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 18000, "wrap": true }
+  },
+  "axisNote": "Travels are placed around the rotary centre (machine origin assumed on the A and C axes, Z positive upward with the spindle nose 150 mm above the centre at the bottom of its stroke); replace them with the machine's stroke and rotary-centre parameters. The A-axis range is -120 to +30 degrees as published.",
+  "mrzp": {
+    "x": 0,
+    "y": 0,
+    "z": 0,
+    "rotaryCenterDistance": 0,
+    "verified": false,
+    "label": "Rotary centre (A/C axes)",
+    "source": "Placeholder: the machine coordinate origin is assumed to lie on the A and C axes. Replace with the machine's rotary-centre parameters."
+  },
+  "rotaryConvention": {
+    "verified": false,
+    "note": "A tilts the table about +X and carries C, which turns it about +Z; both follow the ISO primed-axis convention (sense -1). Flip a node's sense if a test move on the machine shows the opposite direction."
+  },
+  "referencePositions": {
+    "1": { "X": 175, "Y": 275, "Z": 660, "B": 0, "C": 0 },
+    "note": "Placeholder for the G28 reference position (Z at the top of its stroke)."
+  },
+  "spindle": { "maxRpm": 12000, "taper": "BT40" },
+  "toolChanger": {
+    "type": "arm",
+    "capacity": 30,
+    "changeSeconds": 4.5,
+    "zMachine": 660,
+    "note": "Chip-to-chip 4.5 s as published; the preview lifts Z to the reference position before M06 when it is lower."
+  },
+  "defaultToolLength": 100,
+  "workholding": { "platterDiameter": 500, "platterThickness": 60, "platterTopAboveMrzp": 0 },
+  "workOffsets": {
+    "default": "mrzp",
+    "note": "Work offsets that the program or the initial macro variables do not define are placed at the rotary centre with A0 C0."
+  },
+  "parameters": {
+    "1401#1": 1,
+    "3401#0": 1,
+    "3404#7": 1,
+    "5004#2": 0,
+    "5114": 1,
+    "5115": 1,
+    "5400#0": 0,
+    "5400#7": 0,
+    "6000#3": 0,
+    "11221#0": 1,
+    "13451#1": 1,
+    "19696#5": 0
+  },
+  "parameterNotes": {
+    "1401#1": "Linear rapids (Mazak EIA rapids interpolate linearly).",
+    "3401#0": "Calculator-type decimal input assumed (Mazak EIA programs from CAM always carry decimal points); unverified.",
+    "13451#1": "G68.2 I0 J0 K0 accepted for flat operations.",
+    "19696#5": "Tool centre point control programmed in the table coordinate system."
+  },
+  "kinematics": {
+    "type": "table-table",
+    "description": "X/Y/Z move the spindle relative to the table (drawn on the spindle side); the A trunnion (interpreter axis B) tilts the table about a line parallel to X through the rotary centre and carries the C table.",
+    "nodes": [
+      {
+        "id": "base",
+        "label": "Machine base",
+        "geometry": { "shape": "box", "size": [900, 1100, 80], "center": [0, 0, -340] },
+        "model": null
+      },
+      {
+        "id": "x-carriage",
+        "parent": "base",
+        "label": "X carriage",
+        "type": "linear",
+        "axis": "X",
+        "direction": [1, 0, 0],
+        "geometry": { "shape": "box", "size": [260, 200, 110], "center": [0, 380, 700] },
+        "model": null
+      },
+      {
+        "id": "y-ram",
+        "parent": "x-carriage",
+        "label": "Y ram",
+        "type": "linear",
+        "axis": "Y",
+        "direction": [0, 1, 0],
+        "geometry": { "shape": "box", "size": [220, 620, 100], "center": [0, 200, 600] },
+        "model": null
+      },
+      {
+        "id": "z-head",
+        "parent": "y-ram",
+        "label": "Z spindle head",
+        "type": "linear",
+        "axis": "Z",
+        "direction": [0, 0, 1],
+        "geometry": { "shape": "box", "size": [220, 260, 320], "center": [0, 50, 200] },
+        "model": null
+      },
+      {
+        "id": "spindle",
+        "parent": "z-head",
+        "label": "Spindle (gauge line)",
+        "type": "spindle",
+        "toolMount": true,
+        "geometry": { "shape": "cylinder", "radius": 65, "height": 100, "center": [0, 0, 50], "axis": "z" },
+        "model": null
+      },
+      {
+        "id": "a-trunnion",
+        "parent": "base",
+        "label": "A trunnion (tilt about X)",
+        "type": "rotary",
+        "axis": "B",
+        "direction": [1, 0, 0],
+        "pivot": "mrzp",
+        "sense": -1,
+        "geometry": { "shape": "box", "size": [560, 640, 80], "center": "mrzp", "offset": [0, 0, -150] },
+        "model": null
+      },
+      {
+        "id": "c-table",
+        "parent": "a-trunnion",
+        "label": "C table",
+        "type": "rotary",
+        "axis": "C",
+        "direction": [0, 0, 1],
+        "pivot": "mrzp",
+        "sense": -1,
+        "workpieceMount": true,
+        "geometry": { "shape": "cylinder", "radius": 250, "height": 60, "center": "mrzp", "offset": [0, 0, -30], "axis": "z" },
+        "model": null
+      }
+    ]
+  }
+}

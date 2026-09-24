@@ -191,6 +191,11 @@
                                   Click="ClearManualPriority_Click"
                                   AutomationProperties.Name="Clear setup priority" />
                         <Separator />
+                        <MenuItem Header="View NC file"
+                                  ToolTip="Open the NC release this Machine assignment uses in the NC viewer (read-only): 3D toolpath, playback and cycle time."
+                                  IsEnabled="{Binding CanViewNcFile}"
+                                  Click="ViewNcFile_Click"
+                                  AutomationProperties.Name="View NC file" />
                         <MenuItem Header="View in 3D"
                                   ToolTip="Open the Case's STEP/STL models with measurement tools in a separate window."
                                   Click="ViewIn3D_Click"

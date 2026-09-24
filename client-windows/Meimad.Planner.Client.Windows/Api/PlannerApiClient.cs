@@ -254,6 +254,21 @@ internal interface IPlannerApiClient : IDisposable
         string caseId, string caseOperationId, string releaseId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The immutable released NC file exactly as stored (encoding and line endings kept).</summary>
+    Task<byte[]> ReadGCodeFileBytesAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Server-side "Apply Meimad Planner Format"; stateless, needs no Edit Mode.</summary>
+    Task<NcTemplateFormatResult> FormatNcTemplateAsync(
+        string text, string ncDialect,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>The Server's canonical-template check a release must pass; stateless.</summary>
+    Task<NcTemplateValidation> ValidateNcTemplateAsync(
+        string text,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<QcDecisionResult> DecideQcAsync(
         string productionRunId, QcDecisionRequest request,
         string clientId, string userId, long editGeneration,
@@ -1687,6 +1702,34 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             cancellationToken);
         var bytes = await ReadBytesSuccessAsync(response, cancellationToken);
         return Encoding.UTF8.GetString(bytes);
+    }
+
+    public async Task<byte[]> ReadGCodeFileBytesAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/gcode-releases/{Uri.EscapeDataString(releaseId)}/file",
+            cancellationToken);
+        return await ReadBytesSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<NcTemplateFormatResult> FormatNcTemplateAsync(
+        string text, string ncDialect,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/nc-programs/meimad-format", new { text, ncDialect }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<NcTemplateFormatResult>(response, cancellationToken);
+    }
+
+    public async Task<NcTemplateValidation> ValidateNcTemplateAsync(
+        string text,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/nc-programs/validate", new { text }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<NcTemplateValidation>(response, cancellationToken);
     }
 
     public async Task<byte[]> ReadToolTableFileAsync(

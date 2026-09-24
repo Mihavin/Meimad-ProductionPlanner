@@ -1,0 +1,1130 @@
+{
+  "schemaVersion": 1,
+  "id": "haas-classic-lathe",
+  "name": "Haas Classic Control (lathe)",
+  "shortName": "HAAS CLASSIC LATHE",
+  "manufacturer": "Haas Automation",
+  "interpreter": "fanuc-lathe",
+  "machineType": "lathe",
+  "reference": "Haas Lathe Operator's Manual 96-8033 (Classic Haas Control) G-code chapter and the Haas lathe programming workbook; FANUC-compatible turning code with one-block canned cycles",
+  "blockEnd": ";",
+  "comment": "()",
+  "translation": "haas-lathe",
+  "macro": {
+    "dialect": "haas-classic",
+    "localVariables": [
+      1,
+      33
+    ],
+    "globalVariables": [
+      [
+        100,
+        199
+      ],
+      [
+        500,
+        699
+      ],
+      [
+        800,
+        999
+      ]
+    ],
+    "controlFlow": [
+      "GOTO",
+      "IF GOTO",
+      "IF THEN",
+      "WHILE DO END",
+      "M99 P"
+    ],
+    "functions": [
+      "SIN",
+      "COS",
+      "TAN",
+      "ATAN",
+      "ASIN",
+      "ACOS",
+      "SQRT",
+      "ABS",
+      "ROUND",
+      "FIX",
+      "FUP",
+      "LN",
+      "EXP"
+    ]
+  },
+  "modalGroups": {
+    "0": "Non-modal",
+    "1": "Motion",
+    "2": "Constant surface speed",
+    "5": "Feed mode",
+    "6": "Units",
+    "7": "Tool nose radius compensation",
+    "14": "Work coordinate system",
+    "16": "Plane selection"
+  },
+  "defaults": {
+    "motion": "G00",
+    "plane": "G18",
+    "feedMode": "G99",
+    "cutterCompensation": "G40",
+    "spindle": "G97"
+  },
+  "gCodes": [
+    {
+      "code": "G00",
+      "group": 1,
+      "name": "Rapid positioning",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z",
+        "U": "Incremental diameter",
+        "W": "Incremental Z"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G01",
+      "group": 1,
+      "name": "Linear interpolation",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z",
+        "U": "Incremental diameter",
+        "W": "Incremental Z",
+        "F": "Feed",
+        "A": "Angle (linear motion by angle)",
+        ",C": "Chamfer distance",
+        ",R": "Corner radius"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G02",
+      "group": 1,
+      "name": "Circular interpolation CW",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z",
+        "R": "Radius",
+        "I": "Radial centre offset",
+        "K": "Z centre offset",
+        "F": "Feed"
+      },
+      "preview": "motion",
+      "notes": "Drawn in the G18 Z-X plane only."
+    },
+    {
+      "code": "G03",
+      "group": 1,
+      "name": "Circular interpolation CCW",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z",
+        "R": "Radius",
+        "I": "Radial centre offset",
+        "K": "Z centre offset",
+        "F": "Feed"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G04",
+      "group": 0,
+      "name": "Dwell",
+      "addresses": {
+        "P": "Seconds with a decimal point, milliseconds without"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G05",
+      "group": 0,
+      "name": "Fine spindle control motion (live tooling)",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G09",
+      "group": 0,
+      "name": "Exact stop",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G10",
+      "group": 0,
+      "name": "Programmable offset setting",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G14",
+      "group": 0,
+      "name": "Secondary spindle swap",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G15",
+      "group": 0,
+      "name": "Secondary spindle swap cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G17",
+      "group": 16,
+      "name": "XpYp plane",
+      "addresses": {},
+      "preview": "state",
+      "notes": "Arcs outside G18 are drawn as straight lines."
+    },
+    {
+      "code": "G18",
+      "group": 16,
+      "name": "ZpXp plane",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G19",
+      "group": 16,
+      "name": "YpZp plane",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G20",
+      "group": 6,
+      "name": "Inch input",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G21",
+      "group": 6,
+      "name": "Metric input",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G28",
+      "group": 0,
+      "name": "Reference position return",
+      "addresses": {
+        "U": "Axis",
+        "W": "Axis"
+      },
+      "preview": "state",
+      "notes": "The preview forgets the current position after G28."
+    },
+    {
+      "code": "G29",
+      "group": 0,
+      "name": "Move to location through G29 reference point",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G31",
+      "group": 0,
+      "name": "Feed until skip",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G32",
+      "group": 1,
+      "name": "Thread cutting",
+      "addresses": {
+        "F": "Lead"
+      },
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G40",
+      "group": 7,
+      "name": "Tool nose radius compensation cancel",
+      "addresses": {},
+      "preview": "compensation"
+    },
+    {
+      "code": "G41",
+      "group": 7,
+      "name": "Tool nose radius compensation left",
+      "addresses": {},
+      "preview": "compensation"
+    },
+    {
+      "code": "G42",
+      "group": 7,
+      "name": "Tool nose radius compensation right",
+      "addresses": {},
+      "preview": "compensation"
+    },
+    {
+      "code": "G50",
+      "group": 0,
+      "name": "Maximum spindle speed clamp",
+      "addresses": {
+        "S": "RPM limit"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G51",
+      "group": 0,
+      "name": "Cancel offset (rapid to machine zero)",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G52",
+      "group": 0,
+      "name": "Local coordinate system",
+      "addresses": {
+        "X": "Diameter shift",
+        "Z": "Z shift"
+      },
+      "preview": "transform"
+    },
+    {
+      "code": "G53",
+      "group": 0,
+      "name": "Machine coordinate system",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G54",
+      "group": 14,
+      "name": "Work coordinate system 1",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G55",
+      "group": 14,
+      "name": "Work coordinate system 2",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G56",
+      "group": 14,
+      "name": "Work coordinate system 3",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G57",
+      "group": 14,
+      "name": "Work coordinate system 4",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G58",
+      "group": 14,
+      "name": "Work coordinate system 5",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G59",
+      "group": 14,
+      "name": "Work coordinate system 6",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G61",
+      "group": 0,
+      "name": "Exact stop modal",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G64",
+      "group": 0,
+      "name": "Exact stop cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G65",
+      "group": 0,
+      "name": "Macro call",
+      "addresses": {
+        "P": "Program number"
+      },
+      "preview": "not-expanded",
+      "notes": "Looked up in the program folder and the machine's program memory folder (Meimad adapter)."
+    },
+    {
+      "code": "G70",
+      "group": 0,
+      "name": "Finishing cycle",
+      "addresses": {
+        "P": "First block",
+        "Q": "Last block"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G71",
+      "group": 0,
+      "name": "O.D./I.D. stock removal cycle",
+      "addresses": {
+        "P": "First block",
+        "Q": "Last block",
+        "U": "X finish allowance (diameter)",
+        "W": "Z finish allowance",
+        "D": "Depth of cut per pass (radius)",
+        "I": "X rough allowance",
+        "K": "Z rough allowance",
+        "F": "Feed",
+        "R": "R1: Type II"
+      },
+      "preview": "cycle",
+      "notes": "One-block Haas format; the Meimad adapter converts it to the FANUC two-block form for the preview."
+    },
+    {
+      "code": "G72",
+      "group": 0,
+      "name": "End face stock removal cycle",
+      "addresses": {
+        "P": "First block",
+        "Q": "Last block",
+        "U": "X finish allowance (diameter)",
+        "W": "Z finish allowance",
+        "D": "Depth of cut per pass",
+        "F": "Feed"
+      },
+      "preview": "cycle",
+      "notes": "One-block Haas format, converted by the Meimad adapter."
+    },
+    {
+      "code": "G73",
+      "group": 0,
+      "name": "Irregular path stock removal cycle",
+      "addresses": {
+        "P": "First block",
+        "Q": "Last block",
+        "U": "X finish allowance",
+        "W": "Z finish allowance",
+        "I": "X distance first to last pass (radius)",
+        "K": "Z distance first to last pass",
+        "D": "Number of passes",
+        "F": "Feed"
+      },
+      "preview": "cycle",
+      "notes": "One-block Haas format, converted by the Meimad adapter."
+    },
+    {
+      "code": "G74",
+      "group": 0,
+      "name": "End face grooving / peck drilling cycle",
+      "addresses": {
+        "X": "Total pecking depth (diameter)",
+        "Z": "Furthest peck Z",
+        "I": "X increment between cycles (radius)",
+        "K": "Z peck increment",
+        "D": "Tool clearance when returning",
+        "F": "Feed"
+      },
+      "preview": "cycle",
+      "notes": "One-block Haas format, converted by the Meimad adapter."
+    },
+    {
+      "code": "G75",
+      "group": 0,
+      "name": "O.D./I.D. grooving cycle",
+      "addresses": {
+        "X": "Total pecking depth (diameter)",
+        "Z": "Furthest peck cycle Z",
+        "I": "X peck increment (radius)",
+        "K": "Z increment between cycles",
+        "D": "Tool clearance when returning",
+        "F": "Feed"
+      },
+      "preview": "cycle",
+      "notes": "One-block Haas format, converted by the Meimad adapter."
+    },
+    {
+      "code": "G76",
+      "group": 0,
+      "name": "Threading cycle, multiple pass",
+      "addresses": {
+        "X": "Thread depth diameter",
+        "Z": "Thread end",
+        "K": "Thread height (radius)",
+        "D": "First pass depth",
+        "A": "Tool nose angle",
+        "P": "Cutting method P1-P4",
+        "Q": "Thread start angle",
+        "I": "Taper amount (radius)",
+        "F": "Lead"
+      },
+      "preview": "cycle",
+      "notes": "One-block Haas format, converted by the Meimad adapter to the FANUC two-block cycle."
+    },
+    {
+      "code": "G77",
+      "group": 0,
+      "name": "Live tooling flatting cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G80",
+      "group": 10,
+      "name": "Drilling cycle cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G81",
+      "group": 0,
+      "name": "Drill canned cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G82",
+      "group": 0,
+      "name": "Spot drill / counterbore canned cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G83",
+      "group": 10,
+      "name": "Face drilling cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G84",
+      "group": 10,
+      "name": "Face tapping cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G85",
+      "group": 0,
+      "name": "Bore in, bore out canned cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G86",
+      "group": 0,
+      "name": "Bore in, stop, rapid out",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G87",
+      "group": 0,
+      "name": "Bore in, stop, manual retract",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G88",
+      "group": 0,
+      "name": "Bore in, dwell, manual retract",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G89",
+      "group": 0,
+      "name": "Bore in, dwell, bore out",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G90",
+      "group": 1,
+      "name": "O.D./I.D. turning cycle (one block)",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z end",
+        "I": "Taper",
+        "F": "Feed"
+      },
+      "preview": "cycle",
+      "notes": "Haas one-block turning cycle: the Meimad adapter expands one pass (approach, cut, retract, return)."
+    },
+    {
+      "code": "G92",
+      "group": 1,
+      "name": "Threading cycle (one block)",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z end",
+        "I": "Taper",
+        "F": "Lead"
+      },
+      "preview": "cycle",
+      "notes": "Expanded by the Meimad adapter as one thread pass with return."
+    },
+    {
+      "code": "G94",
+      "group": 1,
+      "name": "End facing cycle (one block)",
+      "addresses": {
+        "X": "Diameter",
+        "Z": "Z end",
+        "K": "Taper",
+        "F": "Feed"
+      },
+      "preview": "cycle",
+      "notes": "Haas one-block facing cycle: the Meimad adapter expands one pass."
+    },
+    {
+      "code": "G95",
+      "group": 5,
+      "name": "Live tooling rigid tap (face)",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G96",
+      "group": 2,
+      "name": "Constant surface speed",
+      "addresses": {
+        "S": "Surface speed"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G97",
+      "group": 2,
+      "name": "Constant RPM",
+      "addresses": {
+        "S": "RPM"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G98",
+      "group": 5,
+      "name": "Feed per minute (system A)",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G99",
+      "group": 5,
+      "name": "Feed per revolution (system A)",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G100",
+      "group": 0,
+      "name": "Mirror image cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G101",
+      "group": 0,
+      "name": "Mirror image",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G102",
+      "group": 0,
+      "name": "Programmable output to RS-232",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G103",
+      "group": 0,
+      "name": "Limit block lookahead",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G105",
+      "group": 0,
+      "name": "Servo bar command",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G110-G129",
+      "group": 14,
+      "name": "Work coordinate systems 7-26",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G112",
+      "group": 0,
+      "name": "Cartesian to polar transformation",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G113",
+      "group": 0,
+      "name": "Cartesian to polar transformation cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G154",
+      "group": 14,
+      "name": "Work coordinate system P1-P99",
+      "addresses": {
+        "P": "Offset number"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G159",
+      "group": 0,
+      "name": "Background pickup / part return",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G160",
+      "group": 0,
+      "name": "APL axis command on",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G161",
+      "group": 0,
+      "name": "APL axis command off",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G184",
+      "group": 0,
+      "name": "Reverse tapping canned cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G186",
+      "group": 0,
+      "name": "Live tooling reverse rigid tap",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G187",
+      "group": 0,
+      "name": "Accuracy control",
+      "addresses": {
+        "P": "Level",
+        "E": "Max corner rounding"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G194",
+      "group": 0,
+      "name": "Sub-spindle tapping",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G195",
+      "group": 0,
+      "name": "Live tooling radial tapping",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G196",
+      "group": 0,
+      "name": "Live tooling radial tapping reverse",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G200",
+      "group": 0,
+      "name": "Index on the fly",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G211",
+      "group": 0,
+      "name": "Manual tool setting",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G212",
+      "group": 0,
+      "name": "Automatic tool setting",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G241",
+      "group": 0,
+      "name": "Radial drill canned cycle",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G242",
+      "group": 0,
+      "name": "Radial spot drill",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G243",
+      "group": 0,
+      "name": "Radial peck drill",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G245",
+      "group": 0,
+      "name": "Radial bore",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G246",
+      "group": 0,
+      "name": "Radial bore stop rapid out",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G247",
+      "group": 0,
+      "name": "Radial bore manual retract",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G248",
+      "group": 0,
+      "name": "Radial bore dwell manual retract",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G249",
+      "group": 0,
+      "name": "Radial bore dwell",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G250",
+      "group": 0,
+      "name": "Mirror image cancel (NGC)",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G251",
+      "group": 0,
+      "name": "Mirror image (NGC)",
+      "addresses": {},
+      "preview": "not-expanded"
+    }
+  ],
+  "mCodes": [
+    {
+      "code": "M00",
+      "name": "Program stop",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M01",
+      "name": "Optional stop",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M02",
+      "name": "Program end",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M03",
+      "name": "Spindle forward",
+      "preview": "state"
+    },
+    {
+      "code": "M04",
+      "name": "Spindle reverse",
+      "preview": "state"
+    },
+    {
+      "code": "M05",
+      "name": "Spindle stop",
+      "preview": "state"
+    },
+    {
+      "code": "M08",
+      "name": "Coolant on",
+      "preview": "state"
+    },
+    {
+      "code": "M09",
+      "name": "Coolant off",
+      "preview": "state"
+    },
+    {
+      "code": "M10",
+      "name": "Chuck clamp",
+      "preview": "state"
+    },
+    {
+      "code": "M11",
+      "name": "Chuck unclamp",
+      "preview": "state"
+    },
+    {
+      "code": "M12",
+      "name": "Auto air jet on",
+      "preview": "state"
+    },
+    {
+      "code": "M13",
+      "name": "Auto air jet off",
+      "preview": "state"
+    },
+    {
+      "code": "M14",
+      "name": "Main spindle brake on",
+      "preview": "state"
+    },
+    {
+      "code": "M15",
+      "name": "Main spindle brake off",
+      "preview": "state"
+    },
+    {
+      "code": "M17",
+      "name": "Turret rotation forward",
+      "preview": "state"
+    },
+    {
+      "code": "M18",
+      "name": "Turret rotation reverse",
+      "preview": "state"
+    },
+    {
+      "code": "M19",
+      "name": "Spindle orientation",
+      "preview": "state"
+    },
+    {
+      "code": "M21",
+      "name": "Tailstock advance",
+      "preview": "state"
+    },
+    {
+      "code": "M22",
+      "name": "Tailstock retract",
+      "preview": "state"
+    },
+    {
+      "code": "M23",
+      "name": "Thread chamfer on",
+      "preview": "state"
+    },
+    {
+      "code": "M24",
+      "name": "Thread chamfer off",
+      "preview": "state"
+    },
+    {
+      "code": "M30",
+      "name": "Program end and rewind",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M31",
+      "name": "Chip conveyor forward",
+      "preview": "state"
+    },
+    {
+      "code": "M33",
+      "name": "Chip conveyor stop",
+      "preview": "state"
+    },
+    {
+      "code": "M36",
+      "name": "Parts catcher up",
+      "preview": "state"
+    },
+    {
+      "code": "M37",
+      "name": "Parts catcher down",
+      "preview": "state"
+    },
+    {
+      "code": "M41",
+      "name": "Low gear",
+      "preview": "state"
+    },
+    {
+      "code": "M42",
+      "name": "High gear",
+      "preview": "state"
+    },
+    {
+      "code": "M43",
+      "name": "Turret unlock",
+      "preview": "state"
+    },
+    {
+      "code": "M44",
+      "name": "Turret lock",
+      "preview": "state"
+    },
+    {
+      "code": "M51-M58",
+      "name": "User M code set",
+      "preview": "state"
+    },
+    {
+      "code": "M61-M68",
+      "name": "User M code clear",
+      "preview": "state"
+    },
+    {
+      "code": "M85",
+      "name": "Automatic door open",
+      "preview": "state"
+    },
+    {
+      "code": "M86",
+      "name": "Automatic door close",
+      "preview": "state"
+    },
+    {
+      "code": "M88",
+      "name": "High pressure coolant on",
+      "preview": "state"
+    },
+    {
+      "code": "M89",
+      "name": "High pressure coolant off",
+      "preview": "state"
+    },
+    {
+      "code": "M93",
+      "name": "Axis position capture start",
+      "preview": "state"
+    },
+    {
+      "code": "M94",
+      "name": "Axis position capture stop",
+      "preview": "state"
+    },
+    {
+      "code": "M95",
+      "name": "Sleep mode",
+      "preview": "state"
+    },
+    {
+      "code": "M96",
+      "name": "Jump if no input",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M97",
+      "name": "Local subprogram call",
+      "preview": "program-flow",
+      "notes": "Expanded by the Meimad adapter."
+    },
+    {
+      "code": "M98",
+      "name": "Subprogram call",
+      "preview": "program-flow",
+      "notes": "Looked up in the program folder and the machine's program memory folder (Meimad adapter)."
+    },
+    {
+      "code": "M99",
+      "name": "Subprogram return / loop",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M109",
+      "name": "Interactive user input",
+      "preview": "state"
+    },
+    {
+      "code": "M110",
+      "name": "Sub-spindle chuck clamp",
+      "preview": "state"
+    },
+    {
+      "code": "M111",
+      "name": "Sub-spindle chuck unclamp",
+      "preview": "state"
+    },
+    {
+      "code": "M119",
+      "name": "Sub-spindle orient",
+      "preview": "state"
+    },
+    {
+      "code": "M133",
+      "name": "Live tool drive forward",
+      "preview": "state"
+    },
+    {
+      "code": "M134",
+      "name": "Live tool drive reverse",
+      "preview": "state"
+    },
+    {
+      "code": "M135",
+      "name": "Live tool drive stop",
+      "preview": "state"
+    },
+    {
+      "code": "M143",
+      "name": "Sub-spindle forward",
+      "preview": "state"
+    },
+    {
+      "code": "M144",
+      "name": "Sub-spindle reverse",
+      "preview": "state"
+    },
+    {
+      "code": "M145",
+      "name": "Sub-spindle stop",
+      "preview": "state"
+    },
+    {
+      "code": "M154",
+      "name": "C-axis engage",
+      "preview": "state"
+    },
+    {
+      "code": "M155",
+      "name": "C-axis disengage",
+      "preview": "state"
+    }
+  ]
+}

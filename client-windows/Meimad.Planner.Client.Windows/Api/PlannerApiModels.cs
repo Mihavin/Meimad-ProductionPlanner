@@ -135,7 +135,8 @@ internal sealed record PlannerMachine(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
-    string NcDialect = "HAAS_NGC")
+    string NcDialect = "HAAS_NGC",
+    string? NcViewerMachine = null)
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -489,7 +490,8 @@ internal sealed record MachineCreate(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
-    string NcDialect = "HAAS_NGC");
+    string NcDialect = "HAAS_NGC",
+    string? NcViewerMachine = null);
 
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -2056,3 +2058,13 @@ internal sealed record ClientInstallerManifest(
     string? Sha256);
 
 internal sealed record ClientInstallerDownload(string LocalPath, long ByteLength, string Sha256);
+
+internal sealed record NcTemplateValidation(bool IsValid, string? Code, string? Message);
+
+internal sealed record NcTemplateFormatResult(
+    string Text,
+    string NcDialect,
+    bool Changed,
+    IReadOnlyList<string> Changes,
+    IReadOnlyList<string> Warnings,
+    NcTemplateValidation Validation);

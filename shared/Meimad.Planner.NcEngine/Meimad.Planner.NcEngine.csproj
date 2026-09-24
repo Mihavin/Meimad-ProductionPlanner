@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Hosts the vendored Chevalier NC engine (third_party/chevalier-nc-viewer) in a ClearScript
+    V8 engine for the Server (release cycle-time analysis) and the Windows client (NC viewer).
+    The engine files are copied, unmodified, into the consumer's "nc-engine" folder.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Meimad.Planner.NcEngine</RootNamespace>
+    <AssemblyName>Meimad.Planner.NcEngine</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ClearScript.V8" Version="7.5.1.1" />
+    <PackageReference Include="Microsoft.ClearScript.V8.Native.win-x64" Version="7.5.1.1" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ChevalierViewerRoot>$(MSBuildThisFileDirectory)..\..\third_party\chevalier-nc-viewer\</ChevalierViewerRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="$(ChevalierViewerRoot)src\*.js"
+             Link="nc-engine\src\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)media\kinematics.js;$(ChevalierViewerRoot)media\model-transport.js"
+             Link="nc-engine\media\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)machines\*.json"
+             Link="nc-engine\machines\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)controls\*.json"
+             Link="nc-engine\controls\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(ChevalierViewerRoot)CNC-PARA.TXT"
+             Link="nc-engine\CNC-PARA.TXT"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Scripts\*.js"
+             Link="nc-engine\meimad\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <!-- Meimad machine and control definitions (same schema as the vendored ones). -->
+    <Content Include="Definitions\machines\*.json"
+             Link="nc-engine\meimad\machines\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Definitions\controls\*.json"
+             Link="nc-engine\meimad\controls\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

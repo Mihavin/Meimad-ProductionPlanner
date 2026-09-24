@@ -173,6 +173,19 @@ $serverPackage = Join-Path $installerRoot "server\Package.wxs"
 $clientPayloadAuthoring = Join-Path $installerRoot "obj\generated\ClientPayload.wxs"
 $serverPayloadAuthoring = Join-Path $installerRoot "obj\generated\ServerPayload.wxs"
 
+# The <Version> of an SDK project, whichever PropertyGroup declares it (StrictMode would
+# otherwise fail on a project with a second PropertyGroup that has no Version).
+function Get-ProjectVersion {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $groups = @(([xml](Get-Content -LiteralPath $Path -Raw)).Project.PropertyGroup)
+    $versions = @($groups | ForEach-Object { $_.SelectSingleNode("Version") } | Where-Object { $_ } | ForEach-Object { $_.InnerText.Trim() })
+    if ($versions.Count -ne 1) {
+        throw "Expected exactly one <Version> in $Path, found $($versions.Count)."
+    }
+    return $versions[0]
+}
+
 function Set-SharedVersionFile {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -198,7 +211,7 @@ function Set-SharedVersionFile {
 # though the actual binaries differ. The shared version lives in four files that must
 # always agree (asserted below); bump all four together from whatever they currently
 # say, so there is exactly one source of truth to read and nothing to remember to edit.
-$previousVersionText = ([xml](Get-Content -LiteralPath $clientProject -Raw)).Project.PropertyGroup.Version
+$previousVersionText = Get-ProjectVersion -Path $clientProject
 $previousVersion = [Version]$previousVersionText
 $nextVersionText = "{0}.{1}.{2}" -f $previousVersion.Major, $previousVersion.Minor, ($previousVersion.Build + 1)
 Write-Host "Bumping shared version: $previousVersionText -> $nextVersionText"
@@ -207,8 +220,8 @@ Set-SharedVersionFile -Path $serverProject -OldVersion $previousVersionText -New
 Set-SharedVersionFile -Path $clientPackage -OldVersion $previousVersionText -NewVersion $nextVersionText
 Set-SharedVersionFile -Path $serverPackage -OldVersion $previousVersionText -NewVersion $nextVersionText
 
-$clientApplicationVersion = ([xml](Get-Content -LiteralPath $clientProject -Raw)).Project.PropertyGroup.Version
-$serverApplicationVersion = ([xml](Get-Content -LiteralPath $serverProject -Raw)).Project.PropertyGroup.Version
+$clientApplicationVersion = Get-ProjectVersion -Path $clientProject
+$serverApplicationVersion = Get-ProjectVersion -Path $serverProject
 $clientPackageVersion = ([xml](Get-Content -LiteralPath $clientPackage -Raw)).Wix.Package.Version
 $serverPackageVersion = ([xml](Get-Content -LiteralPath $serverPackage -Raw)).Wix.Package.Version
 $versions = @($clientApplicationVersion, $serverApplicationVersion, $clientPackageVersion, $serverPackageVersion)

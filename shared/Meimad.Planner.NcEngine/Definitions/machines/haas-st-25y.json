@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "haas-st-25y",
+  "name": "Haas ST-25Y (Classic Control)",
+  "manufacturer": "Haas Automation",
+  "model": "ST-25Y",
+  "type": "lathe",
+  "control": "haas-classic-lathe",
+  "description": "Y-axis turning centre with live tooling and a C axis, Haas Classic (pre-NGC) control. Diameter-programmed X. The 2D preview draws the X-Z turning path; Y-axis and C-axis live-tool work is listed but not drawn.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "Haas ST-25Y published specification: X 8.4 in (213 mm), Y +/-2.0 in (+/-50.8 mm), Z 22.5 in (572 mm) travels, rapids 472 / 472 / 945 ipm (12 / 12 / 24 m/min), 3400 rpm spindle, 12-station turret, C axis",
+    "Haas Lathe Operator's Manual (Classic Haas Control) G-code chapter: one-block G71/G72/G73/G74/G75/G76 canned cycles"
+  ],
+  "detection": {
+    "keywords": ["HAAS", "ST-25", "ST25", "ST-20", "ST-30"],
+    "codes": ["G103", "G187", "G154", "G112", "G113", "G105"]
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -426, "max": 0, "rapidRate": 12000, "diameter": true },
+    "Y": { "type": "linear", "min": -50.8, "max": 50.8, "rapidRate": 12000 },
+    "Z": { "type": "linear", "min": -572, "max": 0, "rapidRate": 24000 },
+    "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 36000, "wrap": true }
+  },
+  "spindle": { "maxRpm": 3400, "liveToolMaxRpm": 4000 },
+  "toolChanger": { "type": "turret", "stations": 12, "changeSeconds": 1.5 },
+  "controlSettings": { "9": "MM", "22": 0.5, "73": "OFF" },
+  "kinematics": {
+    "type": "lathe",
+    "description": "Z carriage along the spindle axis, X cross-slide (radial), turret on the cross-slide; the C axis turns the chuck and workpiece. Preview coordinates are X radius and Z along the spindle.",
+    "nodes": [
+      { "id": "bed", "label": "Bed", "geometry": null, "model": null },
+      { "id": "z-carriage", "parent": "bed", "label": "Z carriage", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": null, "model": null },
+      { "id": "x-slide", "parent": "z-carriage", "label": "X cross-slide", "type": "linear", "axis": "X", "direction": [1, 0, 0], "scale": 0.5, "geometry": null, "model": null },
+      { "id": "turret", "parent": "x-slide", "label": "Turret tool point", "type": "spindle", "toolMount": true, "geometry": null, "model": null },
+      { "id": "c-spindle", "parent": "bed", "label": "Main spindle (C)", "type": "rotary", "axis": "C", "direction": [0, 0, 1], "workpieceMount": true, "geometry": { "shape": "cylinder", "radius": 127, "height": 80, "center": [0, 0, -80], "axis": "z" }, "model": null }
+    ]
+  }
+}

@@ -166,6 +166,72 @@ try {
         throw "Expected one complete packaged E-Ink simulator; found HTML $($serverSimulatorHtml.Count), script $($serverSimulatorScript.Count), power policy $($serverSimulatorPowerPolicy.Count), styles $($serverSimulatorStyles.Count)."
     }
 
+    # NC viewer and NC engine (third_party/chevalier-nc-viewer hosted by shared/Meimad.Planner.NcEngine).
+    # The client needs the viewer page, its bridge, the vendored UI and three.js, the engine files,
+    # the V8 native library and the WebView2 loader; the Server needs the engine for cycle times.
+    function Assert-PayloadFiles {
+        param(
+            [Parameter(Mandatory)][string]$Root,
+            [Parameter(Mandatory)][string]$Label,
+            [Parameter(Mandatory)][string[]]$RelativeSuffixes
+        )
+        $files = @(Get-ChildItem -LiteralPath $Root -Recurse -File)
+        foreach ($suffix in $RelativeSuffixes) {
+            $pattern = '\\' + [regex]::Escape($suffix) + '$'
+            # At least one: the WebView2 package ships its loader both at the root and under runtimes\.
+            if (@($files | Where-Object { $_.FullName -match $pattern }).Count -lt 1) {
+                throw "$Label is missing $suffix."
+            }
+        }
+    }
+    Assert-PayloadFiles -Root $clientTarget -Label "Packaged Windows Client" -RelativeSuffixes @(
+        'NcViewer\desktop\meimad-viewer.html',
+        'NcViewer\desktop\meimad-bridge.js',
+        'NcViewer\desktop\meimad-viewer.js',
+        'NcViewer\desktop\renderer.js',
+        'NcViewer\media\preview.js',
+        'NcViewer\media\viewer3d.js',
+        'NcViewer\node_modules\codemirror\lib\codemirror.js',
+        'NcViewer\node_modules\three\build\three.module.js',
+        'NcViewer\node_modules\three\build\three.core.js',
+        'nc-engine\meimad\bootstrap.js',
+        'nc-engine\meimad\meimad-nc-engine.js',
+        'nc-engine\meimad\meimad-dialects.js',
+        'nc-engine\meimad\meimad-subprograms.js',
+        'nc-engine\meimad\machines\mazak-variaxis-i-500.json',
+        'nc-engine\meimad\machines\okuma-genos-l200e-m.json',
+        'nc-engine\meimad\machines\haas-st-25y.json',
+        'nc-engine\meimad\machines\haas-vf-3ss.json',
+        'nc-engine\meimad\machines\fanuc-0i-mc-vmc-3axis.json',
+        'nc-engine\meimad\machines\fanuc-0i-mc-vmc-4axis-a.json',
+        'nc-engine\meimad\controls\okuma-osp-p200l-lathe.json',
+        'nc-engine\meimad\controls\mazak-matrix2-mill.json',
+        'nc-engine\src\parser.js',
+        'nc-engine\src\haas-mill.js',
+        'nc-engine\machines\haas-umc-500.json',
+        'nc-engine\CNC-PARA.TXT',
+        'ClearScriptV8.win-x64.dll',
+        'WebView2Loader.dll')
+    Assert-PayloadFiles -Root $serverTarget -Label "Packaged Server" -RelativeSuffixes @(
+        'nc-engine\meimad\bootstrap.js',
+        'nc-engine\meimad\meimad-nc-engine.js',
+        'nc-engine\meimad\meimad-dialects.js',
+        'nc-engine\meimad\meimad-subprograms.js',
+        'nc-engine\meimad\machines\mazak-variaxis-i-500.json',
+        'nc-engine\meimad\machines\okuma-genos-l200e-m.json',
+        'nc-engine\meimad\machines\haas-st-25y.json',
+        'nc-engine\meimad\machines\haas-vf-3ss.json',
+        'nc-engine\meimad\machines\fanuc-0i-mc-vmc-3axis.json',
+        'nc-engine\meimad\machines\fanuc-0i-mc-vmc-4axis-a.json',
+        'nc-engine\meimad\controls\okuma-osp-p200l-lathe.json',
+        'nc-engine\meimad\controls\haas-classic-lathe.json',
+        'nc-engine\src\parser.js',
+        'nc-engine\src\haas-mill.js',
+        'nc-engine\machines\doosan-dvf-5000.json',
+        'nc-engine\controls\fanuc-31i-b-plus-mill.json',
+        'nc-engine\CNC-PARA.TXT',
+        'ClearScriptV8.win-x64.dll')
+
     $clientAssemblyText = [Text.Encoding]::UTF8.GetString(
         [IO.File]::ReadAllBytes($clientAssemblies[0].FullName))
     foreach ($marker in @(
@@ -262,6 +328,7 @@ try {
         ClientExtractedFiles = @(Get-ChildItem -LiteralPath $clientTarget -Recurse -File).Count
         NestedOcctKernel = $nestedOcctKernels[0].FullName.Substring($clientTarget.Length).TrimStart("\")
         ClientVerificationUi = 'O9003 finalizer + persistent sequence fields present'
+        NcViewerAndEngine = 'client NcViewer page + nc-engine + V8 + WebView2 loader; Server nc-engine + V8'
         ServerExtractedFiles = @(Get-ChildItem -LiteralPath $serverTarget -Recurse -File).Count
         EInkSimulatorProfile = '800x480 TFT bitmap; explicit status power policy; D1/D2/D4/reset; guarded SEND_TO_QC'
         ServiceRecoveryPolicy = 'restart 60s; restart 60s; none; reset 1d'

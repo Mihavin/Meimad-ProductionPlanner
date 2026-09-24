@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "fanuc-0i-mc-vmc-3axis",
+  "name": "Generic FANUC 0i-MC vertical mill (3 axes)",
+  "manufacturer": "Generic",
+  "model": "VMC with FANUC 0i-MC",
+  "type": "mill",
+  "control": "fanuc-0i-mc-mill",
+  "description": "Generic 3-axis vertical machining centre with a FANUC Series 0i-MC / 0i-Mate-MC control. Travels, rapids, spindle and tool changer are typical values; replace them with the machine's parameters.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "Typical 3-axis VMC: X 762 / Y 410 / Z 510 mm travels, 24 m/min rapids, 8000 rpm BT40 spindle, 24-tool arm changer (placeholders)",
+    "FANUC Series 0i-MC Operator's Manual B-64124EN"
+  ],
+  "detection": {
+    "keywords": ["FANUC", "0I-MC", "0I MC", "0IMC"],
+    "codes": ["G54.1", "G16", "G68"]
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -762, "max": 0, "rapidRate": 24000, "maxFeed": 10000 },
+    "Y": { "type": "linear", "min": -410, "max": 0, "rapidRate": 24000, "maxFeed": 10000 },
+    "Z": { "type": "linear", "min": -510, "max": 0, "rapidRate": 24000, "maxFeed": 10000 }
+  },
+  "axisNote": "Placeholders: replace with parameters 1320/1321 (stroke limits) and 1420 (rapid rates).",
+  "mrzp": {
+    "x": -381,
+    "y": -205,
+    "z": -450,
+    "rotaryCenterDistance": 0,
+    "verified": false,
+    "label": "Table centre",
+    "source": "Placeholder at the table centre; undefined work offsets are placed here."
+  },
+  "rotaryConvention": { "verified": true, "note": "No rotary axes." },
+  "referencePositions": {
+    "1": { "X": 0, "Y": 0, "Z": 0 },
+    "2": { "X": -381, "Y": 0, "Z": 0 },
+    "note": "Placeholders for parameters 1240 (G28) and 1241 (G30)."
+  },
+  "spindle": { "maxRpm": 8000, "taper": "BT40" },
+  "toolChanger": { "type": "arm", "capacity": 24, "changeSeconds": 4, "zMachine": 0 },
+  "defaultToolLength": 100,
+  "workOffsets": {
+    "default": "mrzp",
+    "note": "Work offsets that the program or the initial macro variables do not define (#5221-#5326, #7001+) are placed at the table centre."
+  },
+  "parameters": {
+    "1401#1": 0,
+    "3401#0": 0,
+    "3404#7": 0,
+    "5004#2": 0,
+    "5114": 1,
+    "5115": 1,
+    "5400#0": 0,
+    "5400#7": 0,
+    "6000#3": 0
+  },
+  "parameterNotes": {
+    "1401#1": "LRP = 0: non-linear rapids (each axis at its own rate), the FANUC default.",
+    "3401#0": "DPI = 0: values without a decimal point are least input increments (0.001 mm), the FANUC default.",
+    "5004#2": "ODI = 0: D offsets hold radii."
+  },
+  "kinematics": {
+    "type": "vertical-3-axis",
+    "description": "X/Y/Z move the spindle relative to the fixed table (drawn on the spindle side).",
+    "nodes": [
+      { "id": "base", "label": "Machine base", "geometry": { "shape": "box", "size": [1100, 700, 60], "center": [-381, -205, -520] }, "model": null },
+      { "id": "x-saddle", "parent": "base", "label": "X saddle", "type": "linear", "axis": "X", "direction": [1, 0, 0], "geometry": { "shape": "box", "size": [220, 180, 90], "center": [0, 60, 380] }, "model": null },
+      { "id": "y-ram", "parent": "x-saddle", "label": "Y ram", "type": "linear", "axis": "Y", "direction": [0, 1, 0], "geometry": { "shape": "box", "size": [200, 480, 90], "center": [0, 140, 290] }, "model": null },
+      { "id": "z-head", "parent": "y-ram", "label": "Z spindle head", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": { "shape": "box", "size": [200, 240, 300], "center": [0, 40, 160] }, "model": null },
+      { "id": "spindle", "parent": "z-head", "label": "Spindle (gauge line)", "type": "spindle", "toolMount": true, "geometry": { "shape": "cylinder", "radius": 55, "height": 90, "center": [0, 0, 45], "axis": "z" }, "model": null },
+      { "id": "table", "parent": "base", "label": "Table", "type": "fixed", "workpieceMount": true, "geometry": { "shape": "box", "size": [900, 400, 50], "center": "mrzp", "offset": [0, 0, -25] }, "model": null }
+    ]
+  }
+}

@@ -70,6 +70,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool machineRespectMasterCalendar = true;
     private string machineExecutionMode = "MANUAL";
     private string machineNcDialect = "HAAS_NGC";
+    private NcViewerMachineOption selectedNcViewerMachine = NcViewerMachineOption.Auto;
     private string machineUsableToolPositions = string.Empty;
     private string machineRapidRateMillimetersPerMinute = string.Empty;
     private string machineToolChangeTimeSeconds = string.Empty;
@@ -530,6 +531,18 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// <summary>Control family whose syntax the Server injects into this Machine's runnable NC and Offset Loader.</summary>
     public string MachineNcDialect { get => machineNcDialect; set => SetField(ref machineNcDialect, value); }
     public IReadOnlyList<string> MachineNcDialects { get; } = ["HAAS_NGC", "FANUC_MACRO_B", "MAZAK_MATRIX_EIA", "OKUMA_OSP"];
+    /// <summary>
+    /// NC viewer machine: the NC engine definition (Mazak Variaxis i-500, Okuma Genos L200E-M,
+    /// Haas ST-25Y, Haas VF-3SS, generic FANUC 0i-MC mills, ...) the NC viewer and the Server
+    /// cycle-time analysis interpret this Machine's programs with. "Auto-detect" leaves the choice
+    /// to the engine. The list is the catalog installed with this client's NC engine.
+    /// </summary>
+    public NcViewerMachineOption SelectedNcViewerMachine
+    {
+        get => selectedNcViewerMachine;
+        set => SetField(ref selectedNcViewerMachine, value ?? NcViewerMachineOption.Auto);
+    }
+    public ObservableCollection<NcViewerMachineOption> NcViewerMachines { get; } = new(NcViewerMachineOption.Installed());
     public string MachineUsableToolPositions { get => machineUsableToolPositions; set => SetField(ref machineUsableToolPositions, value); }
     public string MachineRapidRateMillimetersPerMinute { get => machineRapidRateMillimetersPerMinute; set => SetField(ref machineRapidRateMillimetersPerMinute, value); }
     public string MachineToolChangeTimeSeconds { get => machineToolChangeTimeSeconds; set => SetField(ref machineToolChangeTimeSeconds, value); }
@@ -1159,6 +1172,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineRespectMasterCalendar = true;
         MachineExecutionMode = "MANUAL";
         MachineNcDialect = "HAAS_NGC";
+        SelectedNcViewerMachine = NcViewerMachineOption.Auto;
         MachineUsableToolPositions = string.Empty;
         MachineRapidRateMillimetersPerMinute = string.Empty;
         MachineToolChangeTimeSeconds = string.Empty;
@@ -2357,6 +2371,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineRespectMasterCalendar = value.RespectMasterCalendar;
         MachineExecutionMode = value.ExecutionMode;
         MachineNcDialect = value.NcDialect;
+        SelectedNcViewerMachine = FindNcViewerMachine(value.NcViewerMachine);
         MachineUsableToolPositions = value.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineRapidRateMillimetersPerMinute = value.RapidRateMillimetersPerMinute?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineToolChangeTimeSeconds = value.ToolChangeTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
@@ -2364,6 +2379,20 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         RebuildMachinePostprocessors(value.SupportedPostprocessorIds ?? []);
         ResetHaasForm();
         OnPropertyChanged(nameof(MachineFormHeading));
+    }
+
+    /// <summary>
+    /// The list entry for a stored NC viewer machine. An id this client's engine does not have
+    /// (older client than the Server) is kept as a marked entry so saving does not clear it.
+    /// </summary>
+    private NcViewerMachineOption FindNcViewerMachine(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return NcViewerMachineOption.Auto;
+        var known = NcViewerMachines.FirstOrDefault(option => option.Id == id);
+        if (known is not null) return known;
+        var missing = new NcViewerMachineOption(id, $"{id} (not installed with this client)");
+        NcViewerMachines.Add(missing);
+        return missing;
     }
 
     private void PopulateHaasConfiguration(HaasConnectionSettings value)
@@ -2577,7 +2606,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             rapidRate,
             toolChangeSeconds,
             timeFactor,
-            MachineNcDialect);
+            MachineNcDialect,
+            SelectedNcViewerMachine.Id);
         return true;
     }
 

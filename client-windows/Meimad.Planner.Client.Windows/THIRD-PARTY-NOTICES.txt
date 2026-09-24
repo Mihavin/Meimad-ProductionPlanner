@@ -11,3 +11,28 @@ Licensed under GNU LGPL 2.1 with the Open CASCADE exception.
 License and source information: https://dev.opencascade.org/resources/licensing
 
 These libraries are used dynamically for local STEP B-rep import and tessellation. They are not modified by this application.
+
+NC viewer (NcViewer\ and nc-engine\ folders)
+
+Chevalier CNC Toolpath Preview 0.17.0 (viewer UI and NC interpreter)
+Copyright Meimad Metals. Internal Meimad software, not licensed to third parties.
+Source: the ChevalierGcode project, vendored unmodified in third_party/chevalier-nc-viewer.
+
+CodeMirror 5.65.21
+Copyright (C) 2017 by Marijn Haverbeke and others.
+Licensed under the MIT License (NcViewer\node_modules\codemirror\LICENSE).
+
+three.js r185 (0.185.1)
+Copyright 2010-2026 three.js authors.
+Licensed under the MIT License (NcViewer\node_modules\three\build\LICENSE).
+
+Microsoft ClearScript 7.5.1.1 (V8 JavaScript engine host)
+Copyright Microsoft Corporation. Licensed under the MIT License.
+Includes the V8 JavaScript engine, Copyright the V8 project authors, licensed under the BSD 3-Clause License,
+and ICU data, Copyright Unicode, Inc., licensed under the Unicode License.
+Package and source information: https://www.nuget.org/packages/Microsoft.ClearScript.V8/7.5.1.1
+
+Microsoft Edge WebView2 SDK 1.0.4191.47
+Copyright Microsoft Corporation. Licensed under the Microsoft WebView2 SDK license.
+Package information: https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47
+The WebView2 Runtime itself is part of Windows 11 (and Microsoft Edge) and is not redistributed by this installer.

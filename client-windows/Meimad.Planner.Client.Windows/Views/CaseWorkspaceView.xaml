@@ -500,7 +500,13 @@
                                         </StackPanel>
                                         <StackPanel Style="{StaticResource FormField}">
                                             <TextBlock Text="Released G-code file" Style="{StaticResource FieldLabel}"/>
-                                            <DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseGCode_Click" Margin="6,0,0,0"/><TextBox Text="{Binding GCodeFilePath}" IsReadOnly="True"/></DockPanel>
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Content="NC viewer…" Click="OpenNcViewer_Click" Margin="6,0,0,0"
+                                                        ToolTip="Open the NC viewer in edit mode: the selected file, or a new program that starts with the Meimad canonical block. In the viewer you can open any NC file, edit and save it, apply the Meimad Planner format, and release it to the Server as a new G-code release of this Operation (the canonical format is checked first)."
+                                                        AutomationProperties.Name="Open the NC viewer to write, edit and release a G-code file"/>
+                                                <Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseGCode_Click" Margin="6,0,0,0"/>
+                                                <TextBox Text="{Binding GCodeFilePath}" IsReadOnly="True"/>
+                                            </DockPanel>
                                         </StackPanel>
                                         <StackPanel Style="{StaticResource FormField}" IsEnabled="{Binding IsNewProcessRevisionRelease}">
                                             <TextBlock Text="Tool-table file" Style="{StaticResource FieldLabel}"/>
@@ -548,7 +554,20 @@
                                         </DataGrid.Columns>
                                     </DataGrid>
                                     <TextBlock Text="Local post-revision history" FontWeight="SemiBold" Margin="0,14,0,5"/>
-                                    <DataGrid ItemsSource="{Binding GCodeReleases}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190">
+                                    <DataGrid ItemsSource="{Binding GCodeReleases}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190"
+                                              ToolTip="Right-click or double-click a release to open it in the NC viewer.">
+                                        <DataGrid.Resources>
+                                            <ContextMenu x:Key="ReleaseRowMenu" x:Shared="False">
+                                                <MenuItem Header="View NC file"
+                                                          ToolTip="Open this immutable release in the NC viewer (read-only): 3D toolpath, playback and cycle time."
+                                                          Click="ViewReleaseNcFile_Click"
+                                                          AutomationProperties.Name="View NC file"/>
+                                            </ContextMenu>
+                                            <Style TargetType="DataGridRow">
+                                                <Setter Property="ContextMenu" Value="{StaticResource ReleaseRowMenu}"/>
+                                                <EventSetter Event="MouseDoubleClick" Handler="ReleaseRow_MouseDoubleClick"/>
+                                            </Style>
+                                        </DataGrid.Resources>
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessRevisionNumber}" Width="70"/>
                                             <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="130"/>

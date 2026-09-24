@@ -962,6 +962,21 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     internal ModelViewerContext? CreateModelViewerContext() =>
         apiClient is null ? null : new ModelViewerContext(apiClient, clientId, editGeneration, isEditor);
 
+    /// <summary>The effective NC release of a Machine-assigned operation, for the NC viewer.</summary>
+    internal async Task<NcViewer.NcViewerOpenRequest?> CreateNcViewerRequestAsync(PlanningOperationViewModel operation)
+    {
+        if (apiClient is not { } client
+            || operation is not { CanViewNcFile: true, CaseOperationId: { } operationId, EffectiveGCodeReleaseId: { } releaseId })
+        {
+            return null;
+        }
+        var machine = Machines.FirstOrDefault(value => value.MachineId == operation.MachineId);
+        var machineText = machine is null ? operation.MachineId : $"{machine.Number} {machine.Name}";
+        return await NcViewer.NcViewerRequests.ForReleaseAsync(
+            client, operation.CaseId, operationId, releaseId, operation.MachineId,
+            $"{operation.DisplayTitle} · {operation.OperationName} · {machineText}");
+    }
+
     internal async Task UndoAsync() =>
         await ReplayPlacementAsync(undoHistory, redoHistory, undo: true);
 
@@ -1536,6 +1551,8 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string? PausedBy { get; }
     public DateTimeOffset? PauseStartedAt { get; }
     public string DisplayTitle => $"{PartNumber} / {BatchNumber} / OP{OperationNumber}";
+    /// <summary>A Machine-assigned operation with an effective NC release can open it in the NC viewer.</summary>
+    public bool CanViewNcFile => MachineId is not null && CaseOperationId is not null && EffectiveGCodeReleaseId is not null;
     public string RequiredMachineText => RequiredMachineType ?? "Any active Machine";
     public string PlannedQuantityText => $"Qty {PlannedQuantity}";
     public string OrderReferencesText => OrderReferences.Count == 0

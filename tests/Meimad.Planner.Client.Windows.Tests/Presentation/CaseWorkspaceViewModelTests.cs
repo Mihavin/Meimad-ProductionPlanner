@@ -138,6 +138,75 @@ public sealed class CaseWorkspaceViewModelTests
         }
     }
 
+    [Fact]
+    public async Task Release_from_the_nc_viewer_uses_the_form_rules_and_the_same_release_command()
+    {
+        var tools = new PlannerToolTableRelease(
+            "tools-1", 1, "tools.csv", 10, new string('a', 64),
+            DateTimeOffset.UtcNow, "planner", "Initial tools");
+        var process = new PlannerProcessRevision(
+            "process-1", 1, true, DateTimeOffset.UtcNow,
+            "planner", "Initial process", 1, tools);
+        var api = new FakeApiClient(CreateCase());
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            ActiveProcessRevision = process,
+            ProcessRevisions = [process],
+            Postprocessors =
+            [
+                new PlannerPostprocessorReleaseStatus("post-doosan", "Doosan 3X", true, "missing", null, null),
+                new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "missing", null, null)
+            ]
+        };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+        await viewModel.RefreshGCodeAsync();
+        var caseId = viewModel.SelectedCase!.CaseId;
+        var operationId = viewModel.SelectedOperation!.CaseOperationId;
+
+        // The viewer offers the form's postprocessors; the editor request carries the release services.
+        var editor = await viewModel.CreateNcEditorRequestAsync(editSelectedFile: false);
+        Assert.NotNull(editor?.ReleaseToServer);
+        Assert.NotNull(editor!.ValidateService);
+        Assert.Equal(["post-doosan", "post-haas"], editor.ReleaseContext!.Postprocessors.Select(target => target.Id));
+        Assert.True(editor.ReleaseContext.HasActiveProcessRevision);
+
+        var gcodePath = Path.GetTempFileName();
+        try
+        {
+            Meimad.Planner.Client.Windows.Presentation.NcViewer.NcViewerReleaseCommand Command(string comment, bool confirmTools = true) => new(
+                gcodePath, "post-haas", "LOCAL_POST_REVISION", comment, null,
+                ConfirmNewProcessRevision: false, ReuseActiveToolTable: true, ConfirmToolTable: confirmTools,
+                ToolTableFilePath: null, HasActiveProcessRevision: true);
+
+            var noComment = await viewModel.ReleaseFromViewerAsync(caseId, operationId, Command(string.Empty));
+            Assert.False(noComment.Succeeded);
+            Assert.Null(api.LastGCodeReleaseCreate);
+
+            var unconfirmed = await viewModel.ReleaseFromViewerAsync(caseId, operationId, Command("v2", confirmTools: false));
+            Assert.False(unconfirmed.Succeeded);
+            Assert.Contains("tool table", unconfirmed.Message, StringComparison.Ordinal);
+
+            var outcome = await viewModel.ReleaseFromViewerAsync(caseId, operationId, Command("Feed corrected in the NC viewer"));
+
+            Assert.True(outcome.Succeeded, outcome.Message);
+            Assert.Equal("release-test", outcome.ReleaseId);
+            Assert.Equal("post-haas", api.LastGCodeReleaseCreate?.PostprocessorId);
+            Assert.Equal("LOCAL_POST_REVISION", api.LastGCodeReleaseCreate?.ChangeScope);
+            Assert.Equal("Feed corrected in the NC viewer", api.LastGCodeReleaseCreate?.ReleaseComment);
+            Assert.Equal(gcodePath, api.LastGCodeReleaseCreate?.GCodeFilePath);
+            Assert.Equal("windows-1", api.LastClientId);
+            Assert.Equal(7, api.LastGeneration);
+            Assert.StartsWith("Released", viewModel.StatusMessage, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(gcodePath);
+        }
+    }
+
     private static PlannerNcMachineCycleEstimate Estimate(string machineId, double seconds) => new(
         machineId, "nc-v1", 50, 100, 5, 1, 4, 2, 12000, 4, 1,
         seconds, seconds, [], "HIGH", DateTimeOffset.UtcNow);

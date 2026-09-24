@@ -3,8 +3,11 @@ using System.IO;
 using System.Threading;
 using System.Windows.Controls;
 using System.Windows;
+using System.Windows.Input;
+using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
 using Microsoft.Win32;
+using Meimad.Planner.Client.Windows.Localization;
 
 namespace Meimad.Planner.Client.Windows.Views;
 
@@ -57,7 +60,7 @@ public partial class CaseWorkspaceView : UserControl
         UpdateStepSnapshotState();
     }
 
-    private static bool ConfirmBatchRemoval(int batchCount) => MessageBox.Show(
+    private static bool ConfirmBatchRemoval(int batchCount) => LocalizedMessageBox.Show(
         $"Adding a child component converts this Case into a parent. {batchCount} direct Production Batch{(batchCount == 1 ? string.Empty : "es")} and their assignments, execution history, allocations, and generated job-package records will be permanently removed. Continue?",
         "Remove direct Production Batches?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
@@ -84,7 +87,7 @@ public partial class CaseWorkspaceView : UserControl
             Filter = "CAD models|*.stp;*.step;*.stl|STEP models|*.stp;*.step|STL meshes|*.stl|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
-        };
+        }.Localized();
         if (dialog.ShowDialog() != true)
         {
             return;
@@ -109,7 +112,7 @@ public partial class CaseWorkspaceView : UserControl
             or InvalidDataException
             or FormatException)
         {
-            MessageBox.Show(exception.Message, "Model preview", MessageBoxButton.OK, MessageBoxImage.Warning);
+            LocalizedMessageBox.Show(exception.Message, "Model preview", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         UpdateStepSnapshotState();
     }
@@ -213,7 +216,7 @@ public partial class CaseWorkspaceView : UserControl
                 or FormatException)
             {
                 item.LoadError = exception.Message;
-                MessageBox.Show(exception.Message, "Model preview", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show(exception.Message, "Model preview", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
     }
@@ -232,7 +235,7 @@ public partial class CaseWorkspaceView : UserControl
             Filter = "CAD models|*.stp;*.step;*.stl|STEP models|*.stp;*.step|STL meshes|*.stl|All files|*.*",
             CheckFileExists = true,
             Multiselect = true
-        };
+        }.Localized();
         if (!string.IsNullOrWhiteSpace(viewModel.WorkingFolderPath) && Directory.Exists(viewModel.WorkingFolderPath))
         {
             dialog.InitialDirectory = viewModel.WorkingFolderPath;
@@ -263,7 +266,7 @@ public partial class CaseWorkspaceView : UserControl
         {
             return;
         }
-        if (MessageBox.Show($"Remove the link to {item.Label}? The file on disk is not deleted.",
+        if (LocalizedMessageBox.Show($"Remove the link to {item.Label}? The file on disk is not deleted.",
                 "Remove model link", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
         {
             return;
@@ -281,13 +284,13 @@ public partial class CaseWorkspaceView : UserControl
     {
         if (DataContext is not CaseWorkspaceViewModel viewModel || viewModel.SelectedCase is null)
         {
-            MessageBox.Show("Select a Case first.", "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show("Select a Case first.", "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         var context = viewModel.CreateModelViewerContext();
         if (context is null)
         {
-            MessageBox.Show("Connect to the Server before opening the 3D viewer.", "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show("Connect to the Server before opening the 3D viewer.", "View in 3D", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         ModelViewerWindow.Open(Window.GetWindow(this), context, viewModel.SelectedCase.CaseId,
@@ -340,10 +343,76 @@ public partial class CaseWorkspaceView : UserControl
             Filter = "G-code|*.nc;*.tap;*.gcode;*.cnc;*.iso;*.mpf;*.spf|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
-        };
+        }.Localized();
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetGCodeFileSelection(dialog.FileName);
+        }
+    }
+
+    /// <summary>
+    /// The NC viewer in edit mode: the selected G-code file when one exists, otherwise a new
+    /// program with the Meimad canonical block. Open, edit, save, format and release happen there.
+    /// </summary>
+    private async void OpenNcViewer_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        var editSelectedFile = !string.IsNullOrWhiteSpace(viewModel.GCodeFilePath) && File.Exists(viewModel.GCodeFilePath);
+        await OpenNcEditorAsync(editSelectedFile);
+    }
+
+    private async Task OpenNcEditorAsync(bool editSelectedFile)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        try
+        {
+            var request = await viewModel.CreateNcEditorRequestAsync(editSelectedFile);
+            if (request is null)
+            {
+                LocalizedMessageBox.Show(Window.GetWindow(this), "Select an Operation first.", "NC editor",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            NcViewerWindow.Open(request);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // An async void handler must not let a file or Server error reach the Dispatcher.
+            LocalizedMessageBox.Show(Window.GetWindow(this), exception.Message, "NC editor", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void ViewReleaseNcFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PlannerGCodeRelease release }) await OpenReleaseAsync(release);
+    }
+
+    private async void ReleaseRow_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is DataGridRow { Item: PlannerGCodeRelease release })
+        {
+            e.Handled = true;
+            await OpenReleaseAsync(release);
+        }
+    }
+
+    private async Task OpenReleaseAsync(PlannerGCodeRelease release)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel) return;
+        try
+        {
+            var request = await viewModel.CreateReleaseViewerRequestAsync(release);
+            if (request is null)
+            {
+                LocalizedMessageBox.Show(Window.GetWindow(this), "Connect to the Server and select the Operation first.", "View NC file",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            NcViewerWindow.Open(request);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            LocalizedMessageBox.Show(Window.GetWindow(this), exception.Message, "View NC file", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -360,7 +429,7 @@ public partial class CaseWorkspaceView : UserControl
             Filter = "Tool tables|*.mht;*.mhtml;*.json;*.csv;*.txt|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
-        };
+        }.Localized();
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetToolTableFileSelection(dialog.FileName);
@@ -386,7 +455,7 @@ public partial class CaseWorkspaceView : UserControl
             AddExtension = true,
             FileName = $"{safePartNumber}-step-preview.png",
             OverwritePrompt = true
-        };
+        }.Localized();
         if (!string.IsNullOrWhiteSpace(viewModel.WorkingFolderPath)
             && Directory.Exists(viewModel.WorkingFolderPath))
         {
@@ -401,7 +470,7 @@ public partial class CaseWorkspaceView : UserControl
         {
             StepViewer.SaveSnapshot(dialog.FileName);
             viewModel.SetPreviewSelection(dialog.FileName);
-            MessageBox.Show(
+            LocalizedMessageBox.Show(
                 "The PNG was saved and selected as the Case picture. Press Save Case to commit the picture path.",
                 "STEP snapshot", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -409,7 +478,7 @@ public partial class CaseWorkspaceView : UserControl
             or UnauthorizedAccessException
             or InvalidOperationException)
         {
-            MessageBox.Show(exception.Message, "STEP snapshot", MessageBoxButton.OK, MessageBoxImage.Warning);
+            LocalizedMessageBox.Show(exception.Message, "STEP snapshot", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -452,7 +521,7 @@ public partial class CaseWorkspaceView : UserControl
             StepBoundingBoxToggle.IsChecked = true;
             StepViewer.BeginCustomReferenceByFaceAndEdge();
         }
-        catch (InvalidOperationException exception) { MessageBox.Show(exception.Message, "STEP reference", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (InvalidOperationException exception) { LocalizedMessageBox.Show(exception.Message, "STEP reference", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
     private void StepReferenceClear_Click(object sender, RoutedEventArgs e) => StepViewer.ClearCustomReference();
     private void StepFlipX_Click(object sender, RoutedEventArgs e) => StepViewer.FlipReferenceAxis("X");
@@ -498,7 +567,7 @@ public partial class CaseWorkspaceView : UserControl
         {
             Title = "Select the external Case Working Folder",
             Multiselect = false
-        };
+        }.Localized();
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetWorkingFolderSelection(dialog.FolderName);
@@ -518,7 +587,7 @@ public partial class CaseWorkspaceView : UserControl
             Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
-        };
+        }.Localized();
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetPreviewSelection(dialog.FileName);
@@ -562,7 +631,7 @@ public partial class CaseWorkspaceView : UserControl
             await viewModel.CancelSelectedBatchProductionAsync();
     }
 
-    private static bool Confirm(string message, string title = "Confirm deletion") => MessageBox.Show(
+    private static bool Confirm(string message, string title = "Confirm deletion") => LocalizedMessageBox.Show(
         message, title, MessageBoxButton.YesNo,
         MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 }

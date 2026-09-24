@@ -24,7 +24,8 @@ internal sealed record CreateMachineRequest(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double? MachineTimeFactor = null,
-    string? NcDialect = null)
+    string? NcDialect = null,
+    string? NcViewerMachine = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -44,7 +45,8 @@ internal sealed record CreateMachineRequest(
         RapidRateMillimetersPerMinute,
         ToolChangeTimeSeconds,
         MachineTimeFactor,
-        NcDialect);
+        NcDialect,
+        NcViewerMachine);
 }
 
 internal sealed class PatchMachineRequest
@@ -74,7 +76,8 @@ internal sealed class PatchMachineRequest
             reader.Double("rapidRateMillimetersPerMinute"),
             reader.Double("toolChangeTimeSeconds"),
             reader.Double("machineTimeFactor"),
-            reader.String("ncDialect"));
+            reader.String("ncDialect"),
+            reader.String("ncViewerMachine"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -88,7 +91,7 @@ internal sealed class PatchMachineRequest
             "machineTypeId", "respectMasterCalendar", "executionMode",
             "supportedPostprocessorIds", "usableToolPositions",
             "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor",
-            "ncDialect"
+            "ncDialect", "ncViewerMachine"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -257,7 +260,8 @@ internal sealed record MachineResponse(
     double? RapidRateMillimetersPerMinute,
     double? ToolChangeTimeSeconds,
     double MachineTimeFactor,
-    string NcDialect)
+    string NcDialect,
+    string? NcViewerMachine)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -283,7 +287,8 @@ internal sealed record MachineResponse(
         machine.RapidRateMillimetersPerMinute,
         machine.ToolChangeTimeSeconds,
         machine.MachineTimeFactor,
-        machine.NcDialect);
+        machine.NcDialect,
+        machine.NcViewerMachine);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

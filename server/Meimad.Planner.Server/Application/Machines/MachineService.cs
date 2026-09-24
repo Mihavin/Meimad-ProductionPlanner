@@ -1,3 +1,4 @@
+using Meimad.Planner.NcEngine;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Machines;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,17 +11,20 @@ internal sealed class MachineService
     private readonly TimeProvider timeProvider;
     private readonly ILogger<MachineService> logger;
     private readonly Cnc.ICncVerificationFoundationRepository? verification;
+    private readonly NcEngineMachineCatalog? ncViewerMachines;
 
     public MachineService(
         IMachineRepository repository,
         TimeProvider timeProvider,
         ILogger<MachineService>? logger = null,
-        Cnc.ICncVerificationFoundationRepository? verification = null)
+        Cnc.ICncVerificationFoundationRepository? verification = null,
+        NcEngineMachineCatalog? ncViewerMachines = null)
     {
         this.repository = repository;
         this.timeProvider = timeProvider;
         this.logger = logger ?? NullLogger<MachineService>.Instance;
         this.verification = verification;
+        this.ncViewerMachines = ncViewerMachines;
     }
 
     internal async Task<Machine> CreateAsync(
@@ -29,6 +33,7 @@ internal sealed class MachineService
         CancellationToken cancellationToken = default)
     {
         var values = MachineValidator.ValidateAndNormalize(ToValues(command));
+        RequireInstalledNcViewerMachine(values.NcViewerMachine);
         var now = timeProvider.GetUtcNow();
         var machine = new Machine(
             Guid.NewGuid().ToString("N"),
@@ -55,7 +60,8 @@ internal sealed class MachineService
             values.RapidRateMillimetersPerMinute,
             values.ToolChangeTimeSeconds,
             values.MachineTimeFactor,
-            values.NcDialect);
+            values.NcDialect,
+            values.NcViewerMachine);
         var created = await repository.CreateAsync(machine, editAuthority, cancellationToken);
         logger.LogInformation(
             "Created Machine {MachineId} with execution mode {ExecutionMode} and {PostprocessorCount} supported Postprocessors.",
@@ -102,7 +108,9 @@ internal sealed class MachineService
             Select(command.RapidRateMillimetersPerMinute, current.RapidRateMillimetersPerMinute),
             Select(command.ToolChangeTimeSeconds, current.ToolChangeTimeSeconds),
             Select(command.MachineTimeFactor, current.MachineTimeFactor),
-            Select(command.NcDialect, current.NcDialect)));
+            Select(command.NcDialect, current.NcDialect),
+            Select(command.NcViewerMachine, current.NcViewerMachine)));
+        if (command.NcViewerMachine.IsSpecified) RequireInstalledNcViewerMachine(values.NcViewerMachine);
         if (!string.Equals(values.NcDialect, current.NcDialect, StringComparison.Ordinal)
             && verification is not null)
         {
@@ -135,6 +143,7 @@ internal sealed class MachineService
             ToolChangeTimeSeconds = values.ToolChangeTimeSeconds,
             MachineTimeFactor = values.MachineTimeFactor,
             NcDialect = values.NcDialect,
+            NcViewerMachine = values.NcViewerMachine,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -169,7 +178,21 @@ internal sealed class MachineService
         command.RapidRateMillimetersPerMinute,
         command.ToolChangeTimeSeconds,
         command.MachineTimeFactor,
-        command.NcDialect);
+        command.NcDialect,
+        command.NcViewerMachine);
+
+    /// <summary>
+    /// An NC viewer machine must be a definition installed with this Server's NC engine; the
+    /// Windows client lists the same installed catalog. Without a catalog (tests) any id passes.
+    /// </summary>
+    private void RequireInstalledNcViewerMachine(string? ncViewerMachine)
+    {
+        if (ncViewerMachine is null || ncViewerMachines is null || ncViewerMachines.Contains(ncViewerMachine)) return;
+        throw new MachineValidationException([new MachineValidationIssue(
+            "ncViewerMachine",
+            "unknown_nc_viewer_machine",
+            $"NC viewer machine '{ncViewerMachine}' is not an installed NC engine machine definition. Installed: {string.Join(", ", ncViewerMachines.Machines.Select(machine => machine.Id))}.")]);
+    }
 
     private static T Select<T>(MachineField<T> field, T current) =>
         field.IsSpecified ? field.Value : current;

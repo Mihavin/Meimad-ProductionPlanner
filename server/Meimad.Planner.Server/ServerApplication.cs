@@ -255,6 +255,11 @@ public static class ServerApplication
         builder.Services.AddSingleton<IManufacturingProgramRepository, SqliteManufacturingProgramRepository>();
         builder.Services.AddSingleton<ManufacturingProgramService>();
         builder.Services.AddSingleton<INcHeaderParser, NcHeaderParser>();
+        builder.Services.AddSingleton<INcProgramAnalyzer, NcEngineProgramAnalyzer>();
+        builder.Services.AddSingleton<INcAnalysisRepository, SqliteNcAnalysisRepository>();
+        // Installed NC viewer machine definitions; validates Machine.ncViewerMachine.
+        builder.Services.AddSingleton(_ => Meimad.Planner.NcEngine.NcEngineMachineCatalog.Load());
+        builder.Services.AddSingleton<NcTemplateFormatter>();
         builder.Services.AddSingleton<IHaasMdcClientFactory, HaasMdcClientFactory>();
         builder.Services.AddSingleton<IFocasClientFactory, FocasClientFactory>();
         builder.Services.AddHttpClient<IMtConnectClient, MtConnectHttpClient>(client =>
@@ -276,6 +281,7 @@ public static class ServerApplication
         builder.Services.AddHostedService(services => services.GetRequiredService<CncConnectionManager>());
         builder.Services.AddSingleton<CncConnectionService>();
         builder.Services.AddHostedService<GCodeStorageRecoveryService>();
+        builder.Services.AddHostedService<NcAnalysisBackfillService>();
         builder.Services.AddSingleton<OpenXmlLegacyWorkbookReader>();
         builder.Services.AddSingleton<ILegacyImportRepository, SqliteLegacyImportRepository>();
         builder.Services.AddSingleton<LegacyImportService>();

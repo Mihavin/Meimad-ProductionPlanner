@@ -1,0 +1,985 @@
+{
+  "schemaVersion": 1,
+  "id": "fanuc-0i-mc-mill",
+  "name": "FANUC Series 0i-MC / 0i-Mate-MC (machining center)",
+  "shortName": "FANUC 0i-MC",
+  "manufacturer": "FANUC",
+  "interpreter": "fanuc-mill",
+  "machineType": "mill",
+  "reference": "FANUC Series 0i-MC Operator's Manual B-64124EN (G code table, chapter 3) and 0i Mate-MC B-64144EN; entries reuse the vendored Series 30i table",
+  "blockEnd": ";",
+  "comment": "()",
+  "macro": {
+    "dialect": "fanuc-custom-macro-b",
+    "controlFlow": [
+      "GOTO",
+      "IF GOTO",
+      "IF THEN",
+      "WHILE DO END"
+    ],
+    "functions": [
+      "SIN",
+      "COS",
+      "TAN",
+      "ASIN",
+      "ACOS",
+      "ATAN",
+      "SQRT",
+      "ABS",
+      "ROUND",
+      "FIX",
+      "FUP",
+      "LN",
+      "EXP",
+      "POW",
+      "MIN",
+      "MAX",
+      "ADP",
+      "BIN",
+      "BCD",
+      "MOD",
+      "AND",
+      "OR",
+      "XOR",
+      "PRM"
+    ],
+    "notes": "0i-MC custom macro B: local #1-#33, common #100-#199 and #500-#999, tool offsets in memory C #10001+/#11001+ (H wear/geometry) and #12001+/#13001+ (D wear/geometry), work offsets #5201+ (EXT), #5221+ (G54-G59), #7001+ (G54.1 P1-P48 option). No tilted working plane, TCP or 5-axis functions."
+  },
+  "modalGroups": {
+    "0": "Non-modal",
+    "1": "Motion",
+    "2": "Plane selection",
+    "3": "Absolute/incremental",
+    "4": "Stored stroke check",
+    "5": "Feed mode",
+    "6": "Input units",
+    "7": "Cutter compensation",
+    "8": "Tool length compensation / tool center point control",
+    "9": "Canned cycle",
+    "10": "Canned cycle return",
+    "11": "Scaling",
+    "12": "Macro modal call",
+    "13": "Constant surface speed",
+    "14": "Work coordinate system",
+    "15": "Cutting mode",
+    "16": "Coordinate rotation / tilted working plane",
+    "17": "Polar coordinates command",
+    "18": "Normal direction control",
+    "19": "Spindle speed fluctuation detection",
+    "20": "In-feed control",
+    "21": "Polar coordinate interpolation",
+    "22": "Programmable mirror image",
+    "23": "Rotary table dynamic fixture offset",
+    "24": "Electronic gear box 2 pair",
+    "27": "Spindle unit compensation",
+    "31": "Polygon turning",
+    "33": "Workpiece setting error compensation",
+    "34": "Electronic gear box"
+  },
+  "defaults": {
+    "motion": "G00",
+    "plane": "G17",
+    "distance": "G90",
+    "feedMode": "G94",
+    "cutterCompensation": "G40",
+    "toolLength": "G49",
+    "workOffset": "G54",
+    "cannedCycle": "G80",
+    "cannedReturn": "G98"
+  },
+  "gCodes": [
+    {
+      "code": "G00",
+      "group": 1,
+      "name": "Positioning (rapid traverse)",
+      "addresses": {
+        "X": "X",
+        "Y": "Y",
+        "Z": "Z",
+        "B": "B",
+        "C": "C"
+      },
+      "preview": "motion",
+      "notes": "Non-linear (each axis at its own rapid rate) unless parameter 1401#1 (LRP) = 1. Tilted working plane indexing needs LRP = 1."
+    },
+    {
+      "code": "G01",
+      "group": 1,
+      "name": "Linear interpolation",
+      "addresses": {
+        "X": "X",
+        "Y": "Y",
+        "Z": "Z",
+        "B": "B",
+        "C": "C",
+        "F": "Feed",
+        ",C": "Chamfer",
+        ",R": "Corner radius"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G02",
+      "group": 1,
+      "name": "Circular / helical interpolation CW",
+      "addresses": {
+        "I": "Centre X offset",
+        "J": "Centre Y offset",
+        "K": "Centre Z offset",
+        "R": "Radius (negative: more than 180 degrees)",
+        "F": "Feed"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G03",
+      "group": 1,
+      "name": "Circular / helical interpolation CCW",
+      "addresses": {
+        "I": "Centre X offset",
+        "J": "Centre Y offset",
+        "K": "Centre Z offset",
+        "R": "Radius",
+        "F": "Feed"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G04",
+      "group": 0,
+      "name": "Dwell",
+      "addresses": {
+        "X": "Seconds (without a decimal point: milliseconds)",
+        "P": "Milliseconds"
+      },
+      "preview": "timing"
+    },
+    {
+      "code": "G05.1",
+      "group": 0,
+      "name": "AI contour control / nano smoothing / smooth interpolation",
+      "addresses": {
+        "Q": "1 on, 0 off, 2/3 smoothing",
+        "R": "Precision level"
+      },
+      "preview": "state",
+      "notes": "Changes acceleration only; the programmed path is drawn as commanded. Optional function on the 0i-MC."
+    },
+    {
+      "code": "G07.1",
+      "group": 0,
+      "name": "Cylindrical interpolation",
+      "addresses": {
+        "C": "Cylinder radius (0 cancels)"
+      },
+      "preview": "transform",
+      "notes": "Same as G107. Optional function on the 0i-MC."
+    },
+    {
+      "code": "G09",
+      "group": 0,
+      "name": "Exact stop",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G10",
+      "group": 0,
+      "name": "Programmable data input",
+      "addresses": {
+        "L": "2 work offset, 20 G54.1 offset, 10-13 tool offsets, 50 parameters",
+        "P": "Offset number",
+        "R": "Offset value",
+        "X": "Axis value",
+        "Y": "Axis value",
+        "Z": "Axis value"
+      },
+      "preview": "transform",
+      "notes": "L10 H geometry, L11 H wear, L12 D geometry, L13 D wear (tool compensation memory C)."
+    },
+    {
+      "code": "G11",
+      "group": 0,
+      "name": "Programmable data input mode cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G15",
+      "group": 17,
+      "name": "Polar coordinates command cancel",
+      "addresses": {},
+      "preview": "transform"
+    },
+    {
+      "code": "G16",
+      "group": 17,
+      "name": "Polar coordinates command",
+      "addresses": {
+        "X": "Radius (G17)",
+        "Y": "Angle (G17)"
+      },
+      "preview": "transform",
+      "notes": "The first plane axis is the radius and the second the angle; G90 measures from the program origin, G91 from the current position."
+    },
+    {
+      "code": "G17",
+      "group": 2,
+      "name": "XpYp plane selection",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G18",
+      "group": 2,
+      "name": "ZpXp plane selection",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G19",
+      "group": 2,
+      "name": "YpZp plane selection",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G20",
+      "group": 6,
+      "name": "Input in inch",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G21",
+      "group": 6,
+      "name": "Input in mm",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G22",
+      "group": 4,
+      "name": "Stored stroke check function on",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G23",
+      "group": 4,
+      "name": "Stored stroke check function off",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G27",
+      "group": 0,
+      "name": "Reference position return check",
+      "addresses": {
+        "X": "Reference position",
+        "Y": "Reference position",
+        "Z": "Reference position"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G28",
+      "group": 0,
+      "name": "Automatic return to reference position",
+      "addresses": {
+        "X": "Intermediate point",
+        "Y": "Intermediate point",
+        "Z": "Intermediate point"
+      },
+      "preview": "motion",
+      "notes": "Moves through the intermediate point to reference position 1 (parameter 1240) of the named axes."
+    },
+    {
+      "code": "G29",
+      "group": 0,
+      "name": "Movement from reference position",
+      "addresses": {},
+      "preview": "motion"
+    },
+    {
+      "code": "G30",
+      "group": 0,
+      "name": "2nd, 3rd and 4th reference position return",
+      "addresses": {
+        "P": "2-4 (default 2)",
+        "X": "Intermediate point",
+        "Y": "Intermediate point",
+        "Z": "Intermediate point"
+      },
+      "preview": "motion",
+      "notes": "Reference positions 2-4 come from parameters 1241-1243 in the machine definition."
+    },
+    {
+      "code": "G31",
+      "group": 0,
+      "name": "Skip function",
+      "addresses": {
+        "X": "Target",
+        "Y": "Target",
+        "Z": "Target",
+        "F": "Feed",
+        "P": "Multi-step skip signal"
+      },
+      "preview": "probe",
+      "notes": "The preview has no stock, so the skip signal never fires and #5061+ hold the end point."
+    },
+    {
+      "code": "G33",
+      "group": 1,
+      "name": "Threading",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G37",
+      "group": 0,
+      "name": "Automatic tool length measurement",
+      "addresses": {
+        "Z": "Measuring position"
+      },
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G39",
+      "group": 0,
+      "name": "Tool radius compensation: corner circular interpolation",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G40",
+      "group": 7,
+      "name": "Tool radius compensation / 3-dimensional cutter compensation cancel",
+      "addresses": {},
+      "preview": "compensation"
+    },
+    {
+      "code": "G41",
+      "group": 7,
+      "name": "Tool radius compensation left",
+      "addresses": {
+        "D": "Offset number (radius; parameter 5004#2 ODI selects diameter)"
+      },
+      "preview": "compensation"
+    },
+    {
+      "code": "G42",
+      "group": 7,
+      "name": "Tool radius compensation right",
+      "addresses": {
+        "D": "Offset number"
+      },
+      "preview": "compensation"
+    },
+    {
+      "code": "G40.1",
+      "group": 18,
+      "name": "Normal direction control cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G41.1",
+      "group": 18,
+      "name": "Normal direction control left",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G42.1",
+      "group": 18,
+      "name": "Normal direction control right",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G43",
+      "group": 8,
+      "name": "Tool length compensation +",
+      "addresses": {
+        "H": "Offset number"
+      },
+      "preview": "compensation",
+      "notes": "No automatic length offset after M06; G43 H is required."
+    },
+    {
+      "code": "G44",
+      "group": 8,
+      "name": "Tool length compensation -",
+      "addresses": {
+        "H": "Offset number"
+      },
+      "preview": "compensation"
+    },
+    {
+      "code": "G45",
+      "group": 0,
+      "name": "Tool offset: increase",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G46",
+      "group": 0,
+      "name": "Tool offset: decrease",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G47",
+      "group": 0,
+      "name": "Tool offset: double increase",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G48",
+      "group": 0,
+      "name": "Tool offset: double decrease",
+      "addresses": {},
+      "preview": "not-expanded"
+    },
+    {
+      "code": "G49",
+      "group": 8,
+      "name": "Tool length compensation / tool center point control cancel",
+      "addresses": {},
+      "preview": "compensation",
+      "notes": "G49 with axis words ends tool center point control after that move."
+    },
+    {
+      "code": "G50",
+      "group": 11,
+      "name": "Scaling cancel",
+      "addresses": {},
+      "preview": "transform"
+    },
+    {
+      "code": "G51",
+      "group": 11,
+      "name": "Scaling",
+      "addresses": {
+        "X": "Centre",
+        "Y": "Centre",
+        "Z": "Centre",
+        "P": "Magnification (parameter 5400#7 SCR: 0.00001 or 0.001 units without a decimal point)",
+        "I": "X magnification",
+        "J": "Y magnification",
+        "K": "Z magnification"
+      },
+      "preview": "transform"
+    },
+    {
+      "code": "G50.1",
+      "group": 22,
+      "name": "Programmable mirror image cancel",
+      "addresses": {},
+      "preview": "transform"
+    },
+    {
+      "code": "G51.1",
+      "group": 22,
+      "name": "Programmable mirror image",
+      "addresses": {
+        "X": "Mirror axis position",
+        "Y": "Mirror axis position",
+        "Z": "Mirror axis position"
+      },
+      "preview": "transform"
+    },
+    {
+      "code": "G52",
+      "group": 0,
+      "name": "Local coordinate system setting",
+      "addresses": {
+        "X": "Shift",
+        "Y": "Shift",
+        "Z": "Shift"
+      },
+      "preview": "transform",
+      "notes": "G52 with zero shifts cancels the local coordinate system."
+    },
+    {
+      "code": "G53",
+      "group": 0,
+      "name": "Machine coordinate system selection",
+      "addresses": {
+        "X": "Machine position",
+        "Y": "Machine position",
+        "Z": "Machine position",
+        "B": "Machine position",
+        "C": "Machine position"
+      },
+      "preview": "motion"
+    },
+    {
+      "code": "G54",
+      "group": 14,
+      "name": "Workpiece coordinate system 1",
+      "addresses": {
+        "P": "With P: additional work offset (same as G54.1)"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G54.1",
+      "group": 14,
+      "name": "Additional workpiece coordinate system",
+      "addresses": {
+        "P": "1-48 (#7001+) or 1-300 (#14001+)"
+      },
+      "preview": "state",
+      "notes": "Optional function on the 0i-MC."
+    },
+    {
+      "code": "G55",
+      "group": 14,
+      "name": "Workpiece coordinate system 2",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G56",
+      "group": 14,
+      "name": "Workpiece coordinate system 3",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G57",
+      "group": 14,
+      "name": "Workpiece coordinate system 4",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G58",
+      "group": 14,
+      "name": "Workpiece coordinate system 5",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G59",
+      "group": 14,
+      "name": "Workpiece coordinate system 6",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G60",
+      "group": 0,
+      "name": "Single direction positioning",
+      "addresses": {},
+      "preview": "motion"
+    },
+    {
+      "code": "G61",
+      "group": 15,
+      "name": "Exact stop mode",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G62",
+      "group": 15,
+      "name": "Automatic corner override",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G63",
+      "group": 15,
+      "name": "Tapping mode",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G64",
+      "group": 15,
+      "name": "Cutting mode",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G65",
+      "group": 0,
+      "name": "Macro call",
+      "addresses": {
+        "P": "Program number",
+        "L": "Repeat count"
+      },
+      "preview": "program-flow",
+      "notes": "Arguments without a decimal point are in least input increments for X/Y/Z/A/B/C/I/J/K/Q/R/U/V/W."
+    },
+    {
+      "code": "G66",
+      "group": 12,
+      "name": "Macro modal call A",
+      "addresses": {
+        "P": "Program number",
+        "L": "Repeat count"
+      },
+      "preview": "program-flow",
+      "notes": "Calls the macro after every move block."
+    },
+    {
+      "code": "G67",
+      "group": 12,
+      "name": "Macro modal call A/B cancel",
+      "addresses": {},
+      "preview": "program-flow"
+    },
+    {
+      "code": "G68",
+      "group": 16,
+      "name": "Coordinate system rotation / 3-dimensional coordinate conversion",
+      "addresses": {
+        "X": "Centre",
+        "Y": "Centre",
+        "Z": "Centre (3D conversion)",
+        "I": "Rotation axis vector (3D)",
+        "J": "Rotation axis vector (3D)",
+        "K": "Rotation axis vector (3D)",
+        "R": "Angle (incremental in G91 when parameter 5400#0 RIN = 1)"
+      },
+      "preview": "transform"
+    },
+    {
+      "code": "G69",
+      "group": 16,
+      "name": "Coordinate rotation / 3D conversion / tilted working plane cancel",
+      "addresses": {},
+      "preview": "transform"
+    },
+    {
+      "code": "G73",
+      "group": 9,
+      "name": "High-speed peck drilling cycle",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "Q": "Peck depth",
+        "F": "Feed",
+        "K": "Repeats",
+        ",D": "Return amount (else parameter 5114)"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G74",
+      "group": 9,
+      "name": "Left-handed tapping cycle",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G76",
+      "group": 9,
+      "name": "Fine boring cycle",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "Q": "Shift (direction: parameter 5148)",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G80",
+      "group": 9,
+      "name": "Canned cycle cancel",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G81",
+      "group": 9,
+      "name": "Drilling cycle, spot boring",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G82",
+      "group": 9,
+      "name": "Drilling cycle, counter boring",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G83",
+      "group": 9,
+      "name": "Peck drilling cycle",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "Q": "Peck depth",
+        "F": "Feed",
+        "K": "Repeats",
+        ",D": "Clearance (else parameter 5115)"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G84",
+      "group": 9,
+      "name": "Tapping cycle",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle",
+      "notes": "Rigid tapping when M29 S is programmed before G84."
+    },
+    {
+      "code": "G85",
+      "group": 9,
+      "name": "Boring cycle (feed out)",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G86",
+      "group": 9,
+      "name": "Boring cycle (spindle stop, rapid out)",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G87",
+      "group": 9,
+      "name": "Back boring cycle",
+      "addresses": {
+        "Z": "Top of the bore",
+        "R": "Bottom (start) point",
+        "Q": "Shift",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G88",
+      "group": 9,
+      "name": "Boring cycle (dwell, spindle stop, manual retract)",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle",
+      "notes": "The manual retraction is drawn as a rapid."
+    },
+    {
+      "code": "G89",
+      "group": 9,
+      "name": "Boring cycle (dwell, feed out)",
+      "addresses": {
+        "Z": "Hole bottom",
+        "R": "R point",
+        "P": "Dwell",
+        "F": "Feed",
+        "K": "Repeats"
+      },
+      "preview": "cycle"
+    },
+    {
+      "code": "G90",
+      "group": 3,
+      "name": "Absolute programming",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G91",
+      "group": 3,
+      "name": "Incremental programming",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G92",
+      "group": 0,
+      "name": "Workpiece coordinate system setting / maximum spindle speed clamp",
+      "addresses": {
+        "X": "Current position becomes",
+        "Y": "Current position becomes",
+        "Z": "Current position becomes"
+      },
+      "preview": "transform"
+    },
+    {
+      "code": "G92.1",
+      "group": 0,
+      "name": "Workpiece coordinate system preset",
+      "addresses": {},
+      "preview": "transform"
+    },
+    {
+      "code": "G94",
+      "group": 5,
+      "name": "Feed per minute",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G95",
+      "group": 5,
+      "name": "Feed per revolution",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G96",
+      "group": 13,
+      "name": "Constant surface speed control",
+      "addresses": {
+        "S": "Surface speed"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G97",
+      "group": 13,
+      "name": "Constant surface speed control cancel",
+      "addresses": {
+        "S": "RPM"
+      },
+      "preview": "state"
+    },
+    {
+      "code": "G98",
+      "group": 10,
+      "name": "Canned cycle: return to initial level",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G99",
+      "group": 10,
+      "name": "Canned cycle: return to R point level",
+      "addresses": {},
+      "preview": "state"
+    },
+    {
+      "code": "G107",
+      "group": 0,
+      "name": "Cylindrical interpolation",
+      "addresses": {
+        "C": "Cylinder radius (0 cancels)"
+      },
+      "preview": "transform",
+      "notes": "Optional function on the 0i-MC."
+    }
+  ],
+  "mCodes": [
+    {
+      "code": "M00",
+      "name": "Program stop",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M01",
+      "name": "Optional stop",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M02",
+      "name": "End of program",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M03",
+      "name": "Spindle forward (CW)",
+      "preview": "state"
+    },
+    {
+      "code": "M04",
+      "name": "Spindle reverse (CCW)",
+      "preview": "state"
+    },
+    {
+      "code": "M05",
+      "name": "Spindle stop",
+      "preview": "state"
+    },
+    {
+      "code": "M06",
+      "name": "Tool change",
+      "preview": "motion",
+      "notes": "Machine builder macro; the preview retracts Z to the tool-change position of the machine definition. No automatic length offset."
+    },
+    {
+      "code": "M08",
+      "name": "Coolant on",
+      "preview": "state"
+    },
+    {
+      "code": "M09",
+      "name": "Coolant off",
+      "preview": "state"
+    },
+    {
+      "code": "M19",
+      "name": "Spindle orientation",
+      "preview": "state"
+    },
+    {
+      "code": "M30",
+      "name": "End of program and rewind",
+      "preview": "program-flow"
+    },
+    {
+      "code": "M98",
+      "name": "Subprogram call",
+      "preview": "program-flow",
+      "notes": "M98 P_ L_ (repeats), M98 Pnnnnpppp (4-digit program with repeats), M98 <name>."
+    },
+    {
+      "code": "M99",
+      "name": "End of subprogram / return",
+      "preview": "program-flow",
+      "notes": "M99 P_ returns to that sequence number; in the main program M99 loops to the start."
+    }
+  ]
+}

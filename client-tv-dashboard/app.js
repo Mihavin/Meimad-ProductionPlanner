@@ -1,6 +1,6 @@
 "use strict";
 
-const DASHBOARD_BUILD = "0.1.35";
+const DASHBOARD_BUILD = "0.1.36";
 const translations = {
   en: {
     machineStatus: "Machine status", language: "Language", waitingForStatus: "Waiting for machine status",
@@ -12,7 +12,8 @@ const translations = {
     progressUnavailable: "Progress unavailable", connecting: "Connecting", refreshing: "Refreshing machine status",
     connected: "Connected", liveConnected: "Connected — live updates active",
     liveLost: "Live connection lost; showing stale status while reconnecting",
-    disconnected: "Disconnected; showing last received machine status"
+    disconnected: "Disconnected; showing last received machine status",
+    average: "AVG", machineStateTitle: "MTConnect machine state"
   },
   he: {
     machineStatus: "מצב מכונות", language: "שפה", waitingForStatus: "ממתין לנתוני המכונות",
@@ -24,7 +25,8 @@ const translations = {
     progressUnavailable: "נתוני התקדמות אינם זמינים", connecting: "מתחבר", refreshing: "מרענן את מצב המכונות",
     connected: "מחובר", liveConnected: "מחובר — עדכונים חיים פעילים",
     liveLost: "החיבור החי נותק; מוצגים נתונים אחרונים בזמן החיבור מחדש",
-    disconnected: "מנותק; מוצגים נתוני המכונות האחרונים"
+    disconnected: "מנותק; מוצגים נתוני המכונות האחרונים",
+    average: "ממוצע", machineStateTitle: "מצב המכונה לפי MTConnect"
   },
   ru: {
     machineStatus: "Состояние станков", language: "Язык", waitingForStatus: "Ожидание данных о станках",
@@ -36,7 +38,8 @@ const translations = {
     progressUnavailable: "Данные о ходе недоступны", connecting: "Подключение", refreshing: "Обновление состояния станков",
     connected: "Подключено", liveConnected: "Подключено — оперативные обновления активны",
     liveLost: "Связь потеряна; показаны последние данные, выполняется переподключение",
-    disconnected: "Отключено; показаны последние полученные данные"
+    disconnected: "Отключено; показаны последние полученные данные",
+    average: "Сред.", machineStateTitle: "Состояние станка по MTConnect"
   }
 };
 
@@ -105,7 +108,7 @@ function previewUrl(value) {
 
 function renderPreview(job) {
   const url = previewUrl(job?.previewUrl);
-  const label = escapeHtml(job?.partNumber || "part");
+  const label = escapeHtml(job?.partNumber || t.part);
   if (!url) {
     return `<div class="preview-frame"><span class="job-preview placeholder" aria-label="${escapeHtml(t.noPicture)}">${escapeHtml(t.noImage)}</span></div>`;
   }
@@ -140,7 +143,7 @@ function cycleAverageLabel(progress) {
   const time = hours > 0
     ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
     : `${minutes}:${String(seconds).padStart(2, "0")}`;
-  return `AVG ${time} (${progress.averageCycleSampleCount})`;
+  return `${t.average} ${time} (${progress.averageCycleSampleCount})`;
 }
 
 function renderMachine(machine) {
@@ -151,7 +154,7 @@ function renderMachine(machine) {
   const connection = `<span class="machine-connection connection-${online ? "online" : "offline"}" role="img" aria-label="${escapeHtml(connectionState)}" title="${escapeHtml(connectionState)}"><span aria-hidden="true"></span></span>`;
   const machineState = String(machine.machineStatus || "").trim();
   const identity = `<div class="machine-identity"><div class="machine-number" title="${number}">${connection}${number}</div><div class="machine-name" title="${name}">${name}</div></div>`;
-  const telemetry = `<div class="machine-telemetry${machineState ? "" : " unavailable"}" title="MTConnect machine state">MT: ${escapeHtml(machineState || "—")}</div>`;
+  const telemetry = `<div class="machine-telemetry${machineState ? "" : " unavailable"}" title="${escapeHtml(t.machineStateTitle)}">MT: ${escapeHtml(machineState || "—")}</div>`;
   if (!machine.current) {
     return `<article class="machine-row idle" aria-label="${number} ${name}">
       ${identity}

@@ -740,6 +740,7 @@ Implemented Machine create request and representation:
   "machineTypeId": "opaque-machine-type-id",
   "executionMode": "CNC_GCODE",
   "ncDialect": "HAAS_NGC",
+  "ncViewerMachine": "haas-vf-3ss",
   "supportedPostprocessorIds": ["opaque-postprocessor-id"],
   "usableToolPositions": 30,
   "rapidRateMillimetersPerMinute": 24000,
@@ -768,6 +769,7 @@ Implemented Machine create request and representation:
   "machineTypeId": "opaque-machine-type-id",
   "executionMode": "CNC_GCODE",
   "ncDialect": "HAAS_NGC",
+  "ncViewerMachine": "haas-vf-3ss",
   "supportedPostprocessorIds": ["opaque-postprocessor-id"],
   "usableToolPositions": 30,
   "rapidRateMillimetersPerMinute": 24000,
@@ -778,7 +780,7 @@ Implemented Machine create request and representation:
 
 `machineTypeId` is an optional stable link to the reusable catalog. Existing schema-v9 Machines are linked during migration from their case-insensitive legacy `processType` values. For compatibility with existing Case Operation requirements, a linked type's name is mirrored into `processType`; Machine-specific `capabilities`, `axisType`, and the linked Machine Type's capabilities all participate in Server assignment validation. Machine and Machine Type changes that would invalidate a current assignment return `409 assigned_operation_incompatible`.
 
-Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior. Schema v76 adds `ncDialect` (`HAAS_NGC` default, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`; any other value fails with issue code `invalid_nc_dialect`). The dialect selects the syntax of every Server-injected NC block (verification hook, event context, cycle events, Offset Loader program) and the variable ranges the Machine verification configuration accepts. A PATCH that changes `ncDialect` while Server Verification is enabled for the Machine fails validation with issue code `verification_enabled` on field `ncDialect`: disable verification, change the dialect, re-enter the mappings in the new range, re-enable.
+Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior. Schema v76 adds `ncDialect` (`HAAS_NGC` default, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`; any other value fails with issue code `invalid_nc_dialect`). The dialect selects the syntax of every Server-injected NC block (verification hook, event context, cycle events, Offset Loader program) and the variable ranges the Machine verification configuration accepts. A PATCH that changes `ncDialect` while Server Verification is enabled for the Machine fails validation with issue code `verification_enabled` on field `ncDialect`: disable verification, change the dialect, re-enter the mappings in the new range, re-enable. Schema v78 adds optional `ncViewerMachine`: the id of the NC engine machine definition (`mazak-variaxis-i-500`, `okuma-genos-l200e-m`, `haas-st-25y`, `haas-vf-3ss`, `fanuc-0i-mc-vmc-3axis`, `fanuc-0i-mc-vmc-4axis-a`, or a vendored `haas-umc-500`, `doosan-dvf-5000`, `chevalier-flc-200mc`) the Windows NC viewer opens this Machine's programs with and the Server NC analysis interprets them with. Null or `"auto"` means automatic detection. A value that is not lower-case letters, digits and hyphens fails with `invalid_nc_viewer_machine`; a well-formed id that is not installed with the Server's NC engine fails with `unknown_nc_viewer_machine` (the message lists the installed ids). The Windows client fills its Setup list from the same catalog installed with its own NC engine, so both sides offer the same ids at the same version.
 
 Implemented Machine Type create request and representation:
 
@@ -1165,7 +1167,34 @@ For a not-started managed Operation, Task 7 interprets the stored `setupTimeSeco
 
 Schema v38 keeps `cycleTimePerPartSeconds` as the manual Batch Operation snapshot and adds `ncEstimatedCycleTimePerPartSeconds`, `planningCycleTimePerPartSeconds`, `planningCycleTimeSource` (`nc_estimate`, `manual`, or `unavailable`), `ncEstimateConfidence`, `ncEstimateWarnings`, and `ncEstimateGCodeReleaseId`. `estimatedTimeSeconds` uses `planningCycleTimePerPartSeconds`. Only not-started work may select the NC source. The setup fields require no later schema: released required-tool count, fixture snapshot, and planned quantity already exist. `setupEstimateWarnings` makes missing structured tool counts visible; such a count contributes zero loading seconds until resolved.
 
-G-code catalog responses expose optional `ncAnalysis` and `machineCycleEstimates`. Analysis includes parser version/status, raw feed seconds, rapid distance in millimetres, tool-change count, dwell seconds, units, warnings, unsupported constructs, confidence, and analysis time. Each Machine estimate includes the raw metrics, Machine timing inputs, component seconds, raw/final seconds, warnings, confidence, and calculation time. Estimate absence or low confidence does not change G-code readiness.
+G-code catalog responses expose optional `ncAnalysis` and `machineCycleEstimates`. Analysis includes parser version/status, raw feed seconds, rapid distance in millimetres, tool-change count, dwell seconds, units, warnings, unsupported constructs, confidence, and analysis time. Each Machine estimate includes the raw metrics, Machine timing inputs, component seconds, raw/final seconds, warnings, confidence, and calculation time. Estimate absence or low confidence does not change G-code readiness. `ncAnalysis` is the release's newest analysis and `machineCycleEstimates` contains only estimates of that analysis' `parserVersion`. NC-engine analyses report `parserVersion` `nc-engine/<version>+m<revision>` (currently `nc-engine/0.17.0+m1`) and their first warning names the interpreter used (`Interpreted as Haas UMC-500 (haas-mill): ...`); engine program issues appear as `Program issue: ...` warnings; `unsupportedConstructs` may contain `UNTIMED_MOTION`, `ENGINE_RESOURCE_LIMIT` and `OKUMA_OSP_SYNTAX`. A release the engine could not analyze keeps parser version `1.0.0` with the warning `NC engine unavailable (...); basic parser estimate.` (see `gcode-readiness-architecture.md`).
+
+#### Apply Meimad Planner Format
+
+`POST /api/v1/nc-programs/meimad-format` turns NC text into a canonical protocol-v2 source template. It is a stateless transformation used by the Windows NC viewer: it stores nothing, needs no Edit Mode headers, and never resolves a placeholder. Request (JSON, text limited to 16 MiB of characters):
+
+```json
+{ "text": "%\nO1500\nG90 G54 G0 X0 Y0\n...\nM30\n%\n", "ncDialect": "FANUC_MACRO_B" }
+```
+
+`ncDialect` is `HAAS_NGC` (default), `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`. The Server inserts only the missing elements of the canonical block of `nc-postprocessor-and-macro-specification.md` section 1: identity header comments after `%`/`O` (`PART`, `OPERATION`, `RUN`, `PACKAGE`, `MACHINE`, `NC RELEASE`, `OFFSET LOADER`), then before the first executable block `[[MEIMAD:VERIFICATION_HOOK]]`, `POPEN` (FANUC only, when the program has none), `[[MEIMAD:EVENT_CONTEXT]]`, the part-number output line (`DPRNT[[[MEIMAD:PART_NAME]]]`, or `PUT '[[MEIMAD:PART_NAME]]'` and `WRITE C` for Okuma) and `[[MEIMAD:CYCLE_START]]`, and `[[MEIMAD:CYCLE_END]]` (plus `PCLOS` when it added `POPEN`) before the main program's first `M30`/`M02`, else its `M99`, else the end. An existing `POPEN` keeps its place and the print lines follow it; a misplaced hook is moved; legacy `(MEIMAD PACKAGE ... V1)` markers and active `(MEIMAD VERIFY V1)` blocks are converted. Cutting code is never changed, and applying the format to its own output changes nothing. Response `200`:
+
+```json
+{
+  "text": "...formatted program...",
+  "ncDialect": "FANUC_MACRO_B",
+  "changed": true,
+  "changes": ["Added identity header comments: PART, OPERATION, RUN, PACKAGE, MACHINE, NC RELEASE, OFFSET LOADER.", "..."],
+  "warnings": [],
+  "validation": { "isValid": true, "code": null, "message": null }
+}
+```
+
+`validation` is the result of the same `NcPackagePlaceholderSchema.ValidateCanonical` check Production Package creation uses; duplicates the format cannot resolve are reported in `warnings` and in `validation` (for example `production_package_placeholder_duplicate`). A missing `text` or an unknown dialect returns `422 validation_failed` with field `text` or `ncDialect`. Line endings are returned as `\n`; the client restores the document's own line ending when it saves.
+
+#### Check a Meimad template
+
+`POST /api/v1/nc-programs/validate` with `{ "text": "..." }` runs only that canonical-template check and returns `200 { "isValid": true, "code": null, "message": null }` or `{ "isValid": false, "code": "production_package_placeholder_required", "message": "..." }`. It is stateless (no Edit Mode headers, nothing stored). The Windows NC viewer calls it before **Release to Server** and refuses to upload a program that is not a valid template; the release endpoint repeats the check, so the viewer cannot bypass it. A missing `text` or more than 16 MiB returns `422 validation_failed` on field `text`.
 
 The current board response also contains `readAt`, `conflictCalculationStatus`, `conflictCalculationMessage`, `conflicts`, `pool`, and `machines`. The Server runs the same Timeline projection that backs `GET /api/v1/timeline` for the fixed horizon `[readAt, readAt + 30 days)` with the forecast cursor at `readAt`, and returns its structured conflicts as `{ conflictId, code, severity, title, message, operationIds, machineIds }`, ordered `blocking`, `warning`, `attention`, then by code and message. `unassigned_operation` is omitted because the pool already presents that state; every other Timeline conflict code, including calendar/setup defaults, dependency, timing, backward-fallback, and overlap conflicts, is passed through unchanged. On success the status is exactly `current` and the message names the calculation time and horizon. If the calculation throws, the status is `unavailable`, `conflicts` is empty, and consumers must not interpret that empty list as a conflict-free plan. The conflict list is a read-time projection with no durable plan revision. Assignment rejection feedback is client presentation of the assignment command error and is not stored as a calculated conflict.
 
