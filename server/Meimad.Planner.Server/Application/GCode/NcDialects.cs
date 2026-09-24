@@ -75,11 +75,92 @@ internal abstract class NcDialectProfile
 
     internal abstract string OffsetLoaderLogicalPath { get; }
 
+    /// <summary>
+    /// The control's statements that write measured tool offsets into its offset table, or null
+    /// when the dialect has no defined offset-input syntax for this process type. Lengths are
+    /// millimetres; the cutter value is written as the radius when <paramref name="diameterAsRadius"/>
+    /// is true (the Machine's control keeps radius values) and as the diameter otherwise. Wear
+    /// registers are reset to zero because a newly measured tool has none.
+    /// </summary>
+    internal abstract IReadOnlyList<string>? ToolOffsetLines(
+        IReadOnlyList<NcToolOffset> offsets, bool diameterAsRadius, bool turning);
+
+    /// <summary>A standalone measured-offsets program for a package without Server Verification.</summary>
+    internal abstract IReadOnlyList<string> ToolOffsetProgram(
+        IReadOnlyList<string> comments, IReadOnlyList<string> offsetLines);
+
+    internal abstract string ToolOffsetProgramLogicalPath { get; }
+
     /// <summary>Characters the control's print statement cannot carry are replaced before rendering.</summary>
     internal virtual string SanitizePrintedText(string value) => value;
 
     protected static string Invariant(int value) => value.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>An offset value with a decimal point, so no control reads it in its least input increment.</summary>
+    protected static string Number(double value)
+    {
+        var text = Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);
+        return text.Contains('.') ? text : text + ".";
+    }
+
+    /// <summary>Tool identity for an in-line comment: letters, digits and a few separators only.</summary>
+    protected static string Label(NcToolOffset offset)
+    {
+        var description = new string(offset.Description
+            .Where(character => char.IsAsciiLetterOrDigit(character) || character is ' ' or '.' or '-' or '_' or '/')
+            .ToArray()).Trim();
+        if (description.Length > 40) description = description[..40].TrimEnd();
+        var identifier = new string(offset.ToolIdentifier.Where(char.IsAsciiLetterOrDigit).ToArray());
+        return description.Length == 0 ? identifier : $"{identifier} {description}";
+    }
+
+    /// <summary>
+    /// The FANUC-family offset input shared by Haas NGC, FANUC custom macro B and the Mazak Matrix
+    /// EIA mode (tool compensation memory C): L10/L11 length geometry/wear, L12/L13 cutter
+    /// geometry/wear. A FANUC lathe writes geometry with P = 10000 + offset number.
+    /// </summary>
+    protected static IReadOnlyList<string>? G10ToolOffsetLines(
+        IReadOnlyList<NcToolOffset> offsets, bool diameterAsRadius, bool turning, bool fanucLathe)
+    {
+        if (turning && !fanucLathe) return null;
+        var lines = new List<string> { "G21" };
+        foreach (var offset in offsets)
+        {
+            var label = Label(offset);
+            if (turning)
+            {
+                lines.Add($"G10 P{Invariant(10000 + offset.OffsetNumber)} X{Number(offset.Diameter)} Z{Number(offset.Length)} ({label})");
+                continue;
+            }
+            var number = Invariant(offset.OffsetNumber);
+            lines.Add($"G10 L10 P{number} R{Number(offset.Length)} ({label} LENGTH)");
+            lines.Add($"G10 L11 P{number} R0. ({label} LENGTH WEAR)");
+            lines.Add($"G10 L12 P{number} R{Number(diameterAsRadius ? offset.Diameter / 2 : offset.Diameter)} ({label} {(diameterAsRadius ? "RADIUS" : "DIAMETER")})");
+            lines.Add($"G10 L13 P{number} R0. ({label} DIAMETER WEAR)");
+        }
+        return lines;
+    }
+
+    protected static IReadOnlyList<string> MacroBToolOffsetProgram(
+        IReadOnlyList<string> comments, IReadOnlyList<string> offsetLines)
+    {
+        var lines = new List<string> { "%", "O01991 (MEIMAD MEASURED TOOL OFFSETS)" };
+        lines.AddRange(comments);
+        lines.AddRange(offsetLines);
+        lines.Add("M30");
+        lines.Add("%");
+        lines.Add(string.Empty);
+        return lines;
+    }
 }
+
+/// <summary>One measured tool the Offset Loader writes: register number, lengths in millimetres.</summary>
+internal sealed record NcToolOffset(
+    int OffsetNumber,
+    string ToolIdentifier,
+    string Description,
+    double Length,
+    double Diameter);
 
 /// <summary>Haas NGC: DPRNT to the Setting 261 destination, G103 look-ahead barrier, #10000-#10999 persistent variables.</summary>
 internal sealed class HaasNgcDialect : NcDialectProfile
@@ -115,6 +196,16 @@ internal sealed class HaasNgcDialect : NcDialectProfile
         MacroBOffsetLoader(comments, challengeProgramNumber, releaseToken, ncIdentityToken);
 
     internal override string OffsetLoaderLogicalPath => "offset-loader/O01990.nc";
+
+    internal override IReadOnlyList<string>? ToolOffsetLines(
+        IReadOnlyList<NcToolOffset> offsets, bool diameterAsRadius, bool turning) =>
+        G10ToolOffsetLines(offsets, diameterAsRadius, turning, fanucLathe: false);
+
+    internal override IReadOnlyList<string> ToolOffsetProgram(
+        IReadOnlyList<string> comments, IReadOnlyList<string> offsetLines) =>
+        MacroBToolOffsetProgram(comments, offsetLines);
+
+    internal override string ToolOffsetProgramLogicalPath => "tool-offsets/O01991.nc";
 
     /// <summary>Shared by every custom-macro-B control; only the look-ahead barrier around it is Haas-specific.</summary>
     internal static IEnumerable<string> MacroBCycleBody(
@@ -184,6 +275,16 @@ internal sealed class FanucMacroBDialect : NcDialectProfile
         HaasNgcDialect.MacroBOffsetLoader(comments, challengeProgramNumber, releaseToken, ncIdentityToken);
 
     internal override string OffsetLoaderLogicalPath => "offset-loader/O01990.nc";
+
+    internal override IReadOnlyList<string>? ToolOffsetLines(
+        IReadOnlyList<NcToolOffset> offsets, bool diameterAsRadius, bool turning) =>
+        G10ToolOffsetLines(offsets, diameterAsRadius, turning, fanucLathe: Id == NcDialects.FanucMacroB);
+
+    internal override IReadOnlyList<string> ToolOffsetProgram(
+        IReadOnlyList<string> comments, IReadOnlyList<string> offsetLines) =>
+        MacroBToolOffsetProgram(comments, offsetLines);
+
+    internal override string ToolOffsetProgramLogicalPath => "tool-offsets/O01991.nc";
 }
 
 /// <summary>
@@ -247,6 +348,42 @@ internal sealed class OkumaOspDialect : NcDialectProfile
     }
 
     internal override string OffsetLoaderLogicalPath => "offset-loader/O1990.MIN";
+
+    internal override IReadOnlyList<string>? ToolOffsetLines(
+        IReadOnlyList<NcToolOffset> offsets, bool diameterAsRadius, bool turning)
+    {
+        // OSP keeps its unit setting on the control, so no unit code precedes the assignments.
+        var lines = new List<string>();
+        foreach (var offset in offsets)
+        {
+            var number = Invariant(offset.OffsetNumber);
+            var label = Label(offset);
+            if (turning)
+            {
+                lines.Add($"VTOFX[{number}]={Number(offset.Diameter)} ({label} X)");
+                lines.Add($"VTOFZ[{number}]={Number(offset.Length)} ({label} Z)");
+            }
+            else
+            {
+                lines.Add($"VTOFH[{number}]={Number(offset.Length)} ({label} LENGTH)");
+                lines.Add($"VTOFD[{number}]={Number(diameterAsRadius ? offset.Diameter / 2 : offset.Diameter)} ({label} {(diameterAsRadius ? "RADIUS" : "DIAMETER")})");
+            }
+        }
+        return lines;
+    }
+
+    internal override IReadOnlyList<string> ToolOffsetProgram(
+        IReadOnlyList<string> comments, IReadOnlyList<string> offsetLines)
+    {
+        var lines = new List<string> { "(MEIMAD MEASURED TOOL OFFSETS)" };
+        lines.AddRange(comments);
+        lines.AddRange(offsetLines);
+        lines.Add("M02");
+        lines.Add(string.Empty);
+        return lines;
+    }
+
+    internal override string ToolOffsetProgramLogicalPath => "tool-offsets/O1991.MIN";
 
     internal override string SanitizePrintedText(string value) => value.Replace('\'', '_');
 }

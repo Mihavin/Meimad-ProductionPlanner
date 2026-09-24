@@ -136,7 +136,8 @@ internal sealed record PlannerMachine(
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
     string NcDialect = "HAAS_NGC",
-    string? NcViewerMachine = null)
+    string? NcViewerMachine = null,
+    string ToolDiameterOffsetKind = "RADIUS")
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -491,7 +492,8 @@ internal sealed record MachineCreate(
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
     string NcDialect = "HAAS_NGC",
-    string? NcViewerMachine = null);
+    string? NcViewerMachine = null,
+    string ToolDiameterOffsetKind = "RADIUS");
 
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -2018,7 +2020,85 @@ internal sealed record ProductionPackageInfo(
     IReadOnlyList<ProductionPackageArtifactInfo> Artifacts)
 {
     public string ToolOffsetMode { get; init; } = "MEASURED";
+
+    /// <summary>The tool preparation version a MEASURED package embedded, if the released table had tools.</summary>
+    public string? ToolPreparationId { get; init; }
 }
+
+/// <summary>One assembled part of a prepared tool (holder, extension, collet, shank, cutter, ...).</summary>
+internal sealed record PlannerToolPreparationComponent(
+    int Sequence,
+    string ComponentType,
+    string Name,
+    string? CatalogNumber,
+    double? Length,
+    double? Diameter,
+    string? Notes);
+
+/// <summary>A released Tool Table row merged with its latest Tool Room measurements, if any.</summary>
+internal sealed record PlannerToolPreparationTool(
+    int RowNumber,
+    string ToolIdentifier,
+    string Description,
+    bool IsRequired,
+    string? MagazinePosition,
+    int? OffsetNumber,
+    double? MeasuredLength,
+    double? MeasuredDiameter,
+    string ShapeType,
+    IReadOnlyDictionary<string, double> Shape,
+    string? Notes,
+    IReadOnlyList<PlannerToolPreparationComponent> Components);
+
+/// <summary>
+/// The Tool Room's tool preparation of one Batch Operation on its assigned Machine: the released
+/// tool rows with the latest saved version's measurements. <c>Version</c> is 0 until the first save.
+/// </summary>
+internal sealed record PlannerToolPreparation(
+    string BatchOperationId,
+    string MachineId,
+    string MachineNumber,
+    string MachineName,
+    string ProcessType,
+    string NcDialect,
+    string ToolDiameterOffsetKind,
+    string ToolTableReleaseId,
+    int ToolTableRevision,
+    string ToolTableFileName,
+    int Version,
+    string? ToolPreparationId,
+    DateTimeOffset? SavedAt,
+    string? SavedBy,
+    string? Comment,
+    string? ContentHash,
+    string? SavedForToolTableReleaseId,
+    IReadOnlyList<PlannerToolPreparationTool> Tools);
+
+internal sealed record ToolPreparationComponentUpdate(
+    int Sequence,
+    string ComponentType,
+    string Name,
+    string? CatalogNumber,
+    double? Length,
+    double? Diameter,
+    string? Notes);
+
+internal sealed record ToolPreparationToolUpdate(
+    string ToolIdentifier,
+    int? OffsetNumber,
+    double? MeasuredLength,
+    double? MeasuredDiameter,
+    string ShapeType,
+    IReadOnlyDictionary<string, double> Shape,
+    string? Notes,
+    IReadOnlyList<ToolPreparationComponentUpdate> Components);
+
+/// <summary>Saves the next tool preparation version; the Server rejects a stale version or Tool Table release.</summary>
+internal sealed record ToolPreparationUpdate(
+    int ExpectedVersion,
+    string ToolTableReleaseId,
+    string? Comment,
+    IReadOnlyList<ToolPreparationToolUpdate> Tools);
 
 internal sealed class PlannerApiException : Exception
 {

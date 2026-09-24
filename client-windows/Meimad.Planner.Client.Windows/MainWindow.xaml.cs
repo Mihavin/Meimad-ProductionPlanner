@@ -8,6 +8,7 @@ using Meimad.Planner.Client.Windows.Configuration;
 using Meimad.Planner.Client.Windows.Localization;
 using Meimad.Planner.Client.Windows.Presentation;
 using Meimad.Planner.Client.Windows.Presentation.NcViewer;
+using Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 using Meimad.Planner.Client.Windows.Views;
 
 namespace Meimad.Planner.Client.Windows;
@@ -206,6 +207,9 @@ public partial class MainWindow : Window
                     break;
                 case "OPEN_TOOL_TABLE" when request.Payload is byte[] toolBytes:
                     ShowReadOnlyText("Current Tool Table", Encoding.UTF8.GetString(toolBytes));
+                    break;
+                case "OPEN_TOOL_PREPARATION" when request.Payload is ToolPreparationViewModel toolPreparation:
+                    new ToolPreparationWindow(toolPreparation) { Owner = this }.Show();
                     break;
                 case "VIEW_NC_READ_ONLY" when request.Payload is NcViewerOpenRequest ncViewer:
                     NcViewerWindow.Open(ncViewer);

@@ -61,7 +61,8 @@ internal sealed class MachineService
             values.ToolChangeTimeSeconds,
             values.MachineTimeFactor,
             values.NcDialect,
-            values.NcViewerMachine);
+            values.NcViewerMachine,
+            values.ToolDiameterOffsetKind);
         var created = await repository.CreateAsync(machine, editAuthority, cancellationToken);
         logger.LogInformation(
             "Created Machine {MachineId} with execution mode {ExecutionMode} and {PostprocessorCount} supported Postprocessors.",
@@ -109,7 +110,8 @@ internal sealed class MachineService
             Select(command.ToolChangeTimeSeconds, current.ToolChangeTimeSeconds),
             Select(command.MachineTimeFactor, current.MachineTimeFactor),
             Select(command.NcDialect, current.NcDialect),
-            Select(command.NcViewerMachine, current.NcViewerMachine)));
+            Select(command.NcViewerMachine, current.NcViewerMachine),
+            Select(command.ToolDiameterOffsetKind, current.ToolDiameterOffsetKind)));
         if (command.NcViewerMachine.IsSpecified) RequireInstalledNcViewerMachine(values.NcViewerMachine);
         if (!string.Equals(values.NcDialect, current.NcDialect, StringComparison.Ordinal)
             && verification is not null)
@@ -144,6 +146,7 @@ internal sealed class MachineService
             MachineTimeFactor = values.MachineTimeFactor,
             NcDialect = values.NcDialect,
             NcViewerMachine = values.NcViewerMachine,
+            ToolDiameterOffsetKind = values.ToolDiameterOffsetKind,
             Version = expectedVersion + 1,
             UpdatedAt = timeProvider.GetUtcNow()
         };
@@ -179,7 +182,8 @@ internal sealed class MachineService
         command.ToolChangeTimeSeconds,
         command.MachineTimeFactor,
         command.NcDialect,
-        command.NcViewerMachine);
+        command.NcViewerMachine,
+        command.ToolDiameterOffsetKind);
 
     /// <summary>
     /// An NC viewer machine must be a definition installed with this Server's NC engine; the

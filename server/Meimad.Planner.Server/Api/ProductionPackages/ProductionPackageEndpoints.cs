@@ -88,7 +88,8 @@ internal sealed record ProductionPackageResponse(
     bool FileExportAvailable,
     bool DirectTransferConfigured,
     bool DirectTransferOnline,
-    IReadOnlyList<ProductionPackageArtifactResponse> Artifacts)
+    IReadOnlyList<ProductionPackageArtifactResponse> Artifacts,
+    string? ToolPreparationId)
 {
     internal static ProductionPackageResponse FromDomain(ProductionPackageRecord value) => new(
         value.ProductionPackageId, value.PackageNumber, value.BatchOperationId, value.ProductionRunId,
@@ -99,7 +100,8 @@ internal sealed record ProductionPackageResponse(
         value.VerificationMacroVersion, value.ManifestHash, value.CreatedAt, value.CreatedBy,
         value.SupersedesPackageId, true, value.DirectTransferConfigured,
         value.DirectTransferOnline,
-        value.Artifacts.Select(ProductionPackageArtifactResponse.FromDomain).ToArray());
+        value.Artifacts.Select(ProductionPackageArtifactResponse.FromDomain).ToArray(),
+        value.ToolPreparationId);
 }
 
 internal sealed record ProductionPackageArtifactResponse(

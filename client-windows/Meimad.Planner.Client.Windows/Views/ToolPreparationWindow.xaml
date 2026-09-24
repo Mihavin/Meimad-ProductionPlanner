@@ -1,0 +1,166 @@
+<Window x:Class="Meimad.Planner.Client.Windows.Views.ToolPreparationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
+        Title="Tool table" Width="1240" Height="780" MinWidth="980" MinHeight="600"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
+  <Grid Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+      <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" />
+      <TextBlock Text="{Binding ToolTableText}" Foreground="{StaticResource MutedTextBrush}" />
+      <TextBlock Text="{Binding MeasurementHint}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      <TextBlock Text="{Binding OffsetKindText}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      <TextBlock Text="{Binding SavedText}" FontWeight="SemiBold" Margin="0,4,0,0" />
+      <Border Background="#FFF4E5" BorderBrush="{StaticResource OrangeBrush}" BorderThickness="1" Padding="8" Margin="0,6,0,0">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding ShowsOlderToolTableWarning}" Value="True">
+                <Setter Property="Visibility" Value="Visible" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <TextBlock Text="{Binding OlderToolTableWarning}" TextWrapping="Wrap" />
+      </Border>
+    </StackPanel>
+
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="11*" MinWidth="520" />
+        <ColumnDefinition Width="12" />
+        <ColumnDefinition Width="9*" MinWidth="380" />
+      </Grid.ColumnDefinitions>
+
+      <DataGrid Grid.Column="0" ItemsSource="{Binding Tools}" SelectedItem="{Binding SelectedTool}"
+                AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                HeadersVisibility="Column" SelectionMode="Single" FrozenColumnCount="2"
+                AutomationProperties.Name="Tool table rows">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="Tool" Binding="{Binding ToolIdentifier}" IsReadOnly="True" Width="64" />
+          <DataGridTextColumn Header="Description" Binding="{Binding Description}" IsReadOnly="True" Width="190" />
+          <DataGridTextColumn Header="Use" Binding="{Binding RequiredText}" IsReadOnly="True" Width="76" />
+          <DataGridTextColumn Header="Pocket" Binding="{Binding MagazinePosition}" IsReadOnly="True" Width="60" />
+          <DataGridTextColumn Header="Offset #" Binding="{Binding OffsetNumberText, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+          <DataGridTextColumn Header="Length (mm)" Binding="{Binding MeasuredLengthText, UpdateSourceTrigger=PropertyChanged}" Width="100" />
+          <DataGridTextColumn Header="Diameter (mm)" Binding="{Binding MeasuredDiameterText, UpdateSourceTrigger=PropertyChanged}" Width="105" />
+          <DataGridTextColumn Header="Shape" Binding="{Binding ShapeName}" IsReadOnly="True" Width="120" />
+          <DataGridTextColumn Header="Parts" Binding="{Binding ComponentCount}" IsReadOnly="True" Width="52" />
+          <DataGridTextColumn Header="State" Binding="{Binding CompletionText}" IsReadOnly="True" Width="80" />
+        </DataGrid.Columns>
+      </DataGrid>
+
+      <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Center" VerticalAlignment="Stretch" />
+
+      <Border Grid.Column="2" Background="White" BorderBrush="#D8DDE3" BorderThickness="1" Padding="10">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel DataContext="{Binding SelectedTool}">
+            <TextBlock Text="Select a tool row to describe it." Foreground="{StaticResource MutedTextBrush}">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
+            <StackPanel>
+              <StackPanel.Style>
+                <Style TargetType="StackPanel">
+                  <Setter Property="Visibility" Value="Visible" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </StackPanel.Style>
+              <TextBlock FontSize="16" FontWeight="SemiBold">
+                <Run Text="{Binding ToolIdentifier, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Description, Mode=OneWay}" />
+              </TextBlock>
+              <TextBlock Text="Shape preview" FontWeight="SemiBold" Margin="0,8,0,4" />
+              <views:ToolShapePreview Geometry="{Binding Geometry}" Height="300" />
+
+              <TextBlock Text="Shape and dimensions (mm)" FontWeight="SemiBold" Margin="0,10,0,4" />
+              <ComboBox ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}" DisplayMemberPath="Name"
+                        AutomationProperties.Name="Cutter shape" />
+              <UniformGrid Columns="2" Margin="0,6,0,0">
+                <StackPanel Margin="0,0,8,6"><TextBlock Text="Cutting diameter" /><TextBox Text="{Binding CuttingDiameterText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,0,6"><TextBlock Text="Flute length" /><TextBox Text="{Binding FluteLengthText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,8,6"><TextBlock Text="Overall cutter length" /><TextBox Text="{Binding OverallLengthText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,0,6"><TextBlock Text="Shank diameter" /><TextBox Text="{Binding ShankDiameterText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,8,6"><TextBlock Text="Corner radius" /><TextBox Text="{Binding CornerRadiusText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,0,6"><TextBlock Text="Point angle (degrees)" /><TextBox Text="{Binding PointAngleText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,8,6"><TextBlock Text="Chamfer angle (degrees)" /><TextBox Text="{Binding TaperAngleText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel Margin="0,0,0,6"><TextBlock Text="Tip diameter" /><TextBox Text="{Binding TipDiameterText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              </UniformGrid>
+
+              <DockPanel Margin="0,8,0,4">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                  <Button Content="Add component" Margin="0,0,6,0"
+                          Command="{Binding DataContext.AddComponentCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                  <Button Content="Remove"
+                          Command="{Binding DataContext.RemoveComponentCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                </StackPanel>
+                <TextBlock Text="Components (from the holder to the cutting edge)" FontWeight="SemiBold" VerticalAlignment="Center" />
+              </DockPanel>
+              <DataGrid ItemsSource="{Binding Components}" SelectedItem="{Binding SelectedComponent}" AutoGenerateColumns="False"
+                        CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" MinHeight="120" MaxHeight="260"
+                        AutomationProperties.Name="Tool components">
+                <DataGrid.Columns>
+                  <DataGridTemplateColumn Header="Type" Width="110">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <ComboBox ItemsSource="{Binding Types}" SelectedItem="{Binding Type, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name" />
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                  <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                  <DataGridTextColumn Header="Catalog no." Binding="{Binding CatalogNumber, UpdateSourceTrigger=PropertyChanged}" Width="110" />
+                  <DataGridTextColumn Header="Length" Binding="{Binding LengthText, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                  <DataGridTextColumn Header="Diameter" Binding="{Binding DiameterText, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                </DataGrid.Columns>
+              </DataGrid>
+
+              <TextBlock Text="Notes" FontWeight="SemiBold" Margin="0,8,0,4" />
+              <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="48" TextWrapping="Wrap" />
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <Grid Grid.Row="2" Margin="0,10,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <StackPanel Grid.Column="0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Left" Text="Save comment" VerticalAlignment="Center" Margin="0,0,8,0" />
+          <TextBox Text="{Binding Comment, UpdateSourceTrigger=PropertyChanged}" MaxWidth="520" HorizontalAlignment="Left" MinWidth="320"
+                   ToolTip="Optional note stored with this version, for example the presetter and the measuring date" />
+        </DockPanel>
+        <TextBlock Text="{Binding ProgressText}" Margin="0,6,0,0" />
+        <TextBlock Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+        <Button Content="Reload" Width="100" Margin="0,0,8,0" Command="{Binding ReloadCommand}"
+                ToolTip="Discard unsaved entries and show the latest saved version" />
+        <Button Content="Save" Width="110" Margin="0,0,8,0" Command="{Binding SaveCommand}"
+                ToolTip="Save these measurements as the next version on the Server; the Production Package uses the latest version" />
+        <Button Content="Close" Width="90" Click="Close_Click" />
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>

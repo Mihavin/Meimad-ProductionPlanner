@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Domain.Readiness;
+using Meimad.Planner.Server.Domain.ToolPreparations;
 
 namespace Meimad.Planner.Server.Application.ProductionPackages;
 
@@ -7,6 +8,10 @@ internal static class ProductionPackageArtifactTypes
     internal const string RunnableNc = "RUNNABLE_NC";
     internal const string ToolTable = "TOOL_TABLE";
     internal const string OffsetLoader = "OFFSET_LOADER";
+    /// <summary>The Tool Room's measured tools, offsets, shapes and components as JSON.</summary>
+    internal const string ToolOffsets = "TOOL_OFFSETS";
+    /// <summary>The control's offset-input program when the package has no verification Offset Loader.</summary>
+    internal const string ToolOffsetProgram = "TOOL_OFFSET_PROGRAM";
     internal const string ManualSetup = "MANUAL_SETUP";
     internal const string Manifest = "MANIFEST";
 }
@@ -44,7 +49,11 @@ internal sealed record ProductionPackageBuildContext(
     bool ManualDummyToolOffsetsAllowed,
     string? CurrentPackageId,
     ProductionReadinessContext ReadinessContext,
-    string NcDialect = "HAAS_NGC");
+    string NcDialect = "HAAS_NGC",
+    string ProcessType = "mill",
+    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
+    IReadOnlyList<ToolPreparationReleasedTool>? ReleasedTools = null,
+    ToolPreparation? ToolPreparation = null);
 
 internal sealed record ProductionPackageArtifact(
     string ArtifactId,
@@ -77,7 +86,8 @@ internal sealed record ProductionPackageRecord(
     string? SupersedesPackageId,
     bool DirectTransferConfigured,
     bool DirectTransferOnline,
-    IReadOnlyList<ProductionPackageArtifact> Artifacts);
+    IReadOnlyList<ProductionPackageArtifact> Artifacts,
+    string? ToolPreparationId = null);
 
 internal sealed record OffsetLoaderPublication(
     string ReleaseId,

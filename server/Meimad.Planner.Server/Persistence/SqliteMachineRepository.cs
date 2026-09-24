@@ -62,7 +62,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             )
         ), '[]') AS supported_postprocessor_ids_json,
         machines.nc_dialect,
-        machines.nc_viewer_machine
+        machines.nc_viewer_machine,
+        machines.tool_diameter_offset_kind
         """;
 
     private readonly SqliteDatabase database;
@@ -108,14 +109,14 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 is_active, display_enabled, version, created_at, updated_at, machine_type_id,
                 respect_master_calendar, execution_mode, usable_tool_positions,
                 rapid_rate_mm_per_min, tool_change_time_seconds, machine_time_factor, nc_dialect,
-                nc_viewer_machine)
+                nc_viewer_machine, tool_diameter_offset_kind)
             VALUES (
                 $id, $number, $name, $processType, $axisType, $capabilities,
                 $calendarId, '{}', $status, $picturePath,
                 $isActive, $displayEnabled, $version, $createdAt, $updatedAt, $machineTypeId,
                 $respectMasterCalendar, $executionMode, $usableToolPositions,
                 $rapidRateMillimetersPerMinute, $toolChangeTimeSeconds, $machineTimeFactor, $ncDialect,
-                $ncViewerMachine);
+                $ncViewerMachine, $toolDiameterOffsetKind);
             """;
         AddWriteParameters(command, machine);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -214,6 +215,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
                 machine_time_factor = $machineTimeFactor,
                 nc_dialect = $ncDialect,
                 nc_viewer_machine = $ncViewerMachine,
+                tool_diameter_offset_kind = $toolDiameterOffsetKind,
                 version = $version,
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
@@ -471,6 +473,7 @@ internal sealed class SqliteMachineRepository : IMachineRepository
         command.Parameters.AddWithValue(
             "$ncViewerMachine",
             machine.NcViewerMachine is null ? DBNull.Value : machine.NcViewerMachine);
+        command.Parameters.AddWithValue("$toolDiameterOffsetKind", machine.ToolDiameterOffsetKind);
     }
 
     private static Machine ReadMachine(SqliteDataReader reader)
@@ -505,7 +508,8 @@ internal sealed class SqliteMachineRepository : IMachineRepository
             reader.IsDBNull(21) ? null : reader.GetDouble(21),
             reader.GetDouble(22),
             reader.GetString(24),
-            reader.IsDBNull(25) ? null : reader.GetString(25));
+            reader.IsDBNull(25) ? null : reader.GetString(25),
+            reader.GetString(26));
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

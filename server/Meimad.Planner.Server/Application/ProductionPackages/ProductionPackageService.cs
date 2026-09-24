@@ -5,6 +5,7 @@ using System.Text.Json;
 using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.Readiness;
+using Meimad.Planner.Server.Domain.ToolPreparations;
 
 namespace Meimad.Planner.Server.Application.ProductionPackages;
 
@@ -33,6 +34,16 @@ internal sealed class ProductionPackageService(
                 "The assigned Operation was not found.");
         var offsetMode = NormalizeOffsetMode(toolOffsetMode);
         ValidatePrerequisites(context, offsetMode);
+        // MEASURED: the Tool Room's saved measurements of every required tool become the package's
+        // offset payload; the control writes them from the Offset Loader (or a separate offset
+        // program without verification). MANUAL_DUMMY carries no measured payload at all.
+        var toolOffsets = offsetMode == "MEASURED" ? RequireMeasuredOffsets(context) : null;
+        var turning = IsTurning(context.ProcessType);
+        var dialectForOffsets = context.ExecutionMode == "CNC_GCODE" ? NcDialects.Profile(context.NcDialect) : null;
+        var offsetLines = toolOffsets is { Count: > 0 } && dialectForOffsets is not null
+            ? dialectForOffsets.ToolOffsetLines(
+                toolOffsets, context.ToolDiameterOffsetKind == ToolDiameterOffsetKinds.Radius, turning)
+            : null;
 
         var packageId = Guid.NewGuid().ToString("N");
         var packageNumber = await repository.AllocatePackageNumberAsync(cancellationToken);
@@ -110,24 +121,37 @@ internal sealed class ProductionPackageService(
                     $"nc/{SafeFileName(context.GCodeOriginalFileName!)}", transformed,
                     context.GCodeReleaseId, cancellationToken));
 
+                var identityComments = new List<string>
+                {
+                    FormattableString.Invariant($"(PRODUCTION PACKAGE {packageNumber})"),
+                    FormattableString.Invariant($"(PRODUCTION RUN {context.RunNumber ?? 0})"),
+                    $"(BATCH OPERATION {context.BatchOperationId})",
+                    $"(MACHINE {context.MachineNumber})",
+                    FormattableString.Invariant($"(NC RELEASE {ncId})")
+                };
+                var offsetComments = OffsetComments(offsetMode, toolOffsets, offsetLines, context.ToolDiameterOffsetKind);
                 if (context.Verification is not null)
                 {
+                    // The Offset Loader writes the measured offsets first and then arms verification,
+                    // so one program run on the control does both.
+                    var body = new List<string>(identityComments) { $"(OFFSET LOADER RELEASE {offsetLoaderId})" };
+                    body.AddRange(offsetComments);
+                    if (offsetLines is not null) body.AddRange(offsetLines);
                     var loader = Encoding.ASCII.GetBytes(string.Join("\r\n", dialect.OffsetLoader(
-                        [
-                            FormattableString.Invariant($"(PRODUCTION PACKAGE {packageNumber})"),
-                            FormattableString.Invariant($"(PRODUCTION RUN {context.RunNumber!.Value})"),
-                            $"(BATCH OPERATION {context.BatchOperationId})",
-                            $"(MACHINE {context.MachineNumber})",
-                            FormattableString.Invariant($"(NC RELEASE {ncId})"),
-                            $"(OFFSET LOADER RELEASE {offsetLoaderId})",
-                            offsetMode == "MANUAL_DUMMY"
-                                ? "(MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY)"
-                                : "(MEASURED TOOL OFFSETS - VERIFICATION AND RELEASE BINDING)"
-                        ],
-                        context.Verification.ChallengeProgramNumber, releaseToken!.Value, ncId)));
+                        body, context.Verification.ChallengeProgramNumber, releaseToken!.Value, ncId)));
                     artifacts.Add(await WriteAsync(
                         staging, packageId, ProductionPackageArtifactTypes.OffsetLoader,
                         dialect.OffsetLoaderLogicalPath, loader, offsetLoaderId, cancellationToken));
+                }
+                else if (offsetLines is not null)
+                {
+                    var body = new List<string>(identityComments);
+                    body.AddRange(offsetComments);
+                    var program = Encoding.ASCII.GetBytes(string.Join("\r\n", dialect.ToolOffsetProgram(body, offsetLines)));
+                    artifacts.Add(await WriteAsync(
+                        staging, packageId, ProductionPackageArtifactTypes.ToolOffsetProgram,
+                        dialect.ToolOffsetProgramLogicalPath, program,
+                        context.ToolPreparation?.ToolPreparationId, cancellationToken));
                 }
             }
 
@@ -144,6 +168,14 @@ internal sealed class ProductionPackageService(
                     staging, packageId, ProductionPackageArtifactTypes.ToolTable,
                     $"tool-table/{SafeFileName(context.ToolTableOriginalFileName)}", toolBytes,
                     context.ToolTableReleaseId, cancellationToken));
+                if (context.ToolPreparation is not null)
+                {
+                    artifacts.Add(await WriteAsync(
+                        staging, packageId, ProductionPackageArtifactTypes.ToolOffsets,
+                        "tool-offsets/tool-offsets.json",
+                        ToolOffsetsArtifact(context, toolOffsets!, offsetLines is not null),
+                        context.ToolPreparation.ToolPreparationId, cancellationToken));
+                }
             }
 
             var manifestRelative = $"{packageId}/manifest.json";
@@ -172,6 +204,12 @@ internal sealed class ProductionPackageService(
                 gCodeSourceHash = context.GCodeHash,
                 toolTableReleaseId = context.ToolTableReleaseId,
                 toolTableSourceHash = offsetMode == "MEASURED" ? context.ToolTableHash : null,
+                toolPreparationId = offsetMode == "MEASURED" ? context.ToolPreparation?.ToolPreparationId : null,
+                toolPreparationVersion = offsetMode == "MEASURED" ? context.ToolPreparation?.VersionNumber : null,
+                toolPreparationHash = offsetMode == "MEASURED" ? context.ToolPreparation?.ContentHash : null,
+                toolDiameterOffsetKind = context.ToolDiameterOffsetKind,
+                measuredToolCount = toolOffsets?.Count,
+                toolOffsetsLoadedByProgram = offsetLines is not null,
                 offsetLoaderReleaseId = offsetLoaderId,
                 offsetLoaderReleaseToken = releaseToken,
                 createdAt,
@@ -215,7 +253,8 @@ internal sealed class ProductionPackageService(
                 context.Verification is not null, context.Verification?.Version,
                 context.Verification?.ExpectedMacroVersion, manifestRelative, manifest.FileHash,
                 createdAt, actor, context.CurrentPackageId,
-                context.DirectTransferConfigured, context.DirectTransferOnline, artifacts);
+                context.DirectTransferConfigured, context.DirectTransferOnline, artifacts,
+                offsetMode == "MEASURED" ? context.ToolPreparation?.ToolPreparationId : null);
             var loaderPublication = offsetLoaderId is null ? null : new OffsetLoaderPublication(
                 offsetLoaderId, releaseToken!.Value,
                 artifacts.Single(value => value.ArtifactType == ProductionPackageArtifactTypes.OffsetLoader).FileHash);
@@ -292,6 +331,127 @@ internal sealed class ProductionPackageService(
             throw new ProductionPackageBuildException(
                 "manual_dummy_tool_offsets_not_enabled",
                 "Manual / Dummy Tool Offsets is not enabled for the assigned Machine.");
+    }
+
+    /// <summary>
+    /// The measured offsets a MEASURED package writes. Every active required released tool needs a
+    /// saved measurement (length and diameter) for this Machine and Tool Table; optional tools are
+    /// written when measured. A released table without rows (pre-v36 history) needs nothing.
+    /// </summary>
+    internal static IReadOnlyList<NcToolOffset> RequireMeasuredOffsets(ProductionPackageBuildContext context)
+    {
+        var released = context.ReleasedTools ?? [];
+        if (released.Count == 0) return [];
+        var preparation = context.ToolPreparation;
+        if (preparation is null || preparation.ToolTableReleaseId != context.ToolTableReleaseId)
+            throw new ProductionPackageBuildException(
+                "production_package_tool_measurements_missing",
+                "Tool Room measurements are missing for this Machine and Tool Table release. Open the tool table in the Tool Room, enter the measured length and diameter of every required tool, and save it.");
+        var prepared = preparation.Tools.ToDictionary(tool => tool.ToolIdentifier.Trim(), tool => tool, StringComparer.OrdinalIgnoreCase);
+        var missing = new List<string>();
+        var offsets = new List<NcToolOffset>();
+        foreach (var tool in released)
+        {
+            prepared.TryGetValue(tool.ToolIdentifier.Trim(), out var measured);
+            var complete = measured is { MeasuredLength: not null, MeasuredDiameter: not null }
+                && measured.EffectiveOffsetNumber is not null;
+            if (complete)
+            {
+                offsets.Add(new NcToolOffset(
+                    measured!.EffectiveOffsetNumber!.Value, tool.ToolIdentifier, tool.Description,
+                    measured.MeasuredLength!.Value, measured.MeasuredDiameter!.Value));
+            }
+            else if (tool.IsRequired)
+            {
+                missing.Add(tool.ToolIdentifier);
+            }
+        }
+        if (missing.Count > 0)
+            throw new ProductionPackageBuildException(
+                "production_package_tool_measurements_missing",
+                $"Tool Room measurements (length, diameter and offset number) are missing for {string.Join(", ", missing)}. Enter them in the Tool Room's tool table and save it.");
+        var duplicate = offsets.GroupBy(offset => offset.OffsetNumber).FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+            throw new ProductionPackageBuildException(
+                "production_package_tool_offset_number_duplicate",
+                $"Offset number {duplicate.Key} is used by {string.Join(" and ", duplicate.Select(offset => offset.ToolIdentifier))}; give every tool its own offset number.");
+        return offsets.OrderBy(offset => offset.OffsetNumber).ToArray();
+    }
+
+    internal static bool IsTurning(string processType) =>
+        processType.Contains("turn", StringComparison.OrdinalIgnoreCase)
+        || processType.Contains("lathe", StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<string> OffsetComments(
+        string offsetMode, IReadOnlyList<NcToolOffset>? toolOffsets, IReadOnlyList<string>? offsetLines, string kind)
+    {
+        if (offsetMode == "MANUAL_DUMMY") return ["(MANUAL DUMMY TOOL OFFSETS - VERIFICATION ONLY)"];
+        var comments = new List<string> { "(MEASURED TOOL OFFSETS - VERIFICATION AND RELEASE BINDING)" };
+        if (toolOffsets is { Count: > 0 })
+        {
+            comments.Add(offsetLines is null
+                ? FormattableString.Invariant($"(TOOL OFFSETS FOR {toolOffsets.Count} TOOLS ARE IN tool-offsets.json - ENTER THEM ON THIS CONTROL)")
+                : FormattableString.Invariant($"(WRITES {toolOffsets.Count} MEASURED TOOL OFFSETS IN MM - {kind} CUTTER VALUES)"));
+        }
+        return comments;
+    }
+
+    private static byte[] ToolOffsetsArtifact(
+        ProductionPackageBuildContext context, IReadOnlyList<NcToolOffset> offsets, bool loadedByProgram)
+    {
+        var preparation = context.ToolPreparation!;
+        var prepared = preparation.Tools.ToDictionary(tool => tool.ToolIdentifier.Trim(), tool => tool, StringComparer.OrdinalIgnoreCase);
+        var written = offsets.ToDictionary(offset => offset.ToolIdentifier.Trim(), offset => offset, StringComparer.OrdinalIgnoreCase);
+        return JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schemaVersion = 1,
+            machine = new
+            {
+                id = context.MachineId,
+                number = context.MachineNumber,
+                name = context.MachineName,
+                ncDialect = context.NcDialect,
+                processType = context.ProcessType,
+                toolDiameterOffsetKind = context.ToolDiameterOffsetKind
+            },
+            toolTableReleaseId = context.ToolTableReleaseId,
+            toolPreparationId = preparation.ToolPreparationId,
+            toolPreparationVersion = preparation.VersionNumber,
+            savedAt = preparation.SavedAt,
+            savedBy = preparation.SavedBy,
+            contentHash = preparation.ContentHash,
+            lengthUnit = "mm",
+            offsetsLoadedByProgram = loadedByProgram,
+            tools = (context.ReleasedTools ?? []).Select(released =>
+            {
+                prepared.TryGetValue(released.ToolIdentifier.Trim(), out var measured);
+                written.TryGetValue(released.ToolIdentifier.Trim(), out var offset);
+                return new
+                {
+                    tool = released.ToolIdentifier,
+                    description = released.Description,
+                    isRequired = released.IsRequired,
+                    magazinePosition = released.MagazinePosition,
+                    offsetNumber = offset?.OffsetNumber ?? measured?.EffectiveOffsetNumber,
+                    measuredLength = measured?.MeasuredLength,
+                    measuredDiameter = measured?.MeasuredDiameter,
+                    writtenByProgram = offset is not null && loadedByProgram,
+                    shapeType = measured?.ShapeType,
+                    shape = measured?.Shape,
+                    notes = measured?.Notes,
+                    components = (measured?.Components ?? []).Select(component => new
+                    {
+                        component.Sequence,
+                        component.ComponentType,
+                        component.Name,
+                        component.CatalogNumber,
+                        component.Length,
+                        component.Diameter,
+                        component.Notes
+                    })
+                };
+            })
+        }, JsonOptions);
     }
 
     private static string NormalizeOffsetMode(string? value)

@@ -25,7 +25,8 @@ internal sealed record CreateMachineRequest(
     double? ToolChangeTimeSeconds = null,
     double? MachineTimeFactor = null,
     string? NcDialect = null,
-    string? NcViewerMachine = null)
+    string? NcViewerMachine = null,
+    string? ToolDiameterOffsetKind = null)
 {
     internal CreateMachineCommand ToCommand() => new(
         Number,
@@ -46,7 +47,8 @@ internal sealed record CreateMachineRequest(
         ToolChangeTimeSeconds,
         MachineTimeFactor,
         NcDialect,
-        NcViewerMachine);
+        NcViewerMachine,
+        ToolDiameterOffsetKind);
 }
 
 internal sealed class PatchMachineRequest
@@ -77,7 +79,8 @@ internal sealed class PatchMachineRequest
             reader.Double("toolChangeTimeSeconds"),
             reader.Double("machineTimeFactor"),
             reader.String("ncDialect"),
-            reader.String("ncViewerMachine"));
+            reader.String("ncViewerMachine"),
+            reader.String("toolDiameterOffsetKind"));
         reader.ThrowIfInvalid();
         return command;
     }
@@ -91,7 +94,7 @@ internal sealed class PatchMachineRequest
             "machineTypeId", "respectMasterCalendar", "executionMode",
             "supportedPostprocessorIds", "usableToolPositions",
             "rapidRateMillimetersPerMinute", "toolChangeTimeSeconds", "machineTimeFactor",
-            "ncDialect", "ncViewerMachine"
+            "ncDialect", "ncViewerMachine", "toolDiameterOffsetKind"
         ];
 
         private readonly IReadOnlyDictionary<string, JsonElement> fields;
@@ -261,7 +264,8 @@ internal sealed record MachineResponse(
     double? ToolChangeTimeSeconds,
     double MachineTimeFactor,
     string NcDialect,
-    string? NcViewerMachine)
+    string? NcViewerMachine,
+    string ToolDiameterOffsetKind)
 {
     internal static MachineResponse FromDomain(Machine machine) => new(
         machine.MachineId,
@@ -288,7 +292,8 @@ internal sealed record MachineResponse(
         machine.ToolChangeTimeSeconds,
         machine.MachineTimeFactor,
         machine.NcDialect,
-        machine.NcViewerMachine);
+        machine.NcViewerMachine,
+        machine.ToolDiameterOffsetKind);
 }
 
 internal sealed record MachineListResponse(IReadOnlyList<MachineResponse> Items, string? NextCursor);

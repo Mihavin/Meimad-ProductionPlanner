@@ -37,7 +37,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    connection.enabled,connection.allow_write,connection.connection_status,
                    current.production_package_id,
                    COALESCE(package_capability.allow_manual_dummy_tool_offsets,0),
-                   machine.nc_dialect
+                   machine.nc_dialect,machine.machine_type,machine.tool_diameter_offset_kind
             FROM batch_operations operation
             JOIN case_operations source_operation ON source_operation.id=operation.source_case_operation_id
             JOIN cases case_record ON case_record.id=source_operation.case_id
@@ -79,6 +79,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var currentPackageId = Nullable(reader, 17);
         var manualDummyAllowed = reader.GetBoolean(18);
         var ncDialect = reader.GetString(19);
+        var processType = reader.GetString(20);
+        var toolDiameterOffsetKind = reader.GetString(21);
         await reader.DisposeAsync();
 
         var runNumber = runId is null ? null : (int?)await EnsureRunNumberAsync(
@@ -99,6 +101,11 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             ?? throw new ProductionPackageBuildException(
                 "production_package_tool_table_missing",
                 "The current Tool Table release artifact could not be resolved.");
+        // The Tool Room's measurements for this Machine: the package binds the exact version.
+        var releasedTools = await SqliteToolPreparationRepository.ReadReleasedToolsAsync(
+            connection, transaction, readiness.ActiveToolTableReleaseId, cancellationToken);
+        var preparation = await SqliteToolPreparationRepository.ReadLatestAsync(
+            connection, transaction, batchOperationId, machineId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(
             batchOperationId, runId, runNumber, assignmentId, machineId, machineNumber, machineName,
@@ -106,7 +113,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash, ncIdentityToken,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
             verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness,
-            ncDialect);
+            ncDialect, processType, toolDiameterOffsetKind, releasedTools, preparation);
     }
 
     public async Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken)
@@ -201,10 +208,10 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                 id,package_number,batch_operation_id,production_run_id,machine_assignment_id,machine_id,
                 gcode_release_id,tool_table_release_id,offset_loader_release_id,execution_mode,
                 verification_enabled,verification_configuration_version,verification_macro_version,tool_offset_mode,
-                manifest_relative_path,manifest_hash,created_at,created_by,supersedes_package_id)
+                manifest_relative_path,manifest_hash,created_at,created_by,supersedes_package_id,tool_preparation_id)
             VALUES ($id,$number,$operationId,$runId,$assignmentId,$machineId,$gcodeId,$toolId,$loaderId,
                     $mode,$verification,$configVersion,$macroVersion,$offsetMode,$manifestPath,$manifestHash,
-                    $at,$by,$supersedes);
+                    $at,$by,$supersedes,$preparationId);
             """, cancellationToken,
             ("$id", package.ProductionPackageId), ("$number", package.PackageNumber),
             ("$operationId", package.BatchOperationId),
@@ -217,7 +224,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             ("$offsetMode", package.ToolOffsetMode),
             ("$manifestPath", package.ManifestRelativePath), ("$manifestHash", package.ManifestHash),
             ("$at", Format(package.CreatedAt)), ("$by", package.CreatedBy),
-            ("$supersedes", Db(package.SupersedesPackageId)));
+            ("$supersedes", Db(package.SupersedesPackageId)), ("$preparationId", Db(package.ToolPreparationId)));
 
         foreach (var artifact in package.Artifacts)
         {
@@ -291,7 +298,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    package.manifest_relative_path,package.manifest_hash,package.created_at,
                    package.created_by,package.supersedes_package_id,package.tool_offset_mode,
                    connection.enabled,connection.allow_write,connection.connection_status,
-                   package.package_number
+                   package.package_number,package.tool_preparation_id
             FROM production_package_current current
             JOIN production_packages package ON package.id=current.production_package_id
             JOIN machine_assignments assignment
@@ -330,7 +337,14 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    OR (package.verification_enabled=0 AND COALESCE(settings.enabled,0)=0)
                    OR (package.verification_enabled=1 AND settings.enabled=1
                        AND settings.version=package.verification_configuration_version
-                       AND settings.expected_macro_version=package.verification_macro_version));
+                       AND settings.expected_macro_version=package.verification_macro_version))
+              AND (package.tool_offset_mode<>'MEASURED'
+                   OR package.tool_preparation_id IS (
+                       SELECT preparation.id FROM tool_preparations preparation
+                       WHERE preparation.batch_operation_id=package.batch_operation_id
+                         AND preparation.machine_id=package.machine_id
+                       ORDER BY preparation.version_number DESC LIMIT 1))
+            ;
             """;
         command.Parameters.AddWithValue("$operationId", batchOperationId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -395,6 +409,12 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                         ON output.production_run_program_id=program.id
                       WHERE program.production_run_id=$runId
                         AND output.batch_operation_id=operation.id))
+                  AND ($offsetMode<>'MEASURED'
+                       OR $preparationId IS (
+                           SELECT preparation.id FROM tool_preparations preparation
+                           WHERE preparation.batch_operation_id=operation.id
+                             AND preparation.machine_id=machine.id
+                           ORDER BY preparation.version_number DESC LIMIT 1))
             );
             """;
         command.Parameters.AddWithValue("$operationId", package.BatchOperationId);
@@ -408,6 +428,7 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         command.Parameters.AddWithValue("$configVersion", Db(package.VerificationConfigurationVersion));
         command.Parameters.AddWithValue("$macroVersion", Db(package.VerificationMacroVersion));
         command.Parameters.AddWithValue("$runId", Db(package.ProductionRunId));
+        command.Parameters.AddWithValue("$preparationId", Db(package.ToolPreparationId));
         return Convert.ToInt64(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1;
     }
 
@@ -423,7 +444,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             reader.GetString(8), reader.GetString(17), reader.GetBoolean(9), NullableInt(reader, 10), NullableInt(reader, 11),
             reader.GetString(12), reader.GetString(13), Parse(reader.GetString(14)), reader.GetString(15),
             Nullable(reader, 16), configured,
-            configured && !reader.IsDBNull(20) && reader.GetString(20) == "ONLINE", artifacts);
+            configured && !reader.IsDBNull(20) && reader.GetString(20) == "ONLINE", artifacts,
+            Nullable(reader, 22));
     }
 
     private static async Task<IReadOnlyList<ProductionPackageArtifact>> ReadArtifactsAsync(

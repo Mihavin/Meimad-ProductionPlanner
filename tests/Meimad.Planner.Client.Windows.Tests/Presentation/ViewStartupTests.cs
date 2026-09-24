@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Meimad.Planner.Client.Windows.Presentation;
+using Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Localization;
 using Meimad.Planner.Client.Windows.Tests.Localization;
@@ -33,6 +34,7 @@ public sealed class ViewStartupTests
         var editModeButtonWasCompactAndStateful = false;
         var operationActionsWereCompactPlayerIcons = false;
         var operationRowWasDenseAndComplete = false;
+        var toolPreparationWindowRenderedRowsAndPreview = false;
         var assignmentModeActionsWereVisible = false;
         var timelineHadNoGlobalModeSelector = false;
         var oneAssignmentRenderedAsOneCanvasBlock = false;
@@ -61,6 +63,7 @@ public sealed class ViewStartupTests
             MainWindow? plannerWindow = null;
             TimelineWindow? timelineWindow = null;
             Window? playerWindow = null;
+            ToolPreparationWindow? toolPreparationWindow = null;
             Window? timelineRenderWindow = null;
             try
             {
@@ -146,6 +149,29 @@ public sealed class ViewStartupTests
                     && Descendants<System.Windows.Shapes.Path>(editModeButton).Count() == 2
                     && viewerStateWasLocked
                     && editorStateWasUnlocked;
+
+                // The Tool Room's tool table window: released rows, the selected tool's editor and the drawn preview.
+                var toolPreparationApi = new PreparationQueueViewModelTests.FakeApiClient([])
+                {
+                    ToolPreparation = ToolPreparationViewModelTests.Preparation(version: 1)
+                };
+                var toolPreparationViewModel = new ToolPreparationViewModel(
+                    toolPreparationApi, "client-1", "tool-room-1", toolPreparationApi.ToolPreparation);
+                toolPreparationWindow = new ToolPreparationWindow(toolPreparationViewModel);
+                toolPreparationWindow.Show();
+                toolPreparationWindow.UpdateLayout();
+                toolPreparationWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                var toolGrid = Descendants<DataGrid>(toolPreparationWindow)
+                    .Single(grid => AutomationProperties.GetName(grid) == "Tool table rows");
+                var toolPreview = Descendants<ToolShapePreview>(toolPreparationWindow).Single();
+                var toolWindowText = Descendants<TextBlock>(toolPreparationWindow).Select(text => text.Text).ToArray();
+                toolPreparationWindowRenderedRowsAndPreview = toolGrid.Items.Count == 3
+                    && toolPreview.Geometry is { Segments.Count: > 0 }
+                    && toolPreview.ActualHeight > 0
+                    && toolWindowText.Any(text => text.StartsWith("Version 1 saved", StringComparison.Ordinal))
+                    && toolWindowText.Contains("Shape preview");
+                toolPreparationWindow.Close();
+                toolPreparationWindow = null;
 
                 var boardView = new MachinePlanningBoardView();
                 var operationTemplate = Assert.IsType<DataTemplate>(
@@ -553,6 +579,7 @@ public sealed class ViewStartupTests
 
                 plannerWindow?.Close();
                 playerWindow?.Close();
+                toolPreparationWindow?.Close();
                 timelineRenderWindow?.Close();
                 window?.Close();
                 application?.Shutdown();
@@ -571,6 +598,7 @@ public sealed class ViewStartupTests
         Assert.True(externalTimelineContainsOnlyGraphAndLegend);
         Assert.True(closedTimelineWasDetached);
         Assert.True(mainViewRemainedVisible);
+        Assert.True(toolPreparationWindowRenderedRowsAndPreview);
         Assert.True(
             localizationFailures.Count == 0,
             "English UI text remained after localization: " + string.Join(" | ", localizationFailures));

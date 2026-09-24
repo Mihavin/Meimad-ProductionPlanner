@@ -55,7 +55,18 @@
               </MenuItem.Style>
             </MenuItem>
             <MenuItem Header="Open Tool Table"
+                      ToolTip="Edit the tool table: measured length and diameter, offset number, cutter shape and the assembled components. Saved versions go into the Production Package."
                       Command="{Binding PlacementTarget.Tag.OpenToolTableCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+              <MenuItem.Style>
+                <Style TargetType="MenuItem">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers><DataTrigger Binding="{Binding PlacementTarget.Tag.Stage, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="TOOL_PREPARATION_PENDING"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                </Style>
+              </MenuItem.Style>
+            </MenuItem>
+            <MenuItem Header="View Tool Table File (read-only)"
+                      ToolTip="Show the released Tool Table file exactly as the postprocessor produced it."
+                      Command="{Binding PlacementTarget.Tag.ViewToolTableFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
               <MenuItem.Style>
                 <Style TargetType="MenuItem">
                   <Setter Property="Visibility" Value="Collapsed" />

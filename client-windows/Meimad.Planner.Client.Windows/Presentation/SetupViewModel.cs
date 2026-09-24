@@ -70,6 +70,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private bool machineRespectMasterCalendar = true;
     private string machineExecutionMode = "MANUAL";
     private string machineNcDialect = "HAAS_NGC";
+    private string machineToolDiameterOffsetKind = "RADIUS";
     private NcViewerMachineOption selectedNcViewerMachine = NcViewerMachineOption.Auto;
     private string machineUsableToolPositions = string.Empty;
     private string machineRapidRateMillimetersPerMinute = string.Empty;
@@ -531,6 +532,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     /// <summary>Control family whose syntax the Server injects into this Machine's runnable NC and Offset Loader.</summary>
     public string MachineNcDialect { get => machineNcDialect; set => SetField(ref machineNcDialect, value); }
     public IReadOnlyList<string> MachineNcDialects { get; } = ["HAAS_NGC", "FANUC_MACRO_B", "MAZAK_MATRIX_EIA", "OKUMA_OSP"];
+    /// <summary>Whether the control keeps cutter (D) offsets as radius or diameter values; the Offset Loader writes measured values accordingly.</summary>
+    public string MachineToolDiameterOffsetKind { get => machineToolDiameterOffsetKind; set => SetField(ref machineToolDiameterOffsetKind, value); }
+    public IReadOnlyList<string> MachineToolDiameterOffsetKinds { get; } = ["RADIUS", "DIAMETER"];
     /// <summary>
     /// NC viewer machine: the NC engine definition (Mazak Variaxis i-500, Okuma Genos L200E-M,
     /// Haas ST-25Y, Haas VF-3SS, generic FANUC 0i-MC mills, ...) the NC viewer and the Server
@@ -1172,6 +1176,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineRespectMasterCalendar = true;
         MachineExecutionMode = "MANUAL";
         MachineNcDialect = "HAAS_NGC";
+        MachineToolDiameterOffsetKind = "RADIUS";
         SelectedNcViewerMachine = NcViewerMachineOption.Auto;
         MachineUsableToolPositions = string.Empty;
         MachineRapidRateMillimetersPerMinute = string.Empty;
@@ -2371,6 +2376,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         MachineRespectMasterCalendar = value.RespectMasterCalendar;
         MachineExecutionMode = value.ExecutionMode;
         MachineNcDialect = value.NcDialect;
+        MachineToolDiameterOffsetKind = value.ToolDiameterOffsetKind;
         SelectedNcViewerMachine = FindNcViewerMachine(value.NcViewerMachine);
         MachineUsableToolPositions = value.UsableToolPositions?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         MachineRapidRateMillimetersPerMinute = value.RapidRateMillimetersPerMinute?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
@@ -2607,7 +2613,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             toolChangeSeconds,
             timeFactor,
             MachineNcDialect,
-            SelectedNcViewerMachine.Id);
+            SelectedNcViewerMachine.Id,
+            MachineToolDiameterOffsetKind);
         return true;
     }
 

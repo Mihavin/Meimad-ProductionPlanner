@@ -1,3 +1,5 @@
+using Meimad.Planner.Server.Domain.ToolPreparations;
+
 namespace Meimad.Planner.Server.Domain.Machines;
 
 internal sealed record Machine(
@@ -26,7 +28,8 @@ internal sealed record Machine(
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
     string NcDialect = MachineNcDialects.HaasNgc,
-    string? NcViewerMachine = null);
+    string? NcViewerMachine = null,
+    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius);
 
 internal sealed record MachineValues(
     string? Number,
@@ -46,7 +49,8 @@ internal sealed record MachineValues(
     double? ToolChangeTimeSeconds = null,
     double? MachineTimeFactor = null,
     string? NcDialect = null,
-    string? NcViewerMachine = null);
+    string? NcViewerMachine = null,
+    string? ToolDiameterOffsetKind = null);
 
 internal sealed record ValidatedMachineValues(
     string Number,
@@ -66,7 +70,8 @@ internal sealed record ValidatedMachineValues(
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
     string NcDialect = MachineNcDialects.HaasNgc,
-    string? NcViewerMachine = null);
+    string? NcViewerMachine = null,
+    string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius);
 
 internal static class MachineExecutionModes
 {

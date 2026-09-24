@@ -749,6 +749,43 @@ public sealed class MachineApiTests
         });
     }
 
+    [Fact]
+    public async Task Machine_tool_diameter_offset_kind_defaults_to_radius_and_accepts_only_radius_or_diameter()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            var id = await CreateMachineAsync(client, "M-D40", "mill", []);
+            using var created = await client.GetAsync($"/api/v1/machines/{id}");
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            Assert.Equal("RADIUS", createdJson.RootElement.GetProperty("toolDiameterOffsetKind").GetString());
+
+            using var invalid = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { toolDiameterOffsetKind = "INCHES" }) };
+            invalid.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var rejected = await client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+            Assert.Contains("invalid_tool_diameter_offset_kind", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            using var change = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { toolDiameterOffsetKind = "diameter" }) };
+            change.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var changed = await client.SendAsync(change);
+            Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+            using var changedJson = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
+            Assert.Equal("DIAMETER", changedJson.RootElement.GetProperty("toolDiameterOffsetKind").GetString());
+
+            using var listed = await client.GetAsync("/api/v1/machines");
+            using var listedJson = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
+            var item = listedJson.RootElement.GetProperty("items").EnumerateArray()
+                .Single(machine => machine.GetProperty("machineId").GetString() == id);
+            Assert.Equal("DIAMETER", item.GetProperty("toolDiameterOffsetKind").GetString());
+        });
+    }
+
     private static async Task<string> CreateMachineAsync(
         HttpClient client,
         string number,

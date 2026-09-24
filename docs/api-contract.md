@@ -780,7 +780,7 @@ Implemented Machine create request and representation:
 
 `machineTypeId` is an optional stable link to the reusable catalog. Existing schema-v9 Machines are linked during migration from their case-insensitive legacy `processType` values. For compatibility with existing Case Operation requirements, a linked type's name is mirrored into `processType`; Machine-specific `capabilities`, `axisType`, and the linked Machine Type's capabilities all participate in Server assignment validation. Machine and Machine Type changes that would invalidate a current assignment return `409 assigned_operation_incompatible`.
 
-Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior. Schema v76 adds `ncDialect` (`HAAS_NGC` default, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`; any other value fails with issue code `invalid_nc_dialect`). The dialect selects the syntax of every Server-injected NC block (verification hook, event context, cycle events, Offset Loader program) and the variable ranges the Machine verification configuration accepts. A PATCH that changes `ncDialect` while Server Verification is enabled for the Machine fails validation with issue code `verification_enabled` on field `ncDialect`: disable verification, change the dialect, re-enter the mappings in the new range, re-enable. Schema v78 adds optional `ncViewerMachine`: the id of the NC engine machine definition (`mazak-variaxis-i-500`, `okuma-genos-l200e-m`, `haas-st-25y`, `haas-vf-3ss`, `fanuc-0i-mc-vmc-3axis`, `fanuc-0i-mc-vmc-4axis-a`, or a vendored `haas-umc-500`, `doosan-dvf-5000`, `chevalier-flc-200mc`) the Windows NC viewer opens this Machine's programs with and the Server NC analysis interprets them with. Null or `"auto"` means automatic detection. A value that is not lower-case letters, digits and hyphens fails with `invalid_nc_viewer_machine`; a well-formed id that is not installed with the Server's NC engine fails with `unknown_nc_viewer_machine` (the message lists the installed ids). The Windows client fills its Setup list from the same catalog installed with its own NC engine, so both sides offer the same ids at the same version.
+Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior. Schema v76 adds `ncDialect` (`HAAS_NGC` default, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`; any other value fails with issue code `invalid_nc_dialect`). The dialect selects the syntax of every Server-injected NC block (verification hook, event context, cycle events, Offset Loader program) and the variable ranges the Machine verification configuration accepts. A PATCH that changes `ncDialect` while Server Verification is enabled for the Machine fails validation with issue code `verification_enabled` on field `ncDialect`: disable verification, change the dialect, re-enter the mappings in the new range, re-enable. Schema v78 adds optional `ncViewerMachine`: the id of the NC engine machine definition (`mazak-variaxis-i-500`, `okuma-genos-l200e-m`, `haas-st-25y`, `haas-vf-3ss`, `fanuc-0i-mc-vmc-3axis`, `fanuc-0i-mc-vmc-4axis-a`, or a vendored `haas-umc-500`, `doosan-dvf-5000`, `chevalier-flc-200mc`) the Windows NC viewer opens this Machine's programs with and the Server NC analysis interprets them with. Null or `"auto"` means automatic detection. A value that is not lower-case letters, digits and hyphens fails with `invalid_nc_viewer_machine`; a well-formed id that is not installed with the Server's NC engine fails with `unknown_nc_viewer_machine` (the message lists the installed ids). The Windows client fills its Setup list from the same catalog installed with its own NC engine, so both sides offer the same ids at the same version. Schema v79 adds `toolDiameterOffsetKind` (`RADIUS`, the default, or `DIAMETER`; any other value fails with `invalid_tool_diameter_offset_kind`): whether the control keeps cutter (D) offsets as radius or diameter values, so a Production Package writes half of the measured diameter or the whole diameter.
 
 Implemented Machine Type create request and representation:
 
@@ -2222,6 +2222,66 @@ mode, supersession, and the generation-relevant Machine capability snapshot.
 Each non-manifest artifact is listed with its logical path, source release, size,
 and SHA-256; the manifest itself has its separately persisted SHA-256. Canonical
 package creation fails before activation if any required token is unresolved.
+
+Schema v79 adds the Tool Room measurements to a `MEASURED` package. When the
+released Tool Table has tool rows, the build requires the latest tool
+preparation version to hold a length, a diameter and an offset number for every
+required released tool (`422 production_package_tool_measurements_missing`,
+listing the tools; duplicate offset numbers fail with
+`production_package_tool_offset_number_duplicate`). The package then contains a
+`TOOL_OFFSETS` artifact (`tool-offsets/tool-offsets.json`: every measured tool
+with offset number, length, diameter, shape and components, plus the offset
+kind), the manifest records `toolPreparationId`, `toolPreparationVersion`,
+`toolPreparationHash`, `toolDiameterOffsetKind`, `measuredToolCount` and
+`toolOffsetsLoadedByProgram`, and the representation exposes
+`toolPreparationId`. With Server Verification enabled the offsets are written
+by the package-specific Offset Loader before the challenge call; with
+verification disabled a separate `TOOL_OFFSET_PROGRAM` artifact
+(`tool-offsets/O01991.nc` or `tool-offsets/O1991.MIN`) carries them. The
+syntax follows the Machine's `ncDialect` and process: `G10 L10/L11/L12/L13`
+(memory C) for milling on Haas NGC, FANUC and Mazak, `G10 P1xxxx X Z` for FANUC
+turning, `VTOFH/VTOFD` or `VTOFX/VTOFZ` for Okuma OSP; Haas NGC and Mazak
+turning have no input syntax, so `toolOffsetsLoadedByProgram` is `false` and
+the loader comment tells the setupist to enter the sheet. The current-package
+predicate also requires that no newer tool preparation version exists, so a new
+save makes the package stale. `MANUAL_DUMMY` packages carry no measurements and
+do not depend on the preparation. A Tool Table without rows (pre-v36 history)
+keeps the previous behavior.
+
+### 8.12a Tool preparation
+
+```http
+GET /api/v1/batch-operations/{operationId}/tool-preparation
+PUT /api/v1/batch-operations/{operationId}/tool-preparation
+```
+
+The read returns the released Tool Table rows of the Operation's current
+process on its assigned Machine, merged with the latest saved version: Machine
+identity, `processType`, `ncDialect`, `toolDiameterOffsetKind`, the current
+`toolTableReleaseId`/revision/file name, `version` (0 before the first save),
+`toolPreparationId`, `savedAt`, `savedBy`, `comment`, `contentHash`,
+`savedForToolTableReleaseId` (differs from the current release when the table
+was re-released after the last save) and `tools`. Each tool carries the released
+`rowNumber`, `toolIdentifier`, `description`, `isRequired`, `magazinePosition`
+and the saved `offsetNumber`, `measuredLength`, `measuredDiameter` (mm, four
+decimals), `shapeType`, `shape` (named dimensions in mm or degrees), `notes` and
+`components` (`sequence`, `componentType`, `name`, `catalogNumber`, `length`,
+`diameter`, `notes`). Unassigned Operations return `404`; an Operation whose
+process has no released Tool Table returns `422
+tool_preparation_tool_table_missing`.
+
+The write requires `X-Meimad-Client-Id` and `X-Meimad-User-Id` (no Edit
+Mode; `428` without them) and the body `expectedVersion`,
+`toolTableReleaseId`, optional `comment` and `tools`. Every tool must name a
+released identifier (`tool_preparation_unknown_tool`) at most once; offset
+numbers are 1–9999 and unique; millimetre values are 0–10000; shape types,
+component types and dimension keys are the documented sets. The Server
+validates, appends version `expectedVersion + 1` as an immutable row set with
+a SHA-256 content hash, and returns the merged read. A stale
+`expectedVersion` fails with `409 tool_preparation_version_conflict`; a
+`toolTableReleaseId` that is no longer current fails with `409
+tool_preparation_tool_table_changed`. Saved versions are never edited or
+deleted; the Production Package build reads the latest one.
 
 ### 8.13 Windows QC Queue and decision contract
 

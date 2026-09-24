@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Domain.ToolPreparations;
 using System.Text.RegularExpressions;
 
 namespace Meimad.Planner.Server.Domain.Machines;
@@ -53,6 +54,15 @@ internal static partial class MachineValidator
                 "ncViewerMachine",
                 "invalid_nc_viewer_machine",
                 "ncViewerMachine must be an NC viewer machine id (lower-case letters, digits and hyphens) or null for automatic detection."));
+        }
+        var toolDiameterOffsetKind = Normalize(values.ToolDiameterOffsetKind)?.ToUpperInvariant()
+            ?? ToolDiameterOffsetKinds.Radius;
+        if (!ToolDiameterOffsetKinds.IsSupported(toolDiameterOffsetKind))
+        {
+            issues.Add(new MachineValidationIssue(
+                "toolDiameterOffsetKind",
+                "invalid_tool_diameter_offset_kind",
+                "toolDiameterOffsetKind must be exactly 'RADIUS' or 'DIAMETER'."));
         }
         var supportedPostprocessorIds = NormalizeIdentifiers(
             values.SupportedPostprocessorIds,
@@ -115,7 +125,8 @@ internal static partial class MachineValidator
             values.ToolChangeTimeSeconds,
             machineTimeFactor,
             ncDialect,
-            ncViewerMachine);
+            ncViewerMachine,
+            toolDiameterOffsetKind);
     }
 
     private static IReadOnlyList<string> NormalizeIdentifiers(

@@ -254,6 +254,16 @@ internal interface IPlannerApiClient : IDisposable
         string caseId, string caseOperationId, string releaseId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The released tool rows of the operation on its assigned Machine with the latest saved measurements.</summary>
+    Task<PlannerToolPreparation> GetToolPreparationAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Saves the next immutable tool preparation version (no Edit Mode; identified like package creation).</summary>
+    Task<PlannerToolPreparation> SaveToolPreparationAsync(
+        string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     /// <summary>The immutable released NC file exactly as stored (encoding and line endings kept).</summary>
     Task<byte[]> ReadGCodeFileBytesAsync(
         string caseId, string caseOperationId, string releaseId,
@@ -1740,6 +1750,29 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/tool-table-releases/{Uri.EscapeDataString(releaseId)}/file",
             cancellationToken);
         return await ReadBytesSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<PlannerToolPreparation> GetToolPreparationAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation",
+            cancellationToken);
+        return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
+    }
+
+    public async Task<PlannerToolPreparation> SaveToolPreparationAsync(
+        string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation",
+            clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
     }
 
     public async Task<QcDecisionResult> DecideQcAsync(

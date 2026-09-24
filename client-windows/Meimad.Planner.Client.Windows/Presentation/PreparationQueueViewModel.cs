@@ -29,7 +29,9 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         UploadGCodeCommand = new AsyncCommand(() => RequestActionAsync("UPLOAD_GCODE"),
             () => CanUseSelected() && Stage == "PROGRAMMING_PENDING");
         OpenToolTableCommand = new AsyncCommand(OpenToolTableAsync,
-            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
+            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING" && Selected?.ToolTableReleaseId is not null);
+        ViewToolTableFileCommand = new AsyncCommand(ViewToolTableFileAsync,
+            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING" && Selected?.ToolTableReleaseId is not null);
         // Every queue (NC Creator, Tool Room, Setup) can open the operation's NC release in the viewer.
         ViewNcFileCommand = new AsyncCommand(ViewNcFileAsync,
             () => CanUseSelected() && Selected?.GCodeReleaseId is not null);
@@ -52,6 +54,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     public AsyncCommand OpenOperationCommand { get; }
     public AsyncCommand UploadGCodeCommand { get; }
     public AsyncCommand OpenToolTableCommand { get; }
+    public AsyncCommand ViewToolTableFileCommand { get; }
     public AsyncCommand ViewNcFileCommand { get; }
     public AsyncCommand CreateProductionPackageCommand { get; }
     public AsyncCommand CreateManualOffsetProductionPackageCommand { get; }
@@ -91,7 +94,27 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
-    private async Task OpenToolTableAsync()
+    /// <summary>
+    /// Opens the editable tool table: the released tool rows merged with the latest Tool Room
+    /// measurements, shapes and components. Saving appends a version on the Server; the
+    /// Production Package (Offset Loader) uses the latest version.
+    /// </summary>
+    internal async Task OpenToolTableAsync()
+    {
+        if (api is not { } client || Selected is not { } item) return;
+        await RunActionAsync(async () =>
+        {
+            var preparation = await client.GetToolPreparationAsync(item.BatchOperationId);
+            var editor = new ToolPreparation.ToolPreparationViewModel(client, clientId, userId, preparation);
+            ActionRequested?.Invoke(this, new("OPEN_TOOL_PREPARATION", item, editor));
+            Status = preparation.Version == 0
+                ? "Tool table opened; no measurements were saved yet."
+                : "Tool table opened with the latest saved measurements.";
+        });
+    }
+
+    /// <summary>Shows the released Tool Table file itself, read-only, as the postprocessor produced it.</summary>
+    private async Task ViewToolTableFileAsync()
     {
         if (api is null || Selected?.CaseId is null || Selected.CaseOperationId is null
             || Selected.ToolTableReleaseId is null) return;
