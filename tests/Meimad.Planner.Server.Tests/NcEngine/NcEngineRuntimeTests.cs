@@ -254,6 +254,45 @@ public sealed class NcEngineRuntimeTests : IDisposable
     }
 
     [Fact]
+    public void Released_tool_table_descriptions_are_read_with_the_comment_heuristics()
+    {
+        // The Operation's tool table replaces the program's comments: the program says nothing about T1.
+        var mill = "%\nO1500\nG21\nT1 M06\nG0 X0 Y0\nM30\n%\n";
+        var tools = runtime.InferToolsFromDescriptions(mill,
+        [
+            new(1, "FLAT END MILL D12"),
+            new(2, "DRILL 8.5MM"),
+            new(3, "BALL_D6_R3_L=75"),
+            new(4, ""),
+            // The shop's CAM names: the diameter follows the tool words; an angle is not a diameter.
+            new(5, "FIN_12_AROH_L=105"),
+            new(6, "MERASEK 10 X 22"),
+            new(7, "CHAMFER 45")
+        ], "haas-vf-3ss", "HAAS_NGC");
+
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7], tools.Select(tool => tool.Number));
+        Assert.Equal(["end-mill", "drill", "ball-mill", "other", "end-mill", "end-mill", "chamfer-mill"], tools.Select(tool => tool.Type));
+        Assert.Equal([12, 8.5, 6, null, 12, 10, null], tools.Select(tool => tool.Diameter));
+        Assert.Equal(3, tools[2].CornerRadius);
+        Assert.Equal(75, tools[2].Length);
+        Assert.Equal(105, tools[4].Length);
+        Assert.Equal("BALL_D6_R3_L=75", tools[2].Description);
+
+        var lathe = "G18 G21 G99\nT0101\nG0 X50. Z2.\nM30\n";
+        var turning = runtime.InferToolsFromDescriptions(lathe,
+        [
+            new(1, "EXT TURN R0.8 TIP 3"),
+            new(2, "DRILL D10")
+        ], "haas-st-25y", "HAAS_NGC");
+
+        Assert.Equal("external-cutter", turning[0].Type);
+        Assert.Equal(0.8, turning[0].CornerRadius);
+        Assert.Equal(3, turning[0].Tip);
+        Assert.Equal("drill", turning[1].Type);
+        Assert.Equal(10, turning[1].Diameter);
+    }
+
+    [Fact]
     public void Placeholder_and_print_lines_are_neutralized_without_moving_rows()
     {
         var text = "O1\n(PART: [[MEIMAD:PART_NAME]])\n[[MEIMAD:VERIFICATION_HOOK]]\nDPRNT[[[MEIMAD:PART_NAME]]]\nPUT 'X'\nWRITE C\nG0 X0\n";

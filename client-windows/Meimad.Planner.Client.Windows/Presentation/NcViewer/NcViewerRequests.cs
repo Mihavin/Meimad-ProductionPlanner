@@ -11,8 +11,8 @@ internal static class NcViewerRequests
     /// <summary>
     /// The immutable release file exactly as stored, shown read-only. The Machine (when the caller
     /// knows the assignment) or the postprocessor's Machines decide the NC dialect and the NC
-    /// viewer machine. With the Batch Operation known, the Tool Room's latest tool table drives the
-    /// preview's tools.
+    /// viewer machine. The release's tool table (with the Tool Room's shapes and measurements when
+    /// the Batch Operation is known) drives the preview's tools instead of the program's comments.
     /// </summary>
     internal static async Task<NcViewerOpenRequest> ForReleaseAsync(
         IPlannerApiClient api,
@@ -25,28 +25,33 @@ internal static class NcViewerRequests
         CancellationToken cancellationToken = default)
     {
         var bytes = await api.ReadGCodeFileBytesAsync(caseId, caseOperationId, releaseId, cancellationToken);
-        NcViewerToolRoomTable? toolRoomTable = null;
+        // The Operation's tool table drives the preview's tools instead of the program's comments:
+        // with the Batch Operation known, the Tool Room's shapes and measurements come with it;
+        // otherwise the released rows of the release's tool table alone.
+        NcViewerOperationToolTable? operationToolTable = null;
         if (batchOperationId is not null)
         {
             try
             {
-                toolRoomTable = NcViewerToolRoomTable.From(await api.GetToolPreparationAsync(batchOperationId, cancellationToken));
+                operationToolTable = NcViewerOperationToolTable.From(await api.GetToolPreparationAsync(batchOperationId, cancellationToken));
             }
             catch (Exception exception) when (IsTransient(exception))
             {
-                // No released tool table or an offline Server: the viewer infers the tools from the program.
+                // No released tool table or an offline Server: fall back to the catalog rows below.
             }
         }
         PlannerGCodeRelease? release = null;
+        PlannerGCodeCatalog? catalog = null;
         try
         {
-            var catalog = await api.GetOperationGCodeAsync(caseId, caseOperationId, cancellationToken);
+            catalog = await api.GetOperationGCodeAsync(caseId, caseOperationId, cancellationToken);
             release = catalog.Releases.FirstOrDefault(value => value.GCodeReleaseId == releaseId);
         }
         catch (Exception exception) when (IsTransient(exception))
         {
             // The file is enough to show the program; the release details are optional.
         }
+        operationToolTable ??= NcViewerOperationToolTable.FromCatalog(catalog, release?.ToolTableReleaseId);
         var machines = await MachinesAsync(api, cancellationToken);
         return new NcViewerOpenRequest(
             contextTitle,
@@ -66,7 +71,7 @@ internal static class NcViewerRequests
                     ? null
                     : new NcProgramRevision(release.ProcessRevisionNumber, release.PostprocessorId,
                         release.PostprocessorName, release.PostSpecificRevision)),
-            ToolRoomTable: toolRoomTable);
+            OperationToolTable: operationToolTable);
     }
 
     /// <summary>The Server's stateless "Apply Meimad Planner Format".</summary>

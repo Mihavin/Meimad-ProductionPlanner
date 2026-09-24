@@ -57,7 +57,7 @@ internal sealed class NcViewerSession : IDisposable
     private string? dialect;
     private JsonElement? toolTable;
     private string toolTableSource = "Program comments";
-    private NcViewerToolRoomTable? toolRoomTable;
+    private NcViewerOperationToolTable? operationToolTable;
     private IReadOnlyList<NcEngineCompensationIssue> compensationIssues = [];
     private NcEngineMachineRef? activeMachine;
     private NcEngineEffectiveSettings? effectiveSettings;
@@ -88,7 +88,7 @@ internal sealed class NcViewerSession : IDisposable
         // The Meimad Machine's NC viewer machine (Setup) is the initial machine of this window;
         // the viewer's own machine list may change it. It is validated when the engine parses.
         machineOverride = NcViewerMachines.Normalize(request.MachineSelection);
-        toolRoomTable = request.ToolRoomTable;
+        operationToolTable = request.OperationToolTable;
         // Loading the engine takes a moment; start it before the page asks for its first parse.
         engineStartup = Task.Run(StartEngine);
         LocalizationService.Current.LanguageChanged += OnLanguageChanged;
@@ -370,9 +370,9 @@ internal sealed class NcViewerSession : IDisposable
             runtime.SetReadableFolders(snapshot.ReadableFolders);
             var table = runtime.InferToolTable(snapshot.Text, snapshot.DocumentName, snapshot.MachineSelection,
                 snapshot.Dialect, snapshot.ToolTable ?? FallbackToolTable(runtime, snapshot));
-            // The page may ask for the table before the first preview: the Tool Room values apply here too.
-            return snapshot.ToolTable is null && snapshot.ToolRoomTable is { } toolRoom
-                ? (ApplyToolRoomTable(runtime, snapshot, table, toolRoom, null), (string?)toolRoom.Source)
+            // The page may ask for the table before the first preview: the Operation's table applies here too.
+            return snapshot.ToolTable is null && snapshot.OperationToolTable is { } toolRoom
+                ? (ApplyOperationToolTable(runtime, snapshot, table, toolRoom, null), (string?)toolRoom.Source)
                 : (table, (string?)null);
         });
         toolTable = inferred.Table;
@@ -853,10 +853,10 @@ internal sealed class NcViewerSession : IDisposable
             var inferred = runtime.InferToolTable(snapshot.Text, snapshot.DocumentName, snapshot.MachineSelection,
                 snapshot.Dialect, baseTable);
             table = inferred.Table;
-            // The first inference of a program opened with the Tool Room's table takes its measured values.
-            if (snapshot.ToolTable is null && snapshot.ToolRoomTable is { } toolRoom)
+            // The first inference of a program opened with its Operation's table takes the table's values.
+            if (snapshot.ToolTable is null && snapshot.OperationToolTable is { } toolRoom)
             {
-                table = ApplyToolRoomTable(runtime, snapshot, inferred, toolRoom, warnings).Table;
+                table = ApplyOperationToolTable(runtime, snapshot, inferred, toolRoom, warnings).Table;
                 source = toolRoom.Source;
             }
         }
@@ -936,7 +936,7 @@ internal sealed class NcViewerSession : IDisposable
             toolTableSource,
             directory,
             readable,
-            toolRoomTable);
+            operationToolTable);
     }
 
     private static JsonElement? FallbackToolTable(NcEngineRuntime runtime, ParseSnapshot snapshot, List<string>? warnings = null)
@@ -960,23 +960,32 @@ internal sealed class NcViewerSession : IDisposable
     }
 
     /// <summary>
-    /// Writes the Tool Room's measured values and cutter shapes into the inferred table through
-    /// the engine's own validation. Tools the program does not use are ignored; a failure keeps
-    /// the inferred table and says why.
+    /// Writes the Operation's tool table into the inferred table through the engine's own
+    /// validation: descriptions from the released rows, type and sizes from the Tool Room shape
+    /// or, for rows without one, from the engine's reading of the row description. Tools the
+    /// program does not use are ignored; a failure keeps the inferred table and says why.
     /// </summary>
-    private static NcEngineToolTable ApplyToolRoomTable(
-        NcEngineRuntime runtime, ParseSnapshot snapshot, NcEngineToolTable inferred, NcViewerToolRoomTable toolRoom, List<string>? warnings)
+    private static NcEngineToolTable ApplyOperationToolTable(
+        NcEngineRuntime runtime, ParseSnapshot snapshot, NcEngineToolTable inferred, NcViewerOperationToolTable table, List<string>? warnings)
     {
         try
         {
-            var edited = toolRoom.ApplyTo(inferred.Editable, out var unmatched);
+            IReadOnlyDictionary<int, NcEngineInferredTool>? readings = null;
+            var descriptions = table.DescriptionsToInfer;
+            if (descriptions.Count > 0)
+            {
+                readings = runtime.InferToolsFromDescriptions(snapshot.Text, descriptions, snapshot.MachineSelection, snapshot.Dialect)
+                    .GroupBy(tool => tool.Number)
+                    .ToDictionary(group => group.Key, group => group.First());
+            }
+            var edited = table.ApplyTo(inferred.Editable, readings, out var unmatched);
             warnings?.AddRange(unmatched);
             return runtime.SaveToolTable(snapshot.Text, snapshot.DocumentName, snapshot.MachineSelection,
                 snapshot.Dialect, inferred.Table, JsonSerializer.SerializeToElement(edited));
         }
         catch (NcEngineException exception)
         {
-            warnings?.Add($"{toolRoom.Source} could not be applied: {exception.Message}");
+            warnings?.Add($"{table.Source} could not be applied: {exception.Message}");
             return inferred;
         }
     }
@@ -1267,7 +1276,7 @@ internal sealed class NcViewerSession : IDisposable
         playbackLine = null;
         toolTable = null;
         toolTableSource = "Program comments";
-        toolRoomTable = null; // another program: the Tool Room's table belongs to the opened release
+        operationToolTable = null; // another program: the Operation's table belongs to the opened release
         textPending = true;
         machineOverride = null;
         SendMeimadMode();
@@ -1405,7 +1414,7 @@ internal sealed class NcViewerSession : IDisposable
         string ToolTableSource,
         string? DocumentDirectory,
         IReadOnlyList<string?> ReadableFolders,
-        NcViewerToolRoomTable? ToolRoomTable);
+        NcViewerOperationToolTable? OperationToolTable);
 
     private sealed record ParseOutcome(NcEnginePreviewResult Result, JsonElement? ToolTable, string? ToolTableSource);
 }

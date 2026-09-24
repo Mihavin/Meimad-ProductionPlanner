@@ -534,6 +534,55 @@ function toolTable(requestJson) {
   return JSON.stringify({ table, xml, editable: editableTable(table, machine, request.documentName) });
 }
 
+// Tool types whose description may name the diameter as a bare number after the tool words.
+const BARE_DIAMETER_TYPES = new Set(["end-mill", "ball-mill", "bull-nose-mill", "face-mill", "slot-mill", "drill", "reamer", "boring-head"]);
+
+// Tool definitions read from released tool-table rows ({ number, description }) with the same
+// heuristics the tool-change comments get, so the Operation's tool table replaces the program
+// comments as the source of type, diameter and nose radius. A bare "D10" or "8.5MM" in a CAM
+// description also counts as the diameter.
+function toolDefinitionsFromRows(requestJson) {
+  const request = JSON.parse(requestJson);
+  const machine = activeMachine(request);
+  const lathe = machine?.type === "lathe";
+  const rows = (Array.isArray(request.rows) ? request.rows : [])
+    .filter((row) => Number.isInteger(row.number) && row.number >= 1 && row.number <= 999);
+  const lines = rows.map((row) => {
+    const description = String(row.description || "").replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+    const number = String(row.number).padStart(2, "0");
+    const word = lathe ? `T${number}${number}` : `T${row.number} M06`;
+    return description ? `${word} (${description})` : word;
+  });
+  const definitions = toolDefinitionsForMachine(lines.join("\n"), undefined, machine);
+  const byNumber = new Map(definitions.map((tool) => [Number(tool.number), tool]));
+  return JSON.stringify(rows.map((row) => {
+    const tool = byNumber.get(row.number) || {};
+    const type = TOOL_TYPES.has(tool.type) ? tool.type : "other";
+    const text = String(row.description || "").toUpperCase().replace(/_/g, " ");
+    let diameter = Number.isFinite(tool.diameter) ? tool.diameter : null;
+    if (diameter === null) {
+      const fallback = text.match(/(?:^|[\s(-])D\s*(\d*\.?\d+)(?![\d.])/) || text.match(/(\d*\.?\d+)\s*MM\b/) || text.match(/Ø\s*(\d*\.?\d+)/);
+      if (fallback && Number(fallback[1]) > 0) diameter = Number(fallback[1]);
+    }
+    if (diameter === null && BARE_DIAMETER_TYPES.has(type)) {
+      // The shop's CAM names put the diameter right after the tool words: "FIN 12 AROH L=105",
+      // "BALL 6 R3", "MERASEK 12". Angles belong to chamfer and spot tools, which are excluded.
+      const bare = text.match(/^[A-Z][A-Z .\/-]*\s(\d*\.?\d+)(?:\s|$)/);
+      if (bare && Number(bare[1]) > 0) diameter = Number(bare[1]);
+    }
+    return {
+      number: row.number,
+      type,
+      diameter,
+      length: Number.isFinite(tool.length) && tool.length > 0 ? tool.length : null,
+      cornerRadius: Number(tool.cornerRadius) || 0,
+      tip: Number.isInteger(tool.tip) ? tool.tip : 0,
+      width: Number.isFinite(tool.width) ? tool.width : null,
+      description: String(row.description || "").trim()
+    };
+  }));
+}
+
 function textField(value, label, maximumLength) {
   if (typeof value !== "string") throw new TypeError(`${label} must be text.`);
   const normalized = value.trim();
@@ -643,4 +692,4 @@ function prepare(requestJson) {
   });
 }
 
-module.exports = { analyze, parsePreview, takePacked, toolTable, saveToolTable, machines, parseToolTableXml, sanitizeOffsets, prepare };
+module.exports = { analyze, parsePreview, takePacked, toolTable, toolDefinitionsFromRows, saveToolTable, machines, parseToolTableXml, sanitizeOffsets, prepare };

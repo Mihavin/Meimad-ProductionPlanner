@@ -37,10 +37,11 @@ namespace Meimad.Planner.Client.Windows.Presentation.NcViewer;
 /// The Case Operation's revision folders in the Case Working Folder. Save, "Use for G-code
 /// release" and "Release to Server" write the program there; null keeps the file dialogs.
 /// </param>
-/// <param name="ToolRoomTable">
-/// The Tool Room's latest tool table for the Operation on its Machine (measured diameter and
-/// length, cutter shape). It replaces the tool values the viewer infers from the program, so the
-/// simulation cuts with the prepared tools; null keeps the inferred values.
+/// <param name="OperationToolTable">
+/// The Operation's released tool table (descriptions) with the Tool Room's cutter shapes and
+/// measurements when the Batch Operation is known. It replaces the tool values the viewer would
+/// read from the program's comments, so the simulation cuts with the released tools; null keeps
+/// the values inferred from the program.
 /// </param>
 internal sealed record NcViewerOpenRequest(
     string ContextTitle,
@@ -57,7 +58,7 @@ internal sealed record NcViewerOpenRequest(
     NcViewerReleaseContext? ReleaseContext = null,
     Func<NcViewerReleaseCommand, CancellationToken, Task<NcViewerReleaseOutcome>>? ReleaseToServer = null,
     NcProgramFolders? ProgramFolders = null,
-    NcViewerToolRoomTable? ToolRoomTable = null)
+    NcViewerOperationToolTable? OperationToolTable = null)
 {
     /// <summary>The upstream viewer's blank program.</summary>
     internal const string BlankProgram = "%\nO0001\n\nM30\n%\n";

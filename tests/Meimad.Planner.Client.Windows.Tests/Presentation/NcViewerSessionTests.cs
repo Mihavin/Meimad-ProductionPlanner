@@ -526,7 +526,7 @@ public sealed class NcViewerSessionTests : IDisposable
     });
 
     [Fact]
-    public void Tool_room_table_replaces_the_inferred_tools_of_the_preview() => SingleThread.Run(async () =>
+    public void Operation_tool_table_with_tool_room_shapes_replaces_the_inferred_tools_of_the_preview() => SingleThread.Run(async () =>
     {
         var ui = new FakeUi();
         var preparation = new PlannerToolPreparation(
@@ -538,12 +538,12 @@ public sealed class NcViewerSessionTests : IDisposable
                 new(2, "T9", "Drill 8.5 (not in this program)", true, "9", 9, 90, 8.5, "DRILL",
                     new Dictionary<string, double>(), null, [])
             ]);
-        var request = Request(readOnly: true) with { ToolRoomTable = NcViewerToolRoomTable.From(preparation) };
+        var request = Request(readOnly: true) with { OperationToolTable = NcViewerOperationToolTable.From(preparation) };
         using var session = Session(request, ui);
         await ui.InvokeAsync(session, "getInitialState");
         ui.Send(session, "preview:message", new { type = "ready" });
         await ui.NextEventAsync("preview:render");
-        Assert.Equal("Tool Room tool table v3", (await ui.NextEventAsync("document:state")).GetProperty("toolTablePath").GetString());
+        Assert.Equal("Tool table r1 (tools.csv) + Tool Room v3", (await ui.NextEventAsync("document:state")).GetProperty("toolTablePath").GetString());
 
         var table = await ui.InvokeAsync(session, "getToolTable");
 
@@ -554,7 +554,34 @@ public sealed class NcViewerSessionTests : IDisposable
         Assert.Equal(101.5, tool.GetProperty("length").GetDouble());
         Assert.Equal(6, tool.GetProperty("cornerRadius").GetDouble());
         Assert.Equal("Ball end mill D12", tool.GetProperty("description").GetString());
-        Assert.Equal("Tool Room tool table v3", table.GetProperty("sourcePath").GetString());
+        Assert.Equal("Tool table r1 (tools.csv) + Tool Room v3", table.GetProperty("sourcePath").GetString());
+    });
+
+    [Fact]
+    public void Released_tool_table_rows_replace_the_program_comments_even_without_measurements() => SingleThread.Run(async () =>
+    {
+        var ui = new FakeUi();
+        // The Case tab opens a release without a Batch Operation: only the released rows exist.
+        var rows = new PlannerReleasedTool[]
+        {
+            new("row-1", 1, "T1", "FLAT END MILL D12", true, true, true, "1"),
+            new("row-2", 2, "T2", "DRILL 8.5MM", true, true, true, "2")
+        };
+        var request = Request(readOnly: true) with { OperationToolTable = NcViewerOperationToolTable.FromRows(rows, 2, "tools.mht") };
+        using var session = Session(request, ui);
+        await ui.InvokeAsync(session, "getInitialState");
+        ui.Send(session, "preview:message", new { type = "ready" });
+        await ui.NextEventAsync("preview:render");
+        Assert.Equal("Tool table r2 (tools.mht)", (await ui.NextEventAsync("document:state")).GetProperty("toolTablePath").GetString());
+
+        var table = await ui.InvokeAsync(session, "getToolTable");
+
+        // The program's comment says nothing about T1; the released description does.
+        var tool = Assert.Single(table.GetProperty("tools").EnumerateArray());
+        Assert.Equal(1, tool.GetProperty("number").GetInt32());
+        Assert.Equal("end-mill", tool.GetProperty("type").GetString());
+        Assert.Equal(12, tool.GetProperty("diameter").GetDouble());
+        Assert.Equal("FLAT END MILL D12", tool.GetProperty("description").GetString());
     });
 
     [Fact]

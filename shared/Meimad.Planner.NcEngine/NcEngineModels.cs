@@ -114,6 +114,20 @@ public sealed record NcEngineMachineSummary(string Id, string Name, string Type,
 /// <summary>Tool table state: the engine's table object (opaque JSON), its XML, and the editor view.</summary>
 public sealed record NcEngineToolTable(JsonElement Table, string Xml, JsonElement Editable);
 
+/// <summary>One released tool-table row handed to the engine's description heuristics.</summary>
+public sealed record NcEngineToolDescription(int Number, string Description);
+
+/// <summary>What the engine reads from a tool-table description: type, sizes and, for lathes, the tip.</summary>
+public sealed record NcEngineInferredTool(
+    int Number,
+    string Type,
+    double? Diameter,
+    double? Length,
+    double CornerRadius,
+    int Tip,
+    double? Width,
+    string Description);
+
 public class NcEngineException : Exception
 {
     public NcEngineException(string message) : base(message) { }

@@ -163,6 +163,23 @@ public sealed class NcEngineRuntime : IDisposable
         return Deserialize<NcEngineToolTable>(Call("saveToolTable", json));
     }
 
+    /// <summary>
+    /// Tool definitions read from released tool-table rows with the engine's comment heuristics
+    /// (type, diameter, corner radius, lathe tip), for the machine the program is interpreted on.
+    /// </summary>
+    public IReadOnlyList<NcEngineInferredTool> InferToolsFromDescriptions(
+        string text, IReadOnlyList<NcEngineToolDescription> rows, string machineSelection, string? dialect)
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            text = NcPlaceholderText.ForEngine(text),
+            machineSelection,
+            dialect,
+            rows
+        }, NcEngineInfo.Json);
+        return Deserialize<IReadOnlyList<NcEngineInferredTool>>(Call("toolDefinitionsFromRows", json));
+    }
+
     /// <summary>Reads a tool table XML file into the engine's table object.</summary>
     public JsonElement ParseToolTableXml(string xml) =>
         Deserialize<JsonElement>(Call("parseToolTableXml", xml ?? string.Empty));
