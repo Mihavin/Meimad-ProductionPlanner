@@ -74,12 +74,15 @@ internal sealed class ProductionPackageService(
                 var sourceLines = Encoding.UTF8.GetString(sourceBytes).Split(
                     ["\r\n", "\n", "\r"], StringSplitOptions.None);
                 var dialect = NcDialects.Profile(context.NcDialect);
+                // The cycle markers count parts through the Machine's DPRNT connection whether or
+                // not verification is enabled; the verification hook needs verification.
                 var transformOptions = new NcPackageTransformOptions(
                     context.Verification is not null,
                     context.Verification?.VerifyProgramNumber ?? 9002,
-                    context.Verification?.ExpectedMacroVersion ?? 1,
-                    context.Verification?.EventSequenceVariable ?? dialect.PersistentVariables.Minimum,
-                    dialect.Id);
+                    context.Verification?.ExpectedMacroVersion ?? context.PartCounting?.MacroVersion ?? 1,
+                    context.Verification?.EventSequenceVariable ?? context.PartCounting?.EventSequenceVariable ?? dialect.DefaultEventSequenceVariable,
+                    dialect.Id,
+                    PartCountingEnabled: context.Verification is not null || context.PartCounting is not null);
                 int ncId;
                 byte[] transformed;
                 if (NcPackagePlaceholderSchema.IsCanonical(sourceLines))
@@ -137,8 +140,12 @@ internal sealed class ProductionPackageService(
                     var body = new List<string>(identityComments) { $"(OFFSET LOADER RELEASE {offsetLoaderId})" };
                     body.AddRange(offsetComments);
                     if (offsetLines is not null) body.AddRange(offsetLines);
+                    // The loader prints its own context line so the DPRNT log names the package
+                    // and Offset Loader release before the challenge's OLC event.
+                    var loaderContext = dialect.SanitizePrintedText(FormattableString.Invariant(
+                        $"MEIMAD/V/2/CONTEXT/PACKAGE/{packageNumber}/RUN/{context.RunNumber ?? 0}/MACHINE/{NcSafe(context.MachineNumber)}/NCRELEASE/{ncId}/OFFSETRELEASE/{releaseToken!.Value}/MACROVERSION/{context.Verification.ExpectedMacroVersion}/PROGRAM/{ncId}"));
                     var loader = Encoding.ASCII.GetBytes(string.Join("\r\n", dialect.OffsetLoader(
-                        body, context.Verification.ChallengeProgramNumber, releaseToken!.Value, ncId)));
+                        body, context.Verification.ChallengeProgramNumber, releaseToken!.Value, ncId, loaderContext)));
                     artifacts.Add(await WriteAsync(
                         staging, packageId, ProductionPackageArtifactTypes.OffsetLoader,
                         dialect.OffsetLoaderLogicalPath, loader, offsetLoaderId, cancellationToken));
@@ -199,6 +206,13 @@ internal sealed class ProductionPackageService(
                 serverVerificationEnabled = context.Verification is not null,
                 verificationConfigurationVersion = context.Verification?.Version,
                 verificationMacroVersion = context.Verification?.ExpectedMacroVersion,
+                partCountingEnabled = context.ExecutionMode == "CNC_GCODE"
+                    && (context.Verification is not null || context.PartCounting is not null),
+                partCountingDprntSource = context.PartCounting?.DprntSource,
+                partCountingEventSequenceVariable = context.ExecutionMode == "CNC_GCODE"
+                    ? context.Verification?.EventSequenceVariable ?? context.PartCounting?.EventSequenceVariable
+                    : null,
+                partCountingVariableFromConfiguration = context.Verification is not null || context.PartCounting?.FromConfiguration == true,
                 gCodeReleaseId = context.GCodeReleaseId,
                 ncIdentityToken = context.NcIdentityToken,
                 gCodeSourceHash = context.GCodeHash,
@@ -503,6 +517,13 @@ internal sealed class ProductionPackageService(
         if (string.IsNullOrWhiteSpace(trimmed) || trimmed.Length > 200)
             throw new ProductionPackageBuildException("production_package_input_invalid", $"{field} is required.");
         return trimmed;
+    }
+
+    /// <summary>A value inside a printed context line: the wire format allows only A-Z, 0-9 and '-'.</summary>
+    private static string NcSafe(string value)
+    {
+        var safe = new string(value.ToUpperInvariant().Where(character => char.IsAsciiLetterOrDigit(character) || character == '-').ToArray());
+        return safe.Length == 0 ? "0" : safe;
     }
 
     private static string SafeFileName(string value)

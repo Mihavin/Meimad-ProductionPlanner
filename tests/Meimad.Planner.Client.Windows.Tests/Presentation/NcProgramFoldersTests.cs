@@ -48,6 +48,25 @@ public sealed class NcProgramFoldersTests : IDisposable
     }
 
     [Fact]
+    public async Task Stock_folders_follow_the_operation_and_the_next_operation_in_the_route()
+    {
+        var folders = new NcProgramFolders(
+            _ => Task.FromResult(new NcProgramLocation(workingFolder, "Bearing housing", 10, Catalog(), 20)), "post-haas");
+
+        Assert.Equal(Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "Stock"),
+            await folders.StockFolderAsync(nextOperation: false, create: false));
+        var next = await folders.StockFolderAsync(nextOperation: true, create: true);
+        Assert.Equal(Path.Combine(workingFolder, "Gcode", "Bearing housing", "20", "Stock"), next);
+        Assert.True(Directory.Exists(next));
+        Assert.Equal(20, await folders.NextOperationNumberAsync());
+
+        var last = new NcProgramFolders(
+            _ => Task.FromResult(new NcProgramLocation(workingFolder, "Bearing housing", 30, Catalog())), "post-haas");
+        Assert.Null(await last.NextOperationNumberAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => last.StockFolderAsync(nextOperation: true, create: false));
+    }
+
+    [Fact]
     public void Case_and_postprocessor_names_become_safe_folder_names()
     {
         Assert.Equal("Haas_ NGC_5-axis", NcProgramFolders.Segment("Haas: NGC/5-axis"));

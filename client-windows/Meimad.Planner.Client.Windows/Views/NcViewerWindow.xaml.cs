@@ -206,6 +206,19 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
     }
 
+    string? INcViewerHostUi.ChooseStlFile(string? initialDirectory)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Select the stock STL file",
+            Filter = "STL files|*.stl|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        }.Localized();
+        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory)) dialog.InitialDirectory = initialDirectory;
+        return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+    }
+
     string? INcViewerHostUi.ChooseToolTableFile(string? initialDirectory)
     {
         // Same file types as the Release G-code form's tool-table Browse.

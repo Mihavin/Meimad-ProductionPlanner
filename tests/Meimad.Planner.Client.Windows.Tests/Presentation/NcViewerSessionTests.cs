@@ -557,6 +557,60 @@ public sealed class NcViewerSessionTests : IDisposable
         Assert.Equal("Tool Room tool table v3", table.GetProperty("sourcePath").GetString());
     });
 
+    [Fact]
+    public void Stock_definition_is_saved_beside_the_program_and_the_machined_stock_goes_to_the_next_operation() => SingleThread.Run(async () =>
+    {
+        var programFolder = Path.Combine(folder, "Gcode", "Bearing housing", "10", "1", "Haas NGC", "1");
+        Directory.CreateDirectory(programFolder);
+        var programPath = Path.Combine(programFolder, "O1500.nc");
+        File.WriteAllText(programPath, MillProgram);
+        var rawStl = Path.Combine(folder, "raw.stl");
+        File.WriteAllBytes(rawStl, new byte[100]);
+        var ui = new FakeUi { StlPath = rawStl };
+        var folders = new NcProgramFolders(
+            _ => Task.FromResult(new NcProgramLocation(folder, "Bearing housing", 10, Catalog(), 20)), "post-haas");
+        using var session = Session(Request(readOnly: false) with { FilePath = programPath, ProgramFolders = folders }, ui);
+
+        var initial = await ui.InvokeAsync(session, "meimadStock");
+        Assert.Equal(JsonValueKind.Null, initial.GetProperty("stock").ValueKind);
+        Assert.True(initial.GetProperty("canSave").GetBoolean());
+        Assert.Equal(20, initial.GetProperty("nextOperationNumber").GetInt32());
+        Assert.Empty(initial.GetProperty("candidates").EnumerateArray());
+
+        // The definition travels with the program as a sidecar file.
+        var saved = await ui.InvokeAsync(session, "meimadStockSave",
+            new { type = "box", workOffset = "G54", box = new { minX = -10, maxX = 10, minY = -10, maxY = 10, minZ = -5, maxZ = 0 } });
+        Assert.Equal(Path.Combine(programFolder, "O1500.nc.stock.json"), saved.GetProperty("path").GetString());
+        var reloaded = await ui.InvokeAsync(session, "meimadStock");
+        Assert.Equal("box", reloaded.GetProperty("stock").GetProperty("type").GetString());
+        Assert.Equal(10, reloaded.GetProperty("stock").GetProperty("box").GetProperty("maxX").GetInt32());
+
+        // An STL is chosen through the host and read as bytes.
+        var chosen = await ui.InvokeAsync(session, "meimadChooseStl");
+        Assert.Equal(rawStl, chosen.GetProperty("path").GetString());
+        var read = await ui.InvokeAsync(session, "meimadReadStl", rawStl);
+        Assert.Equal(Convert.ToBase64String(new byte[100]), read.GetProperty("base64").GetString());
+        Assert.Equal("raw.stl", read.GetProperty("name").GetString());
+
+        // The machined stock goes to the next Operation's Stock folder in the Case Working Folder.
+        var exported = await ui.InvokeAsync(session, "meimadExportStl", Convert.ToBase64String(new byte[120]), new { toNextOperation = true });
+        var expected = Path.Combine(folder, "Gcode", "Bearing housing", "20", "Stock", "O1500-machined.stl");
+        Assert.Equal(expected, exported.GetProperty("path").GetString());
+        Assert.Equal(120, new FileInfo(expected).Length);
+
+        // The next Operation's viewer offers it as a stock candidate.
+        var nextUi = new FakeUi();
+        var nextFolders = new NcProgramFolders(
+            _ => Task.FromResult(new NcProgramLocation(folder, "Bearing housing", 20, Catalog())), "post-haas");
+        using var nextSession = Session(Request(readOnly: false) with { ProgramFolders = nextFolders }, nextUi);
+        var next = await nextUi.InvokeAsync(nextSession, "meimadStock");
+        var candidate = Assert.Single(next.GetProperty("candidates").EnumerateArray());
+        Assert.Equal("O1500-machined.stl", candidate.GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, next.GetProperty("nextOperationNumber").ValueKind);
+        // An unsaved program has no folder for the sidecar yet.
+        Assert.False(next.GetProperty("canSave").GetBoolean());
+    });
+
     public void Dispose()
     {
         if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
@@ -604,6 +658,8 @@ public sealed class NcViewerSessionTests : IDisposable
         }
         public string? ChooseFolder(string title, string? initialDirectory) => null;
         public string? ChooseToolTableFile(string? initialDirectory) => ToolTablePath;
+        public string? StlPath { get; init; }
+        public string? ChooseStlFile(string? initialDirectory) => StlPath;
         public bool ConfirmDiscardChanges(string documentName) => true;
         public void UpdateTitle(string documentName, bool dirty) => LastTitleDirty = dirty;
 

@@ -174,6 +174,14 @@ before `M30`/`M99`/any successful return, never on an alarm/reset/optional-stop/
 failure path. Every template contains exactly one pair; a template without it fails
 package creation with `production_package_cycle_marker_required`.
 
+Package Creator expands the pair into the wire-format `CST`/`CEN` events for every Machine
+whose enabled CNC connection reads DPRNT (source TCP, FILE or FTP) and for every
+verification-enabled Machine; the sequence variable comes from the Machine's verification
+configuration when one exists (enabled or not), else from the dialect default. A Machine
+without a DPRNT connection gets the markers removed. The manifest records
+`partCountingEnabled`, `partCountingDprntSource`, `partCountingEventSequenceVariable` and
+`partCountingVariableFromConfiguration`.
+
 ### Verification insertion point
 
 ```text
@@ -217,7 +225,7 @@ The runnable NC has all placeholders resolved. Verification hooks are present on
 
 At minimum:
 
-1. package-specific runnable NC;
+1. package-specific runnable NC (with the part-counting cycle events when the Machine's CNC connection reads DPRNT);
 2. finalized current Tool Table / Tool Offset Table artifact or explicitly selected supported source mode.
 
 No active Server Verification hook and no executable verification Offset Loader are generated.
@@ -228,7 +236,7 @@ Do not generate CNC verification code or an executable CNC Offset Loader. Do not
 
 ## 7. Connectivity is delivery capability, not verification policy
 
-Network connectivity controls available delivery methods. It does not decide whether Server Verification is enabled.
+Network connectivity controls available delivery methods. It does not decide whether Server Verification is enabled. The CNC connection's DPRNT source does decide part counting: a Machine whose connection is enabled with a DPRNT source other than `NONE` receives the cycle events whether or not its verification is enabled.
 
 - If the Machine has a supported direct network transfer path and is connected, direct send may be offered.
 - File open/export/copy remains available for the normal shop-floor workflow.

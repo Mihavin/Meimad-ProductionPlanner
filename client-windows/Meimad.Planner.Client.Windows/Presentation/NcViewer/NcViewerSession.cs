@@ -232,6 +232,17 @@ internal sealed class NcViewerSession : IDisposable
             case "meimadChooseToolTable":
                 var toolTableFile = ui.ChooseToolTableFile(request.ReleaseContext?.ToolTableFilePath is { } known ? Path.GetDirectoryName(known) : null);
                 return toolTableFile is null ? new { canceled = true, path = (string?)null } : new { canceled = false, path = (string?)toolTableFile };
+            case "meimadStock":
+                return await StockStateAsync();
+            case "meimadStockSave":
+                return await StockSaveAsync(args.Length > 0 ? args[0] : default);
+            case "meimadChooseStl":
+                var stlFile = ui.ChooseStlFile(await StockDialogFolderAsync());
+                return stlFile is null ? new { canceled = true, path = (string?)null } : new { canceled = false, path = (string?)stlFile };
+            case "meimadReadStl":
+                return StockReadStl(Text(args, 0));
+            case "meimadExportStl":
+                return await StockExportStlAsync(Text(args, 0), args.Length > 1 ? args[1] : default);
             default:
                 throw new InvalidOperationException($"The NC viewer host has no '{method}' method.");
         }
@@ -969,6 +980,137 @@ internal sealed class NcViewerSession : IDisposable
             return inferred;
         }
     }
+
+    // ----- stock and machined-stock hand-over (meimad-simulation.js) ---------------------------
+
+    private const long MaximumStlBytes = 200L * 1024 * 1024;
+
+    /// <summary>The stock definition travels with the program: <c>{program}.stock.json</c> in the program's folder.</summary>
+    private async Task<string?> StockSidecarPathAsync()
+    {
+        var folder = filePath is not null ? Path.GetDirectoryName(filePath) : readOnly ? await SourceReleaseFolderAsync() : null;
+        return folder is null ? null : Path.Combine(folder, documentName + ".stock.json");
+    }
+
+    /// <summary>Where STL dialogs start: this Operation's Stock folder when it exists, else the program's folder.</summary>
+    private async Task<string?> StockDialogFolderAsync()
+    {
+        if (request.ProgramFolders is not null)
+        {
+            try
+            {
+                var folder = await request.ProgramFolders.StockFolderAsync(nextOperation: false, create: false);
+                if (Directory.Exists(folder)) return folder;
+            }
+            catch (Exception exception) when (IsStockFolderFailure(exception))
+            {
+                // Fall through to the program's own folder.
+            }
+        }
+        return filePath is null ? DefaultProgramFolder() : Path.GetDirectoryName(filePath);
+    }
+
+    private async Task<object> StockStateAsync()
+    {
+        var sidecar = await StockSidecarPathAsync();
+        JsonElement? stock = null;
+        if (sidecar is not null && File.Exists(sidecar))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(await File.ReadAllTextAsync(sidecar));
+                if (document.RootElement.ValueKind == JsonValueKind.Object) stock = document.RootElement.Clone();
+            }
+            catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+            {
+                SendStatus($"The stock definition could not be read: {sidecar}: {exception.Message}", "warning");
+            }
+        }
+        var candidates = new List<object>();
+        int? nextOperation = null;
+        if (request.ProgramFolders is not null)
+        {
+            try
+            {
+                var stockFolder = await request.ProgramFolders.StockFolderAsync(nextOperation: false, create: false);
+                if (Directory.Exists(stockFolder))
+                {
+                    candidates.AddRange(Directory.EnumerateFiles(stockFolder, "*.stl")
+                        .Order(StringComparer.OrdinalIgnoreCase)
+                        .Select(path => new { name = Path.GetFileName(path), path }));
+                }
+                nextOperation = await request.ProgramFolders.NextOperationNumberAsync();
+            }
+            catch (Exception exception) when (IsStockFolderFailure(exception))
+            {
+                // No Working Folder or no Server: the stock stays in this window.
+            }
+        }
+        return new { stock, candidates, canSave = sidecar is not null, savePath = sidecar, nextOperationNumber = nextOperation };
+    }
+
+    private async Task<object> StockSaveAsync(JsonElement stock)
+    {
+        if (stock.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("Invalid stock definition.");
+        var json = stock.GetRawText();
+        if (json.Length > 65536) throw new InvalidOperationException("The stock definition is too large to save.");
+        var sidecar = await StockSidecarPathAsync()
+            ?? throw new InvalidOperationException("The program has no folder yet: save it in the Case Working Folder, then save the stock with it.");
+        Directory.CreateDirectory(Path.GetDirectoryName(sidecar)!);
+        await File.WriteAllTextAsync(sidecar, json);
+        return new { path = sidecar };
+    }
+
+    private static object StockReadStl(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) throw new InvalidOperationException($"STL file not found: {path}");
+        if (!string.Equals(Path.GetExtension(path), ".stl", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Choose an .stl file.");
+        if (new FileInfo(path).Length > MaximumStlBytes) throw new InvalidOperationException("The STL file is larger than 200 MB.");
+        var bytes = File.ReadAllBytes(path);
+        return new { name = Path.GetFileName(path), base64 = Convert.ToBase64String(bytes), size = bytes.Length };
+    }
+
+    /// <summary>
+    /// Writes the machined stock: into the next Operation's Stock folder in the Case Working
+    /// Folder (<c>{program}-machined.stl</c>, replacing an older export only after asking), or to a
+    /// file the user chooses.
+    /// </summary>
+    private async Task<object> StockExportStlAsync(string base64, JsonElement options)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(base64);
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException("Invalid STL payload.");
+        }
+        if (bytes.Length < 84) throw new InvalidOperationException("The machined stock is empty; run the material removal first.");
+        var toNextOperation = options.ValueKind == JsonValueKind.Object
+            && options.TryGetProperty("toNextOperation", out var flag) && flag.ValueKind == JsonValueKind.True;
+        var name = Path.GetFileNameWithoutExtension(documentName) + "-machined.stl";
+        string? target;
+        if (toNextOperation)
+        {
+            if (request.ProgramFolders is null)
+                throw new InvalidOperationException("This viewer was not opened from a Case Operation; use \"Save STL as\" instead.");
+            var folder = await request.ProgramFolders.StockFolderAsync(nextOperation: true, create: true);
+            target = Path.Combine(folder, name);
+            if (File.Exists(target) && !ui.ConfirmReplaceFile(target)) return new { canceled = true, path = (string?)null };
+        }
+        else
+        {
+            target = ui.ChooseSaveFile(name, await StockDialogFolderAsync(), "Save the machined stock (STL)");
+            if (target is null) return new { canceled = true, path = (string?)null };
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        await File.WriteAllBytesAsync(target, bytes);
+        return new { canceled = false, path = (string?)target, size = bytes.Length };
+    }
+
+    private static bool IsStockFolderFailure(Exception exception) =>
+        IsFolderFailure(exception) || exception is HttpRequestException or TaskCanceledException or PlannerApiException or NotSupportedException;
 
     // ----- engine -------------------------------------------------------------------------------
 

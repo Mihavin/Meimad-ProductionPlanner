@@ -392,6 +392,122 @@ public sealed class ProductionPackageApiTests
         }
     }
 
+    [Fact]
+    public async Task Connected_machine_counts_parts_while_verification_is_disabled_and_the_loader_prints_its_context()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.PartCounting.Tests", Guid.NewGuid().ToString("N"));
+        var releaseRoot = Path.Combine(root, "releases");
+        Directory.CreateDirectory(root);
+        await using var application = ServerApplication.Build(
+            ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
+             $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={Path.Combine(root, "packages")}"],
+            webHost => webHost.UseTestServer());
+        try
+        {
+            await application.StartAsync();
+            await SeedAsync(application.Services, releaseRoot, false);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            // The Machine's CNC connection reads DPRNT from a file; verification stays off.
+            await ExecuteAsync(database, """
+                INSERT INTO machine_connections (
+                    id, machine_id, adapter_type, enabled, connection_status, polling_interval_ms,
+                    connection_timeout_ms, maximum_reconnect_backoff_ms, allow_read, allow_write,
+                    configuration_json, raw_telemetry_retention_days, version, created_at, updated_at)
+                VALUES ('cnc-package', 'machine-package', 'HAAS_NGC', 1, 'OFFLINE', 1000, 3000, 30000, 1, 0,
+                    '{"dprnt":{"source":"FILE","filePath":"\\\\print\\print.txt","clearPolicy":"NEVER"}}', 14, 1,
+                    '2026-09-01T08:00:00Z', '2026-09-01T08:00:00Z');
+                """);
+            using var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "tool-room-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "tool-room-user");
+
+            // No verification configuration at all: the dialect's documented default variable counts.
+            var (ncText, manifest) = await CreatePackageAsync(client);
+            Assert.DoesNotContain("MEIMAD VERIFY V1", ncText, StringComparison.Ordinal);
+            Assert.Contains("DPRNT[MEIMAD/V/1/EVENT/CST/ID/NC-483921-S-#3001[80]/SEQ/#30[60]/MACROVERSION/10/PROGRAM/483921]", ncText, StringComparison.Ordinal);
+            Assert.Contains("EVENT/CEN", ncText, StringComparison.Ordinal);
+            Assert.Contains("#10504=#30", ncText, StringComparison.Ordinal);
+            Assert.True(manifest.GetProperty("partCountingEnabled").GetBoolean());
+            Assert.Equal("FILE", manifest.GetProperty("partCountingDprntSource").GetString());
+            Assert.Equal(10504, manifest.GetProperty("partCountingEventSequenceVariable").GetInt32());
+            Assert.False(manifest.GetProperty("partCountingVariableFromConfiguration").GetBoolean());
+            Assert.False(manifest.GetProperty("serverVerificationEnabled").GetBoolean());
+
+            // A disabled verification configuration still supplies the configured sequence variable.
+            await ExecuteAsync(database, """
+                INSERT INTO cnc_verification_settings(
+                    machine_id,dprint_transport,dprint_port,challenge_program_number,verify_program_number,
+                    custom_gcode_alias,nonce_variable,response_variable,verification_state_variable,
+                    release_token_variable,expected_macro_version,response_code_digits,verification_timeout_seconds,
+                    enabled,version,created_at,updated_at,finalize_program_number,event_sequence_variable)
+                VALUES('machine-package','HAAS_DPRNT_TCP',8080,9001,9002,NULL,10501,500,10502,10503,
+                       10,6,120,0,1,'2026-09-01T08:00:00Z','2026-09-01T08:00:00Z',9003,10510);
+                """);
+            var (configured, configuredManifest) = await CreatePackageAsync(client);
+            Assert.Contains("#10510=#30", configured, StringComparison.Ordinal);
+            Assert.DoesNotContain("MEIMAD VERIFY V1", configured, StringComparison.Ordinal);
+            Assert.Equal(10510, configuredManifest.GetProperty("partCountingEventSequenceVariable").GetInt32());
+            Assert.True(configuredManifest.GetProperty("partCountingVariableFromConfiguration").GetBoolean());
+
+            // A disabled connection cannot carry events: the markers are removed.
+            await ExecuteAsync(database, "UPDATE machine_connections SET enabled=0 WHERE id='cnc-package';");
+            var (silent, silentManifest) = await CreatePackageAsync(client);
+            Assert.DoesNotContain("EVENT/CST", silent, StringComparison.Ordinal);
+            Assert.False(silentManifest.GetProperty("partCountingEnabled").GetBoolean());
+
+            // With verification enabled the Offset Loader prints its own context line before the challenge call.
+            await ExecuteAsync(database, """
+                UPDATE machine_connections SET enabled=1 WHERE id='cnc-package';
+                UPDATE cnc_verification_settings SET enabled=1, event_sequence_variable=10504 WHERE machine_id='machine-package';
+                """);
+            using var verified = await client.PostAsync(
+                "/api/v1/batch-operations/operation-package/production-package",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.Created, verified.StatusCode);
+            using var verifiedJson = JsonDocument.Parse(await verified.Content.ReadAsStringAsync());
+            var loader = verifiedJson.RootElement.GetProperty("artifacts").EnumerateArray()
+                .Single(value => value.GetProperty("artifactType").GetString() == "OFFSET_LOADER");
+            var loaderText = Encoding.ASCII.GetString(await client.GetByteArrayAsync(
+                $"/api/v1/batch-operations/operation-package/production-package/artifacts/{loader.GetProperty("artifactId").GetString()}"));
+            var contextIndex = loaderText.IndexOf("(MEIMAD EVENT CONTEXT V2)\r\nDPRNT[MEIMAD/V/2/CONTEXT/PACKAGE/", StringComparison.Ordinal);
+            Assert.True(contextIndex > 0, loaderText);
+            Assert.True(contextIndex < loaderText.IndexOf("G65 P9001 A", StringComparison.Ordinal), loaderText);
+            Assert.Contains("/NCRELEASE/483921/OFFSETRELEASE/", loaderText, StringComparison.Ordinal);
+            Assert.DoesNotContain("POPEN", loaderText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await application.StopAsync();
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static async Task<(string NcText, JsonElement Manifest)> CreatePackageAsync(HttpClient client)
+    {
+        using var create = await client.PostAsync(
+            "/api/v1/batch-operations/operation-package/production-package",
+            new StringContent("{}", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        using var document = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
+        var artifacts = document.RootElement.GetProperty("artifacts").EnumerateArray().ToArray();
+        var nc = artifacts.Single(value => value.GetProperty("artifactType").GetString() == "RUNNABLE_NC");
+        var ncText = Encoding.ASCII.GetString(await client.GetByteArrayAsync(
+            $"/api/v1/batch-operations/operation-package/production-package/artifacts/{nc.GetProperty("artifactId").GetString()}"));
+        var manifestArtifact = artifacts.Single(value => value.GetProperty("artifactType").GetString() == "MANIFEST");
+        var manifest = JsonDocument.Parse(await client.GetByteArrayAsync(
+            $"/api/v1/batch-operations/operation-package/production-package/artifacts/{manifestArtifact.GetProperty("artifactId").GetString()}")).RootElement.Clone();
+        return (ncText, manifest);
+    }
+
+    private static async Task ExecuteAsync(SqliteDatabase database, string sql)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task<IReadOnlyList<string>> QueueIdsAsync(HttpClient client, string stage)
     {
         using var response = await client.GetAsync($"/api/v1/preparation-queues/{stage}");

@@ -23,6 +23,18 @@ internal sealed record ProductionPackageVerificationConfiguration(
     int ExpectedMacroVersion,
     int EventSequenceVariable);
 
+/// <summary>
+/// Part counting for a Machine whose enabled CNC connection reads DPRNT output: the cycle
+/// markers expand to CST/CEN events printed through that source. The sequence variable and
+/// macro version come from the Machine's verification configuration when one exists (enabled or
+/// not), else from the dialect's documented defaults.
+/// </summary>
+internal sealed record ProductionPackagePartCounting(
+    string DprntSource,
+    int EventSequenceVariable,
+    int MacroVersion,
+    bool FromConfiguration);
+
 internal sealed record ProductionPackageBuildContext(
     string BatchOperationId,
     string? ProductionRunId,
@@ -53,7 +65,8 @@ internal sealed record ProductionPackageBuildContext(
     string ProcessType = "mill",
     string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
     IReadOnlyList<ToolPreparationReleasedTool>? ReleasedTools = null,
-    ToolPreparation? ToolPreparation = null);
+    ToolPreparation? ToolPreparation = null,
+    ProductionPackagePartCounting? PartCounting = null);
 
 internal sealed record ProductionPackageArtifact(
     string ArtifactId,

@@ -21,11 +21,13 @@ internal sealed record NcProgramFolder(string Path, NcProgramRevision Revision);
 internal sealed record NcProgramPlacement(string Path, bool InOperationFolder);
 
 /// <summary>What a revision folder is built from, read fresh from the Server for every save.</summary>
+/// <param name="NextOperationNumber">The Operation that follows this one in the route, for the machined-stock hand-over; null for the last Operation.</param>
 internal sealed record NcProgramLocation(
     string WorkingFolderPath,
     string CaseName,
     int OperationNumber,
-    PlannerGCodeCatalog Catalog);
+    PlannerGCodeCatalog Catalog,
+    int? NextOperationNumber = null);
 
 /// <summary>
 /// Where the NC viewer saves a modified program of a Case Operation:
@@ -38,6 +40,7 @@ internal sealed record NcProgramLocation(
 internal sealed class NcProgramFolders
 {
     internal const string RootFolderName = "Gcode";
+    internal const string StockFolderName = "Stock";
     internal const string NewProcessRevision = "NEW_PROCESS_REVISION";
     internal const string LocalPostRevision = "LOCAL_POST_REVISION";
 
@@ -86,11 +89,14 @@ internal sealed class NcProgramFolders
                 var operation = operations.FirstOrDefault(value => value.CaseOperationId == caseOperationId)
                     ?? throw new InvalidOperationException("The Operation no longer exists on the Server.");
                 var catalog = await api.GetOperationGCodeAsync(caseId, caseOperationId, token);
+                var route = operations.OrderBy(value => value.RoutePosition).ThenBy(value => value.OperationNumber).ToList();
+                var position = route.FindIndex(value => value.CaseOperationId == caseOperationId);
                 return new NcProgramLocation(
                     resource.Value.WorkingFolderPath,
                     CaseFolderName(resource.Value),
                     operation.OperationNumber,
-                    catalog);
+                    catalog,
+                    position >= 0 && position + 1 < route.Count ? route[position + 1].OperationNumber : null);
             },
             defaultPostprocessorId,
             defaultChangeScope,
@@ -121,6 +127,41 @@ internal sealed class NcProgramFolders
             ?? (location.Catalog.ActiveProcessRevision is null ? NewProcessRevision : LocalPostRevision);
         return Create(location, NextRevision(location.Catalog, postprocessor, scope));
     }
+
+    /// <summary>
+    /// The stock files of this Operation (<c>...\{Operation number}\Stock</c>), or of the next
+    /// Operation in the route when <paramref name="nextOperation"/> is set: where a machined stock
+    /// is exported to and where the following Operation looks for it.
+    /// </summary>
+    internal async Task<string> StockFolderAsync(bool nextOperation, bool create, CancellationToken cancellationToken = default)
+    {
+        var location = await load(cancellationToken);
+        if (nextOperation)
+        {
+            if (location.NextOperationNumber is not { } next)
+            {
+                throw new InvalidOperationException("This Operation is the last one in the route; there is no next Operation to export the machined stock to.");
+            }
+            location = location with { OperationNumber = next };
+        }
+        var path = Path.Combine(OperationFolder(location), StockFolderName);
+        if (create)
+        {
+            try
+            {
+                Directory.CreateDirectory(path);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                throw new InvalidOperationException($"The Stock folder could not be created: {path}. {exception.Message}", exception);
+            }
+        }
+        return path;
+    }
+
+    /// <summary>The number of the Operation that follows this one in the route, or null for the last.</summary>
+    internal async Task<int?> NextOperationNumberAsync(CancellationToken cancellationToken = default) =>
+        (await load(cancellationToken)).NextOperationNumber;
 
     /// <summary>The folder of an existing release's numbers.</summary>
     internal async Task<NcProgramFolder> ReleaseFolderAsync(

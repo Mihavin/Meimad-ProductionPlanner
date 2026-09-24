@@ -4,14 +4,22 @@ using Meimad.Planner.Server.Application.GCode;
 
 namespace Meimad.Planner.Server.Application.ProductionPackages;
 
+/// <param name="PartCountingEnabled">
+/// Whether the CYCLE_START/CYCLE_END markers expand to the wire-format part-counting events.
+/// Null keeps the historical coupling to <paramref name="VerificationEnabled"/>; a Machine with
+/// an enabled DPRNT connection counts parts whether or not its verification is enabled.
+/// </param>
 internal sealed record NcPackageTransformOptions(
     bool VerificationEnabled,
     int VerifyProgramNumber,
     int MacroVersion,
     int EventSequenceVariable,
-    string NcDialect = NcDialects.HaasNgc)
+    string NcDialect = NcDialects.HaasNgc,
+    bool? PartCountingEnabled = null)
 {
     internal NcDialectProfile Profile => NcDialects.Profile(NcDialect);
+
+    internal bool CountsParts => PartCountingEnabled ?? VerificationEnabled;
 }
 
 internal sealed record NcPackageResolvedValues(
@@ -70,15 +78,16 @@ internal static class NcPackageTemplateTransformer
             {
                 // Real part counting (SqliteProductionRunCycleAccounting) only understands the
                 // wire-format V=1 CST/CEN events emitted here — identical mechanism to the legacy
-                // Transform() path below, gated the same way on Server Verification being enabled.
-                if (options.VerificationEnabled)
+                // Transform() path below. They are emitted for every Machine whose DPRNT
+                // connection can carry them, with or without Server Verification.
+                if (options.CountsParts)
                     AppendCycle(output, "CST", "S", ncIdentityToken, options);
                 continue;
             }
             if (line.Contains($"[[MEIMAD:{NcPackagePlaceholderKeys.CycleEnd}]]",
                     StringComparison.Ordinal))
             {
-                if (options.VerificationEnabled)
+                if (options.CountsParts)
                     AppendCycle(output, "CEN", "E", ncIdentityToken, options);
                 continue;
             }
@@ -123,14 +132,14 @@ internal static class NcPackageTemplateTransformer
 
             if (NcVerificationHookParser.PackageCycleStartPlaceholder().IsMatch(line))
             {
-                if (options.VerificationEnabled)
+                if (options.CountsParts)
                     AppendCycle(output, "CST", "S", ncIdentityToken, options);
                 continue;
             }
 
             if (NcVerificationHookParser.PackageCycleEndPlaceholder().IsMatch(line))
             {
-                if (options.VerificationEnabled)
+                if (options.CountsParts)
                     AppendCycle(output, "CEN", "E", ncIdentityToken, options);
                 continue;
             }

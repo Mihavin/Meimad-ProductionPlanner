@@ -28,6 +28,38 @@ public sealed class NcPackageTemplateTransformerTests
     ];
 
     [Fact]
+    public void Part_counting_follows_the_dprnt_connection_not_the_verification_switch()
+    {
+        // A connected Machine counts parts while its verification is disabled: no hook, cycle events.
+        var counted = Encoding.ASCII.GetString(NcPackageTemplateTransformer.TransformCanonical(
+            CountingTemplate, new(false, 9002, 10, 10504, "HAAS_NGC", PartCountingEnabled: true),
+            Values with { OffsetLoaderReleaseId = null }, 654321, out _));
+        Assert.DoesNotContain("MEIMAD VERIFY V1", counted, StringComparison.Ordinal);
+        Assert.Contains("G103 P1\r\n#30=ROUND[#10504]", counted, StringComparison.Ordinal);
+        Assert.Contains("DPRNT[MEIMAD/V/1/EVENT/CST/ID/NC-654321-S-#3001[80]/SEQ/#30[60]/MACROVERSION/10/PROGRAM/654321]", counted, StringComparison.Ordinal);
+        Assert.Contains("EVENT/CEN", counted, StringComparison.Ordinal);
+        Assert.Contains("(OFFSET LOADER: NOT_APPLICABLE)", counted, StringComparison.Ordinal);
+
+        // Without a DPRNT connection the markers are removed as before.
+        var silent = Encoding.ASCII.GetString(NcPackageTemplateTransformer.TransformCanonical(
+            CountingTemplate, new(false, 9002, 10, 10504, "HAAS_NGC", PartCountingEnabled: false),
+            Values with { OffsetLoaderReleaseId = null }, 654321, out _));
+        Assert.DoesNotContain("EVENT/CST", silent, StringComparison.Ordinal);
+        Assert.DoesNotContain("[[MEIMAD:", silent, StringComparison.Ordinal);
+
+        // Null keeps the historical coupling: verification enabled implies counting.
+        var coupled = Encoding.ASCII.GetString(NcPackageTemplateTransformer.TransformCanonical(
+            CountingTemplate, new(true, 9002, 10, 10504, "HAAS_NGC"), Values, 654321, out _));
+        Assert.Contains("EVENT/CST", coupled, StringComparison.Ordinal);
+        Assert.Contains("MEIMAD VERIFY V1", coupled, StringComparison.Ordinal);
+
+        var legacy = Encoding.ASCII.GetString(NcPackageTemplateTransformer.Transform(
+            LegacyTemplate, new(false, 9002, 10, 10504, PartCountingEnabled: true), out _));
+        Assert.Contains("EVENT/CST", legacy, StringComparison.Ordinal);
+        Assert.DoesNotContain("MEIMAD VERIFY V1", legacy, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Verification_enabled_resolves_all_markers_to_machine_configuration()
     {
         var bytes = NcPackageTemplateTransformer.Transform(

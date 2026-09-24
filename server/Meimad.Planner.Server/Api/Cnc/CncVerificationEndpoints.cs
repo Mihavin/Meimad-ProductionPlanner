@@ -1,5 +1,7 @@
 using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.GCode;
+using Meimad.Planner.Server.Application.Machines;
 
 namespace Meimad.Planner.Server.Api.Cnc;
 
@@ -11,6 +13,7 @@ internal static class CncVerificationEndpoints
         endpoints.MapPost("/api/v1/production-runs/{runId}/offset-loader-releases", CreateReleaseAsync);
         endpoints.MapGet("/api/v1/machines/{machineId}/verification-configuration", GetSettingsAsync);
         endpoints.MapPut("/api/v1/machines/{machineId}/verification-configuration", UpdateSettingsAsync);
+        endpoints.MapGet("/api/v1/machines/{machineId}/verification-macros", GetMacrosAsync);
         endpoints.MapPost(
             "/api/v1/production-runs/{runId}/verification/invalidate",
             InvalidateVerificationAsync);
@@ -52,6 +55,44 @@ internal static class CncVerificationEndpoints
             if (value is null) return PlanningHttpSupport.Error(404, "verification_settings_not_found",
                 "CNC verification settings are not configured for this Machine.", context);
             return Results.Ok(value);
+        }
+        catch (Exception exception) when (Map(exception, context, out var result)) { return result!; }
+    }
+
+    /// <summary>
+    /// The Machine's protected verification subprograms, rendered in its NC dialect from its
+    /// verification configuration (or the dialect defaults when none exists). <c>?format=json</c>
+    /// returns the files as text; otherwise a zip with the files and a README. Read-only.
+    /// </summary>
+    private static async Task<IResult> GetMacrosAsync(
+        string machineId, HttpContext context, CncVerificationFoundationService service,
+        MachineService machines, CancellationToken token)
+    {
+        try
+        {
+            var machine = await machines.GetByIdAsync(machineId, token);
+            if (machine is null) return PlanningHttpSupport.Error(404, "resource_not_found",
+                "The Machine does not exist.", context);
+            var package = await service.GenerateMacrosAsync(machineId, token)
+                ?? throw new InvalidOperationException("The Machine does not exist.");
+            if (string.Equals(context.Request.Query["format"], "json", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Ok(new
+                {
+                    machineId,
+                    machineNumber = machine.Number,
+                    machineName = machine.Name,
+                    ncDialect = package.Dialect,
+                    machineTag = package.MachineTag,
+                    fromConfiguration = package.Settings.FromConfiguration,
+                    macroVersion = package.Settings.MacroVersion,
+                    files = package.Files.Select(file => new { fileName = file.FileName, text = file.Text }),
+                    readme = package.Readme
+                });
+            }
+            var safeNumber = new string(machine.Number.Where(char.IsAsciiLetterOrDigit).ToArray());
+            return Results.File(NcVerificationMacroZip.Build(package), "application/zip",
+                $"meimad-verification-macros-{(safeNumber.Length == 0 ? machineId : safeNumber)}-{package.Dialect}-v{package.Settings.MacroVersion}.zip");
         }
         catch (Exception exception) when (Map(exception, context, out var result)) { return result!; }
     }

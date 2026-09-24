@@ -1,6 +1,9 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json;
+using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Application.ProductionPackages;
+using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Domain.Readiness;
 using Microsoft.Data.Sqlite;
 
@@ -37,7 +40,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
                    connection.enabled,connection.allow_write,connection.connection_status,
                    current.production_package_id,
                    COALESCE(package_capability.allow_manual_dummy_tool_offsets,0),
-                   machine.nc_dialect,machine.machine_type,machine.tool_diameter_offset_kind
+                   machine.nc_dialect,machine.machine_type,machine.tool_diameter_offset_kind,
+                   connection.configuration_json
             FROM batch_operations operation
             JOIN case_operations source_operation ON source_operation.id=operation.source_case_operation_id
             JOIN cases case_record ON case_record.id=source_operation.case_id
@@ -81,6 +85,20 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
         var ncDialect = reader.GetString(19);
         var processType = reader.GetString(20);
         var toolDiameterOffsetKind = reader.GetString(21);
+        // Part counting follows the DPRNT connection, not the verification switch: a configured
+        // sequence variable is used even while verification is disabled, else the dialect default.
+        ProductionPackagePartCounting? partCounting = null;
+        if (executionMode == "CNC_GCODE" && !reader.IsDBNull(14) && reader.GetBoolean(14)
+            && DprntSource(Nullable(reader, 22)) is { } dprntSource && dprntSource != CncDprntSources.None)
+        {
+            var dialectProfile = NcDialects.Profile(ncDialect);
+            var configured = !reader.IsDBNull(13);
+            partCounting = new(
+                dprntSource,
+                configured ? reader.GetInt32(13) : dialectProfile.DefaultEventSequenceVariable,
+                !reader.IsDBNull(12) ? reader.GetInt32(12) : NcVerificationMacroGenerator.DefaultSettings(dialectProfile).MacroVersion,
+                configured);
+        }
         await reader.DisposeAsync();
 
         var runNumber = runId is null ? null : (int?)await EnsureRunNumberAsync(
@@ -113,7 +131,36 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash, ncIdentityToken,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
             verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness,
-            ncDialect, processType, toolDiameterOffsetKind, releasedTools, preparation);
+            ncDialect, processType, toolDiameterOffsetKind, releasedTools, preparation, partCounting);
+    }
+
+    /// <summary>The connection's DPRNT source (<c>dprnt.source</c> in its configuration JSON); TCP when the JSON predates the field.</summary>
+    private static string? DprntSource(string? configurationJson)
+    {
+        if (configurationJson is null) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(configurationJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return CncDprntSources.Tcp;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!property.Name.Equals("dprnt", StringComparison.OrdinalIgnoreCase)
+                    || property.Value.ValueKind != JsonValueKind.Object) continue;
+                foreach (var field in property.Value.EnumerateObject())
+                {
+                    if (field.Name.Equals("source", StringComparison.OrdinalIgnoreCase) && field.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var source = field.Value.GetString()?.Trim().ToUpperInvariant();
+                        return string.IsNullOrEmpty(source) ? CncDprntSources.Tcp : source;
+                    }
+                }
+            }
+            return CncDprntSources.Tcp;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     public async Task<int> AllocatePackageNumberAsync(CancellationToken cancellationToken)

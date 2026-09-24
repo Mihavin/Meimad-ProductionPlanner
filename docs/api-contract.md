@@ -1476,6 +1476,7 @@ The FANUC adapter is read-only and uses the FOCAS 2 Ethernet library installed o
 | `POST` | `/api/v1/production-runs/{runId}/offset-loader-releases` | Active editor creates a new release and atomically makes it current for that Run/Machine. Body: `machineId`, approved `ncReleaseId`, exact `toolTableReleaseId`, optional 64-hex `artifactHash`, and optional JSON-object `metadataJson`. |
 | `GET` | `/api/v1/machines/{machineId}/verification-configuration` | Windows planning read. Returns controller mappings and lifecycle configuration. Unconfigured returns `404 verification_settings_not_found`. No Machine credential field exists. |
 | `PUT` | `/api/v1/machines/{machineId}/verification-configuration` | Edit-Mode optimistic create/update. Accepts transport, port, protected program numbers, temporary-variable mappings, evidence-only event-sequence mapping, expected macro version, response width, timeout, enabled, and version. It accepts no credential. |
+| `GET` | `/api/v1/machines/{machineId}/verification-macros` | Read-only. The Machine's protected challenge/verify/finalizer subprograms rendered in its NC dialect from its verification configuration (enabled or not) or, without one, from the dialect defaults (`fromConfiguration: false`, README marked `DIALECT DEFAULTS`). Default response: `application/zip` (`O09001.nc`/`O09002.nc`/`O09003.nc` for Haas NGC, `O9001.NC`.. for FANUC and Mazak, `MEIMAD.SUB` for Okuma OSP, plus `README.txt`); `?format=json` returns `machineTag`, `ncDialect`, `macroVersion`, `files[{fileName,text}]` and `readme`. Unknown Machine returns `404 resource_not_found`. |
 
 Offset Loader creation validates that the Machine is assigned to the Production Run, that the supplied approved NC/tool-table pair belongs to the selected Run program, and that the NC release has schema-v51 hook identity. The Server generates the decimal release token. Releases are immutable; a later release changes only the separate current pointer. Old tokens therefore fail current DPRINT resolution even when their NC program remains approved. No date comparison determines validity.
 
@@ -2218,7 +2219,15 @@ downgrades configured verification.
 Manifest schema v2 records `placeholderProtocolVersion`, authoritative
 `partName` and `operationName`, exact Run/Operation/Machine/NC/Tool Table/Offset
 Loader identities, input hashes, creator and Server timestamp, selected offset
-mode, supersession, and the generation-relevant Machine capability snapshot.
+mode, supersession, and the generation-relevant Machine capability snapshot. It
+also records part counting: `partCountingEnabled` (the cycle markers expanded to
+`CST`/`CEN` events because the Machine's enabled CNC connection reads DPRNT or
+its verification is enabled), `partCountingDprntSource`,
+`partCountingEventSequenceVariable` and `partCountingVariableFromConfiguration`
+(false when the dialect default variable was used because no verification
+configuration exists). The generated Offset Loader prints its own
+`MEIMAD/V/2/CONTEXT/...` line with the Offset Loader release token before the
+challenge call.
 Each non-manifest artifact is listed with its logical path, source release, size,
 and SHA-256; the manifest itself has its separately persisted SHA-256. Canonical
 package creation fails before activation if any required token is unresolved.

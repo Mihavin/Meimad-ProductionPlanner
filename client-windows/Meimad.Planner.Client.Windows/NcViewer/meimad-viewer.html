@@ -119,6 +119,9 @@
           <label class="check meimad-hidden" id="showPolyarcLabel" title="Polyarc envelopes are not used in Meimad Planner"><input id="showPolyarc" type="checkbox" checked disabled> Polyarc</label>
           <label class="check"><input id="showExtruder" type="checkbox"> Non-cutting</label>
           <label class="check"><input id="showTool" type="checkbox" checked> Tool</label>
+          <label class="check meimad-sim" title="Cut the stock with the tool during playback; shows the finished part while playback is idle"><input id="meimadMaterialToggle" type="checkbox"> Material removal</label>
+          <label class="meimad-sim" title="Cell size of the stock grid in mm; smaller is finer and slower">Resolution<input id="meimadResolution" type="number" min="0.02" max="10" step="0.05" placeholder="auto"></label>
+          <label class="check meimad-sim" title="Run starts at the NC row selected in the editor"><input id="meimadFromRow" type="checkbox" checked> From selected row</label>
           <div class="view-controls" role="group" aria-label="View direction">
             <button type="button" data-view="lathe" data-for="lathe" title="X-Z view (1)">XZ</button>
             <button type="button" data-view="iso" title="Isometric view (1)">Iso</button>
@@ -152,6 +155,7 @@
           <div id="viewerStatus" class="viewer-status" hidden></div>
           <div id="tooltip" class="tooltip" hidden></div>
           <div id="playbackHud" class="playback-hud" aria-live="polite">Ready | 0:00 / 0:00</div>
+          <div id="meimadProgress" class="meimad-progress" hidden role="progressbar" aria-live="polite"><div id="meimadProgressBar" class="meimad-progress-bar"></div><span id="meimadProgressText" class="meimad-progress-text"></span></div>
         </section>
         <aside class="preview-sidebar">
           <section class="card">
@@ -194,6 +198,59 @@
               </table>
             </div>
             <div id="toolTableSource" class="xml-source"></div>
+          </section>
+          <section id="meimadStockCard" class="card meimad-stock">
+            <h2>Stock</h2>
+            <p class="meimad-note">The raw material the program starts from, relative to the work offset. Saved next to the NC program in the Case Working Folder.</p>
+            <label>Shape
+              <select id="meimadStockType">
+                <option value="none">None</option>
+                <option value="box">Box</option>
+                <option value="cylinder">Cylinder</option>
+                <option value="stl">STL file</option>
+              </select>
+            </label>
+            <label>Relative to <select id="meimadStockOffset"></select></label>
+            <div id="meimadStockBox" class="meimad-stock-grid" hidden>
+              <label>X min<input type="number" step="any" data-stock="boxMinX"></label>
+              <label>X max<input type="number" step="any" data-stock="boxMaxX"></label>
+              <label>Y min<input type="number" step="any" data-stock="boxMinY"></label>
+              <label>Y max<input type="number" step="any" data-stock="boxMaxY"></label>
+              <label>Z min<input type="number" step="any" data-stock="boxMinZ"></label>
+              <label>Z max<input type="number" step="any" data-stock="boxMaxZ"></label>
+            </div>
+            <div id="meimadStockCylinder" class="meimad-stock-grid" hidden>
+              <label data-for="mill lathe">Diameter<input type="number" step="any" data-stock="cylDiameter"></label>
+              <label data-for="lathe">Bore diameter<input type="number" step="any" data-stock="cylInner"></label>
+              <label data-for="mill">Center X<input type="number" step="any" data-stock="cylCenterX"></label>
+              <label data-for="mill">Center Y<input type="number" step="any" data-stock="cylCenterY"></label>
+              <label data-for="mill">Z min<input type="number" step="any" data-stock="cylMinZ"></label>
+              <label data-for="mill">Z max<input type="number" step="any" data-stock="cylMaxZ"></label>
+              <label data-for="lathe">Length<input type="number" step="any" data-stock="cylLength"></label>
+              <label data-for="lathe">Front face Z<input type="number" step="any" data-stock="cylFrontZ"></label>
+            </div>
+            <div id="meimadStockStl" class="meimad-stock-stl" hidden>
+              <div class="secret-input-row">
+                <input id="meimadStockStlPath" type="text" spellcheck="false" placeholder="STL file of the raw or previously machined stock">
+                <button id="meimadStockStlBrowse" class="field-button" type="button">Browse...</button>
+              </div>
+              <select id="meimadStockCandidates" title="STL files exported into this Operation's Stock folder by the previous Operation"></select>
+              <div class="meimad-stock-grid">
+                <label>Shift X<input type="number" step="any" data-stock="stlX"></label>
+                <label>Shift Y<input type="number" step="any" data-stock="stlY"></label>
+                <label>Shift Z<input type="number" step="any" data-stock="stlZ"></label>
+              </div>
+            </div>
+            <div class="meimad-stock-actions">
+              <button id="meimadStockFromToolpath" type="button" title="Size a stock around the cutting moves">From toolpath</button>
+              <button id="meimadStockApply" type="button">Apply</button>
+              <button id="meimadStockSave" type="button">Save with program</button>
+            </div>
+            <div class="meimad-stock-actions">
+              <button id="meimadStockExportNext" type="button" title="Write the machined stock as STL into the next Operation's Stock folder in the Case Working Folder">Export machined stock to next Operation</button>
+              <button id="meimadStockExportAs" type="button">Save STL as…</button>
+            </div>
+            <p id="meimadStockNote" class="meimad-note"></p>
           </section>
           <section class="card">
             <h2>Legend</h2>
@@ -482,5 +539,7 @@
   <script src="../media/model-transport.js"></script>
   <script src="../media/preview.js"></script>
   <script src="./meimad-viewer.js"></script>
+  <script src="./meimad-material.js"></script>
+  <script src="./meimad-simulation.js"></script>
 </body>
 </html>

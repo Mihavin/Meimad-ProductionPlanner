@@ -10,6 +10,9 @@
 // toolpaths never travel inside a web message.
 (() => {
   const webview = window.chrome && window.chrome.webview;
+  // preview.js imports the 3D viewer from this attribute: the Meimad wrapper module, which keeps
+  // the vendored viewer unmodified and exposes its scene to meimad-simulation.js.
+  if (document.body) document.body.dataset.viewerModule = new URL("./meimad-viewer3d.js", document.baseURI).href;
   const PREVIEW_MESSAGE_TYPES = new Set([
     "ready",
     "g30Changed",
@@ -155,6 +158,13 @@
       editCopy: () => invoke("meimadEditCopy"),
       release: (text, options) => invoke("meimadRelease", text, options),
       chooseToolTable: () => invoke("meimadChooseToolTable"),
+      stock: Object.freeze({
+        load: () => invoke("meimadStock"),
+        save: (stock) => invoke("meimadStockSave", stock),
+        chooseStl: () => invoke("meimadChooseStl"),
+        readStl: (path) => invoke("meimadReadStl", path),
+        exportStl: (base64, options) => invoke("meimadExportStl", base64, options || {})
+      }),
       onMode: onChannel("meimad:mode"),
       localization: () => invoke("meimadLocalization"),
       translate: (texts) => invoke("meimadTranslate", texts),

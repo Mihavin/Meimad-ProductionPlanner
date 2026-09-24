@@ -194,6 +194,8 @@ internal interface INcViewerHostUi
     string? ChooseFolder(string title, string? initialDirectory);
     /// <summary>A tool-table file (CSV, JSON or Cimatron MHT) for a release.</summary>
     string? ChooseToolTableFile(string? initialDirectory);
+    /// <summary>An STL file to use as the stock of the simulation.</summary>
+    string? ChooseStlFile(string? initialDirectory);
     bool ConfirmDiscardChanges(string documentName);
     /// <summary>Asks before a different file of the same name in a revision folder is replaced.</summary>
     bool ConfirmReplaceFile(string path);

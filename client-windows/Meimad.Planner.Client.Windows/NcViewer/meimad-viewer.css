@@ -164,3 +164,82 @@ body.meimad-read-only .CodeMirror-cursor {
   direction: rtl;
   text-align: right;
 }
+
+/* Material removal simulation and stock definition. */
+.preview-controls .meimad-sim input[type="number"] {
+  width: 64px;
+}
+
+.meimad-progress {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  height: 18px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 3px;
+  background: rgba(13, 17, 23, 0.85);
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--app-fg, #c9d1d9);
+}
+
+.meimad-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: #1f6feb;
+  transition: width 120ms linear;
+}
+
+.meimad-progress.busy .meimad-progress-bar {
+  background: #d29922;
+}
+
+.meimad-progress-text {
+  position: relative;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.meimad-stock label {
+  display: block;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.meimad-stock select,
+.meimad-stock input[type="number"],
+.meimad-stock input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 2px;
+}
+
+.meimad-stock-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+
+.meimad-stock-grid label {
+  margin: 2px 0;
+}
+
+.meimad-stock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.meimad-stock-actions button {
+  flex: 1 1 auto;
+}
+
+.meimad-note {
+  font-size: 11px;
+  color: var(--app-fg-muted, #8b949e);
+  margin: 4px 0;
+}
