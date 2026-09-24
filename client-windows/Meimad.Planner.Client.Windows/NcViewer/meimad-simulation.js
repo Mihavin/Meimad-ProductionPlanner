@@ -250,13 +250,28 @@
       const duration = Number.isFinite(segment.estimatedSeconds) ? Math.max(0, segment.estimatedSeconds) : 0;
       timeline.push({ index, tool: segment.tool, line: segment.line, startSeconds: elapsed, endSeconds: elapsed + duration, duration });
       elapsed += duration;
+      // The tool axis in the part's frame (the frame the points are in): one vector for a fixed
+      // rotary position, one per point when the rotaries move during the segment. The points of
+      // such a move are sampled uniformly over the rotary sweep, so the angles interpolate by index.
       let axis;
-      if (chain && segment.rotary && (segment.rotary.a1 || segment.rotary.b1 || segment.rotary.c1 || segment.rotary.a0 || segment.rotary.b0 || segment.rotary.c0)) {
+      let axes;
+      const rotary = segment.rotary;
+      if (chain && rotary && (rotary.a0 || rotary.b0 || rotary.c0 || rotary.a1 || rotary.b1 || rotary.c1)) {
         try {
-          axis = window.CncKinematics.toolAxisInWorkpiece(chain, { A: segment.rotary.a1 || 0, B: segment.rotary.b1 || 0, C: segment.rotary.c1 || 0 });
-          if (axis && axis.z < 0.985 && isCutting(segment)) tiltedMoves += 1;
+          const toolAxis = (t) => window.CncKinematics.toolAxisInWorkpiece(chain, {
+            A: (rotary.a0 || 0) + ((rotary.a1 || 0) - (rotary.a0 || 0)) * t,
+            B: (rotary.b0 || 0) + ((rotary.b1 || 0) - (rotary.b0 || 0)) * t,
+            C: (rotary.c0 || 0) + ((rotary.c1 || 0) - (rotary.c0 || 0)) * t
+          });
+          const turns = ["a", "b", "c"].some((name) => Math.abs((rotary[`${name}1`] || 0) - (rotary[`${name}0`] || 0)) > 1e-6);
+          const count = segment.points?.length || 0;
+          if (turns && count > 1) axes = segment.points.map((_, pointIndex) => toolAxis(pointIndex / (count - 1)));
+          else axis = toolAxis(1);
+          const tilted = axes ? axes.some((value) => value.z < 0.9999) : axis.z < 0.9999;
+          if (tilted && isCutting(segment)) tiltedMoves += 1;
         } catch {
           axis = undefined;
+          axes = undefined;
         }
       }
       return {
@@ -269,7 +284,9 @@
         toolType: segment.toolType,
         toolCornerRadius: segment.toolCornerRadius,
         toolTip: segment.toolTip,
-        axis
+        toolLength: Number.isFinite(segment.toolLength) && segment.toolLength > 0 ? segment.toolLength : undefined,
+        axis,
+        axes
       };
     });
   }
@@ -277,7 +294,7 @@
   function toolsByNumber() {
     const tools = {};
     for (const tool of model?.toolDefinitions || []) {
-      tools[tool.number] = { diameter: tool.diameter, cornerRadius: tool.cornerRadius, type: tool.type, tip: tool.tip, width: tool.width };
+      tools[tool.number] = { diameter: tool.diameter, cornerRadius: tool.cornerRadius, type: tool.type, tip: tool.tip, width: tool.width, length: tool.length };
     }
     return tools;
   }
@@ -365,7 +382,7 @@
     if (data.type === "ready") {
       workerReady = true;
       elements.note.textContent = `Stock grid: ${data.cells.toLocaleString()} cells at ${Number(data.resolution).toFixed(3)} mm` +
-        (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s) are not simulated (2.5D)` : "");
+        (tiltedMoves ? ` · ${tiltedMoves} tilted-axis cutting move(s)` : "");
       followPlayback();
       return;
     }

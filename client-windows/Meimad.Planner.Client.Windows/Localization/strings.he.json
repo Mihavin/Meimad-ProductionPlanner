@@ -3635,7 +3635,7 @@
   "{counts.BatchesDeleted} dependent Production Batch(es) and {counts.OrdersDeleted} non-Kitaron Order(s) removed.": "הוסרו {counts.BatchesDeleted} אצוות ייצור תלויות ו-{counts.OrdersDeleted} הזמנות שאינן מ-Kitaron.",
   "{counts.HistoricalOrdersRetained} superseded Order(s) retained only for locked production history.": "{counts.HistoricalOrdersRetained} הזמנות שהוחלפו נשמרו רק עבור היסטוריית ייצור נעולה.",
   "{counts.OperationsSuppressed} Kitaron route Operation(s) left out because a planner removed them in Meimad Planner.": "{counts.OperationsSuppressed} פעולות מסלול של Kitaron לא נכללו כי מתכנן הסיר אותן ב-Meimad Planner.",
-  "{count} tilted-axis cutting move(s) are not simulated (2.5D)": "{count} תנועות חיתוך בציר מוטה אינן מדומות (2.5D)",
+  "{count} tilted-axis cutting move(s)": "{count} תנועות חיתוך בציר מוטה",
   "{count} | AVG {average} ({interval.MeasuredCycleSampleCount})": "{count} | ממוצע {average} ({interval.MeasuredCycleSampleCount})",
   "{definition.DisplayName} is not implemented and cannot be enabled.": "{definition.DisplayName} אינו ממומש ולא ניתן להפעיל אותו.",
   "{definition.Name} home offsets saved on this PC.": "אפסי הבית של {definition.Name} נשמרו במחשב זה.",

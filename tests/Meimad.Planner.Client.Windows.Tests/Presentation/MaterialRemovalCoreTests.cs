@@ -37,21 +37,24 @@ public sealed class MaterialRemovalCoreTests : IDisposable
     }
 
     [Fact]
-    public void Ball_mills_and_ramps_follow_the_edge_geometry_and_tilted_moves_are_skipped()
+    public void Ball_mills_and_ramps_follow_the_edge_geometry_and_a_tilted_end_mill_cuts_with_its_lead()
     {
         var result = Run("""
             const ball = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 1);
             M.cutMillSegment(ball, [{ x: 10, y: 10, z: -3 }], { radius: 2, type: "ball-mill" });
             const ramp = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 1);
             M.cutMillSegment(ramp, [{ x: 2, y: 10, z: 0 }, { x: 18, y: 10, z: -8 }], { radius: 1, type: "end-mill" });
-            const tilted = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 1);
-            const tiltedChanged = M.cutMillSegment(tilted, [{ x: 2, y: 10, z: -3 }, { x: 18, y: 10, z: -3 }], { radius: 2, type: "end-mill" }, { x: 0.5, y: 0, z: 0.866 });
+            // A flat end mill tilted 30 degrees into its own motion: the trailing edge of the tip
+            // sweeps the floor one radius times sin 30 deeper than the tip on the centre line.
+            const tilted = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 0.25);
+            const tiltedChanged = M.cutMillSegment(tilted, [{ x: 2, y: 10, z: -3 }, { x: 18, y: 10, z: -3 }], { radius: 2, type: "end-mill", length: 30 }, { x: 0.5, y: 0, z: 0.866 });
+            const col = (s, x, y) => s.top[Math.round((y - s.originY) / s.cell) * s.nx + Math.round((x - s.originX) / s.cell)];
             const floor = M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -2, maxZ: 0 }, 1);
             M.cutMillSegment(floor, [{ x: 10, y: 10, z: -5 }], { radius: 3, type: "end-mill" });
             return {
               ballCenter: ball.top[10 * ball.nx + 10], ballNext: ball.top[10 * ball.nx + 11],
               rampMiddle: ramp.top[10 * ramp.nx + 10], rampEnd: ramp.top[10 * ramp.nx + 18],
-              tiltedChanged, tiltedTop: tilted.top[10 * tilted.nx + 10],
+              tiltedChanged, tiltedCentre: col(tilted, 10, 10), tiltedBeside: col(tilted, 10, 11), tiltedFar: col(tilted, 10, 13),
               floorCenter: floor.top[10 * floor.nx + 10], throughCut: floor.throughCut
             };
             """);
@@ -59,11 +62,115 @@ public sealed class MaterialRemovalCoreTests : IDisposable
         Assert.Equal(-3 + 2 - Math.Sqrt(3), result.GetProperty("ballNext").GetDouble(), 3);
         Assert.Equal(-4.5, result.GetProperty("rampMiddle").GetDouble(), 3);
         Assert.Equal(-8, result.GetProperty("rampEnd").GetDouble(), 3);
-        Assert.False(result.GetProperty("tiltedChanged").GetBoolean());
-        Assert.Equal(0, result.GetProperty("tiltedTop").GetDouble());
+        Assert.True(result.GetProperty("tiltedChanged").GetBoolean());
+        Assert.Equal(-4, result.GetProperty("tiltedCentre").GetDouble(), 0.12);
+        Assert.Equal(-3 - Math.Sqrt(3) / 2, result.GetProperty("tiltedBeside").GetDouble(), 0.12);
+        Assert.Equal(0, result.GetProperty("tiltedFar").GetDouble());
         // A cut below the stock bottom stops at the bottom and counts as a through cut.
         Assert.Equal(-2, result.GetProperty("floorCenter").GetDouble());
         Assert.True(result.GetProperty("throughCut").GetInt32() > 0);
+    }
+
+    [Fact]
+    public void A_horizontal_tool_slots_the_side_leaves_an_undercut_slab_and_an_upside_down_tool_cuts_from_below()
+    {
+        var result = Run("""
+            const box = () => M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 0.25);
+            const index = (s, x, y) => Math.round((y - s.originY) / s.cell) * s.nx + Math.round((x - s.originX) / s.cell);
+            const side = box();
+            // Axis +Y: the tip faces -Y, the body reaches from y = 15 to y = 45 through the block's side.
+            M.cutMillSegment(side, [{ x: 2, y: 15, z: -5 }, { x: 18, y: 15, z: -5 }], { radius: 2, type: "end-mill", length: 30 }, { x: 0, y: 1, z: 0 });
+            const inSlot = index(side, 10, 17);
+            const before = index(side, 10, 14);
+            // Copies: the plunge below edits the column's slab list in place.
+            const slot = { top: side.top[inSlot], base: side.base[inSlot], extras: [...(side.extras.get(inSlot) || [])], undercut: side.undercut };
+            const untouched = { top: side.top[before], base: side.base[before], extras: [...(side.extras.get(before) || [])] };
+            const triangles = M.millTriangles(side);
+            let finite = true;
+            for (let i = 0; i < triangles.length; i += 1) if (!Number.isFinite(triangles[i])) { finite = false; break; }
+            const roundTrip = M.readStl(M.writeStl(triangles, "undercut")).length;
+            // A vertical plunge through the slab above the slot merges the column again.
+            M.cutMillSegment(side, [{ x: 10, y: 17, z: -8 }], { radius: 1, type: "end-mill" });
+            const merged = { top: side.top[inSlot], base: side.base[inSlot], extras: side.extras.get(inSlot) || [] };
+            const below = box();
+            M.cutMillSegment(below, [{ x: 2, y: 10, z: -7 }, { x: 18, y: 10, z: -7 }], { radius: 2, type: "end-mill", length: 30 }, { x: 0, y: 0, z: -1 });
+            const fromBelow = { top: below.top[index(below, 10, 10)], base: below.base[index(below, 10, 10)], extras: below.extras.get(index(below, 10, 10)) || [] };
+            return { slot, untouched, triangles: triangles.length / 9, finite, roundTrip: roundTrip / 9, merged, fromBelow };
+            """);
+        var slot = result.GetProperty("slot");
+        Assert.Equal(0, slot.GetProperty("top").GetDouble());
+        Assert.Equal(-3, slot.GetProperty("base").GetDouble(), 0.05);
+        var extras = slot.GetProperty("extras").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+        Assert.Equal(2, extras.Length);
+        Assert.Equal(-10, extras[0]);
+        Assert.Equal(-7, extras[1], 0.05);
+        Assert.True(slot.GetProperty("undercut").GetBoolean());
+        var untouched = result.GetProperty("untouched");
+        Assert.Equal(0, untouched.GetProperty("top").GetDouble());
+        Assert.Equal(-10, untouched.GetProperty("base").GetDouble());
+        Assert.Empty(untouched.GetProperty("extras").EnumerateArray());
+        Assert.True(result.GetProperty("triangles").GetInt32() > 0);
+        Assert.True(result.GetProperty("finite").GetBoolean());
+        Assert.Equal(result.GetProperty("triangles").GetInt32(), result.GetProperty("roundTrip").GetInt32());
+        var merged = result.GetProperty("merged");
+        Assert.Equal(-8, merged.GetProperty("top").GetDouble(), 3);
+        Assert.Equal(-10, merged.GetProperty("base").GetDouble());
+        Assert.Empty(merged.GetProperty("extras").EnumerateArray());
+        var fromBelow = result.GetProperty("fromBelow");
+        Assert.Equal(0, fromBelow.GetProperty("top").GetDouble());
+        Assert.Equal(-7, fromBelow.GetProperty("base").GetDouble(), 0.05);
+        Assert.Empty(fromBelow.GetProperty("extras").EnumerateArray());
+    }
+
+    [Fact]
+    public void Chamfer_ball_drill_and_turning_axes_follow_the_tilted_tool()
+    {
+        var result = Run("""
+            const box = () => M.createMillStock({ minX: 0, maxX: 20, minY: 0, maxY: 20, minZ: -10, maxZ: 0 }, 0.25);
+            const index = (s, x, y) => Math.round((y - s.originY) / s.cell) * s.nx + Math.round((x - s.originX) / s.cell);
+            const col = (s, x, y) => s.top[index(s, x, y)];
+            const u45 = { x: Math.SQRT1_2, y: 0, z: Math.SQRT1_2 };
+            // A flat end mill at 45 degrees along the x = 0 edge: the column through the axis meets a chord of 2r/sin 45.
+            const chamfer = box();
+            M.cutMillSegment(chamfer, [{ x: 0, y: 2, z: -2 }, { x: 0, y: 18, z: -2 }], { radius: 2, type: "end-mill", length: 30 }, u45);
+            // A ball mill plunging along its own 45-degree axis: the ball's lowest point lies r/sqrt2 beyond the tip.
+            const ball = box();
+            M.cutMillSegment(ball, [{ x: 10 + 6 * u45.x, y: 10, z: -3 + 6 * u45.z }, { x: 10, y: 10, z: -3 }], { radius: 2, type: "ball-mill", length: 30 }, u45);
+            const tipColumn = index(ball, 10, 10);
+            // A drill along a 30-degree axis: the point reaches the tip depth exactly on the tip column.
+            const u30 = { x: 0.5, y: 0, z: 0.8660254 };
+            const drill = box();
+            M.cutMillSegment(drill, [{ x: 10 + 6 * u30.x, y: 10, z: -3 + 6 * u30.z }, { x: 10, y: 10, z: -3 }], { radius: 2, type: "drill", length: 30 }, u30);
+            // The axis turning during one move: vertical at the start, 30 degrees at the end.
+            const turning = box();
+            const turned = M.cutMillSegment(turning, [{ x: 2, y: 10, z: -3 }, { x: 18, y: 10, z: -3 }], { radius: 2, type: "end-mill", length: 30 }, [{ x: 0, y: 0, z: 1 }, u30]);
+            return {
+              chamfer: [col(chamfer, 0, 10), col(chamfer, 2, 10), col(chamfer, 4, 10), col(chamfer, 6, 10)],
+              ballLow: col(ball, 11.5, 10), ballTipTop: ball.top[tipColumn], ballTipBase: ball.base[tipColumn], ballTipExtras: ball.extras.get(tipColumn) || [],
+              drillTip: col(drill, 10, 10), drillBeside: col(drill, 11, 10), drillClear: col(drill, 6, 10),
+              turned, turningStart: col(turning, 3, 10), turningEnd: col(turning, 16, 10)
+            };
+            """);
+        var chamfer = result.GetProperty("chamfer").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+        Assert.Equal(-2, chamfer[0], 0.05);
+        Assert.Equal(-2 * Math.Sqrt(2), chamfer[1], 0.05);
+        Assert.Equal(2 - 2 * Math.Sqrt(2), chamfer[2], 0.05);
+        Assert.Equal(0, chamfer[3]);
+        // Ball centre at tip + r * axis = (10 + sqrt2, 10, -3 + sqrt2); the column x = 11.5 meets its underside.
+        Assert.Equal(-3 + Math.Sqrt(2) - Math.Sqrt(4 - Math.Pow(11.5 - 10 - Math.Sqrt(2), 2)), result.GetProperty("ballLow").GetDouble(), 0.05);
+        // On the tip column the ball and the body only reach r / sin 45 above the tip: a skin stays above.
+        Assert.Equal(0, result.GetProperty("ballTipTop").GetDouble());
+        Assert.Equal(-3 + 2 * Math.Sqrt(2), result.GetProperty("ballTipBase").GetDouble(), 0.05);
+        var ballExtras = result.GetProperty("ballTipExtras").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+        Assert.Equal(2, ballExtras.Length);
+        Assert.Equal(-10, ballExtras[0]);
+        Assert.Equal(-3, ballExtras[1], 0.05);
+        Assert.Equal(-3, result.GetProperty("drillTip").GetDouble(), 0.05);
+        Assert.InRange(result.GetProperty("drillBeside").GetDouble(), -3.05, -2.5);
+        Assert.Equal(0, result.GetProperty("drillClear").GetDouble());
+        Assert.True(result.GetProperty("turned").GetBoolean());
+        Assert.Equal(-3, result.GetProperty("turningStart").GetDouble(), 0.1);
+        Assert.True(result.GetProperty("turningEnd").GetDouble() < -3.6);
     }
 
     [Fact]

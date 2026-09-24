@@ -3635,7 +3635,7 @@
   "{counts.BatchesDeleted} dependent Production Batch(es) and {counts.OrdersDeleted} non-Kitaron Order(s) removed.": "Удалено: зависимых производственных партий — {counts.BatchesDeleted}, заказов не из Kitaron — {counts.OrdersDeleted}.",
   "{counts.HistoricalOrdersRetained} superseded Order(s) retained only for locked production history.": "Заменённых заказов, сохранённых только для заблокированной истории производства: {counts.HistoricalOrdersRetained}.",
   "{counts.OperationsSuppressed} Kitaron route Operation(s) left out because a planner removed them in Meimad Planner.": "Операций маршрута Kitaron, не включённых, так как планировщик удалил их в Meimad Planner: {counts.OperationsSuppressed}.",
-  "{count} tilted-axis cutting move(s) are not simulated (2.5D)": "{count} перемещений с наклонённой осью не моделируются (2.5D)",
+  "{count} tilted-axis cutting move(s)": "{count} движений резания с наклонной осью",
   "{count} | AVG {average} ({interval.MeasuredCycleSampleCount})": "{count} | СРЕДН. {average} ({interval.MeasuredCycleSampleCount})",
   "{definition.DisplayName} is not implemented and cannot be enabled.": "{definition.DisplayName} не реализован и не может быть включён.",
   "{definition.Name} home offsets saved on this PC.": "Смещения нуля {definition.Name} сохранены на этом компьютере.",

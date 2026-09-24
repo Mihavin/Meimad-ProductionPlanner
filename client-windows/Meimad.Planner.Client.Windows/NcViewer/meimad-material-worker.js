@@ -4,6 +4,8 @@
 // in execution order up to the position the page asks for, posting progress and the current
 // surface. Going backwards resets the stock and cuts again from the first motion.
 //   page -> worker  { type: "init", kind, stock, resolution, tools, segments, stl? }
+//                   (a mill segment carries axis {x,y,z} or axes [{x,y,z} per point]: the tool
+//                   axis in the stock's frame, tip toward spindle, for tilted-axis cutting)
 //                   { type: "cutTo", index, fraction }   cut motions 0..index (index partial by fraction)
 //                   { type: "reset" }
 //                   { type: "export" }
@@ -37,12 +39,16 @@ function toolFor(segment) {
   const radius = Number.isFinite(segment.toolRadius) && segment.toolRadius > 0
     ? segment.toolRadius
     : Number.isFinite(definition.diameter) ? definition.diameter / 2 : 0;
+  // The body a tilted tool sweeps: the tool table's length, else the program's tool length offset.
+  const length = Number(definition.length) > 0 ? Number(definition.length)
+    : Number(segment.toolLength) > 0 ? Number(segment.toolLength) : undefined;
   return {
     radius,
     type: segment.toolType || definition.type || "end-mill",
     cornerRadius: Number(segment.toolCornerRadius) || Number(definition.cornerRadius) || 0,
     pointAngle: definition.pointAngle,
-    taperAngle: definition.taperAngle
+    taperAngle: definition.taperAngle,
+    length
   };
 }
 
@@ -54,8 +60,13 @@ function cuts(segment) {
     && (filterTool === "all" || Number(segment.tool) === Number(filterTool));
 }
 
-function partialPoints(points, fraction) {
-  if (fraction >= 1 || points.length < 2) return points;
+// The motion up to `fraction` of its length: its points and, for a mill, the tool axis (one
+// vector, or one per point when the axis turns during the move, interpolated for the cut point).
+function partialMotion(segment, fraction) {
+  const points = segment.points;
+  const axes = Array.isArray(segment.axes) && segment.axes.length === points.length ? segment.axes : undefined;
+  const wholeAxis = axes || segment.axis;
+  if (fraction >= 1 || points.length < 2) return { points, axis: wholeAxis };
   let total = 0;
   const lengths = [];
   for (let index = 1; index < points.length; index += 1) {
@@ -67,11 +78,13 @@ function partialPoints(points, fraction) {
   }
   const targetLength = total * Math.max(0, fraction);
   const result = [points[0]];
+  let axis = axes ? [axes[0]] : wholeAxis;
   let travelled = 0;
   for (let index = 1; index < points.length; index += 1) {
     const length = lengths[index - 1];
     if (travelled + length <= targetLength) {
       result.push(points[index]);
+      if (axes) axis.push(axes[index]);
       travelled += length;
       continue;
     }
@@ -82,17 +95,18 @@ function partialPoints(points, fraction) {
     if (Number.isFinite(a.y) || Number.isFinite(b.y)) point.y = (a.y ?? 0) + ((b.y ?? 0) - (a.y ?? 0)) * t;
     if (Number.isFinite(a.r) || Number.isFinite(b.r)) point.r = (a.r ?? a.x / 2) + ((b.r ?? b.x / 2) - (a.r ?? a.x / 2)) * t;
     result.push(point);
+    if (axes) axis.push(Material.slerpAxis(axes[index - 1], axes[index], t));
     break;
   }
-  return result;
+  return { points: result, axis };
 }
 
 function cutOne(segment, fraction) {
   if (!cuts(segment)) return;
   const tool = toolFor(segment);
-  const points = partialPoints(segment.points, fraction);
-  if (state.kind === "lathe") Material.cutLatheSegment(state.stock, points, tool);
-  else Material.cutMillSegment(state.stock, points, tool, segment.axis);
+  const motion = partialMotion(segment, fraction);
+  if (state.kind === "lathe") Material.cutLatheSegment(state.stock, motion.points, tool);
+  else Material.cutMillSegment(state.stock, motion.points, tool, motion.axis);
 }
 
 function postSurface(force) {
