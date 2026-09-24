@@ -690,6 +690,11 @@
   function attachHooks() {
     hooks = window.meimadViewer3d;
     if (!hooks) return;
+    if (!hooks.captured) {
+      elements.toggle.disabled = true;
+      elements.note.textContent = "Material removal is unavailable: the 3D scene could not be captured.";
+      return;
+    }
     hooks.on("model", (next) => {
       model = next;
       compactSegments();

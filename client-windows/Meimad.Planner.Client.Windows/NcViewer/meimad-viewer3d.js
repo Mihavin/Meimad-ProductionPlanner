@@ -11,21 +11,31 @@ export { SEGMENT_STYLES };
 export function createToolpathViewer(options) {
   const THREE = options.THREE;
   const captured = { scenes: [], groups: [], cameras: [], renderers: [] };
-  // The namespace object is not writable; a derived object overrides the four constructors and
-  // falls through to THREE for everything else.
-  const capturing = Object.create(THREE);
-  capturing.Scene = class extends THREE.Scene {
-    constructor(...args) { super(...args); captured.scenes.push(this); }
-  };
-  capturing.Group = class extends THREE.Group {
-    constructor(...args) { super(...args); captured.groups.push(this); }
-  };
-  capturing.OrthographicCamera = class extends THREE.OrthographicCamera {
-    constructor(...args) { super(...args); captured.cameras.push(this); }
-  };
-  capturing.WebGLRenderer = class extends THREE.WebGLRenderer {
-    constructor(...args) { super(...args); captured.renderers.push(this); }
-  };
+  // The module namespace is not writable, and an object derived from it cannot shadow its
+  // exports either (assignment delegates to the namespace), so the four constructors are
+  // overridden on a plain copy of the namespace. If that ever fails the upstream viewer runs
+  // unwrapped and the simulation stays off.
+  let capturing = THREE;
+  try {
+    capturing = {
+      ...THREE,
+      Scene: class extends THREE.Scene {
+        constructor(...args) { super(...args); captured.scenes.push(this); }
+      },
+      Group: class extends THREE.Group {
+        constructor(...args) { super(...args); captured.groups.push(this); }
+      },
+      OrthographicCamera: class extends THREE.OrthographicCamera {
+        constructor(...args) { super(...args); captured.cameras.push(this); }
+      },
+      WebGLRenderer: class extends THREE.WebGLRenderer {
+        constructor(...args) { super(...args); captured.renderers.push(this); }
+      }
+    };
+  } catch (error) {
+    console.error("Meimad: the 3D scene could not be captured; material removal is unavailable.", error);
+    capturing = THREE;
+  }
   const listeners = new Map();
   const emit = (name, ...args) => {
     for (const listener of [...(listeners.get(name) || [])]) {
@@ -47,6 +57,7 @@ export function createToolpathViewer(options) {
   // Creation order in viewer3d.js: scene, camera, contentRoot, machineRoot, gridRoot, pickScene, pickRoot.
   const hooks = {
     THREE,
+    captured: capturing !== THREE && captured.scenes.length > 0 && captured.groups.length > 0,
     scene: captured.scenes[0],
     contentRoot: captured.groups[0],
     machineRoot: captured.groups[1],
