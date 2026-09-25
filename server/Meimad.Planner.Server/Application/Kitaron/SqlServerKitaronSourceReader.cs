@@ -80,8 +80,97 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         var materialRows = materialColumns.Count == 0
             ? []
             : await ReadMaterialRowsAsync(connection, materialColumns, cancellationToken);
-        return new KitaronSourceSnapshot(workRows, orders, components, materialRows);
+        var routeSteps = await ReadRouteStepsAsync(connection, cancellationToken);
+        var stations = await ReadStationsAsync(connection, cancellationToken);
+        return new KitaronSourceSnapshot(workRows, orders, components, materialRows, routeSteps, stations);
     }
+
+    /// <summary>
+    /// The complete route master: every header linked to a part and every step of it. The part scope
+    /// is applied later against the synchronized Cases; the whole master is 58,569 rows on the
+    /// commissioned database, well inside the row limit and cheaper than a scoped join.
+    /// </summary>
+    private static async Task<IReadOnlyList<KitaronSourceRouteStep>> ReadRouteStepsAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = RouteStepQuery;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<KitaronSourceRouteStep>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            EnsureWithinLimit(result.Count);
+            result.Add(new KitaronSourceRouteStep(
+                KitaronTextNormalization.CleanRequired(reader.GetString(0)),
+                reader.IsDBNull(1) ? null : KitaronTextNormalization.Clean(reader.GetString(1)),
+                reader.GetInt32(2),
+                reader.IsDBNull(3) ? null : KitaronTextNormalization.Clean(reader.GetString(3)),
+                !reader.IsDBNull(4) && reader.GetBoolean(4),
+                !reader.IsDBNull(5) && reader.GetBoolean(5),
+                reader.IsDBNull(6) ? null : reader.GetDateTime(6),
+                reader.GetInt32(7),
+                reader.IsDBNull(8) ? null : Convert.ToInt32(reader.GetValue(8), CultureInfo.InvariantCulture),
+                reader.IsDBNull(9) ? null : Convert.ToString(reader.GetValue(9), CultureInfo.InvariantCulture),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : Convert.ToInt32(reader.GetValue(12), CultureInfo.InvariantCulture),
+                !reader.IsDBNull(13) && reader.GetBoolean(13),
+                reader.IsDBNull(14) ? null : Convert.ToDouble(reader.GetValue(14), CultureInfo.InvariantCulture),
+                reader.IsDBNull(15) ? null : Convert.ToDouble(reader.GetValue(15), CultureInfo.InvariantCulture),
+                reader.IsDBNull(16) ? null : Convert.ToInt32(reader.GetValue(16), CultureInfo.InvariantCulture)));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<KitaronDiscoveredStation>> ReadStationsAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = StationQuery;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<KitaronDiscoveredStation>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            EnsureWithinLimit(result.Count);
+            result.Add(new KitaronDiscoveredStation(
+                reader.GetInt32(0),
+                KitaronTextNormalization.Clean(reader.IsDBNull(1) ? null : reader.GetString(1))
+                    ?? $"Station {reader.GetInt32(0).ToString(CultureInfo.InvariantCulture)}",
+                reader.IsDBNull(2) ? null : KitaronTextNormalization.Clean(reader.GetString(2)),
+                !reader.IsDBNull(3) && reader.GetBoolean(3),
+                reader.GetInt32(4),
+                reader.GetInt32(5),
+                reader.GetInt32(6)));
+        }
+        return result;
+    }
+
+    internal const string RouteStepQuery = """
+        SELECT d.DetailNumber, d.REV, l.DirectionHeaderID, l.REV AS HeaderRev, l.ChartMaster,
+               h.IsMaster, h.ExpiredDate,
+               r.DirectionID, r.NumOrder, r.ActionNumber, r.OperationDescription, o.Operation,
+               r.StationID, r.WorkPlanning, r.TimeProduction, r.DirectionTime, r.SupplierID
+        FROM dbo.TDetailDirectionList l
+        JOIN dbo.TDetails d ON d.DetailID = l.DetailID
+        JOIN dbo.TDetailDirectionHeader h ON h.DirectionHeaderID = l.DirectionHeaderID
+        JOIN dbo.TDirection r ON r.DirectionHeaderID = l.DirectionHeaderID
+        LEFT JOIN dbo.TOperation o ON o.OperationID = r.OperationID
+        WHERE NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL
+        ORDER BY d.DetailNumber, l.DirectionHeaderID, r.NumOrder, r.DirectionID;
+        """;
+
+    internal const string StationQuery = """
+        SELECT s.StationID, s.Station, s.StationType, s.Retired,
+               COUNT(r.DirectionID) AS RouteRows,
+               SUM(CASE WHEN r.WorkPlanning = 1 THEN 1 ELSE 0 END) AS PlannedRows,
+               SUM(CASE WHEN r.SupplierID IS NOT NULL AND r.SupplierID > 0 THEN 1 ELSE 0 END) AS SupplierRows
+        FROM dbo.TStation s
+        LEFT JOIN dbo.TDirection r ON r.StationID = s.StationID
+        GROUP BY s.StationID, s.Station, s.StationType, s.Retired
+        ORDER BY s.StationID;
+        """;
 
     private static async Task<IReadOnlyList<KitaronSourceRow>> ReadWorkRowsAsync(
         SqlConnection connection,

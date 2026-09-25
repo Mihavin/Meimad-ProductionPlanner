@@ -63,6 +63,10 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
         var holidaysElapsed = phase.ElapsedMilliseconds;
         phase.Restart();
         var masterCalendar = await ReadMasterCalendarAsync(connection, transaction, cancellationToken);
+        var requirements = await ReadRequirementsAsync(connection, transaction, cancellationToken);
+        var workstations = await ReadWorkstationsAsync(connection, transaction, cancellationToken);
+        var externalResources = await ReadExternalResourcesAsync(connection, transaction, cancellationToken);
+        var auxiliaryPins = await SqliteTimelineAuxiliaryPinRepository.ReadPinsAsync(connection, transaction, cancellationToken);
         var resourcesElapsed = phase.ElapsedMilliseconds;
         await transaction.CommitAsync(cancellationToken);
         total.Stop();
@@ -81,7 +85,96 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
             holidays,
             resources,
             masterCalendar.Json,
-            masterCalendar.TimeZoneId);
+            masterCalendar.TimeZoneId,
+            requirements,
+            workstations,
+            externalResources,
+            auxiliaryPins);
+    }
+
+    /// <summary>
+    /// Active auxiliary requirements of every Case Operation that has at least one Batch Operation;
+    /// requirements of routes without production are never scheduled and are not read.
+    /// </summary>
+    private static async Task<IReadOnlyList<TimelineSourceRequirement>> ReadRequirementsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT requirement.id, requirement.case_operation_id, requirement.sequence_position, requirement.resource_class,
+                   requirement.workstation_type_id, requirement.external_resource_id, requirement.required_capability,
+                   requirement.required_skill_id, requirement.capacity_required, requirement.estimated_duration_seconds,
+                   requirement.duration_per_unit_seconds, requirement.direction, requirement.predecessor_requirement_id,
+                   requirement.name, requirement.step_number
+            FROM operation_resource_requirements requirement
+            WHERE requirement.is_active = 1
+              AND EXISTS (SELECT 1 FROM batch_operations WHERE batch_operations.source_case_operation_id = requirement.case_operation_id)
+            ORDER BY requirement.case_operation_id, requirement.sequence_position, requirement.id;
+            """;
+        var values = new List<TimelineSourceRequirement>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(new TimelineSourceRequirement(
+                reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3),
+                NullableString(reader, 4), NullableString(reader, 5), NullableString(reader, 6), NullableString(reader, 7),
+                reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetString(11),
+                NullableString(reader, 12), NullableString(reader, 13), NullableInt(reader, 14)));
+        }
+        return values;
+    }
+
+    private static async Task<IReadOnlyList<TimelineSourceWorkstation>> ReadWorkstationsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT workstations.id, workstations.name, workstations.workstation_type_id, workstation_types.name,
+                   workstations.capacity, workstations.capabilities_json,
+                   working_calendars.time_zone_id, working_calendars.calendar_json
+            FROM workstations
+            JOIN workstation_types ON workstation_types.id = workstations.workstation_type_id
+            JOIN working_calendars ON working_calendars.id = workstations.working_calendar_id
+            WHERE workstations.is_active = 1
+            ORDER BY workstations.name COLLATE NOCASE, workstations.id;
+            """;
+        var values = new List<TimelineSourceWorkstation>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(new TimelineSourceWorkstation(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4),
+                JsonSerializer.Deserialize<string[]>(reader.GetString(5)) ?? [],
+                reader.GetString(6), reader.GetString(7)));
+        }
+        return values;
+    }
+
+    private static async Task<IReadOnlyList<TimelineSourceExternalResource>> ReadExternalResourcesAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT external_resources.id, external_resources.name, external_resources.supplier_name,
+                   external_resources.promised_lead_time_minutes, external_resources.safety_buffer_minutes,
+                   external_resources.lead_time_semantics, working_calendars.time_zone_id, working_calendars.calendar_json
+            FROM external_resources
+            LEFT JOIN working_calendars ON working_calendars.id = external_resources.working_calendar_id
+            WHERE external_resources.is_active = 1
+            ORDER BY external_resources.name COLLATE NOCASE, external_resources.id;
+            """;
+        var values = new List<TimelineSourceExternalResource>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(new TimelineSourceExternalResource(
+                reader.GetString(0), reader.GetString(1), NullableString(reader, 2), reader.GetInt32(3), reader.GetInt32(4),
+                reader.GetString(5), NullableString(reader, 6), NullableString(reader, 7)));
+        }
+        return values;
     }
 
     private static async Task<IReadOnlyList<TimelineSourceMachine>> ReadMachinesAsync(
@@ -544,7 +637,12 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                    employee_resources.respect_master_calendar,
                    employee_resources.tool_load_seconds_per_tool,
                    employee_resources.fixture_assembly_seconds,
-                   employee_resources.first_part_running_speed_percent
+                   employee_resources.first_part_running_speed_percent,
+                   employee_resources.name,
+                   COALESCE((SELECT json_group_array(skill_id) FROM (
+                       SELECT skill_id FROM employee_skills
+                       WHERE employee_skills.employee_resource_id = employee_resources.id
+                       ORDER BY skill_id)), '[]')
             FROM employee_resources
             JOIN working_calendars ON working_calendars.id = employee_resources.assigned_calendar_id
             WHERE employee_resources.is_active = 1
@@ -557,7 +655,9 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), [],
                 JsonSerializer.Deserialize<string[]>(reader.GetString(4)) ?? [],
                 reader.GetInt32(5) == 1,
-                reader.GetDouble(6), reader.IsDBNull(7) ? null : reader.GetDouble(7), reader.GetDouble(8)));
+                reader.GetDouble(6), reader.IsDBNull(7) ? null : reader.GetDouble(7), reader.GetDouble(8),
+                NullableString(reader, 9),
+                JsonSerializer.Deserialize<string[]>(reader.GetString(10)) ?? []));
         }
         await reader.DisposeAsync();
 

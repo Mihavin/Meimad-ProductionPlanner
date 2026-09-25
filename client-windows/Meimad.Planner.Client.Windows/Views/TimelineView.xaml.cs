@@ -202,8 +202,10 @@ public partial class TimelineView : UserControl
 
         var duration = viewModel.HorizonEnd - viewModel.HorizonStart;
         var chartWidth = Math.Max(900, Math.Min(6000, duration.TotalHours * 22));
+        var resourceLanes = viewModel.Resources.Where(lane => lane.Intervals.Count > 0).ToArray();
         TimelineCanvas.Width = LabelWidth + chartWidth + 18;
-        TimelineCanvas.Height = HeaderHeight + viewModel.Machines.Count * RowHeight + 12;
+        TimelineCanvas.Height = HeaderHeight + viewModel.Machines.Count * RowHeight
+            + (resourceLanes.Length == 0 ? 0 : ResourceSectionGap + resourceLanes.Length * RowHeight) + 12;
         // Daylight/dark context belongs to the time ruler only. It is deliberately
         // rendered before the full-height grid lines and Machine rows so it cannot
         // change the meaning or status color of any planning interval.
@@ -218,6 +220,7 @@ public partial class TimelineView : UserControl
         {
             DrawMachineRow(viewModel.Machines[row], row, chartWidth, duration);
         }
+        DrawResourceSection(resourceLanes, chartWidth, duration);
         // Dependency arrows are the topmost layer so selected-batch links remain
         // legible over operation blocks and calendar context.
         DrawDependencyArrows(chartWidth, duration);
@@ -908,6 +911,122 @@ public partial class TimelineView : UserControl
             Canvas.SetTop(block, y + laneTop + lane * laneHeight);
             TimelineCanvas.Children.Add(block);
         }
+    }
+
+    private const double ResourceSectionGap = 26;
+    private static readonly Brush WorkstationStepBrush = new SolidColorBrush(Color.FromRgb(0, 131, 143));
+    private static readonly Brush ExternalStepBrush = new SolidColorBrush(Color.FromRgb(109, 76, 65));
+    private static readonly Brush EmployeeStepBrush = new SolidColorBrush(Color.FromRgb(84, 110, 122));
+
+    /// <summary>
+    /// Auxiliary resource lanes below the Machine rows: one row per Workstation, External Resource
+    /// or Employee that received a provisional step from the Server's deterministic allocator. The
+    /// blocks are read-only placements around the Machine anchors; a pinned block carries a marker.
+    /// </summary>
+    private void DrawResourceSection(IReadOnlyList<TimelineResourceLane> lanes, double chartWidth, TimeSpan duration)
+    {
+        if (viewModel is null || lanes.Count == 0 || duration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var top = HeaderHeight + viewModel.Machines.Count * RowHeight;
+        AddLine(0, top + ResourceSectionGap - 1, TimelineCanvas.Width, top + ResourceSectionGap - 1, Color.FromRgb(158, 158, 158), 1.5);
+        AddText("AUXILIARY STEPS (Workstations / External / Employees)", 4, top + 6, 10, Brushes.DimGray, FontWeights.Bold);
+        for (var row = 0; row < lanes.Count; row++)
+        {
+            var lane = lanes[row];
+            var y = top + ResourceSectionGap + row * RowHeight;
+            var label = $"{lane.ClassLabel}: {lane.Name}";
+            var labelBlock = AddText(label, 4, y + 7, 10, Brushes.Black, FontWeights.SemiBold);
+            labelBlock.Width = LabelWidth - 10;
+            labelBlock.TextTrimming = TextTrimming.CharacterEllipsis;
+            labelBlock.ToolTip = label;
+            AddLine(0, y + RowHeight, TimelineCanvas.Width, y + RowHeight, Color.FromRgb(220, 224, 229), 1);
+            foreach (var interval in lane.Intervals)
+            {
+                var clippedStart = interval.StartsAt < viewModel.HorizonStart ? viewModel.HorizonStart : interval.StartsAt;
+                var clippedEnd = interval.EndsAt > viewModel.HorizonEnd ? viewModel.HorizonEnd : interval.EndsAt;
+                if (clippedEnd <= clippedStart)
+                {
+                    continue;
+                }
+
+                var x = LabelWidth + chartWidth * (clippedStart - viewModel.HorizonStart).TotalSeconds / duration.TotalSeconds;
+                var width = Math.Max(8, chartWidth * (clippedEnd - clippedStart).TotalSeconds / duration.TotalSeconds);
+                var text = interval.IsPinned ? $"📌 {interval.Label}" : interval.Label;
+                var block = new Border
+                {
+                    Tag = interval,
+                    Width = width,
+                    Height = AssignmentLaneHeight,
+                    Background = ResourceStepBrush(lane.ResourceClass),
+                    BorderBrush = interval.IsPinned ? Brushes.Black : Brushes.White,
+                    BorderThickness = interval.IsPinned ? new Thickness(2) : new Thickness(1),
+                    ToolTip = ResourceIntervalToolTip(interval, DisplayTimeZone()),
+                    Child = new TextBlock
+                    {
+                        Text = text,
+                        Foreground = Brushes.White,
+                        FontSize = 10,
+                        Margin = new Thickness(3, 0, 3, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis
+                    }
+                };
+                var menu = new ContextMenu();
+                var open = new MenuItem { Header = "Open operation", Tag = interval.OperationId };
+                open.Click += TimelineOpenOperation_Click;
+                menu.Items.Add(open);
+                if (viewModel.CanPin)
+                {
+                    var pinResource = new MenuItem { Header = "Pin to this resource", Tag = interval };
+                    pinResource.Click += PinResource_Click;
+                    var pinStart = new MenuItem { Header = "Pin resource and start", Tag = interval };
+                    pinStart.Click += PinResourceAndStart_Click;
+                    var unpin = new MenuItem { Header = "Unpin", Tag = interval, IsEnabled = interval.IsPinned };
+                    unpin.Click += Unpin_Click;
+                    menu.Items.Add(pinResource);
+                    menu.Items.Add(pinStart);
+                    menu.Items.Add(unpin);
+                }
+                block.ContextMenu = menu;
+                Canvas.SetLeft(block, x);
+                Canvas.SetTop(block, y + AssignmentLaneTop);
+                TimelineCanvas.Children.Add(block);
+            }
+        }
+    }
+
+    internal static string ResourceIntervalToolTip(TimelineResourceInterval interval, TimeZoneInfo zone) =>
+        $"{interval.Label}\n{interval.PartNumber} · {interval.OperationName} · {interval.DirectionLabel}\n"
+        + $"Local: {FormatLocal(interval.StartsAt, zone)} → {FormatLocal(interval.EndsAt, zone)}\n"
+        + (interval.IsPinned ? "Pinned by the planner. " : "Provisional placement. ")
+        + interval.Explanation;
+
+    private static Brush ResourceStepBrush(string resourceClass) => resourceClass switch
+    {
+        "external" => ExternalStepBrush,
+        "employee" => EmployeeStepBrush,
+        _ => WorkstationStepBrush
+    };
+
+    private async void PinResource_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: TimelineResourceInterval interval } && viewModel is not null)
+            await viewModel.PinAsync(interval, pinStart: false);
+    }
+
+    private async void PinResourceAndStart_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: TimelineResourceInterval interval } && viewModel is not null)
+            await viewModel.PinAsync(interval, pinStart: true);
+    }
+
+    private async void Unpin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: TimelineResourceInterval interval } && viewModel is not null)
+            await viewModel.UnpinAsync(interval);
     }
 
     private void DrawDependencyArrows(double chartWidth, TimeSpan duration)

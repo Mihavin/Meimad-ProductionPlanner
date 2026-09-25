@@ -18,7 +18,58 @@ internal sealed record TimelineSourceSnapshot(
     IReadOnlyList<TimelineSourceHoliday> Holidays,
     IReadOnlyList<TimelineSourceResource> Resources,
     string? MasterCalendarJson = null,
-    string? MasterCalendarTimeZoneId = null);
+    string? MasterCalendarTimeZoneId = null,
+    IReadOnlyList<TimelineSourceRequirement>? Requirements = null,
+    IReadOnlyList<TimelineSourceWorkstation>? Workstations = null,
+    IReadOnlyList<TimelineSourceExternalResource>? ExternalResources = null,
+    IReadOnlyList<TimelineSourceAuxiliaryPin>? AuxiliaryPins = null);
+
+/// <summary>An active auxiliary requirement of a Case Operation that has Batch Operations.</summary>
+internal sealed record TimelineSourceRequirement(
+    string RequirementId,
+    string CaseOperationId,
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    int DurationPerUnitSeconds,
+    string Direction,
+    string? PredecessorRequirementId,
+    string? Name,
+    int? StepNumber,
+    bool IsActive = true);
+
+internal sealed record TimelineSourceWorkstation(
+    string WorkstationId,
+    string Name,
+    string WorkstationTypeId,
+    string WorkstationTypeName,
+    int Capacity,
+    IReadOnlyList<string> Capabilities,
+    string TimeZoneId,
+    string CalendarJson);
+
+internal sealed record TimelineSourceExternalResource(
+    string ExternalResourceId,
+    string Name,
+    string? SupplierName,
+    int PromisedLeadTimeMinutes,
+    int SafetyBufferMinutes,
+    string LeadTimeSemantics,
+    string? TimeZoneId,
+    string? CalendarJson);
+
+/// <summary>A planner pin of one auxiliary work item: the resource and/or the start are fixed.</summary>
+internal sealed record TimelineSourceAuxiliaryPin(
+    string BatchOperationId,
+    string RequirementId,
+    string? WorkstationId,
+    string? EmployeeId,
+    DateTimeOffset? StartsAt);
 
 internal sealed record TimelineSourceHoliday(
     DateOnly Date, string Name, string Status, string? StartsAtLocal, string? EndsAtLocal);
@@ -106,7 +157,9 @@ internal sealed record TimelineSourceResource(
     bool RespectMasterCalendar = true,
     double ToolLoadSecondsPerTool = 60,
     double? FixtureAssemblySeconds = null,
-    double FirstPartRunningSpeedPercent = 66.6666666667);
+    double FirstPartRunningSpeedPercent = 66.6666666667,
+    string? Name = null,
+    IReadOnlyList<string>? OperationalSkillIds = null);
 
 internal sealed record TimelineSourceResourceException(
     DateOnly Date,

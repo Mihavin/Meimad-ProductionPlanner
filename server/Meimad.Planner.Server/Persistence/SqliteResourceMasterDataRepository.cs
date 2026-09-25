@@ -104,17 +104,99 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     public async Task<OperationResourceRequirementRecord> CreateRequirementAsync(OperationResourceRequirementRecord v,EditAuthority authority,CancellationToken token)
     {
         await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
+        await EnsurePredecessorOnSameOperationAsync(c,t,v.CaseOperationId,v.PredecessorRequirementId,token);
         await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="""
             INSERT INTO operation_resource_requirements(id,case_operation_id,sequence_position,resource_class,workstation_type_id,external_resource_id,
                 required_capability,required_skill_id,capacity_required,estimated_duration_seconds,direction,simultaneous_group_key,
-                predecessor_requirement_id,is_active,version,created_at,updated_at)
-            VALUES($id,$operation,$position,$class,$type,$external,$capability,$skill,$capacity,$duration,$direction,$group,$predecessor,1,1,$at,$at);
+                predecessor_requirement_id,is_active,version,created_at,updated_at,name,step_number,duration_per_unit_seconds)
+            VALUES($id,$operation,$position,$class,$type,$external,$capability,$skill,$capacity,$duration,$direction,$group,$predecessor,1,1,$at,$at,$name,$step,$perUnit);
             """;
         q.Parameters.AddWithValue("$id",v.Id);q.Parameters.AddWithValue("$operation",v.CaseOperationId);q.Parameters.AddWithValue("$position",v.SequencePosition);
         q.Parameters.AddWithValue("$class",v.ResourceClass);q.Parameters.AddWithValue("$type",Db(v.WorkstationTypeId));q.Parameters.AddWithValue("$external",Db(v.ExternalResourceId));
         q.Parameters.AddWithValue("$capability",Db(v.RequiredCapability));q.Parameters.AddWithValue("$skill",Db(v.RequiredSkillId));q.Parameters.AddWithValue("$capacity",v.CapacityRequired);
         q.Parameters.AddWithValue("$duration",v.EstimatedDurationSeconds);q.Parameters.AddWithValue("$direction",v.Direction);q.Parameters.AddWithValue("$group",Db(v.SimultaneousGroupKey));
-        q.Parameters.AddWithValue("$predecessor",Db(v.PredecessorRequirementId));q.Parameters.AddWithValue("$at",Now());await ExecuteMappedAsync(q,token);await t.CommitAsync(token);return v;
+        q.Parameters.AddWithValue("$predecessor",Db(v.PredecessorRequirementId));q.Parameters.AddWithValue("$at",Now());
+        q.Parameters.AddWithValue("$name",Db(v.Name));q.Parameters.AddWithValue("$step",Db(v.StepNumber));q.Parameters.AddWithValue("$perUnit",v.DurationPerUnitSeconds);
+        await ExecuteMappedAsync(q,token);await t.CommitAsync(token);return v;
+    }
+
+    public async Task<OperationResourceRequirementRecord> UpdateRequirementAsync(string id,OperationResourceRequirementUpdate v,int expected,EditAuthority authority,CancellationToken token)
+    {
+        await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
+        var current=(await ReadRequirementsAsync(c,t,"WHERE id=$id",id,token)).FirstOrDefault()
+            ??throw new ResourceMasterDataException("resource_version_stale","version","The requirement changed or no longer exists. Refresh and retry.");
+        await EnsurePredecessorOnSameOperationAsync(c,t,current.CaseOperationId,v.PredecessorRequirementId,token);
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="""
+            UPDATE operation_resource_requirements
+            SET sequence_position=$position,resource_class=$class,workstation_type_id=$type,external_resource_id=$external,required_capability=$capability,
+                required_skill_id=$skill,capacity_required=$capacity,estimated_duration_seconds=$duration,direction=$direction,simultaneous_group_key=$group,
+                predecessor_requirement_id=$predecessor,is_active=$active,name=$name,step_number=$step,duration_per_unit_seconds=$perUnit,
+                version=version+1,updated_at=$at
+            WHERE id=$id AND version=$version;
+            """;
+        q.Parameters.AddWithValue("$position",v.SequencePosition);q.Parameters.AddWithValue("$class",v.ResourceClass);q.Parameters.AddWithValue("$type",Db(v.WorkstationTypeId));
+        q.Parameters.AddWithValue("$external",Db(v.ExternalResourceId));q.Parameters.AddWithValue("$capability",Db(v.RequiredCapability));q.Parameters.AddWithValue("$skill",Db(v.RequiredSkillId));
+        q.Parameters.AddWithValue("$capacity",v.CapacityRequired);q.Parameters.AddWithValue("$duration",v.EstimatedDurationSeconds);q.Parameters.AddWithValue("$direction",v.Direction);
+        q.Parameters.AddWithValue("$group",Db(v.SimultaneousGroupKey));q.Parameters.AddWithValue("$predecessor",Db(v.PredecessorRequirementId));q.Parameters.AddWithValue("$active",v.IsActive);
+        q.Parameters.AddWithValue("$name",Db(v.Name));q.Parameters.AddWithValue("$step",Db(v.StepNumber));q.Parameters.AddWithValue("$perUnit",v.DurationPerUnitSeconds);
+        q.Parameters.AddWithValue("$at",Now());q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);
+        await ExecuteChangedAsync(q,token);
+        var updated=(await ReadRequirementsAsync(c,t,"WHERE id=$id",id,token)).Single();
+        await t.CommitAsync(token);return updated;
+    }
+
+    public async Task DeleteRequirementAsync(string id,int expected,EditAuthority authority,CancellationToken token)
+    {
+        await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
+        await using(var blocked=c.CreateCommand())
+        {
+            blocked.Transaction=t;blocked.CommandText="SELECT EXISTS(SELECT 1 FROM operation_resource_requirements WHERE predecessor_requirement_id=$id);";blocked.Parameters.AddWithValue("$id",id);
+            if(Convert.ToInt32(await blocked.ExecuteScalarAsync(token),CultureInfo.InvariantCulture)==1)
+                throw new ResourceMasterDataException("resource_in_use","predecessorRequirementId","Another requirement follows this one. Remove that link first.");
+        }
+        await SuppressKitaronRequirementAsync(c,t,id,Now(),token);
+        await using(var pins=c.CreateCommand())
+        {
+            pins.Transaction=t;pins.CommandText="""
+                DELETE FROM external_resource_executions WHERE schedule_work_id IN (SELECT id FROM resource_schedule_work WHERE requirement_id=$id);
+                DELETE FROM resource_schedule_assignments WHERE schedule_work_id IN (SELECT id FROM resource_schedule_work WHERE requirement_id=$id);
+                DELETE FROM resource_schedule_work WHERE requirement_id=$id;
+                """;pins.Parameters.AddWithValue("$id",id);await pins.ExecuteNonQueryAsync(token);
+        }
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="DELETE FROM operation_resource_requirements WHERE id=$id AND version=$version;";
+        q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);
+    }
+
+    /// <summary>
+    /// A planner who deletes a Kitaron-imported requirement means it: the sync link becomes a
+    /// suppression record so the next synchronization does not recreate the step. Shared with the
+    /// Case Operation deletion path, which removes the operation's requirements first.
+    /// </summary>
+    internal static async Task SuppressKitaronRequirementAsync(SqliteConnection c,SqliteTransaction t,string requirementId,string now,CancellationToken token)
+    {
+        await using var suppress=c.CreateCommand();suppress.Transaction=t;suppress.CommandText="""
+            INSERT INTO kitaron_suppressed_operations (source_key, case_id, operation_number, name, suppressed_at)
+            SELECT link.source_key, operation.case_id, COALESCE(requirement.step_number, 0), COALESCE(requirement.name, ''), $now
+            FROM kitaron_sync_links link
+            JOIN operation_resource_requirements requirement ON requirement.id = link.target_id
+            JOIN case_operations operation ON operation.id = requirement.case_operation_id
+            WHERE link.source_entity = 'operation_requirement' AND link.target_id = $id
+            ON CONFLICT (source_key) DO UPDATE SET
+                case_id = excluded.case_id, operation_number = excluded.operation_number,
+                name = excluded.name, suppressed_at = excluded.suppressed_at;
+            DELETE FROM kitaron_sync_links WHERE source_entity = 'operation_requirement' AND target_id = $id;
+            """;
+        suppress.Parameters.AddWithValue("$id",requirementId);suppress.Parameters.AddWithValue("$now",now);
+        await suppress.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task EnsurePredecessorOnSameOperationAsync(SqliteConnection c,SqliteTransaction t,string operationId,string? predecessorId,CancellationToken token)
+    {
+        if(predecessorId is null)return;
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="SELECT EXISTS(SELECT 1 FROM operation_resource_requirements WHERE id=$id AND case_operation_id=$operation);";
+        q.Parameters.AddWithValue("$id",predecessorId);q.Parameters.AddWithValue("$operation",operationId);
+        if(Convert.ToInt32(await q.ExecuteScalarAsync(token),CultureInfo.InvariantCulture)!=1)
+            throw new ResourceMasterDataException("resource_validation_failed","predecessorRequirementId","The predecessor requirement must belong to the same Case Operation.");
     }
 
     private async Task ExecuteCreateAsync(string sql, string id, string name, string? description, EditAuthority authority,
@@ -165,12 +247,21 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     }
     private async Task<IReadOnlyList<OperationResourceRequirementRecord>> ReadRequirementsAsync(string operationId,CancellationToken token)
     {
-        await using var c=await database.OpenConnectionAsync(token);await using var q=c.CreateCommand();q.CommandText="""
+        await using var c=await database.OpenConnectionAsync(token);
+        return await ReadRequirementsAsync(c,null,"WHERE case_operation_id=$id",operationId,token);
+    }
+
+    private static async Task<IReadOnlyList<OperationResourceRequirementRecord>> ReadRequirementsAsync(SqliteConnection c,SqliteTransaction? t,string where,string id,CancellationToken token)
+    {
+        await using var q=c.CreateCommand();q.Transaction=t;q.CommandText=$"""
             SELECT id,case_operation_id,sequence_position,resource_class,workstation_type_id,external_resource_id,required_capability,
-                   required_skill_id,capacity_required,estimated_duration_seconds,direction,simultaneous_group_key,predecessor_requirement_id,is_active,version
-            FROM operation_resource_requirements WHERE case_operation_id=$id ORDER BY sequence_position,id;
-            """;q.Parameters.AddWithValue("$id",operationId);var values=new List<OperationResourceRequirementRecord>();await using var r=await q.ExecuteReaderAsync(token);
-        while(await r.ReadAsync(token))values.Add(new(r.GetString(0),r.GetString(1),r.GetInt32(2),r.GetString(3),Nullable(r,4),Nullable(r,5),Nullable(r,6),Nullable(r,7),r.GetInt32(8),r.GetInt32(9),r.GetString(10),Nullable(r,11),Nullable(r,12),r.GetBoolean(13),r.GetInt32(14)));return values;
+                   required_skill_id,capacity_required,estimated_duration_seconds,direction,simultaneous_group_key,predecessor_requirement_id,is_active,version,
+                   name,step_number,duration_per_unit_seconds,
+                   EXISTS(SELECT 1 FROM kitaron_sync_links link WHERE link.source_entity='operation_requirement' AND link.target_id=operation_resource_requirements.id)
+            FROM operation_resource_requirements {where} ORDER BY sequence_position,id;
+            """;q.Parameters.AddWithValue("$id",id);var values=new List<OperationResourceRequirementRecord>();await using var r=await q.ExecuteReaderAsync(token);
+        while(await r.ReadAsync(token))values.Add(new(r.GetString(0),r.GetString(1),r.GetInt32(2),r.GetString(3),Nullable(r,4),Nullable(r,5),Nullable(r,6),Nullable(r,7),r.GetInt32(8),r.GetInt32(9),r.GetString(10),Nullable(r,11),Nullable(r,12),r.GetBoolean(13),r.GetInt32(14),
+            Nullable(r,15),r.IsDBNull(16)?null:r.GetInt32(16),r.GetInt32(17),r.GetInt32(18)==1));return values;
     }
 
     private static async Task EnsureEditAuthorityAsync(SqliteConnection c, SqliteTransaction t, EditAuthority authority, CancellationToken token)

@@ -167,6 +167,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public ObservableCollection<CaseOperation> Operations { get; } = [];
 
+    /// <summary>Auxiliary steps (Workstation, External Resource, Employee Skill) of the selected Operation.</summary>
+    public OperationRequirementsViewModel Requirements { get; } = new();
+
     public ObservableCollection<CaseOperation> OperationReferenceOptions { get; } = [];
 
     public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty];
@@ -370,6 +373,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 ClearGCodeCatalog();
                 RefreshGCodeCommand.RaiseCanExecuteChanged();
                 ReleaseGCodeCommand.RaiseCanExecuteChanged();
+                _ = Requirements.LoadAsync(value?.CaseOperationId);
                 if (value is not null && apiClient is not null && !IsBusy)
                 {
                     RefreshGCodeCommand.Execute(null);
@@ -757,6 +761,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var apiChanged = !ReferenceEquals(apiClient, newApiClient);
         var nextIsEditor = editStatus?.State == ClientEditState.Editor;
         var nextGeneration = editStatus?.Generation ?? 0;
+        Requirements.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
             && isEditor == nextIsEditor

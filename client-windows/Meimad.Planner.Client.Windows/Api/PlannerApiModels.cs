@@ -1724,13 +1724,81 @@ internal sealed record TimelineSnapshot(
     IReadOnlyList<TimelineConflict> Conflicts,
     string? DisplayTimeZoneId = null,
     string? DayStartsAtLocal = null,
-    string? DayEndsAtLocal = null);
+    string? DayEndsAtLocal = null,
+    IReadOnlyList<TimelineResourceLane>? Resources = null);
+
+/// <summary>
+/// One Workstation, External Resource or Employee lane with the provisional auxiliary steps the
+/// Server placed on it around the Machine anchors. Read-only like the rest of the Timeline.
+/// </summary>
+internal sealed record TimelineResourceLane(
+    string ResourceId,
+    string ResourceClass,
+    string Name,
+    IReadOnlyList<TimelineResourceInterval> Intervals)
+{
+    public string ClassLabel => ResourceClass switch
+    {
+        "workstation" => "Workstation",
+        "external" => "External",
+        "employee" => "Employee",
+        _ => ResourceClass
+    };
+}
+
+internal sealed record TimelineResourceInterval(
+    string WorkId,
+    string OperationId,
+    string RequirementId,
+    string BatchId,
+    string BatchNumber,
+    string PartNumber,
+    int OperationNumber,
+    string OperationName,
+    int? StepNumber,
+    string Name,
+    string Direction,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    bool IsPinned,
+    string Explanation,
+    string? WorkstationId,
+    string? EmployeeId,
+    string? ExternalResourceId,
+    string ResourceClass)
+{
+    public string Label => StepNumber is { } step
+        ? $"{BatchNumber} OP{OperationNumber} · {step} {Name}"
+        : $"{BatchNumber} OP{OperationNumber} · {Name}";
+
+    public string DirectionLabel => string.Equals(Direction, "BACKWARD", StringComparison.OrdinalIgnoreCase)
+        ? "before the Machine"
+        : "after the Machine";
+}
+
+internal sealed record TimelineAuxiliaryPinRequest(
+    string BatchOperationId,
+    string RequirementId,
+    string? WorkstationId,
+    string? EmployeeId,
+    DateTimeOffset PlannedStartsAt,
+    DateTimeOffset PlannedEndsAt,
+    bool PinStart,
+    string? Reason);
+
+internal sealed record TimelineAuxiliaryPin(
+    string BatchOperationId,
+    string RequirementId,
+    string? WorkstationId,
+    string? EmployeeId,
+    DateTimeOffset? StartsAt);
 
 internal sealed record TimelineBatch(
     string BatchId,
     string BatchNumber,
     string PartNumber,
-    DateOnly? WorkFinishDate = null)
+    DateOnly? WorkFinishDate = null,
+    DateTimeOffset? PredictedCompletion = null)
 {
     public string DisplayName => WorkFinishDate.HasValue
         ? $"{PartNumber} / {BatchNumber} • due {WorkFinishDate:yyyy-MM-dd}"
@@ -2196,3 +2264,121 @@ internal sealed record NcTemplateFormatResult(
     IReadOnlyList<string> Changes,
     IReadOnlyList<string> Warnings,
     NcTemplateValidation Validation);
+
+/// <summary>A Kitaron station and the planner's decision about what its route steps become.</summary>
+internal sealed record PlannerKitaronStation(
+    int KitaronStationId,
+    string StationName,
+    string? StationType,
+    bool Retired,
+    int RouteRows,
+    int PlannedRows,
+    int SupplierRows,
+    string SuggestedRole,
+    string ImportRole,
+    string? MachineType,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    double DefaultMinutesPerPart,
+    double DefaultMinutesPerBatch,
+    int CapacityRequired,
+    string? Notes,
+    DateTimeOffset FirstSeenAt,
+    DateTimeOffset LastSeenAt,
+    DateTimeOffset? DecidedAt,
+    string? DecidedBy,
+    int Version,
+    DateTimeOffset UpdatedAt)
+{
+    public bool IsUndecided => string.Equals(ImportRole, "UNDECIDED", StringComparison.Ordinal);
+
+    public string RoleLabel => KitaronStationRoleLabels.Label(ImportRole);
+
+    public string SuggestedRoleLabel => KitaronStationRoleLabels.Label(SuggestedRole);
+
+    public string StatusLabel => Retired ? "retired" : "active";
+}
+
+internal static class KitaronStationRoleLabels
+{
+    internal static readonly IReadOnlyList<string> Roles = ["UNDECIDED", "MACHINE", "WORKSTATION", "EXTERNAL", "IGNORE"];
+
+    internal static string Label(string role) => role switch
+    {
+        "UNDECIDED" => "Undecided",
+        "MACHINE" => "Machine operation",
+        "WORKSTATION" => "Workstation step",
+        "EXTERNAL" => "External resource step",
+        "IGNORE" => "Ignore",
+        _ => role
+    };
+}
+
+internal sealed record KitaronStationDecision(
+    string ImportRole,
+    string? MachineType,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    double DefaultMinutesPerPart,
+    double DefaultMinutesPerBatch,
+    int CapacityRequired,
+    string? Notes,
+    int ExpectedVersion);
+
+internal sealed record PlannerKitaronStationList(IReadOnlyList<PlannerKitaronStation> Items);
+
+/// <summary>An auxiliary resource requirement of a Case Operation (schema v65, extended in v81).</summary>
+internal sealed record PlannerOperationRequirement(
+    string Id,
+    string CaseOperationId,
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    string Direction,
+    string? SimultaneousGroupKey,
+    string? PredecessorRequirementId,
+    bool IsActive,
+    int Version,
+    string? Name = null,
+    int? StepNumber = null,
+    int DurationPerUnitSeconds = 0,
+    bool IsKitaronManaged = false);
+
+internal sealed record OperationRequirementCreate(
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    string Direction,
+    string? SimultaneousGroupKey,
+    string? PredecessorRequirementId,
+    string? Name,
+    int? StepNumber,
+    int DurationPerUnitSeconds);
+
+internal sealed record OperationRequirementUpdate(
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    string Direction,
+    string? SimultaneousGroupKey,
+    string? PredecessorRequirementId,
+    string? Name,
+    int? StepNumber,
+    int DurationPerUnitSeconds,
+    bool IsActive,
+    int ExpectedVersion);

@@ -14,6 +14,9 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     // but the shared view model limits those read-only requests.
     internal static readonly TimeSpan AutomaticForecastRefreshInterval = TimeSpan.FromSeconds(30);
     private IPlannerApiClient? apiClient;
+    private string clientId = string.Empty;
+    private long editGeneration;
+    private bool isEditor;
     private readonly Func<DateTimeOffset> clientNowProvider;
     private IReadOnlyList<TimelineDependency> allDependencies = [];
     private bool hasLoaded;
@@ -53,6 +56,14 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     public ObservableCollection<TimelineMachine> Machines { get; } = [];
 
     public ObservableCollection<TimelineConflict> Conflicts { get; } = [];
+
+    /// <summary>
+    /// Workstation, External Resource and Employee lanes with the provisional auxiliary steps the
+    /// Server placed around the Machine anchors. Read-only like the Machine rows.
+    /// </summary>
+    public ObservableCollection<TimelineResourceLane> Resources { get; } = [];
+
+    public bool CanPin => apiClient is not null && isEditor && !IsBusy;
 
     public ObservableCollection<TimelineDependency> SelectedDependencies { get; } = [];
 
@@ -139,6 +150,55 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
             {
                 RefreshCommand.RaiseCanExecuteChanged();
             }
+        }
+    }
+
+    internal void AttachSession(IPlannerApiClient? newApiClient, string newClientId, EditModeStatus? editStatus)
+    {
+        clientId = newClientId;
+        editGeneration = editStatus?.Generation ?? 0;
+        isEditor = editStatus?.State == ClientEditState.Editor;
+        OnPropertyChanged(nameof(CanPin));
+        AttachSession(newApiClient);
+    }
+
+    /// <summary>
+    /// Pins the auxiliary step to the resource it is currently placed on, optionally to its start
+    /// as well, and asks the Server for a fresh projection. Pins never move Machine assignments.
+    /// </summary>
+    internal async Task PinAsync(TimelineResourceInterval interval, bool pinStart)
+    {
+        if (apiClient is null || !CanPin) return;
+        try
+        {
+            await apiClient.SetTimelineAuxiliaryPinAsync(new TimelineAuxiliaryPinRequest(
+                interval.OperationId, interval.RequirementId, interval.WorkstationId, interval.EmployeeId,
+                interval.StartsAt, interval.EndsAt, pinStart, null), clientId, editGeneration);
+            Invalidate();
+            await RefreshAsync();
+            StatusMessage = pinStart
+                ? $"{interval.Label} pinned to its resource and start."
+                : $"{interval.Label} pinned to its resource.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+    }
+
+    internal async Task UnpinAsync(TimelineResourceInterval interval)
+    {
+        if (apiClient is null || !CanPin) return;
+        try
+        {
+            await apiClient.ClearTimelineAuxiliaryPinAsync(interval.OperationId, interval.RequirementId, clientId, editGeneration);
+            Invalidate();
+            await RefreshAsync();
+            StatusMessage = $"{interval.Label} unpinned.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
         }
     }
 
@@ -319,6 +379,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
                         }).ToArray()
             }));
         TraceDuplicateBlocks(Machines);
+        Replace(Resources, snapshot.Resources ?? []);
         Replace(Conflicts, snapshot.Conflicts);
         allDependencies = snapshot.Dependencies;
         SelectedBatch = Batches.FirstOrDefault(batch => batch.BatchId == selectedId)
@@ -370,6 +431,7 @@ internal sealed class TimelineViewModel : INotifyPropertyChanged
     {
         Batches.Clear();
         Machines.Clear();
+        Resources.Clear();
         Conflicts.Clear();
         SelectedDependencies.Clear();
         allDependencies = [];

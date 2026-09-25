@@ -13,6 +13,7 @@ internal sealed class KitaronSyncService
     private readonly KitaronMappingService mappingService;
     private readonly IKitaronSourceReader sourceReader;
     private readonly IKitaronSyncRepository syncRepository;
+    private readonly IKitaronStationRepository stationRepository;
     private readonly IDataProtector passwordProtector;
     private readonly TimeProvider timeProvider;
     private readonly string workingFolderRoot;
@@ -27,12 +28,14 @@ internal sealed class KitaronSyncService
         IDataProtectionProvider dataProtectionProvider,
         DatabaseOptions databaseOptions,
         TimeProvider timeProvider,
-        ILogger<KitaronSyncService> logger)
+        ILogger<KitaronSyncService> logger,
+        IKitaronStationRepository stationRepository)
     {
         this.connectionRepository = connectionRepository;
         this.mappingService = mappingService;
         this.sourceReader = sourceReader;
         this.syncRepository = syncRepository;
+        this.stationRepository = stationRepository;
         this.timeProvider = timeProvider;
         this.logger = logger;
         passwordProtector = dataProtectionProvider.CreateProtector("Meimad.Planner.Kitaron.SqlPassword.v1");
@@ -103,7 +106,9 @@ internal sealed class KitaronSyncService
                 var snapshot = await sourceReader.ReadAsync(
                     connection, password, columns, materialColumns, cancellationToken);
                 var existingCasePartNumbers = await syncRepository.GetExistingCasePartNumbersAsync(cancellationToken);
-                var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version);
+                var stations = (await stationRepository.ListAsync(cancellationToken))
+                    .ToDictionary(station => station.KitaronStationId);
+                var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version, stations);
                 return await syncRepository.ApplyAsync(plan, timeProvider.GetUtcNow(), cancellationToken);
             }
             catch (KitaronSyncBlockedException exception)
@@ -121,11 +126,12 @@ internal sealed class KitaronSyncService
         finally { gate.Release(); }
     }
 
-    private KitaronSyncPlan BuildPlan(
+    internal KitaronSyncPlan BuildPlan(
         KitaronSourceSnapshot snapshot,
         IReadOnlyList<KitaronMappingField> fields,
         IReadOnlySet<string> existingCasePartNumbers,
-        int mappingVersion)
+        int mappingVersion,
+        IReadOnlyDictionary<int, KitaronStationRecord>? stations = null)
     {
         var byTarget = fields.ToDictionary(
             field => $"{field.TargetEntity}.{field.TargetField}", StringComparer.Ordinal);
@@ -251,11 +257,20 @@ internal sealed class KitaronSyncService
 
         var parentParts = selectedComponents.Select(component => component.ParentPartNumber)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // The route master (OD-038) is the authoritative route for every synchronized Case that has
+        // one; the planning view's open-work rows remain only a fallback for parts without a route.
+        var routePlan = KitaronRoutePlanner.Plan(
+            snapshot.RouteSteps ?? [],
+            stations ?? new Dictionary<int, KitaronStationRecord>(),
+            cases.Select(item => item.PartNumber).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            parentParts,
+            warnings);
         foreach (var parentPart in parsed.Where(row => row.OperationNumber > 0)
                      .Select(row => row.Part).Where(parentParts.Contains)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
             AddWarning(warnings, $"{parentPart} is a parent Case; its direct Kitaron Operations were skipped.");
-        var rawOperations = parsed.Where(row => row.OperationNumber > 0 && !parentParts.Contains(row.Part))
+        var rawOperations = parsed.Where(row => row.OperationNumber > 0 && !parentParts.Contains(row.Part)
+                && !routePlan.PartsWithRoute.Contains(row.Part))
             .GroupBy(row => $"{row.Part}\u001f{row.OperationNumber}", StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
@@ -274,6 +289,7 @@ internal sealed class KitaronSyncService
                     item.SourceKey, item.CaseSourceKey, item.OperationNumber, index, item.Name,
                     item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds,
                     Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds))))
+            .Concat(routePlan.Operations)
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var materialRows = snapshot.MaterialRows ?? [];
@@ -318,10 +334,12 @@ internal sealed class KitaronSyncService
             .ToArray();
 
         return new KitaronSyncPlan(
-            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count,
+            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count
+                + (snapshot.RouteSteps?.Count ?? 0),
             cases, orders, operations, components,
             snapshot.Components.Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
-            warnings, mappingVersion, materialOrders);
+            warnings, mappingVersion, materialOrders,
+            routePlan.Requirements, snapshot.Stations, routePlan.StepsSkipped);
     }
 
     private static string? OptionalText(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields,

@@ -577,6 +577,16 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<PlannerExternalResource> UpdateExternalResourceAsync(string id,ExternalResourceUpdate update,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
     Task DeleteExternalResourceAsync(string id,int version,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerOperationRequirement>> ListOperationRequirementsAsync(string caseOperationId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerOperationRequirement>>([]);
+    Task<PlannerOperationRequirement> CreateOperationRequirementAsync(string caseOperationId, OperationRequirementCreate create, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PlannerOperationRequirement> UpdateOperationRequirementAsync(string requirementId, OperationRequirementUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task DeleteOperationRequirementAsync(string requirementId, int version, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerKitaronStation>> ListKitaronStationsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerKitaronStation>>([]);
+    Task<PlannerKitaronStation> DecideKitaronStationAsync(int kitaronStationId, KitaronStationDecision decision, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<TimelineAuxiliaryPin> SetTimelineAuxiliaryPinAsync(TimelineAuxiliaryPinRequest request, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(new PlannerEmployeeSkills(employeeId, []));
@@ -2531,6 +2541,45 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         PostResourceAsync<PlannerExternalResource>("api/v1/resources/external", create, clientId, editGeneration, cancellationToken);
     public Task<PlannerExternalResource> UpdateExternalResourceAsync(string id,ExternalResourceUpdate value,string clientId,long generation,CancellationToken token=default)=>PatchResourceAsync<PlannerExternalResource>($"api/v1/resources/external/{Uri.EscapeDataString(id)}",value,clientId,generation,token);
     public Task DeleteExternalResourceAsync(string id,int version,string clientId,long generation,CancellationToken token=default)=>DeleteAsync($"api/v1/resources/external/{Uri.EscapeDataString(id)}?version={version}",clientId,generation,token);
+
+    public async Task<IReadOnlyList<PlannerOperationRequirement>> ListOperationRequirementsAsync(string caseOperationId, CancellationToken cancellationToken = default) =>
+        await ReadArrayAsync<PlannerOperationRequirement>($"api/v1/case-operations/{Uri.EscapeDataString(caseOperationId)}/resource-requirements", cancellationToken);
+
+    public Task<PlannerOperationRequirement> CreateOperationRequirementAsync(string caseOperationId, OperationRequirementCreate create, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        PostResourceAsync<PlannerOperationRequirement>($"api/v1/case-operations/{Uri.EscapeDataString(caseOperationId)}/resource-requirements", create, clientId, editGeneration, cancellationToken);
+
+    public Task<PlannerOperationRequirement> UpdateOperationRequirementAsync(string requirementId, OperationRequirementUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        PatchResourceAsync<PlannerOperationRequirement>($"api/v1/resource-requirements/{Uri.EscapeDataString(requirementId)}", update, clientId, editGeneration, cancellationToken);
+
+    public Task DeleteOperationRequirementAsync(string requirementId, int version, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/resource-requirements/{Uri.EscapeDataString(requirementId)}?version={version}", clientId, editGeneration, cancellationToken);
+
+    public async Task<IReadOnlyList<PlannerKitaronStation>> ListKitaronStationsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/kitaron/stations", cancellationToken);
+        return (await ReadSuccessAsync<PlannerKitaronStationList>(response, cancellationToken)).Items;
+    }
+
+    public async Task<PlannerKitaronStation> DecideKitaronStationAsync(int kitaronStationId, KitaronStationDecision decision, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, $"api/v1/kitaron/stations/{kitaronStationId.ToString(CultureInfo.InvariantCulture)}", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(decision, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerKitaronStation>(response, cancellationToken);
+    }
+
+    public async Task<TimelineAuxiliaryPin> SetTimelineAuxiliaryPinAsync(TimelineAuxiliaryPinRequest pin, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/timeline/auxiliary-pins", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(pin, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<TimelineAuxiliaryPin>(response, cancellationToken);
+    }
+
+    public Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/timeline/auxiliary-pins/{Uri.EscapeDataString(batchOperationId)}/{Uri.EscapeDataString(requirementId)}", clientId, editGeneration, cancellationToken);
 
     public async Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
         CancellationToken cancellationToken = default)

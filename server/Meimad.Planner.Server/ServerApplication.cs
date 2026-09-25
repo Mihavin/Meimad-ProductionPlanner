@@ -243,6 +243,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<IProductionReadinessRepository, SqliteProductionReadinessRepository>();
         builder.Services.AddSingleton<ProductionReadinessService>();
         builder.Services.AddSingleton<ITimelineSourceRepository, SqliteTimelineSourceRepository>();
+        builder.Services.AddSingleton<ITimelineAuxiliaryPinRepository, SqliteTimelineAuxiliaryPinRepository>();
         builder.Services.AddSingleton<TimelineCalculationEngine>();
         builder.Services.AddSingleton<TimelineProjectionService>();
         builder.Services.AddSingleton<ITvDashboardRepository, SqliteTvDashboardRepository>();
@@ -301,6 +302,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<KitaronConnectionService>();
         builder.Services.AddSingleton<KitaronMappingService>();
         builder.Services.AddSingleton<KitaronSyncService>();
+        builder.Services.AddSingleton<IKitaronStationRepository, SqliteKitaronStationRepository>();
+        builder.Services.AddSingleton<KitaronStationService>();
         builder.Services.AddHostedService<KitaronConnectionMonitorService>();
         builder.Services.AddHostedService<KitaronSyncHostedService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
@@ -429,6 +432,7 @@ public static class ServerApplication
         application.MapManufacturingProgramEndpoints();
         application.MapLegacyImportEndpoints();
         application.MapKitaronConnectionEndpoints();
+        application.MapKitaronStationEndpoints();
         application.MapClientPortalCustomerEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();

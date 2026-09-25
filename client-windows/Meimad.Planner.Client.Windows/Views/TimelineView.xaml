@@ -69,6 +69,11 @@
                     <Border Width="12" Height="12" Background="#C62828" />
                     <TextBlock Text="NOW = CURRENT TIME" Margin="5,0,0,0" />
                 </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
+                            ToolTip="Auxiliary steps (inspection, deburring, packing, plating) placed by the Server around the Machine anchor on Workstations, External Resources and Employees. A black outline marks a planner pin.">
+                    <Border Width="12" Height="12" Background="#00838F" />
+                    <TextBlock Text="AUXILIARY STEP" Margin="5,0,0,0" />
+                </StackPanel>
             </WrapPanel>
         </Border>
 

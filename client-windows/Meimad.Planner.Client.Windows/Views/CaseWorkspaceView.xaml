@@ -389,6 +389,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -589,6 +590,69 @@
                                             <DataGridTextColumn Header="Comment" Binding="{Binding ReleaseComment}" Width="*"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="4" Margin="0,14,0,0" Padding="14" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4" DataContext="{Binding Requirements}">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Delete step" Command="{Binding DeleteCommand}" />
+                                            <Button Content="Edit step" Command="{Binding BeginEditCommand}" />
+                                            <Button Content="Add step" Command="{Binding BeginAddCommand}" Margin="0" />
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="Auxiliary steps of the selected Operation" FontSize="17" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding Summary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <TextBlock Text="Inspection, deburring, packing, plating and similar steps run on Workstations, External Resources or Employees before or after the Machine. The Server places them automatically around the Machine anchor on the Timeline; the planner can pin a step there. Steps from Kitaron follow the station decisions in Setup."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <DataGrid ItemsSource="{Binding Requirements}" SelectedItem="{Binding SelectedRequirement}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="220">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Step" Binding="{Binding StepText}" Width="55"/>
+                                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                                            <DataGridTextColumn Header="Class" Binding="{Binding ClassLabel}" Width="90"/>
+                                            <DataGridTextColumn Header="Resource" Binding="{Binding ResourceText}" Width="*"/>
+                                            <DataGridTextColumn Header="When" Binding="{Binding DirectionLabel}" Width="70"/>
+                                            <DataGridTextColumn Header="Min / batch" Binding="{Binding PerBatchText}" Width="90"/>
+                                            <DataGridTextColumn Header="Min / part" Binding="{Binding PerPartText}" Width="80"/>
+                                            <DataGridTextColumn Header="After step" Binding="{Binding PredecessorText}" Width="*"/>
+                                            <DataGridTextColumn Header="Origin" Binding="{Binding OriginLabel}" Width="70"/>
+                                            <DataGridTextColumn Header="State" Binding="{Binding ActiveLabel}" Width="70"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Border Padding="12" Margin="0,10,0,0" Background="White" BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4"
+                                            Visibility="{Binding IsEditing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding EditorHeading}" FontWeight="Bold" Margin="0,0,0,8"/>
+                                            <UniformGrid Columns="3">
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Step name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Name}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Step number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding StepNumber}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Resource class" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding ResourceClassOptions}" SelectedItem="{Binding ResourceClass}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsWorkstationClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Workstation type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedWorkstationType}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsWorkstationClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Required capability (optional)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CapabilityText}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsExternalClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="External Resource" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding ExternalResources}" SelectedItem="{Binding SelectedExternalResource}" DisplayMemberPath="Name"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsEmployeeClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Required Skill" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding Skills}" SelectedItem="{Binding SelectedSkill}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Before or after the Machine" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding DirectionOptions}" SelectedItem="{Binding Direction}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Capacity required" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Capacity}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding HasDurations, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Minutes per batch" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MinutesPerBatch}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding HasDurations, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Minutes per part" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MinutesPerPart}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="After step (same side of the Machine)" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding PredecessorOptions}" SelectedItem="{Binding SelectedPredecessor}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Margin="0,20,12,8"><CheckBox Content="Active" IsChecked="{Binding IsActive}"/></StackPanel>
+                                            </UniformGrid>
+                                            <TextBlock Text="An External step takes its duration from the External Resource's promised lead time and safety buffer. FORWARD steps follow the Machine finish, BACKWARD steps precede the Machine start." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                            <DockPanel>
+                                                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                    <Button Content="Cancel" Command="{Binding CancelCommand}" />
+                                                    <Button Content="Save step" Command="{Binding SaveCommand}" Margin="0" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </StackPanel>
+                                    </Border>
+                                    <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                               Visibility="{Binding IsEditing, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
                                 </StackPanel>
                             </Border>
                         </Grid>

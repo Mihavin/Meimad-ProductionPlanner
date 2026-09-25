@@ -454,7 +454,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         RaiseCommandStates();
         CaseWorkspace.AttachSession(apiClient, ClientId, status);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, status);
-        Timeline.AttachSession(apiClient);
+        Timeline.AttachSession(apiClient, ClientId, status);
         Setup.AttachSession(apiClient, ClientId, status);
         UserTerminals.AttachSession(apiClient, ClientId, status);
         QcQueue.AttachSession(
@@ -476,7 +476,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Setup.ApplyConnectionStatus(headline, detail);
         CaseWorkspace.AttachSession(apiClient, ClientId, null);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
-        Timeline.AttachSession(apiClient);
+        Timeline.AttachSession(apiClient, ClientId, null);
         Setup.AttachSession(apiClient, ClientId, null);
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
@@ -496,7 +496,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         apiClient = apiClientFactory.Create(serverBaseUri);
         CaseWorkspace.AttachSession(apiClient, ClientId, null);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
-        Timeline.AttachSession(apiClient);
+        Timeline.AttachSession(apiClient, ClientId, null);
         Setup.AttachSession(apiClient, ClientId, null);
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(

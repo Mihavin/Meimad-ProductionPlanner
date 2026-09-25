@@ -23,7 +23,10 @@
 
     <section class="notice">
       <strong>One-way boundary:</strong> Kitaron is always opened with <code>ApplicationIntent=ReadOnly</code>.
-      Synchronization creates or updates linked Cases, canonical delivery-row Orders, reusable Case Operations, and Case Components in Meimad only.
+      Synchronization creates or updates linked Cases, canonical delivery-row Orders, reusable Case Operations, auxiliary route steps, and Case Components in Meimad only.
+      Case Operations and auxiliary steps come from the Kitaron route master (<code>TDetailDirectionList</code>, <code>TDetailDirectionHeader</code>, <code>TDirection</code>);
+      what each Kitaron station becomes is decided in the Windows client under Setup, Kitaron Stations, and an undecided station imports nothing.
+      The planning view remains the route source only for parts without a route.
       It also imports raw-material purchase lines and the latest supplier delivery approval into a separate advisory register.
       Each Order uses <code>OrderNumber/RecordID</code>, imports <code>CostShkalim</code> as unit Price in NIS (a zero means no price),
       and becomes Active, Inactive, or Cancelled from the Kitaron closed/StopProduction facts.
@@ -154,6 +157,8 @@
         <div><strong>Cases</strong><span id="syncCases">0 created / 0 updated / 0 matched</span></div>
         <div><strong>Orders</strong><span id="syncOrders">0 created / 0 updated / 0 matched</span></div>
         <div><strong>Case Operations</strong><span id="syncOperations">0 created / 0 updated / 0 matched</span></div>
+        <div><strong>Auxiliary route steps</strong><span id="syncRequirements">0 created / 0 updated / 0 matched</span></div>
+        <div><strong>Route steps skipped</strong><span id="syncRouteStepsSkipped">0</span></div>
         <div><strong>Case Components</strong><span id="syncComponents">0 created / 0 updated / 0 matched</span></div>
         <div><strong>Warnings</strong><span id="syncWarnings">0</span></div>
       </div>

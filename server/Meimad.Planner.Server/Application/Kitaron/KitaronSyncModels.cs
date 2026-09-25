@@ -26,11 +26,36 @@ internal sealed record KitaronSourceComponent(
     double QuantityPerParent,
     int SortOrder);
 
+/// <summary>
+/// One row of the Kitaron route master (`TDetailDirectionList` → `TDetailDirectionHeader` →
+/// `TDirection`), with the header facts needed to pick one route per part.
+/// </summary>
+internal sealed record KitaronSourceRouteStep(
+    string PartNumber,
+    string? PartRevision,
+    int DirectionHeaderId,
+    string? HeaderRevision,
+    bool ChartMaster,
+    bool IsMaster,
+    DateTime? ExpiredDate,
+    int DirectionId,
+    int? NumOrder,
+    string? ActionNumber,
+    string? Description,
+    string? OperationName,
+    int? StationId,
+    bool WorkPlanning,
+    double? TimeProductionMinutes,
+    double? DirectionTimeMinutes,
+    int? SupplierId);
+
 internal sealed record KitaronSourceSnapshot(
     IReadOnlyList<KitaronSourceRow> WorkRows,
     IReadOnlyList<KitaronSourceOrder> Orders,
     IReadOnlyList<KitaronSourceComponent> Components,
-    IReadOnlyList<KitaronSourceRow>? MaterialRows = null);
+    IReadOnlyList<KitaronSourceRow>? MaterialRows = null,
+    IReadOnlyList<KitaronSourceRouteStep>? RouteSteps = null,
+    IReadOnlyList<KitaronDiscoveredStation>? Stations = null);
 
 internal interface IKitaronSourceReader
 {
@@ -101,6 +126,28 @@ internal sealed record KitaronSyncMaterialOrder(
     bool Closed,
     string SourceHash);
 
+/// <summary>
+/// An auxiliary route step (inspection, deburring, packing, subcontract, ...) imported as a resource
+/// requirement of the machining Case Operation it surrounds. `Direction` BACKWARD means before the
+/// Machine anchor, FORWARD after it; `PredecessorSourceKey` chains steps of one side in route order.
+/// </summary>
+internal sealed record KitaronSyncRequirement(
+    string SourceKey,
+    string CaseSourceKey,
+    string OperationSourceKey,
+    int StepNumber,
+    int SequencePosition,
+    string Name,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    int CapacityRequired,
+    int DurationSeconds,
+    int DurationPerUnitSeconds,
+    string Direction,
+    string? PredecessorSourceKey,
+    string SourceHash);
+
 internal sealed record KitaronSyncPlan(
     int SourceRows,
     IReadOnlyList<KitaronSyncCase> Cases,
@@ -110,7 +157,10 @@ internal sealed record KitaronSyncPlan(
     IReadOnlySet<string> KnownComponentSourceKeys,
     IReadOnlyList<string> Warnings,
     int MappingVersion,
-    IReadOnlyList<KitaronSyncMaterialOrder>? MaterialOrders = null);
+    IReadOnlyList<KitaronSyncMaterialOrder>? MaterialOrders = null,
+    IReadOnlyList<KitaronSyncRequirement>? Requirements = null,
+    IReadOnlyList<KitaronDiscoveredStation>? Stations = null,
+    int RouteStepsSkipped = 0);
 
 internal sealed record KitaronSyncStatus(
     string Status,
@@ -132,7 +182,11 @@ internal sealed record KitaronSyncStatus(
     int ComponentsMatched,
     int WarningCount,
     int? MappingVersion,
-    int Version);
+    int Version,
+    int RequirementsCreated = 0,
+    int RequirementsUpdated = 0,
+    int RequirementsMatched = 0,
+    int RouteStepsSkipped = 0);
 
 internal interface IKitaronSyncRepository
 {

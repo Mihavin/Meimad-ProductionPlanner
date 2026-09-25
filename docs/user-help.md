@@ -28,6 +28,8 @@ The downloaded installer and its log (`install-client-update.log`) are kept unde
 
 Cases are part masters. Search by part number, name, customer, or active state. Open a Case to review its engineering preview, route, operations, dependencies, orders, batches, and revisions.
 
+Under **Operations**, the selected Operation also lists its **auxiliary steps**: inspection, deburring, packing, plating and similar work on Workstations, External Resources or Employees before or after the Machine. Add, edit or delete them with Edit Mode; steps imported from Kitaron show the origin **Kitaron**, and a step you delete is not brought back by the next synchronization.
+
 The Case working folder contains the source engineering files. The Planner does not modify original CAD, NC, or customer files. Generated Planner material is kept in the designated `_MeimadPlanner` area.
 
 ### Planning Board
@@ -49,6 +51,8 @@ Timeline is a read-only forecast calculated from the current Server snapshot. It
 
 Change the displayed horizon when needed. The separate Timeline window is also read-only; closing it does not change planning. The timeline is a consequence view, not a second place to schedule work.
 
+Below the Machine rows, **auxiliary steps** (inspection, deburring, packing, plating and other Workstation, External Resource or Employee steps of the Operation) appear on their own resource rows. The Server places them automatically around the Machine block: preparation steps end at the Machine start, following steps start at the Machine finish, chained in route order. A missing Workstation type, Skill or External Resource shows as a conflict instead of a silent gap, and a Batch whose complete route is predicted to finish after its Work Finish Date shows `delivery_at_risk`. Right-click a step to pin it to its resource (and optionally its start) or to unpin it; pins need Edit Mode and never move Machine work.
+
 ### Setup
 
 Setup contains the factory master data:
@@ -61,6 +65,7 @@ Setup contains the factory master data:
 - Material-order report and email settings
 - CNC connection settings and monitoring diagnostics
 - Per Machine: the **NC dialect** (control family of the Server-generated NC blocks) and the **NC viewer machine** (see below)
+- **Kitaron Stations**: what each Kitaron route station becomes when the connector imports the route master. Every station the synchronization has seen is listed with a suggested role; choose **Machine operation** (with the required Machine Type), **Workstation step** (with its Workstation type and default minutes per part/batch), **External resource step** (with the External Resource whose lead time applies) or **Ignore**. Undecided stations import nothing, so decide the machining stations first, then the inspection, deburring and packing stations once their Workstation types exist under Resource Types & Skills.
 
 Edit Mode is required for changes. Keep machine IDs stable, because employee skills, operation requirements, and historical records use them.
 

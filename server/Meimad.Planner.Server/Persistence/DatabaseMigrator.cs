@@ -85,7 +85,8 @@ internal sealed class DatabaseMigrator
         new SchemaV77ClientPortalCustomersMigration(),
         new SchemaV78MachineNcViewerMachineMigration(),
         new SchemaV79ToolPreparationMigration(),
-        new SchemaV80ToolCatalogMigration()
+        new SchemaV80ToolCatalogMigration(),
+        new SchemaV81KitaronRouteImportMigration()
     ];
 
     private readonly SqliteDatabase database;

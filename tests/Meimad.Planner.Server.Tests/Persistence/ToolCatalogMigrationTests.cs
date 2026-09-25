@@ -42,7 +42,7 @@ public sealed class ToolCatalogMigrationTests
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         Assert.Equal("tool_catalog", await ScalarAsync(connection, "SELECT name FROM schema_migrations WHERE version = 80;"));
-        Assert.Equal(80L, await ScalarAsync(connection, "PRAGMA user_version;"));
+        Assert.True((long)(await ScalarAsync(connection, "PRAGMA user_version;"))! >= 80L);
         Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check;"));
 
         // The rows of version 79 survived the rebuild, with the new columns empty.

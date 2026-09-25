@@ -30,6 +30,11 @@ internal static class ResourcePlanningEndpoints
         endpoints.MapPost("/api/v1/resource-plan/preview", Preview);
         endpoints.MapGet("/api/v1/case-operations/{operationId}/resource-requirements",async(string operationId,ResourceMasterDataService s,CancellationToken t)=>Results.Ok(await s.ListRequirementsAsync(operationId,t)));
         endpoints.MapPost("/api/v1/case-operations/{operationId}/resource-requirements",CreateRequirementAsync);
+        endpoints.MapPatch("/api/v1/resource-requirements/{requirementId}",(string requirementId,RequirementUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>
+            Mutate(c,a=>s.UpdateRequirementAsync(requirementId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,
+                r.CapacityRequired,r.EstimatedDurationSeconds,r.DurationPerUnitSeconds,r.Direction,r.SimultaneousGroupKey,r.PredecessorRequirementId,r.Name,r.StepNumber,r.IsActive,r.ExpectedVersion,a,t)));
+        endpoints.MapDelete("/api/v1/resource-requirements/{requirementId}",(string requirementId,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>
+            Mutate(c,async a=>{await s.DeleteRequirementAsync(requirementId,version,a,t);return new{id=requirementId};}));
     }
 
     private static IResult Preview(ResourcePlanningInput input, AutomaticResourceScheduler scheduler)
@@ -48,7 +53,7 @@ internal static class ResourcePlanningEndpoints
     private static async Task<IResult> SetEmployeeSkillsAsync(string employeeId, EmployeeSkillsRequest r, HttpContext c, ResourceMasterDataService s, CancellationToken t) =>
         await Mutate(c, async a => { await s.SetEmployeeSkillsAsync(employeeId, r.SkillIds, a, t); return new { employeeId, skillIds = r.SkillIds ?? [] }; });
     private static async Task<IResult> CreateRequirementAsync(string operationId,RequirementRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>
-        await Mutate(c,a=>s.CreateRequirementAsync(operationId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,r.CapacityRequired,r.EstimatedDurationSeconds,r.Direction,r.SimultaneousGroupKey,r.PredecessorRequirementId,a,t));
+        await Mutate(c,a=>s.CreateRequirementAsync(operationId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,r.CapacityRequired,r.EstimatedDurationSeconds,r.Direction,r.SimultaneousGroupKey,r.PredecessorRequirementId,a,t,r.Name,r.StepNumber,r.DurationPerUnitSeconds));
 
     private static async Task<IResult> Mutate<T>(HttpContext context, Func<Application.EditMode.EditAuthority,Task<T>> action)
     {
@@ -68,4 +73,5 @@ internal sealed record WorkstationRequest(string? Name,string? WorkstationTypeId
 internal sealed record WorkstationUpdateRequest(string? Name,string? WorkstationTypeId,string? WorkingCalendarId,int Capacity,IReadOnlyList<string?>? Capabilities,string? PropertiesJson,bool IsActive,int ExpectedVersion);
 internal sealed record ExternalResourceRequest(string? Name,string? SupplierName,int PromisedLeadTimeMinutes,int SafetyBufferMinutes,string? LeadTimeSemantics,string? WorkingCalendarId,string? PropertiesJson);
 internal sealed record ExternalResourceUpdateRequest(string? Name,string? SupplierName,int PromisedLeadTimeMinutes,int SafetyBufferMinutes,string? LeadTimeSemantics,string? WorkingCalendarId,string? PropertiesJson,bool IsActive,int ExpectedVersion);
-internal sealed record RequirementRequest(int SequencePosition,string? ResourceClass,string? WorkstationTypeId,string? ExternalResourceId,string? RequiredCapability,string? RequiredSkillId,int CapacityRequired,int EstimatedDurationSeconds,string? Direction,string? SimultaneousGroupKey,string? PredecessorRequirementId);
+internal sealed record RequirementRequest(int SequencePosition,string? ResourceClass,string? WorkstationTypeId,string? ExternalResourceId,string? RequiredCapability,string? RequiredSkillId,int CapacityRequired,int EstimatedDurationSeconds,string? Direction,string? SimultaneousGroupKey,string? PredecessorRequirementId,string? Name=null,int? StepNumber=null,int DurationPerUnitSeconds=0);
+internal sealed record RequirementUpdateRequest(int SequencePosition,string? ResourceClass,string? WorkstationTypeId,string? ExternalResourceId,string? RequiredCapability,string? RequiredSkillId,int CapacityRequired,int EstimatedDurationSeconds,string? Direction,string? SimultaneousGroupKey,string? PredecessorRequirementId,string? Name,int? StepNumber,int DurationPerUnitSeconds,bool IsActive,int ExpectedVersion);

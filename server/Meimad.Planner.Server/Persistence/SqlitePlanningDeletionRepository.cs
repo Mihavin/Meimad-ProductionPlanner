@@ -281,6 +281,40 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                 suppress.Parameters.AddWithValue("$id", id);
                 await suppress.ExecuteNonQueryAsync(token);
             }
+            // Auxiliary requirements belong to the Operation: they go with it, and a Kitaron-imported
+            // one is suppressed like the Operation so the next sync does not recreate either.
+            var requirementIds = new List<string>();
+            await using (var readRequirements = c.CreateCommand())
+            {
+                readRequirements.Transaction = t;
+                readRequirements.CommandText = "SELECT id FROM operation_resource_requirements WHERE case_operation_id = $id ORDER BY id;";
+                readRequirements.Parameters.AddWithValue("$id", id);
+                await using var requirementReader = await readRequirements.ExecuteReaderAsync(token);
+                while (await requirementReader.ReadAsync(token)) requirementIds.Add(requirementReader.GetString(0));
+            }
+            var suppressedAt = timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture);
+            foreach (var requirementId in requirementIds)
+                await SqliteResourceMasterDataRepository.SuppressKitaronRequirementAsync(c, t, requirementId, suppressedAt, token);
+            await using (var removeRequirements = c.CreateCommand())
+            {
+                removeRequirements.Transaction = t;
+                removeRequirements.CommandText = """
+                    DELETE FROM external_resource_executions WHERE schedule_work_id IN (
+                        SELECT work.id FROM resource_schedule_work work
+                        JOIN operation_resource_requirements requirement ON requirement.id = work.requirement_id
+                        WHERE requirement.case_operation_id = $id);
+                    DELETE FROM resource_schedule_assignments WHERE schedule_work_id IN (
+                        SELECT work.id FROM resource_schedule_work work
+                        JOIN operation_resource_requirements requirement ON requirement.id = work.requirement_id
+                        WHERE requirement.case_operation_id = $id);
+                    DELETE FROM resource_schedule_work WHERE requirement_id IN (
+                        SELECT id FROM operation_resource_requirements WHERE case_operation_id = $id);
+                    UPDATE operation_resource_requirements SET predecessor_requirement_id = NULL WHERE case_operation_id = $id;
+                    DELETE FROM operation_resource_requirements WHERE case_operation_id = $id;
+                    """;
+                removeRequirements.Parameters.AddWithValue("$id", id);
+                await removeRequirements.ExecuteNonQueryAsync(token);
+            }
             // Model files attached to the Operation stay with the Case; they just lose the link.
             await using (var detachModels = c.CreateCommand())
             {

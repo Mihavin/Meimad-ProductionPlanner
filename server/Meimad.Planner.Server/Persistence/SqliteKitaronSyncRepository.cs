@@ -81,7 +81,11 @@ internal sealed class SqliteKitaronSyncRepository(
         await using var transaction = connection.BeginTransaction(deferred: false);
         var counts = new MutableCounts();
         var caseIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var operationIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var requirementIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         await DeactivateMaterialOrdersAsync(connection, transaction, now, cancellationToken);
+        await SqliteKitaronStationRepository.UpsertDiscoveredAsync(
+            connection, transaction, plan.Stations ?? [], now, cancellationToken);
 
         foreach (var item in plan.Cases)
         {
@@ -100,8 +104,29 @@ internal sealed class SqliteKitaronSyncRepository(
         {
             if (!caseIds.TryGetValue(item.CaseSourceKey, out var caseId))
                 throw new KitaronSyncDataException($"Operation {item.SourceKey} references an unresolved Case.");
-            await ResolveOperationAsync(connection, transaction, item, caseId, now, counts, cancellationToken);
+            var operationId = await ResolveOperationAsync(connection, transaction, item, caseId, now, counts, cancellationToken);
+            if (operationId is not null) operationIds[item.SourceKey] = operationId;
         }
+        // Requirements arrive predecessor-first; a suppressed or skipped anchor leaves its steps out.
+        foreach (var item in plan.Requirements ?? [])
+        {
+            if (!caseIds.TryGetValue(item.CaseSourceKey, out var caseId))
+                throw new KitaronSyncDataException($"Route step {item.SourceKey} references an unresolved Case.");
+            if (!operationIds.TryGetValue(item.OperationSourceKey, out var operationId))
+            {
+                counts.RequirementsSuppressed++;
+                continue;
+            }
+            var requirementId = await ResolveRequirementAsync(
+                connection, transaction, item, caseId, operationId,
+                item.PredecessorSourceKey is null ? null : requirementIds.GetValueOrDefault(item.PredecessorSourceKey),
+                now, counts, cancellationToken);
+            if (requirementId is not null) requirementIds[item.SourceKey] = requirementId;
+        }
+        await DeactivateMissingRequirementsAsync(
+            connection, transaction, caseIds.Values.ToHashSet(StringComparer.Ordinal),
+            (plan.Requirements ?? []).Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
+            now, counts, cancellationToken);
         foreach (var item in plan.Components)
         {
             if (!caseIds.TryGetValue(item.ParentCaseSourceKey, out var parentCaseId)
@@ -126,6 +151,9 @@ internal sealed class SqliteKitaronSyncRepository(
             $"{counts.HistoricalOrdersRetained} superseded Order(s) retained only for locked production history. " +
             $"{counts.BatchesRetained} Production Batch(es) with started production kept although Kitaron changed their Order. " +
             $"{counts.OperationsSuppressed} Kitaron route Operation(s) left out because a planner removed them in Meimad Planner. " +
+            $"{counts.RequirementsCreated} auxiliary route step(s) created as resource requirements, {counts.RequirementsUpdated} updated, " +
+            $"{counts.RequirementsSuppressed} left out because a planner removed them or their machining step; " +
+            $"{plan.RouteStepsSkipped} Kitaron route step(s) skipped because their station is undecided or the route has no machining step. " +
             $"{plan.MaterialOrders?.Count ?? 0:N0} Kitaron material order line(s) with delivery approval data imported as advisory records. " +
             "Existing or linked records were reused safely.";
         await using (var command = connection.CreateCommand())
@@ -141,9 +169,15 @@ internal sealed class SqliteKitaronSyncRepository(
                     operations_matched = $operationsMatched, warning_count = $warnings,
                     components_created = $componentsCreated, components_updated = $componentsUpdated,
                     components_matched = $componentsMatched,
+                    requirements_created = $requirementsCreated, requirements_updated = $requirementsUpdated,
+                    requirements_matched = $requirementsMatched, route_steps_skipped = $routeStepsSkipped,
                     mapping_version = $mappingVersion, version = version + 1, updated_at = $now
                 WHERE id = 1;
                 """;
+            command.Parameters.AddWithValue("$requirementsCreated", counts.RequirementsCreated);
+            command.Parameters.AddWithValue("$requirementsUpdated", counts.RequirementsUpdated);
+            command.Parameters.AddWithValue("$requirementsMatched", counts.RequirementsMatched);
+            command.Parameters.AddWithValue("$routeStepsSkipped", plan.RouteStepsSkipped);
             command.Parameters.AddWithValue("$message", message);
             command.Parameters.AddWithValue("$now", now.ToString("O"));
             command.Parameters.AddWithValue("$sourceRows", plan.SourceRows);
@@ -1049,7 +1083,7 @@ internal sealed class SqliteKitaronSyncRepository(
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
     }
 
-    private static async Task ResolveOperationAsync(
+    private static async Task<string?> ResolveOperationAsync(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncOperation item, string caseId,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
@@ -1063,7 +1097,7 @@ internal sealed class SqliteKitaronSyncRepository(
             if (reAdded.Count == 0)
             {
                 counts.OperationsSuppressed++;
-                return;
+                return null;
             }
 
             await ClearOperationSuppressionAsync(connection, transaction, item.SourceKey, cancellationToken);
@@ -1101,7 +1135,7 @@ internal sealed class SqliteKitaronSyncRepository(
             }
             else counts.OperationsMatched++;
             await UpsertLinkAsync(connection, transaction, "case_operation", item.SourceKey, id, owns, item.SourceHash, now, cancellationToken);
-            return;
+            return id;
         }
         if (link.Value.OwnsTarget && !StringComparer.Ordinal.Equals(link.Value.SourceHash, item.SourceHash))
         {
@@ -1121,6 +1155,143 @@ internal sealed class SqliteKitaronSyncRepository(
         else counts.OperationsMatched++;
         await UpsertLinkAsync(connection, transaction, "case_operation", item.SourceKey, link.Value.TargetId,
             link.Value.OwnsTarget, item.SourceHash, now, cancellationToken);
+        return link.Value.TargetId;
+    }
+
+    /// <summary>
+    /// An auxiliary route step becomes a resource requirement of its machining Case Operation. The
+    /// same ownership rules as for Operations apply: a planner-created requirement with the same
+    /// step number is adopted rather than duplicated, a planner deletion suppresses the step until
+    /// a requirement with that step number exists again, and Kitaron changes update owned rows.
+    /// </summary>
+    private static async Task<string?> ResolveRequirementAsync(
+        SqliteConnection connection, SqliteTransaction transaction, KitaronSyncRequirement item,
+        string caseId, string operationId, string? predecessorId,
+        DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
+    {
+        if (await IsOperationSuppressedAsync(connection, transaction, item.SourceKey, cancellationToken))
+        {
+            var reAdded = await FindIdsAsync(connection, transaction,
+                "SELECT id FROM operation_resource_requirements WHERE case_operation_id=$caseId AND step_number=$key ORDER BY id;",
+                item.StepNumber, cancellationToken, operationId);
+            if (reAdded.Count == 0)
+            {
+                counts.RequirementsSuppressed++;
+                return null;
+            }
+            await ClearOperationSuppressionAsync(connection, transaction, item.SourceKey, cancellationToken);
+        }
+
+        var link = await ReadValidLinkAsync(
+            connection, transaction, "operation_requirement", item.SourceKey, "operation_resource_requirements", counts, cancellationToken);
+        if (link is null)
+        {
+            var matches = await FindIdsAsync(connection, transaction,
+                "SELECT id FROM operation_resource_requirements WHERE case_operation_id=$caseId AND step_number=$key ORDER BY id;",
+                item.StepNumber, cancellationToken, operationId);
+            if (matches.Count > 1)
+                throw new KitaronSyncDataException($"Route step {item.StepNumber} of {item.CaseSourceKey} matches multiple resource requirements.");
+            var id = matches.Count == 1 ? matches[0] : StableId("kit-req", item.SourceKey);
+            var owns = matches.Count == 0;
+            if (owns)
+            {
+                await using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO operation_resource_requirements (id, case_operation_id, sequence_position, resource_class,
+                        workstation_type_id, external_resource_id, required_capability, required_skill_id, capacity_required,
+                        estimated_duration_seconds, direction, simultaneous_group_key, predecessor_requirement_id,
+                        is_active, version, created_at, updated_at, name, step_number, duration_per_unit_seconds)
+                    VALUES ($id, $operation, $position, $class, $type, $external, NULL, NULL, $capacity,
+                        $duration, $direction, NULL, $predecessor, 1, 1, $now, $now, $name, $step, $perUnit);
+                    """;
+                AddRequirementValues(insert, item, operationId, predecessorId, now);
+                Add(insert, "$id", id);
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+                counts.RequirementsCreated++;
+            }
+            else counts.RequirementsMatched++;
+            await UpsertLinkAsync(connection, transaction, "operation_requirement", item.SourceKey, id, owns, item.SourceHash, now, cancellationToken);
+            return id;
+        }
+        if (link.Value.OwnsTarget)
+        {
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            // The hash covers every Kitaron-owned field; a changed anchor or predecessor id (after
+            // a planner re-created a neighbouring step) is repaired even when the hash is unchanged.
+            update.CommandText = """
+                UPDATE operation_resource_requirements
+                SET case_operation_id=$operation, sequence_position=$position, resource_class=$class,
+                    workstation_type_id=$type, external_resource_id=$external, capacity_required=$capacity,
+                    estimated_duration_seconds=$duration, direction=$direction, predecessor_requirement_id=$predecessor,
+                    is_active=1, name=$name, step_number=$step, duration_per_unit_seconds=$perUnit,
+                    version=version+1, updated_at=$now
+                WHERE id=$id AND (
+                    case_operation_id IS NOT $operation OR sequence_position IS NOT $position OR resource_class IS NOT $class
+                    OR workstation_type_id IS NOT $type OR external_resource_id IS NOT $external OR capacity_required IS NOT $capacity
+                    OR estimated_duration_seconds IS NOT $duration OR direction IS NOT $direction
+                    OR predecessor_requirement_id IS NOT $predecessor OR is_active IS NOT 1 OR name IS NOT $name
+                    OR step_number IS NOT $step OR duration_per_unit_seconds IS NOT $perUnit);
+                """;
+            AddRequirementValues(update, item, operationId, predecessorId, now);
+            Add(update, "$id", link.Value.TargetId);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) == 1) counts.RequirementsUpdated++;
+            else counts.RequirementsMatched++;
+        }
+        else counts.RequirementsMatched++;
+        await UpsertLinkAsync(connection, transaction, "operation_requirement", item.SourceKey, link.Value.TargetId,
+            link.Value.OwnsTarget, item.SourceHash, now, cancellationToken);
+        return link.Value.TargetId;
+    }
+
+    private static void AddRequirementValues(
+        SqliteCommand command, KitaronSyncRequirement item, string operationId, string? predecessorId, DateTimeOffset now)
+    {
+        Add(command, "$operation", operationId); Add(command, "$position", item.SequencePosition);
+        Add(command, "$class", item.ResourceClass); Add(command, "$type", item.WorkstationTypeId);
+        Add(command, "$external", item.ExternalResourceId); Add(command, "$capacity", item.CapacityRequired);
+        Add(command, "$duration", item.DurationSeconds); Add(command, "$direction", item.Direction);
+        Add(command, "$predecessor", predecessorId); Add(command, "$name", item.Name);
+        Add(command, "$step", item.StepNumber); Add(command, "$perUnit", item.DurationPerUnitSeconds);
+        Add(command, "$now", now.ToString("O"));
+    }
+
+    /// <summary>
+    /// A Kitaron-owned requirement of a synchronized Case whose route step disappeared (route
+    /// changed, station re-decided as IGNORE) is deactivated, not deleted: pins and history keep
+    /// their reference, and the step reactivates when Kitaron lists it again.
+    /// </summary>
+    private static async Task DeactivateMissingRequirementsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, IReadOnlySet<string> synchronizedCaseIds,
+        IReadOnlySet<string> currentSourceKeys, DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
+    {
+        await using var read = connection.CreateCommand();
+        read.Transaction = transaction;
+        read.CommandText = """
+            SELECT link.source_key, link.target_id, operation.case_id
+            FROM kitaron_sync_links link
+            JOIN operation_resource_requirements requirement ON requirement.id = link.target_id
+            JOIN case_operations operation ON operation.id = requirement.case_operation_id
+            WHERE link.source_entity = 'operation_requirement' AND link.owns_target = 1 AND requirement.is_active = 1;
+            """;
+        var stale = new List<string>();
+        await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (!currentSourceKeys.Contains(reader.GetString(0)) && synchronizedCaseIds.Contains(reader.GetString(2)))
+                    stale.Add(reader.GetString(1));
+            }
+        }
+        foreach (var id in stale)
+        {
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE operation_resource_requirements SET is_active=0, version=version+1, updated_at=$now WHERE id=$id AND is_active=1;";
+            Add(update, "$now", now.ToString("O")); Add(update, "$id", id);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) == 1) counts.RequirementsUpdated++;
+        }
     }
 
     private static async Task<bool> IsOperationSuppressedAsync(
@@ -1451,7 +1622,8 @@ internal sealed class SqliteKitaronSyncRepository(
                 cases_created, cases_updated, cases_matched, orders_created, orders_updated, orders_matched,
                 operations_created, operations_updated, operations_matched,
                 components_created, components_updated, components_matched,
-                warning_count, mapping_version, version
+                warning_count, mapping_version, version,
+                requirements_created, requirements_updated, requirements_matched, route_steps_skipped
             FROM kitaron_sync_state WHERE id=1;
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1461,7 +1633,8 @@ internal sealed class SqliteKitaronSyncRepository(
             Date(reader, 2), Date(reader, 3), reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6),
             reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
             reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16),
-            reader.GetInt32(17), reader.IsDBNull(18) ? null : reader.GetInt32(18), reader.GetInt32(19));
+            reader.GetInt32(17), reader.IsDBNull(18) ? null : reader.GetInt32(18), reader.GetInt32(19),
+            reader.GetInt32(20), reader.GetInt32(21), reader.GetInt32(22), reader.GetInt32(23));
     }
 
     private sealed class MutableCounts
@@ -1470,5 +1643,6 @@ internal sealed class SqliteKitaronSyncRepository(
         internal int OperationsCreated, OperationsUpdated, OperationsMatched, OperationsSuppressed, Warnings;
         internal int HistoricalOrdersRetained, BatchesRetained;
         internal int ComponentsCreated, ComponentsUpdated, ComponentsMatched;
+        internal int RequirementsCreated, RequirementsUpdated, RequirementsMatched, RequirementsSuppressed;
     }
 }

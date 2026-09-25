@@ -758,6 +758,63 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Kitaron Stations" ToolTip="Decide what each Kitaron route station becomes in Meimad: a Machine operation, a Workstation step, an External Resource step, or nothing">
+                <Grid Margin="8" DataContext="{Binding KitaronStations}">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="2,0,2,8">
+                        <TextBlock Text="KITARON ROUTE STATIONS" FontSize="17" FontWeight="Bold"/>
+                        <TextBlock Text="The Kitaron synchronization imports the route master of every linked Case. Each route step belongs to a Kitaron station; this table decides what the step becomes: a machining Case Operation with a required Machine Type, an auxiliary Workstation or External Resource step around the nearest machining operation, or nothing. Undecided stations import nothing." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <TextBlock Text="{Binding Summary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                    </StackPanel>
+                    <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                            <DockPanel>
+                                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                    <CheckBox Content="Show decided stations" IsChecked="{Binding ShowDecided}" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                    <Button Content="Accept machining suggestions" Command="{Binding AcceptMachineSuggestionsCommand}" ToolTip="Every undecided station whose steps Kitaron plans as machining becomes a Machine operation without a Machine Type; choose the type per station afterwards." Margin="0,0,6,0"/>
+                                    <Button Content="Ignore stations without steps" Command="{Binding IgnoreEmptySuggestionsCommand}" ToolTip="Every undecided station that has no route steps is set to Ignore."/>
+                                </WrapPanel>
+                                <DataGrid ItemsSource="{Binding VisibleStations}" SelectedItem="{Binding SelectedStation}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Station" Binding="{Binding StationName}" Width="2*"/>
+                                        <DataGridTextColumn Header="Kitaron type" Binding="{Binding StationType}" Width="*"/>
+                                        <DataGridTextColumn Header="Steps" Binding="{Binding RouteRows}" Width="60"/>
+                                        <DataGridTextColumn Header="Planned" Binding="{Binding PlannedRows}" Width="70"/>
+                                        <DataGridTextColumn Header="Supplier" Binding="{Binding SupplierRows}" Width="70"/>
+                                        <DataGridTextColumn Header="Suggested" Binding="{Binding SuggestedRoleLabel}" Width="*"/>
+                                        <DataGridTextColumn Header="Decision" Binding="{Binding RoleLabel}" Width="*"/>
+                                        <DataGridTextColumn Header="Target" Binding="{Binding MachineType}" Width="*"/>
+                                        <DataGridTextColumn Header="State" Binding="{Binding StatusLabel}" Width="70"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                        <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel IsEnabled="{Binding IsEditor}">
+                                <TextBlock Text="DECIDE STATION" FontSize="17" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock Text="{Binding SelectedStationHint}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Import as" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ImportRoles}" SelectedItem="{Binding ImportRole}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}" Visibility="{Binding IsMachineRole, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Required Machine Type (empty: the planner chooses per Operation)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding MachineTypeOptions}" SelectedItem="{Binding MachineType}"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}" Visibility="{Binding IsWorkstationRole, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Workstation type" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedWorkstationType}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}" Visibility="{Binding IsExternalRole, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="External Resource (its promised lead time is used)" Style="{StaticResource SetupFieldLabel}"/><ComboBox ItemsSource="{Binding ExternalResources}" SelectedItem="{Binding SelectedExternalResource}" DisplayMemberPath="Name"/></StackPanel>
+                                <StackPanel Visibility="{Binding HasTimeDefaults, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <UniformGrid Columns="3">
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Default minutes per part" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MinutesPerPart}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Default minutes per batch" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding MinutesPerBatch}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Capacity required" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding CapacityRequired}"/></StackPanel>
+                                    </UniformGrid>
+                                    <TextBlock Text="Used only when the Kitaron route step carries no time of its own. Kitaron minutes on the step always win." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding Notes}" AcceptsReturn="True" MinHeight="55"/></StackPanel>
+                                <WrapPanel><Button Content="Save decision" Command="{Binding SaveDecisionCommand}"/></WrapPanel>
+                                <TextBlock Text="The next Kitaron synchronization applies the decision: new steps are imported, steps of a station set to Ignore are deactivated, and steps a planner deleted stay out." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            </StackPanel></ScrollViewer>
+                        </Border>
+                    </Grid>
+                    <DockPanel Grid.Row="2" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh stations" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></DockPanel>
+                </Grid>
+            </TabItem>
+
             <TabItem ToolTip="Manage employees, roles, skills, and availability">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ResourcesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Employees / Resources" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">

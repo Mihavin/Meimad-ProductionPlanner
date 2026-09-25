@@ -11,7 +11,39 @@ internal sealed record TimelineProjection(
     string DisplayTimeZoneId,
     string DayStartsAtLocal,
     string DayEndsAtLocal,
-    IReadOnlyList<TimelineProductionRunProjection>? ProductionRuns = null);
+    IReadOnlyList<TimelineProductionRunProjection>? ProductionRuns = null,
+    IReadOnlyList<TimelineProjectionResourceLane>? Resources = null);
+
+/// <summary>
+/// One Workstation, External Resource or Employee with the provisional auxiliary work the
+/// deterministic allocator placed on it around the Machine anchors (rule 34).
+/// </summary>
+internal sealed record TimelineProjectionResourceLane(
+    string ResourceId,
+    string ResourceClass,
+    string Name,
+    IReadOnlyList<TimelineProjectionResourceInterval> Intervals);
+
+internal sealed record TimelineProjectionResourceInterval(
+    string WorkId,
+    string OperationId,
+    string RequirementId,
+    string BatchId,
+    string BatchNumber,
+    string PartNumber,
+    int OperationNumber,
+    string OperationName,
+    int? StepNumber,
+    string Name,
+    string Direction,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    bool IsPinned,
+    string Explanation,
+    string? WorkstationId,
+    string? EmployeeId,
+    string? ExternalResourceId,
+    string ResourceClass);
 
 internal sealed record TimelineProductionRunProjection(
     string ProductionRunId, string MachineId, DateTimeOffset StartsAt, DateTimeOffset EndsAt,
@@ -24,7 +56,8 @@ internal sealed record TimelineProjectionBatch(
     string BatchId,
     string BatchNumber,
     string PartNumber,
-    DateOnly? WorkFinishDate = null);
+    DateOnly? WorkFinishDate = null,
+    DateTimeOffset? PredictedCompletion = null);
 
 internal sealed record TimelineProjectionMachine(
     string MachineId,
