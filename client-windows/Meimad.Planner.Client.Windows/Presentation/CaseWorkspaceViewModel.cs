@@ -103,6 +103,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private bool isParentCase;
     private bool isChildCase;
     private bool isKitaronManagedCase;
+    private bool isRouteLockedCase;
     private PlannerPostprocessorReleaseStatus? selectedReleasePostprocessor;
     private string gcodeFilePath = string.Empty;
     private string toolTableFilePath = string.Empty;
@@ -124,7 +125,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CancelCreateCommand = new AsyncCommand(CancelCreateAsync, () => IsCreating && !IsBusy);
         RefreshDetailsCommand = new AsyncCommand(LoadSelectedCaseSafeAsync, () => SelectedCase is not null && !IsBusy);
         OpenWorkingFolderCommand = new AsyncCommand(OpenWorkingFolderAsync, () => CanOpenWorkingFolder);
-        BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanManageOperations);
+        BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanAddOperations);
         BeginEditOperationCommand = new AsyncCommand(BeginEditOperationAsync, () => CanBeginEditOperation);
         CancelCreateOperationCommand = new AsyncCommand(CancelCreateOperationAsync, () => IsCreatingOperation && !IsBusy);
         CreateOperationCommand = new AsyncCommand(CreateOperationAsync, () => CanCreateOperation);
@@ -639,6 +640,18 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanManageOperations => CanBeginChildCreate && !IsParentCase;
 
+    /// <summary>The Kitaron route master owns a locked Case's operation list: the list mirrors
+    /// Kitaron, so operations cannot be added or deleted here. Operation data stays editable.</summary>
+    public bool IsRouteLockedCase => isRouteLockedCase;
+
+    public bool CanAddOperations => CanManageOperations && !isRouteLockedCase;
+
+    public bool CanDeleteSelectedOperation => CanDelete && !isRouteLockedCase;
+
+    public string OperationListAuthorityText => isRouteLockedCase
+        ? "The Kitaron route owns this operation list. Remap stations or change the route in Kitaron to add or remove operations; times, Machine Type and dependencies stay editable here."
+        : "Ordered route template. New operations append to the route.";
+
     public bool CanManageDirectOrders => CanBeginChildCreate && !isKitaronManagedCase && (!IsChildCase || IsParentCase);
 
     public bool CanManageBatches => CanBeginChildCreate && !IsParentCase;
@@ -660,7 +673,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
         && !IsCreatingBatch;
 
-    public bool CanCreateOperation => IsCreatingOperation && CanManageOperations;
+    public bool CanCreateOperation => IsCreatingOperation && CanAddOperations;
 
     public bool CanBeginEditOperation =>
         CanManageOperations && SelectedOperation is not null && !IsCreatingOperation;
@@ -2271,6 +2284,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         var selectedCaseValue = SelectedCase;
         var operation = SelectedOperation;
+        if (isRouteLockedCase)
+        {
+            StatusMessage = "The Kitaron route owns this operation list; remap its station or change the route in Kitaron instead.";
+            return Task.CompletedTask;
+        }
         return selectedCaseValue is null || operation is null || apiClient is null
             ? Task.CompletedTask
             : DeleteAsync(
@@ -2538,6 +2556,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isParentCase = plannerCase.IsParent;
         isChildCase = plannerCase.IsChild;
         isKitaronManagedCase = plannerCase.IsKitaronManaged;
+        isRouteLockedCase = plannerCase.KitaronRouteLocked;
         RaiseStateProperties();
     }
 
@@ -2850,6 +2869,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsChildCase));
         OnPropertyChanged(nameof(CanShowBatches));
         OnPropertyChanged(nameof(CanManageOperations));
+        OnPropertyChanged(nameof(IsRouteLockedCase));
+        OnPropertyChanged(nameof(CanAddOperations));
+        OnPropertyChanged(nameof(CanDeleteSelectedOperation));
+        OnPropertyChanged(nameof(OperationListAuthorityText));
         OnPropertyChanged(nameof(CanManageDirectOrders));
         OnPropertyChanged(nameof(CanManageBatches));
         OnPropertyChanged(nameof(CanCreateOrder));

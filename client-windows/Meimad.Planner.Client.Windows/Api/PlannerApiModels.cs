@@ -61,7 +61,8 @@ internal sealed record PlannerCase(
     DateTimeOffset UpdatedAt,
     bool IsParent = false,
     bool IsChild = false,
-    bool IsKitaronManaged = false);
+    bool IsKitaronManaged = false,
+    bool KitaronRouteLocked = false);
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
@@ -1435,7 +1436,10 @@ internal sealed record ProductionBatch(
     int? RouteRevision,
     int BatchOperationCount,
     int Version = 1,
-    IReadOnlyList<BatchAllocation>? Allocations = null)
+    IReadOnlyList<BatchAllocation>? Allocations = null,
+    bool IsKitaronManaged = false,
+    string? KitaronMaterialState = null,
+    string? KitaronMaterialDetail = null)
 {
     public string StatusDisplay => Status switch
     {
@@ -1445,6 +1449,18 @@ internal sealed record ProductionBatch(
         "cancelled" => "Cancelled",
         _ => Status.Replace('_', ' ')
     };
+
+    /// <summary>Kitaron's material verdict for an imported batch, refreshed by every synchronization.</summary>
+    public string MaterialDisplay => KitaronMaterialState switch
+    {
+        "available" => "Available",
+        "on_order" => "On order",
+        "missing" => "Missing",
+        "unknown" => "Unknown",
+        _ => IsKitaronManaged ? "Unknown" : string.Empty
+    };
+
+    public string SourceDisplay => IsKitaronManaged ? "Kitaron" : "Planner";
 }
 
 internal sealed record CancelProductionBatchRequest(string? Reason);

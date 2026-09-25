@@ -22,4 +22,5 @@ internal sealed record PlannerCase(
     DateTimeOffset UpdatedAt,
     bool IsParent = false,
     bool IsChild = false,
-    bool IsKitaronManaged = false);
+    bool IsKitaronManaged = false,
+    bool KitaronRouteLocked = false);

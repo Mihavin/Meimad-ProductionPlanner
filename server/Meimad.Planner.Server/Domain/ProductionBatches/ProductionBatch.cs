@@ -11,7 +11,17 @@ internal sealed record ProductionBatch(
     IReadOnlyList<BatchOperation> Operations,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>Kitaron's material verdict for the imported batch: available, on_order, missing
+    /// or unknown; null for a batch Kitaron does not own. Advisory - the ERP owns stock.</summary>
+    internal string? KitaronMaterialState { get; init; }
+
+    internal string? KitaronMaterialDetail { get; init; }
+
+    /// <summary>True when the batch is linked to a Kitaron work order.</summary>
+    internal bool IsKitaronManaged { get; init; }
+}
 
 internal sealed record BatchAllocation(
     string AllocationId,

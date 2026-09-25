@@ -807,7 +807,7 @@
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Notes" Style="{StaticResource SetupFieldLabel}"/><TextBox Text="{Binding Notes}" AcceptsReturn="True" MinHeight="55"/></StackPanel>
                                 <WrapPanel><Button Content="Save decision" Command="{Binding SaveDecisionCommand}"/></WrapPanel>
-                                <TextBlock Text="The next Kitaron synchronization applies the decision: new steps are imported, steps of a station set to Ignore are deactivated, and steps a planner deleted stay out." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                                <TextBlock Text="Saving a decision starts a Kitaron synchronization on the Server. The operation lists follow the Kitaron route: operations and steps that the decisions no longer produce are removed, except those a started Production Batch, a release or a pin still uses; the synchronization result names them." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
                             </StackPanel></ScrollViewer>
                         </Border>
                     </Grid>

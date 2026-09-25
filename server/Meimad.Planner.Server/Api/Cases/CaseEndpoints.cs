@@ -225,6 +225,10 @@ internal static class CaseEndpoints
         {
             return Error(StatusCodes.Status422UnprocessableEntity, "parent_operations_forbidden", exception.Message, httpContext);
         }
+        catch (KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
+        }
         catch (CaseParentBatchesMustBeRemovedException exception)
         {
             return Error(StatusCodes.Status422UnprocessableEntity, "parent_batches_must_be_removed", exception.Message, httpContext);

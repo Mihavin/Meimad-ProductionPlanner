@@ -49,13 +49,50 @@ internal sealed record KitaronSourceRouteStep(
     double? DirectionTimeMinutes,
     int? SupplierId);
 
+/// <summary>
+/// One open Kitaron work order (`TRootCard`): the factory's actual production launch for one
+/// part against one sales-order line. `Amount` is the launched quantity (with cutting reserve),
+/// `ProductionAmount` the net ordered quantity.
+/// </summary>
+internal sealed record KitaronSourceWorkOrder(
+    int Number,
+    string PartNumber,
+    string OrderRecordId,
+    double? Amount,
+    double? ProductionAmount,
+    DateTime? SupplyDate,
+    string? LotNumber);
+
+/// <summary>An order-line allocation of a work order (`TOrderLinkRoot`).</summary>
+internal sealed record KitaronSourceWorkOrderLink(
+    int WorkOrderNumber,
+    string OrderRecordId,
+    double? ProductionAmount);
+
+/// <summary>
+/// One material line of Kitaron's per-work-order material calculation (`TBOMWithdrawalByRoot`):
+/// what the work order needs, what the stock held at the last calculation, and what is on
+/// purchase orders. Kitaron maintains these rows only for parts with stock-managed materials.
+/// </summary>
+internal sealed record KitaronSourceWorkOrderMaterial(
+    int WorkOrderNumber,
+    string MaterialPartNumber,
+    double RequiredAmount,
+    double? IssuedAmount,
+    double? StockAmount,
+    double? OnPurchaseAmount,
+    double? RunningBalance);
+
 internal sealed record KitaronSourceSnapshot(
     IReadOnlyList<KitaronSourceRow> WorkRows,
     IReadOnlyList<KitaronSourceOrder> Orders,
     IReadOnlyList<KitaronSourceComponent> Components,
     IReadOnlyList<KitaronSourceRow>? MaterialRows = null,
     IReadOnlyList<KitaronSourceRouteStep>? RouteSteps = null,
-    IReadOnlyList<KitaronDiscoveredStation>? Stations = null);
+    IReadOnlyList<KitaronDiscoveredStation>? Stations = null,
+    IReadOnlyList<KitaronSourceWorkOrder>? WorkOrders = null,
+    IReadOnlyList<KitaronSourceWorkOrderLink>? WorkOrderLinks = null,
+    IReadOnlyList<KitaronSourceWorkOrderMaterial>? WorkOrderMaterials = null);
 
 internal interface IKitaronSourceReader
 {
@@ -154,6 +191,30 @@ internal sealed record KitaronSyncRequirement(
     string? PredecessorSourceKey,
     string SourceHash);
 
+/// <summary>One Order-line allocation of an imported Production Batch. A null
+/// `OrderSourceKey` allocates the quantity to stock (the Meimad Order is missing or closed);
+/// `ScrapAllowance` marks the launched cutting reserve above the net ordered quantity.</summary>
+internal sealed record KitaronSyncBatchAllocation(
+    string? OrderSourceKey,
+    int Quantity,
+    bool ScrapAllowance = false);
+
+/// <summary>
+/// One Production Batch imported from an open Kitaron work order. `MaterialState` mirrors
+/// Kitaron's own per-work-order material calculation: available, on_order, missing, or unknown
+/// when Kitaron keeps no material rows for the part. Kitaron (the ERP) stays authoritative for
+/// stock; the state is an advisory fact for planning, refreshed by every synchronization.
+/// </summary>
+internal sealed record KitaronSyncBatch(
+    string SourceKey,
+    string CaseSourceKey,
+    string BatchNumber,
+    int PlannedQuantity,
+    IReadOnlyList<KitaronSyncBatchAllocation> Allocations,
+    string MaterialState,
+    string? MaterialDetail,
+    string SourceHash);
+
 internal sealed record KitaronSyncPlan(
     int SourceRows,
     IReadOnlyList<KitaronSyncCase> Cases,
@@ -166,7 +227,9 @@ internal sealed record KitaronSyncPlan(
     IReadOnlyList<KitaronSyncMaterialOrder>? MaterialOrders = null,
     IReadOnlyList<KitaronSyncRequirement>? Requirements = null,
     IReadOnlyList<KitaronDiscoveredStation>? Stations = null,
-    int RouteStepsSkipped = 0);
+    int RouteStepsSkipped = 0,
+    IReadOnlySet<string>? RoutePartNumbers = null,
+    IReadOnlyList<KitaronSyncBatch>? Batches = null);
 
 internal sealed record KitaronSyncStatus(
     string Status,

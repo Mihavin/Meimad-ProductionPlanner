@@ -82,8 +82,120 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             : await ReadMaterialRowsAsync(connection, materialColumns, cancellationToken);
         var routeSteps = await ReadRouteStepsAsync(connection, cancellationToken);
         var stations = await ReadStationsAsync(connection, cancellationToken);
-        return new KitaronSourceSnapshot(workRows, orders, components, materialRows, routeSteps, stations);
+        var workOrders = await ReadWorkOrdersAsync(connection, cancellationToken);
+        var workOrderLinks = await ReadWorkOrderLinksAsync(connection, cancellationToken);
+        var workOrderMaterials = await ReadWorkOrderMaterialsAsync(connection, cancellationToken);
+        return new KitaronSourceSnapshot(
+            workRows, orders, components, materialRows, routeSteps, stations,
+            workOrders, workOrderLinks, workOrderMaterials);
     }
+
+    /// <summary>
+    /// Open Kitaron work orders (`TRootCard`): route not closed, the sales-order line still open,
+    /// and neither the work order nor the line stopped. These become the Production Batches.
+    /// </summary>
+    private static async Task<IReadOnlyList<KitaronSourceWorkOrder>> ReadWorkOrdersAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = WorkOrderQuery;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<KitaronSourceWorkOrder>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            EnsureWithinLimit(result.Count);
+            result.Add(new KitaronSourceWorkOrder(
+                reader.GetInt32(0),
+                KitaronTextNormalization.CleanRequired(reader.GetString(1)),
+                Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture)
+                    .ToString(CultureInfo.InvariantCulture),
+                reader.IsDBNull(3) ? null : Convert.ToDouble(reader.GetValue(3), CultureInfo.InvariantCulture),
+                reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), CultureInfo.InvariantCulture),
+                reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                reader.IsDBNull(6) ? null : KitaronTextNormalization.Clean(reader.GetString(6))));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<KitaronSourceWorkOrderLink>> ReadWorkOrderLinksAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = WorkOrderLinkQuery;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<KitaronSourceWorkOrderLink>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            EnsureWithinLimit(result.Count);
+            result.Add(new KitaronSourceWorkOrderLink(
+                reader.GetInt32(0),
+                Convert.ToInt32(reader.GetValue(1), CultureInfo.InvariantCulture)
+                    .ToString(CultureInfo.InvariantCulture),
+                reader.IsDBNull(2) ? null : Convert.ToDouble(reader.GetValue(2), CultureInfo.InvariantCulture)));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<KitaronSourceWorkOrderMaterial>> ReadWorkOrderMaterialsAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = WorkOrderMaterialQuery;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<KitaronSourceWorkOrderMaterial>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            EnsureWithinLimit(result.Count);
+            result.Add(new KitaronSourceWorkOrderMaterial(
+                reader.GetInt32(0),
+                KitaronTextNormalization.CleanRequired(reader.GetString(1)),
+                Convert.ToDouble(reader.GetValue(2), CultureInfo.InvariantCulture),
+                reader.IsDBNull(3) ? null : Convert.ToDouble(reader.GetValue(3), CultureInfo.InvariantCulture),
+                reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), CultureInfo.InvariantCulture),
+                reader.IsDBNull(5) ? null : Convert.ToDouble(reader.GetValue(5), CultureInfo.InvariantCulture),
+                reader.IsDBNull(6) ? null : Convert.ToDouble(reader.GetValue(6), CultureInfo.InvariantCulture)));
+        }
+        return result;
+    }
+
+    internal const string WorkOrderQuery = """
+        SELECT rc.NUMBER, d.DetailNumber, rc.RecordID, rc.Amount, rc.ProductionAmount,
+               rc.SupplyDate, rc.LotNumber
+        FROM dbo.TRootCard rc
+        JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
+        JOIN dbo.TDetails d ON d.DetailID = rc.DetailID
+        WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
+          AND so.Closed = 0 AND so.StopProduction = 0
+          AND NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL
+        ORDER BY rc.NUMBER;
+        """;
+
+    internal const string WorkOrderLinkQuery = """
+        SELECT l.RootID, l.RecordID, l.ProdAmount
+        FROM dbo.TOrderLinkRoot l
+        JOIN dbo.TRootCard rc ON rc.NUMBER = l.RootID
+        JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
+        WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
+          AND so.Closed = 0 AND so.StopProduction = 0
+        ORDER BY l.RootID, l.RecordID;
+        """;
+
+    internal const string WorkOrderMaterialQuery = """
+        SELECT w.RootID, m.DetailNumber, w.Amount, w.StockMoved, w.StockAmount,
+               w.AmountInBuy, w.RunningSum_ForStartDate
+        FROM dbo.TBOMWithdrawalByRoot w
+        JOIN dbo.TRootCard rc ON rc.NUMBER = w.RootID
+        JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
+        JOIN dbo.TDetails m ON m.DetailID = w.MDetID
+        WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
+          AND so.Closed = 0 AND so.StopProduction = 0
+          AND w.Amount IS NOT NULL AND w.Amount > 0
+          AND NULLIF(LTRIM(RTRIM(m.DetailNumber)), N'') IS NOT NULL
+        ORDER BY w.RootID, w.AutoID;
+        """;
 
     /// <summary>
     /// The complete route master: every header linked to a part and every step of it. The part scope

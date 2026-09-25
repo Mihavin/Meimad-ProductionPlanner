@@ -19,6 +19,8 @@ internal sealed class KitaronSyncService
     private readonly string workingFolderRoot;
     private readonly ILogger<KitaronSyncService> logger;
     private readonly SemaphoreSlim gate = new(1, 1);
+    private TaskCompletionSource runRequestSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int runRequested;
 
     public KitaronSyncService(
         IKitaronConnectionRepository connectionRepository,
@@ -46,6 +48,28 @@ internal sealed class KitaronSyncService
 
     internal Task<KitaronSyncStatus> GetStatusAsync(CancellationToken cancellationToken) =>
         syncRepository.GetStatusAsync(cancellationToken);
+
+    /// <summary>
+    /// Asks the periodic synchronization to run now instead of at its next interval, for example
+    /// after a planner changed a Kitaron station decision. Requests that arrive while a run is going
+    /// coalesce into one more run. `wake` false only records the request for the next regular pass.
+    /// </summary>
+    internal void RequestRun(bool wake = true)
+    {
+        Volatile.Write(ref runRequested, 1);
+        if (wake)
+        {
+            Interlocked.Exchange(
+                ref runRequestSignal, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+                .TrySetResult();
+        }
+    }
+
+    /// <summary>Takes a pending run request; true when one was waiting.</summary>
+    internal bool TakeRunRequest() => Interlocked.Exchange(ref runRequested, 0) == 1;
+
+    /// <summary>Completes when a run is requested after this task was read.</summary>
+    internal Task RunRequested => Volatile.Read(ref runRequestSignal).Task;
 
     internal async Task<KitaronSyncStatus> RunAsync(CancellationToken cancellationToken)
     {
@@ -345,14 +369,133 @@ internal sealed class KitaronSyncService
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var batches = BuildBatches(
+            snapshot.WorkOrders, snapshot.WorkOrderLinks, snapshot.WorkOrderMaterials,
+            cases.Select(item => item.PartNumber).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            materialOrders, warnings);
+
         return new KitaronSyncPlan(
             snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count
-                + (snapshot.RouteSteps?.Count ?? 0),
+                + (snapshot.RouteSteps?.Count ?? 0) + (snapshot.WorkOrders?.Count ?? 0),
             cases, orders, operations, components,
             snapshot.Components.Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
             warnings, mappingVersion, materialOrders,
-            routePlan.Requirements, snapshot.Stations, routePlan.StepsSkipped);
+            routePlan.Requirements, snapshot.Stations, routePlan.StepsSkipped, routePlan.PartsWithRoute,
+            batches);
     }
+
+    /// <summary>
+    /// Builds the Production Batches from the open Kitaron work orders. Order-line allocations
+    /// follow `TOrderLinkRoot`; a launched surplus above the net ordered quantity is the cutting
+    /// reserve and becomes the batch's scrap allowance. The material state mirrors Kitaron's own
+    /// per-work-order material rows; Kitaron stays authoritative for stock.
+    /// </summary>
+    internal static IReadOnlyList<KitaronSyncBatch> BuildBatches(
+        IReadOnlyList<KitaronSourceWorkOrder>? workOrders,
+        IReadOnlyList<KitaronSourceWorkOrderLink>? links,
+        IReadOnlyList<KitaronSourceWorkOrderMaterial>? materials,
+        IReadOnlySet<string> partNumbers,
+        IReadOnlyList<KitaronSyncMaterialOrder> materialOrders,
+        ICollection<string> warnings)
+    {
+        if (workOrders is null || workOrders.Count == 0) return [];
+        var linksByNumber = (links ?? []).ToLookup(item => item.WorkOrderNumber);
+        var materialsByNumber = (materials ?? []).ToLookup(item => item.WorkOrderNumber);
+        var purchasesByMaterial = materialOrders
+            .Where(item => !item.Closed)
+            .ToLookup(item => item.MaterialNumber, StringComparer.OrdinalIgnoreCase);
+        var result = new List<KitaronSyncBatch>();
+        foreach (var workOrder in workOrders.OrderBy(item => item.Number))
+        {
+            if (!partNumbers.Contains(workOrder.PartNumber))
+            {
+                AddWarning(warnings,
+                    $"Kitaron work order {workOrder.Number} was skipped: part {workOrder.PartNumber} is not synchronized.");
+                continue;
+            }
+            var planned = Quantity(workOrder.Amount) ?? Quantity(workOrder.ProductionAmount);
+            if (planned is not > 0)
+            {
+                AddWarning(warnings,
+                    $"Kitaron work order {workOrder.Number} was skipped: its quantity is missing or not a whole number.");
+                continue;
+            }
+            var allocations = new List<KitaronSyncBatchAllocation>();
+            var remaining = planned.Value;
+            foreach (var link in linksByNumber[workOrder.Number]
+                         .OrderBy(item => item.OrderRecordId, StringComparer.Ordinal))
+            {
+                var quantity = Math.Min(Quantity(link.ProductionAmount) ?? 0, remaining);
+                if (quantity <= 0) continue;
+                allocations.Add(new KitaronSyncBatchAllocation(link.OrderRecordId, quantity));
+                remaining -= quantity;
+            }
+            if (allocations.Count == 0)
+            {
+                allocations.Add(new KitaronSyncBatchAllocation(null, remaining));
+                remaining = 0;
+            }
+            if (remaining > 0)
+                allocations.Add(new KitaronSyncBatchAllocation(null, remaining, ScrapAllowance: true));
+
+            var (materialState, materialDetail) = MaterialCheck(
+                materialsByNumber[workOrder.Number].ToArray(), purchasesByMaterial);
+            var sourceKey = $"wo:{workOrder.Number.ToString(CultureInfo.InvariantCulture)}";
+            var batchNumber = workOrder.Number.ToString(CultureInfo.InvariantCulture);
+            result.Add(new KitaronSyncBatch(
+                sourceKey, workOrder.PartNumber, batchNumber, planned.Value, allocations,
+                materialState, materialDetail,
+                Hash(sourceKey, batchNumber, planned.Value,
+                    allocations.Select(item => $"{item.OrderSourceKey}\u001f{item.Quantity}\u001f{item.ScrapAllowance}").ToArray())));
+        }
+        return result;
+    }
+
+    private static (string State, string? Detail) MaterialCheck(
+        IReadOnlyList<KitaronSourceWorkOrderMaterial> lines,
+        ILookup<string, KitaronSyncMaterialOrder> purchasesByMaterial)
+    {
+        if (lines.Count == 0)
+            return ("unknown", "Kitaron has no material calculation for this work order.");
+        var shortLines = new List<string>();
+        var allShortOnPurchase = true;
+        foreach (var line in lines)
+        {
+            var issued = line.IssuedAmount ?? 0;
+            var covered = issued >= line.RequiredAmount
+                || (line.RunningBalance is double balance
+                    ? balance >= 0
+                    : line.StockAmount is double stock && stock >= line.RequiredAmount);
+            if (covered) continue;
+            var purchases = purchasesByMaterial[line.MaterialPartNumber]
+                .Where(item => item.OrderedQuantity > (item.ReceivedQuantity ?? 0))
+                .ToArray();
+            var onPurchase = (line.OnPurchaseAmount is > 0) || purchases.Length > 0;
+            allShortOnPurchase &= onPurchase;
+            var due = purchases
+                .Select(item => item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate)
+                .Where(item => item is not null)
+                .OrderBy(item => item)
+                .FirstOrDefault();
+            var text = $"{line.MaterialPartNumber}: need {Amount(line.RequiredAmount)}"
+                + (line.StockAmount is double stockAmount ? $", stock {Amount(stockAmount)}" : "")
+                + (onPurchase
+                    ? ", on purchase order" + (due is null ? "" : $" due {due:yyyy-MM-dd}")
+                    : ", no open purchase order");
+            if (shortLines.Count < 3) shortLines.Add(text);
+        }
+        if (shortLines.Count == 0)
+            return ("available", $"Kitaron stock covers {lines.Count.ToString(CultureInfo.InvariantCulture)} material line(s).");
+        return (allShortOnPurchase ? "on_order" : "missing", string.Join("; ", shortLines));
+    }
+
+    private static string Amount(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static int? Quantity(double? value) =>
+        value is > 0 and <= int.MaxValue && double.IsFinite(value.Value)
+            && Math.Truncate(value.Value) == value.Value
+            ? (int)value.Value
+            : null;
 
     private static string? OptionalText(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields,
         string key, bool manualLookupAsNull = false) =>
@@ -568,19 +711,31 @@ internal sealed class KitaronSyncHostedService(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Read before the checks, so a request that arrives during this pass wakes the next one.
+            var runRequested = syncService.RunRequested;
             try
             {
                 var connection = await connectionRepository.GetAsync(stoppingToken);
                 var mapping = await mappingService.GetAsync(stoppingToken);
                 var status = await syncService.GetStatusAsync(stoppingToken);
+                var ready = connection.Enabled && mapping.Status == "ready_for_implementation";
                 var due = status.LastCompletedAt is null
                     || timeProvider.GetUtcNow() - status.LastCompletedAt >= TimeSpan.FromSeconds(connection.RefreshIntervalSeconds);
-                if (connection.Enabled && mapping.Status == "ready_for_implementation" && due)
+                // A station decision asks for a run now; the request waits while the connector is off.
+                var requested = ready && syncService.TakeRunRequest();
+                if (ready && (due || requested))
                     await syncService.RunAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            catch (KitaronSyncBlockedException)
+            {
+                // A synchronization started from the Server page is running; run again after it.
+                syncService.RequestRun(wake: false);
+            }
             catch (Exception exception) { logger.LogError(exception, "Periodic Kitaron synchronization failed."); }
-            await Task.Delay(TimeSpan.FromSeconds(30), timeProvider, stoppingToken);
+            using var pause = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(30), timeProvider, pause.Token), runRequested);
+            pause.Cancel();
         }
     }
 }

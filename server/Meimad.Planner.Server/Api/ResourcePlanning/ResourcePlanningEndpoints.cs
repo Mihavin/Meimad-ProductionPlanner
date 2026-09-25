@@ -60,6 +60,7 @@ internal static class ResourcePlanningEndpoints
         if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
         try { return Results.Ok(await action(authority!)); }
         catch (ResourceMasterDataException e) { return PlanningHttpSupport.Error(422,e.Code,e.Message,context,[new { field=e.Field,code=e.Code,message=e.Message }]); }
+        catch (Application.Kitaron.KitaronManagedResourceException e) { return PlanningHttpSupport.Error(409,"kitaron_managed_read_only",e.Message,context); }
         catch (Application.EditMode.EditModeMutationException e) { return PlanningHttpSupport.Error(409,e.Code,e.Message,context); }
     }
 }

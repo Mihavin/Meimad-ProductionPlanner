@@ -1,6 +1,7 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.Cases;
 using Microsoft.Data.Sqlite;
@@ -150,7 +151,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                    EXISTS(SELECT 1 FROM case_components
                           WHERE child_case_id=cases.id AND is_active=1) AS is_child,
                    EXISTS(SELECT 1 FROM kitaron_sync_links
-                          WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed
+                          WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed,
+                   cases.kitaron_route_locked
             FROM cases
             WHERE id = $id;
             """;
@@ -200,6 +202,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                               WHERE child_case_id=cases.id AND is_active=1) AS is_child,
                        EXISTS(SELECT 1 FROM kitaron_sync_links
                               WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed,
+                       cases.kitaron_route_locked,
                        (SELECT MIN(orders.work_finish_date)
                          FROM orders
                          WHERE orders.case_id = cases.id
@@ -334,6 +337,17 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
         if (await CaseIsParentAsync(connection, transaction, operation.CaseId, cancellationToken))
             throw new CaseParentOperationsNotAllowedException();
+
+        // The Kitaron route master owns this Case's operation list: the lists stay identical, so
+        // a planner cannot add an operation here (nor delete one). Operation data stays editable.
+        await using (var locked = connection.CreateCommand())
+        {
+            locked.Transaction = transaction;
+            locked.CommandText = "SELECT kitaron_route_locked FROM cases WHERE id = $id;";
+            locked.Parameters.AddWithValue("$id", operation.CaseId);
+            if (Convert.ToInt32(await locked.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
+                throw new KitaronManagedResourceException("The Case Operation list", operation.CaseId);
+        }
 
         var current = await ReadOperationsAsync(
             connection,
@@ -912,7 +926,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         ParseInstant(reader.GetString(17)),
         includeActiveProjection && reader.GetBoolean(19),
         includeActiveProjection && reader.GetBoolean(20),
-        includeActiveProjection && reader.GetBoolean(21));
+        includeActiveProjection && reader.GetBoolean(21),
+        includeActiveProjection && reader.GetBoolean(22));
 
     private static void AddNullableText(SqliteCommand command, string name, string? value)
     {

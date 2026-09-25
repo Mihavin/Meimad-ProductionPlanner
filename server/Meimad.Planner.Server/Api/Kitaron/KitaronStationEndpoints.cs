@@ -25,6 +25,7 @@ internal static class KitaronStationEndpoints
         KitaronStationDecisionRequest request,
         HttpContext context,
         KitaronStationService service,
+        KitaronSyncService syncService,
         CancellationToken cancellationToken)
     {
         if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
@@ -36,6 +37,9 @@ internal static class KitaronStationEndpoints
                 request.ExternalResourceId, request.DefaultMinutesPerPart, request.DefaultMinutesPerBatch,
                 request.CapacityRequired, request.Notes, request.ExpectedVersion, authority!,
                 string.IsNullOrEmpty(userId) ? null : userId, cancellationToken);
+            // The decision reaches the Case Operations and steps with the next synchronization; ask
+            // for it now instead of waiting for the periodic interval.
+            syncService.RequestRun();
             return Results.Ok(KitaronStationResponse.From(value));
         }
         catch (KitaronStationValidationException exception)

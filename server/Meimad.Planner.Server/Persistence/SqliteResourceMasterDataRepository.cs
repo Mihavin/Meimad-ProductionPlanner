@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Application.ResourcePlanning;
 using Microsoft.Data.Sqlite;
 
@@ -148,6 +149,16 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     public async Task DeleteRequirementAsync(string id,int expected,EditAuthority authority,CancellationToken token)
     {
         await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
+        // A Kitaron route step mirrors Kitaron and cannot be deleted here; remap its station or
+        // change the route in Kitaron, and the synchronization removes it.
+        await using(var kitaronLink=c.CreateCommand())
+        {
+            kitaronLink.Transaction=t;
+            kitaronLink.CommandText="SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity='operation_requirement' AND target_id=$id);";
+            kitaronLink.Parameters.AddWithValue("$id",id);
+            if(Convert.ToInt32(await kitaronLink.ExecuteScalarAsync(token),CultureInfo.InvariantCulture)==1)
+                throw new KitaronManagedResourceException("Route step",id);
+        }
         // A chain of steps closes over the removed one: the steps that followed it now follow its
         // predecessor (or the Machine anchor when it had none).
         await using(var relink=c.CreateCommand())
@@ -161,7 +172,6 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
             relink.Parameters.AddWithValue("$id",id);relink.Parameters.AddWithValue("$at",Now());
             await relink.ExecuteNonQueryAsync(token);
         }
-        await SuppressKitaronRequirementAsync(c,t,id,Now(),token);
         await using(var pins=c.CreateCommand())
         {
             pins.Transaction=t;pins.CommandText="""
@@ -172,29 +182,6 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
         }
         await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="DELETE FROM operation_resource_requirements WHERE id=$id AND version=$version;";
         q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$version",expected);await ExecuteChangedAsync(q,token);await t.CommitAsync(token);
-    }
-
-    /// <summary>
-    /// A planner who deletes a Kitaron-imported requirement means it: the sync link becomes a
-    /// suppression record so the next synchronization does not recreate the step. Shared with the
-    /// Case Operation deletion path, which removes the operation's requirements first.
-    /// </summary>
-    internal static async Task SuppressKitaronRequirementAsync(SqliteConnection c,SqliteTransaction t,string requirementId,string now,CancellationToken token)
-    {
-        await using var suppress=c.CreateCommand();suppress.Transaction=t;suppress.CommandText="""
-            INSERT INTO kitaron_suppressed_operations (source_key, case_id, operation_number, name, suppressed_at)
-            SELECT link.source_key, operation.case_id, COALESCE(requirement.step_number, 0), COALESCE(requirement.name, ''), $now
-            FROM kitaron_sync_links link
-            JOIN operation_resource_requirements requirement ON requirement.id = link.target_id
-            JOIN case_operations operation ON operation.id = requirement.case_operation_id
-            WHERE link.source_entity = 'operation_requirement' AND link.target_id = $id
-            ON CONFLICT (source_key) DO UPDATE SET
-                case_id = excluded.case_id, operation_number = excluded.operation_number,
-                name = excluded.name, suppressed_at = excluded.suppressed_at;
-            DELETE FROM kitaron_sync_links WHERE source_entity = 'operation_requirement' AND target_id = $id;
-            """;
-        suppress.Parameters.AddWithValue("$id",requirementId);suppress.Parameters.AddWithValue("$now",now);
-        await suppress.ExecuteNonQueryAsync(token);
     }
 
     private static async Task EnsurePredecessorOnSameOperationAsync(SqliteConnection c,SqliteTransaction t,string operationId,string? predecessorId,CancellationToken token)

@@ -18,7 +18,14 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         route_revision,
         version,
         created_at,
-        updated_at
+        updated_at,
+        (SELECT state FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id) AS kitaron_material_state,
+        (SELECT detail FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id) AS kitaron_material_detail,
+        EXISTS(SELECT 1 FROM kitaron_sync_links
+                WHERE source_entity = 'production_batch'
+                  AND target_id = production_batches.id) AS is_kitaron_managed
         """;
 
     private const string AllocationProjection = """
@@ -655,6 +662,24 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Snapshot of the current Case route into an imported batch, shared with the Kitaron
+    /// synchronization so imported and planner-created batches instantiate identically.
+    /// </summary>
+    internal static async Task InstantiateOperationsForImportAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchId,
+        string caseId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var batch = new ProductionBatch(
+            batchId, caseId, string.Empty, ProductionBatchValidator.WaitingStatus, 1, null,
+            [], [], 1, now, now);
+        await InstantiateOperationsAsync(connection, transaction, batch, cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<BatchOperation>> InstantiateOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -951,7 +976,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         [],
         reader.GetInt32(6),
         ParseInstant(reader.GetString(7)),
-        ParseInstant(reader.GetString(8)));
+        ParseInstant(reader.GetString(8)))
+    {
+        KitaronMaterialState = GetNullableString(reader, 9),
+        KitaronMaterialDetail = GetNullableString(reader, 10),
+        IsKitaronManaged = reader.GetBoolean(11)
+    };
 
     private static BatchAllocation ReadAllocation(SqliteDataReader reader)
     {

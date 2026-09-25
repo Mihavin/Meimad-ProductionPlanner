@@ -137,7 +137,7 @@ public sealed class KitaronRouteSyncTests
     }
 
     [Fact]
-    public async Task A_deleted_kitaron_step_stays_out_and_a_step_missing_from_the_route_is_deactivated()
+    public async Task A_kitaron_step_cannot_be_deleted_and_a_step_missing_from_the_route_is_removed()
     {
         await RunAsync(async (application, client) =>
         {
@@ -159,56 +159,37 @@ public sealed class KitaronRouteSyncTests
                 finalVersion = (int)(long)(await ScalarAsync(connection, "SELECT version FROM operation_resource_requirements WHERE step_number = 50;"))!;
             }
 
-            // The planner deletes the imported final inspection through the normal endpoint.
+            // The route step mirrors Kitaron: the planner cannot delete it in Meimad Planner.
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "route-editor");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
             using var delete = await client.DeleteAsync($"/api/v1/resource-requirements/{finalId}?version={finalVersion}");
-            Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await delete.Content.ReadAsStringAsync());
 
             var second = await repository.ApplyAsync(Plan([operation], [deburr, final]), Now.AddMinutes(1), CancellationToken.None);
             Assert.Equal(0, second.RequirementsCreated);
-            Assert.Equal(1, second.RequirementsMatched);
+            Assert.Equal(2, second.RequirementsMatched);
             await using (var connection = await database.OpenConnectionAsync())
             {
-                Assert.Equal(1L, await ScalarAsync(connection, "SELECT COUNT(*) FROM operation_resource_requirements;"));
-                Assert.Equal(1L, await ScalarAsync(connection,
-                    "SELECT COUNT(*) FROM kitaron_suppressed_operations WHERE source_key = 'PN-ROUTE' || char(31) || 'step' || char(31) || '50';"));
+                Assert.Equal(2L, await ScalarAsync(connection, "SELECT COUNT(*) FROM operation_resource_requirements;"));
             }
 
-            // Kitaron no longer lists the deburr step (station re-decided as Ignore): it is deactivated, not deleted.
+            // Kitaron no longer produces the steps (station re-decided as Ignore): they are removed.
             var third = await repository.ApplyAsync(Plan([operation], []), Now.AddMinutes(2), CancellationToken.None);
-            Assert.Equal(1, third.RequirementsUpdated);
+            Assert.Contains("0 Case Operation(s) and 2 auxiliary step(s) removed", third.Message);
             await using (var connection = await database.OpenConnectionAsync())
             {
-                Assert.Equal(0L, await ScalarAsync(connection, "SELECT is_active FROM operation_resource_requirements WHERE step_number = 40;"));
+                Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM operation_resource_requirements;"));
+                Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM kitaron_sync_links WHERE source_entity = 'operation_requirement';"));
             }
 
-            // Listed again, it comes back active with the current facts.
+            // Produced again, it comes back with the current facts.
             var fourth = await repository.ApplyAsync(Plan([operation], [deburr]), Now.AddMinutes(3), CancellationToken.None);
-            Assert.Equal(1, fourth.RequirementsUpdated);
-            await using (var connection = await database.OpenConnectionAsync())
-            {
-                Assert.Equal(1L, await ScalarAsync(connection, "SELECT is_active FROM operation_resource_requirements WHERE step_number = 40;"));
-            }
-
-            // Deleting the operation removes its remaining requirement and records the suppression.
-            string operationId;
-            string caseId;
-            await using (var connection = await database.OpenConnectionAsync())
-            {
-                operationId = (string)(await ScalarAsync(connection, "SELECT id FROM case_operations WHERE operation_number = 30;"))!;
-                caseId = (string)(await ScalarAsync(connection, "SELECT case_id FROM case_operations WHERE operation_number = 30;"))!;
-            }
-            using var deleteOperation = await client.DeleteAsync($"/api/v1/cases/{caseId}/operations/{operationId}");
-            Assert.Equal(HttpStatusCode.NoContent, deleteOperation.StatusCode);
+            Assert.Equal(1, fourth.RequirementsCreated);
             await using (var verify = await database.OpenConnectionAsync())
             {
-                Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM operation_resource_requirements;"));
-                Assert.Equal(2L, await ScalarAsync(verify, "SELECT COUNT(*) FROM kitaron_suppressed_operations WHERE source_key LIKE '%' || char(31) || 'step' || char(31) || '%';"));
+                Assert.Equal(1L, await ScalarAsync(verify, "SELECT is_active FROM operation_resource_requirements WHERE step_number = 40;"));
             }
-            var fifth = await repository.ApplyAsync(Plan([operation], [deburr]), Now.AddMinutes(4), CancellationToken.None);
-            Assert.Equal(0, fifth.OperationsCreated);
-            Assert.Equal(0, fifth.RequirementsCreated);
         });
     }
 
@@ -375,7 +356,7 @@ public sealed class KitaronRouteSyncTests
     }
 
     [Fact]
-    public async Task Deleting_an_imported_operation_relinks_the_route_and_the_next_sync_keeps_it_out()
+    public async Task An_imported_operation_cannot_be_deleted_and_the_locked_case_rejects_new_operations()
     {
         await RunAsync(async (application, client) =>
         {
@@ -387,35 +368,62 @@ public sealed class KitaronRouteSyncTests
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "route-editor");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
 
+            // The operation list mirrors Kitaron: deleting an imported operation is rejected.
             using var deleteMiddle = await client.DeleteAsync(await OperationUrlAsync(database, 40));
-            Assert.Equal(HttpStatusCode.NoContent, deleteMiddle.StatusCode);
-            Assert.Equal("30:independent:|90:sequential:30", await RouteAsync(database));
+            Assert.Equal(HttpStatusCode.Conflict, deleteMiddle.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await deleteMiddle.Content.ReadAsStringAsync());
+            Assert.Equal("30:independent:|40:sequential:30|90:sequential:40", await RouteAsync(database));
+
+            // The route master locks the Case, so a planner cannot add an operation either.
+            string caseId;
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                caseId = (string)(await ScalarAsync(connection, "SELECT id FROM cases WHERE part_number = 'PN-ROUTE';"))!;
+                Assert.Equal(1L, await ScalarAsync(connection, "SELECT kitaron_route_locked FROM cases WHERE part_number = 'PN-ROUTE';"));
+            }
+            using var create = await client.PostAsJsonAsync($"/api/v1/cases/{caseId}/operations", new
+            {
+                operationNumber = 95, name = "Manual extra", dependencyType = "INDEPENDENT"
+            });
+            Assert.Equal(HttpStatusCode.Conflict, create.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await create.Content.ReadAsStringAsync());
 
             var next = await repository.ApplyAsync(plan, Now.AddMinutes(1), CancellationToken.None);
             Assert.Equal(0, next.OperationsCreated);
-            Assert.Contains("1 Kitaron route Operation(s) left out because a planner removed them", next.Message);
-            Assert.Equal("30:independent:|90:sequential:30", await RouteAsync(database));
-
-            using var deleteFirst = await client.DeleteAsync(await OperationUrlAsync(database, 30));
-            Assert.Equal(HttpStatusCode.NoContent, deleteFirst.StatusCode);
-            Assert.Equal("90:independent:", await RouteAsync(database));
-
-            // An operation a planner made depend on an imported one still blocks its deletion.
-            await ExecuteAsync(database, """
-                INSERT INTO case_operations (id, case_id, operation_number, route_position, name, dependency_type,
-                    predecessor_case_operation_id, version, created_at, updated_at)
-                SELECT 'manual-op-95', case_id, 95, 5, 'Manual follow-up', 'sequential', id, 1,
-                    '2026-09-25T09:00:00Z', '2026-09-25T09:00:00Z'
-                FROM case_operations WHERE operation_number = 90;
-                """);
-            using var blocked = await client.DeleteAsync(await OperationUrlAsync(database, 90));
-            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
-            Assert.Equal("90:independent:|95:sequential:90", await RouteAsync(database));
+            Assert.Equal("30:independent:|40:sequential:30|90:sequential:40", await RouteAsync(database));
         });
     }
 
     [Fact]
-    public async Task A_planner_edit_of_an_imported_step_stands_and_deleting_a_middle_step_closes_the_chain()
+    public async Task A_planner_added_operation_in_a_route_case_is_removed_by_the_synchronization()
+    {
+        await RunAsync(async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var plan = Plan([RouteOperation(30, 0, null, "a30"), RouteOperation(90, 1, 30, "a90")], []);
+            await repository.ApplyAsync(plan, Now, CancellationToken.None);
+            // An operation a planner added by hand before the route lock existed.
+            await ExecuteAsync(database, """
+                INSERT INTO case_operations (id, case_id, operation_number, route_position, name, dependency_type,
+                    predecessor_case_operation_id, version, created_at, updated_at)
+                SELECT 'manual-op-50', case_id, 50, 7, 'Manual extra', 'sequential', id, 1,
+                    '2026-09-25T09:00:00Z', '2026-09-25T09:00:00Z'
+                FROM case_operations WHERE operation_number = 30;
+                """);
+
+            var next = await repository.ApplyAsync(plan, Now.AddMinutes(1), CancellationToken.None);
+
+            Assert.Contains("1 Case Operation(s) and 0 auxiliary step(s) removed", next.Message);
+            Assert.Equal("30:independent:|90:sequential:30", await RouteAsync(database));
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM case_operations WHERE operation_number = 50;"));
+        });
+    }
+
+    [Fact]
+    public async Task A_planner_edit_of_an_imported_step_stands_and_deleting_it_is_rejected()
     {
         await RunAsync(async (application, client) =>
         {
@@ -458,22 +466,141 @@ public sealed class KitaronRouteSyncTests
                 inspectVersion = (long)(await ScalarAsync(connection, "SELECT version FROM operation_resource_requirements WHERE step_number = 50;"))!;
             }
 
-            // Deleting the middle step closes the chain: packing now follows deburring.
+            // The route step mirrors Kitaron: deleting the middle step is rejected and the chain stays.
             using var delete = await client.DeleteAsync($"/api/v1/resource-requirements/{inspectId}?version={inspectVersion}");
-            Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
-            Assert.Equal(deburrId, await PredecessorOfStepAsync(database, 60));
-            var third = await repository.ApplyAsync(plan, Now.AddMinutes(2), CancellationToken.None);
-            Assert.Equal(0, third.RequirementsCreated);
-            Assert.Equal(deburrId, await PredecessorOfStepAsync(database, 60));
+            Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await delete.Content.ReadAsStringAsync());
+            Assert.Equal(inspectId, await PredecessorOfStepAsync(database, 60));
 
-            // When Kitaron changes the packing step, its facts apply and the chain still skips step 50.
+            // When Kitaron changes the packing step, its facts apply over the planner's chain.
             var changedPack = Requirement("PN-ROUTE", operationKey, 60, 2, "Pack", "type-inspection", inspect.SourceKey, 180);
             var fourth = await repository.ApplyAsync(Plan([RouteOperation(30, 0, null, "a30")], [deburr, inspect, changedPack]),
                 Now.AddMinutes(3), CancellationToken.None);
             Assert.Equal(1, fourth.RequirementsUpdated);
-            Assert.Equal(deburrId, await PredecessorOfStepAsync(database, 60));
+            Assert.Equal(inspectId, await PredecessorOfStepAsync(database, 60));
             await using var verify = await database.OpenConnectionAsync();
             Assert.Equal(180L, await ScalarAsync(verify, "SELECT estimated_duration_seconds FROM operation_resource_requirements WHERE step_number = 60;"));
+        });
+    }
+
+    [Fact]
+    public async Task Remapping_a_station_removes_its_operations_and_steps_unless_production_data_holds_them()
+    {
+        await RunAsync(async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var key30 = KitaronRoutePlanner.OperationKey("PN-ROUTE", 30);
+            var key50 = KitaronRoutePlanner.OperationKey("PN-ROUTE", 50);
+            var key90 = KitaronRoutePlanner.OperationKey("PN-ROUTE", 90);
+            var inspect40 = Requirement("PN-ROUTE", key30, 40, 0, "Inspect", "type-inspection", null, 300);
+            var inspect60 = Requirement("PN-ROUTE", key50, 60, 0, "Inspect", "type-inspection", null, 300);
+            var pack95 = Requirement("PN-ROUTE", key90, 95, 0, "Pack", "type-inspection", null, 120);
+            var full = Plan(
+                [RouteOperation(30, 0, null, "a30"), RouteOperation(50, 1, 30, "a50"), RouteOperation(90, 2, 50, "a90")],
+                [inspect40, inspect60, pack95]);
+            await repository.ApplyAsync(full, Now, CancellationToken.None);
+            // A waiting Batch uses OP90, and a planner pinned the packing step of that Batch.
+            await ExecuteAsync(database, """
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                SELECT 'batch-r', case_id, 'B-R', 'waiting', 5 FROM case_operations WHERE operation_number = 90;
+                INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position,
+                    name, required_machine_type, setup_seconds, cycle_seconds, status, dependency_type)
+                SELECT 'batch-op-90', 'batch-r', id, 90, 0, 'OP90', 'Mill 3x', 600, 120, 'not_started', 'independent'
+                FROM case_operations WHERE operation_number = 90;
+                INSERT INTO resource_schedule_work (id, batch_operation_id, requirement_id, planned_duration_seconds, state, version, created_at, updated_at)
+                SELECT 'pin-95', 'batch-op-90', id, 600, 'PINNED', 1, '2026-09-25T08:00:00Z', '2026-09-25T08:00:00Z'
+                FROM operation_resource_requirements WHERE step_number = 95;
+                """);
+
+            // The stations of OP50 and OP90 are re-decided: only OP30 remains a machining step, the
+            // inspection after OP50 now follows OP30, and the packing station is ignored.
+            var remapped = await repository.ApplyAsync(Plan(
+                [RouteOperation(30, 0, null, "a30")],
+                [inspect40, Requirement("PN-ROUTE", key30, 60, 1, "Inspect", "type-inspection", inspect40.SourceKey, 300)]),
+                Now.AddMinutes(1), CancellationToken.None);
+            Assert.Contains("1 Case Operation(s) and 0 auxiliary step(s) removed", remapped.Message);
+            Assert.Contains("1 such Case Operation(s) kept because production or planner data still uses them (PN-ROUTE OP90: Production Batch)", remapped.Message);
+            Assert.Equal("30:independent:|90:sequential:30", await RouteAsync(database));
+            Assert.Equal("30@0|90@1", await PositionsAsync(database));
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                // The re-anchored inspection moved to OP30; the pinned packing step stays, inactive.
+                Assert.Equal("30:40,60", await ScalarAsync(connection, """
+                    SELECT o.operation_number || ':' || group_concat(r.step_number, ',')
+                    FROM operation_resource_requirements r JOIN case_operations o ON o.id = r.case_operation_id
+                    WHERE r.is_active = 1 GROUP BY o.operation_number;
+                    """));
+                Assert.Equal(0L, await ScalarAsync(connection, "SELECT is_active FROM operation_resource_requirements WHERE step_number = 95;"));
+                Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM manufacturing_programs WHERE name LIKE '%OP50%';"));
+            }
+
+            // Re-deciding the stations back brings OP50 back in the sequence and applies the steps again.
+            var restored = await repository.ApplyAsync(full, Now.AddMinutes(2), CancellationToken.None);
+            Assert.Equal(1, restored.OperationsCreated);
+            Assert.Equal("30:independent:|50:sequential:30|90:sequential:50", await RouteAsync(database));
+            Assert.Equal("30@0|50@1|90@2", await PositionsAsync(database));
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal(1L, await ScalarAsync(verify, "SELECT is_active FROM operation_resource_requirements WHERE step_number = 95;"));
+            Assert.Equal(3L, await ScalarAsync(verify, "SELECT COUNT(*) FROM operation_resource_requirements WHERE is_active = 1;"));
+        });
+    }
+
+    [Fact]
+    public async Task Planning_view_operations_are_not_removed_when_the_open_work_changes()
+    {
+        await RunAsync(async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            KitaronSyncPlan ViewPlan(params KitaronSyncOperation[] operations) => Plan(operations, []) with
+            {
+                RoutePartNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            };
+            await repository.ApplyAsync(ViewPlan(RouteOperation(30, 0, null, "a30"), RouteOperation(40, 1, 30, "a40")), Now, CancellationToken.None);
+
+            var next = await repository.ApplyAsync(ViewPlan(RouteOperation(40, 0, null, "b40")), Now.AddMinutes(1), CancellationToken.None);
+
+            Assert.Contains("0 Case Operation(s) and 0 auxiliary step(s) removed", next.Message);
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal(2L, await ScalarAsync(connection, "SELECT COUNT(*) FROM case_operations;"));
+        });
+    }
+
+    [Fact]
+    public async Task A_station_decision_asks_the_server_to_synchronize_now()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            await repository.ApplyAsync(Plan([], [], stations: Stations()), Now, CancellationToken.None);
+            var syncService = application.Services.GetRequiredService<KitaronSyncService>();
+            Assert.False(syncService.TakeRunRequest());
+            var signal = syncService.RunRequested;
+
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "route-editor");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            using var decided = await client.PutAsJsonAsync("/api/v1/kitaron/stations/4", new
+            {
+                importRole = "IGNORE", defaultMinutesPerPart = 0, defaultMinutesPerBatch = 0, capacityRequired = 1, expectedVersion = 1
+            });
+            Assert.Equal(HttpStatusCode.OK, decided.StatusCode);
+
+            // The connector is off in this test, so the request waits for the periodic pass to take it.
+            Assert.True(signal.IsCompleted);
+            Assert.True(syncService.TakeRunRequest());
+            Assert.False(syncService.TakeRunRequest());
+
+            using var rejected = await client.PutAsJsonAsync("/api/v1/kitaron/stations/4", new
+            {
+                importRole = "WORKSTATION", defaultMinutesPerPart = 0, defaultMinutesPerBatch = 0, capacityRequired = 1, expectedVersion = 2
+            });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+            Assert.False(syncService.TakeRunRequest());
         });
     }
 
@@ -536,13 +663,16 @@ public sealed class KitaronRouteSyncTests
         IReadOnlyList<KitaronDiscoveredStation>? stations = null) => new(
         1,
         [new KitaronSyncCase("PN-ROUTE", "PN-ROUTE", "Routed part", null, null, @"C:\Kitaron\PN-ROUTE", "case-hash")],
-        [], operations, [], new HashSet<string>(), [], 1, null, requirements, stations);
+        [], operations, [], new HashSet<string>(), [], 1, null, requirements, stations,
+        RoutePartNumbers: new HashSet<string>(["PN-ROUTE"], StringComparer.OrdinalIgnoreCase));
 
     private static KitaronSyncRequirement Requirement(
         string part, string operationKey, int step, int position, string name, string? workstationTypeId,
         string? predecessorKey, int perBatchSeconds, string direction = "FORWARD") => new(
         KitaronRoutePlanner.RequirementKey(part, step), part, operationKey, step, position, name,
-        "WORKSTATION", workstationTypeId, null, 1, perBatchSeconds, 0, direction, predecessorKey, $"hash-{step}-{perBatchSeconds}");
+        "WORKSTATION", workstationTypeId, null, 1, perBatchSeconds, 0, direction, predecessorKey,
+        // Like the route planner, the hash covers the anchor operation and the place in the chain.
+        $"hash-{step}-{perBatchSeconds}-{operationKey}-{position}-{predecessorKey}");
 
     private static IReadOnlyList<KitaronDiscoveredStation> Stations() =>
     [

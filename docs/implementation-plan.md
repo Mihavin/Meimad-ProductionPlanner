@@ -888,3 +888,25 @@ A planner reported that imported route operations arrive as `INDEPENDENT`. A rea
 Tests: `KitaronRoutePlannerTests.The_route_follows_the_operation_numbers_not_the_kitaron_NumOrder`, and in `KitaronRouteSyncTests` the sequence with planner values kept, the upgrade from 0.1.136 state, deletion re-linking, and planner edits of imported steps.
 
 Open, not in this change: auxiliary steps placed after a machining operation (for example a setup inspection between OP30 and OP90) do not yet hold back the next machining operation on the Timeline; the Machine calculation runs first and the steps are placed around it. Kitaron lists instruction rows on the generic production station (16W1120-13 OP50/60/70/120, "FOR LINE DATA SEE ..."), so with that station decided as Machine they import as operations.
+
+## Kitaron station remapping updates the route - 2026-09-25
+
+A planner re-decided the generic production station ייצור from Machine to Ignore and the operation lists did not change: the synchronization never removed an imported operation, so 2,334 Kitaron-owned operations the route no longer produced stayed, and 6,807 steps stayed as inactive rows. Now:
+
+- For Cases whose route comes from the route master (`KitaronSyncPlan.RoutePartNumbers`), a Kitaron-owned operation the current route and decisions no longer produce is removed with its link and default Manufacturing Program; its Kitaron-owned followers are re-linked to its predecessor. It is kept, and named in the result message, while a Production Batch or Run, a G-code/process/tool-table release, a Manufacturing Program output, a remaining step, a locked group, or a following operation the synchronization does not own uses it. Kept and re-linked operations get the link markers `not-produced`/`relinked`, so the sequence is applied in full when the route produces them again. Planning-view operations are never removed this way.
+- A Kitaron-owned step the route no longer produces is removed (its followers re-linked); only a pinned step is deactivated. This replaces the earlier deactivate-and-reactivate rule.
+- Saving a station decision calls `KitaronSyncService.RequestRun`; the periodic service wakes and runs the synchronization within seconds when the connector is enabled and the mapping Ready, and runs once more if a synchronization from the Server page was already running.
+- Live data at the time: 14 of the 2,334 operations are held by waiting or started Batches (16W1120-13/-14 OP30/40/90, 16W121-21 OP30/40/70, 16W121-22 OP30, 1199C423-001 OP20/40/60, 30P450190103-001 OP140) and 2 by releases; the rest are removed by the first synchronization of this version.
+
+Tests: `KitaronRouteSyncTests.Remapping_a_station_removes_its_operations_and_steps_unless_production_data_holds_them`, `Planning_view_operations_are_not_removed_when_the_open_work_changes`, `A_station_decision_asks_the_server_to_synchronize_now`, and the updated `A_deleted_kitaron_step_stays_out_and_a_step_missing_from_the_route_is_removed`.
+
+## Kitaron operation-list and batch authority - 2026-09-25 (schema v82)
+
+The owner decided: the operation lists of Kitaron and Meimad Planner must be identical; operation data may be edited in Meimad but operations cannot be added or deleted; planner-added operations in Kitaron-managed Cases are removed; all Production Batches, Machine backlogs and assignments are removed once ("I will replan it all after"); batches are imported from Kitaron with an automatic material check; station remapping or parameter changes update the operation list.
+
+- **Migration v82** archives to `wipe_v82_archive` and deletes the planning/execution graph (validated on a copy of the live database: 1,526 rows archived, no foreign-key violations, integrity ok, 80 triggers restored), drops `kitaron_suppressed_operations`, adds `cases.kitaron_route_locked`, `kitaron_batch_material_checks`, and the `production_batch` link entity.
+- **Source.** `SqlServerKitaronSourceReader` reads open work orders (`TRootCard` joined to open, not stopped `TSubOrder`), their order links (`TOrderLinkRoot`) and material lines (`TBOMWithdrawalByRoot`). At the time, 195 work orders were open and 49 had material lines; none had stock issued.
+- **Rules.** See the functional specification section "Kitaron operation-list and batch authority". A run created only by the assignment trigger does not count as started; started means a non-waiting batch, a started Batch Operation, a structure-locked run, or a package.
+- **Superseded.** The deletion/suppression behavior recorded in "Kitaron station remapping updates the route" and in OD-038 option 3 is replaced: imported operations and steps can no longer be deleted by a planner.
+- **Tests.** `KitaronBatchSyncTests`, `KitaronBatchPlanTests`, `KitaronBatchAuthorityMigrationTests`, and updated `KitaronRouteSyncTests`, `KitaronConnectionApiTests`, `PlanningDeletionApiTests`.
+- **Open.** Material is judged from Kitaron's own calculation rows; parts without them show `unknown` rather than a Meimad-computed stock balance, because ERP remains the stock authority.

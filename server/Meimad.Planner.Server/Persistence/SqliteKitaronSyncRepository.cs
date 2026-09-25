@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.Kitaron;
 using Microsoft.Data.Sqlite;
 
@@ -111,10 +112,6 @@ internal sealed class SqliteKitaronSyncRepository(
         }
         await ApplyRouteDependenciesAsync(
             connection, transaction, plan.Operations, operationIds, routeDependencyTargets, now, counts, cancellationToken);
-        await ApplyRouteOrderAsync(
-            connection, transaction,
-            plan.Operations.Select(item => caseIds[item.CaseSourceKey]).Distinct(StringComparer.Ordinal).ToArray(),
-            now, counts, cancellationToken);
         // Requirements arrive predecessor-first per chain. A step that is left out (suppressed, or
         // its machining step is missing) hands its own predecessor on, so the chain closes over it
         // the same way a planner's deletion re-links it.
@@ -136,9 +133,24 @@ internal sealed class SqliteKitaronSyncRepository(
                 connection, transaction, item, caseId, operationId, predecessorId, now, counts, cancellationToken);
             chainRequirementIds[item.SourceKey] = requirementId ?? predecessorId;
         }
-        await DeactivateMissingRequirementsAsync(
+        // What the current route and station decisions no longer produce leaves the Case: first the
+        // steps, then the operations they may have been anchored to; then the route is renumbered.
+        await RemoveMissingRequirementsAsync(
             connection, transaction, caseIds.Values.ToHashSet(StringComparer.Ordinal),
-            (plan.Requirements ?? []).Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
+            (plan.Requirements ?? []).Select(item => item.SourceKey).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            now, counts, cancellationToken);
+        var routeCaseIds = (plan.RoutePartNumbers ?? new HashSet<string>())
+            .Where(caseIds.ContainsKey)
+            .Select(part => caseIds[part])
+            .ToHashSet(StringComparer.Ordinal);
+        await RemoveMissingOperationsAsync(
+            connection, transaction, routeCaseIds,
+            plan.Operations.Select(item => item.SourceKey).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            now, counts, cancellationToken);
+        await ApplyRouteOrderAsync(
+            connection, transaction,
+            plan.Operations.Select(item => caseIds[item.CaseSourceKey]).Concat(routeCaseIds)
+                .Distinct(StringComparer.Ordinal).ToArray(),
             now, counts, cancellationToken);
         foreach (var item in plan.Components)
         {
@@ -156,6 +168,15 @@ internal sealed class SqliteKitaronSyncRepository(
             connection, transaction, plan.KnownComponentSourceKeys, now, counts, cancellationToken);
         await SynchronizeNotStartedBatchOperationTimesAsync(
             connection, transaction, now, cancellationToken);
+        await ApplyRouteLockAsync(connection, transaction, routeCaseIds, now, cancellationToken);
+        if (plan.Batches is not null)
+        {
+            await ApplyBatchesAsync(
+                connection, transaction, plan.Batches, caseIds, now, counts, cancellationToken);
+        }
+        var materialStates = (plan.Batches ?? [])
+            .GroupBy(item => item.MaterialState, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
 
         var message = $"Synchronized {plan.SourceRows:N0} source rows: " +
             $"{counts.CasesCreated} Case(s), {counts.OrdersCreated} Order(s), and " +
@@ -163,13 +184,24 @@ internal sealed class SqliteKitaronSyncRepository(
             $"{counts.BatchesDeleted} dependent Production Batch(es) and {counts.OrdersDeleted} non-Kitaron Order(s) removed. " +
             $"{counts.HistoricalOrdersRetained} superseded Order(s) retained only for locked production history. " +
             $"{counts.BatchesRetained} Production Batch(es) with started production kept although Kitaron changed their Order. " +
-            $"{counts.OperationsSuppressed} Kitaron route Operation(s) left out because a planner removed them in Meimad Planner. " +
             $"{counts.OperationDependenciesSet} Case Operation dependency(ies) set from the Kitaron route sequence and " +
             $"{counts.OperationsReordered} Case Operation(s) moved to the Kitaron route order. " +
+            $"{counts.OperationsRemoved} Case Operation(s) and {counts.RequirementsRemoved} auxiliary step(s) removed because the Kitaron route and station decisions no longer produce them; " +
+            $"{counts.OperationsKept} such Case Operation(s) kept because production or planner data still uses them" +
+            (counts.KeptOperations.Count == 0 ? ". " : $" ({string.Join(", ", counts.KeptOperations)}). ") +
             $"{counts.RequirementsCreated} auxiliary route step(s) created as resource requirements, {counts.RequirementsUpdated} updated, " +
-            $"{counts.RequirementsSuppressed} left out because a planner removed them or their machining step; " +
+            $"{counts.RequirementsSuppressed} left out because their machining step is not produced; " +
             $"{plan.RouteStepsSkipped} Kitaron route step(s) skipped because their station is undecided or the route has no machining step. " +
             $"{plan.MaterialOrders?.Count ?? 0:N0} Kitaron material order line(s) with delivery approval data imported as advisory records. " +
+            $"{counts.BatchesImported} Production Batch(es) imported from open Kitaron work orders, " +
+            $"{counts.BatchesUpdatedFromKitaron} updated, and {counts.BatchesRemovedWithWorkOrder} removed with their Kitaron work orders; " +
+            $"{counts.BatchesKeptStarted} kept although the Kitaron work order closed or changed" +
+            (counts.KeptBatches.Count == 0 ? ". " : $" ({string.Join(", ", counts.KeptBatches)}). ") +
+            $"{counts.BatchesWaitingForRoute} work order(s) wait for their Case route" +
+            (counts.WaitingBatches.Count == 0 ? ". " : $" ({string.Join(", ", counts.WaitingBatches)}). ") +
+            "Batch material per Kitaron: " +
+            $"{materialStates.GetValueOrDefault("available")} available, {materialStates.GetValueOrDefault("on_order")} on order, " +
+            $"{materialStates.GetValueOrDefault("missing")} missing, {materialStates.GetValueOrDefault("unknown")} unknown. " +
             "Existing or linked records were reused safely.";
         await using (var command = connection.CreateCommand())
         {
@@ -1111,22 +1143,6 @@ internal sealed class SqliteKitaronSyncRepository(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncOperation item, string caseId,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
-        if (await IsOperationSuppressedAsync(connection, transaction, item.SourceKey, cancellationToken))
-        {
-            // A planner deleted this imported Operation on purpose. Keep it out of the route until
-            // an Operation with the same number exists again on the Case; then Kitaron re-adopts it.
-            var reAdded = await FindIdsAsync(connection, transaction,
-                "SELECT id FROM case_operations WHERE case_id=$caseId AND operation_number=$key ORDER BY id;",
-                item.OperationNumber, cancellationToken, caseId);
-            if (reAdded.Count == 0)
-            {
-                counts.OperationsSuppressed++;
-                return (null, false);
-            }
-
-            await ClearOperationSuppressionAsync(connection, transaction, item.SourceKey, cancellationToken);
-        }
-
         var link = await ReadValidLinkAsync(
             connection, transaction, "case_operation", item.SourceKey, "case_operations", counts, cancellationToken);
         if (link is null)
@@ -1327,19 +1343,6 @@ internal sealed class SqliteKitaronSyncRepository(
         string caseId, string operationId, string? predecessorId,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
-        if (await IsOperationSuppressedAsync(connection, transaction, item.SourceKey, cancellationToken))
-        {
-            var reAdded = await FindIdsAsync(connection, transaction,
-                "SELECT id FROM operation_resource_requirements WHERE case_operation_id=$caseId AND step_number=$key ORDER BY id;",
-                item.StepNumber, cancellationToken, operationId);
-            if (reAdded.Count == 0)
-            {
-                counts.RequirementsSuppressed++;
-                return null;
-            }
-            await ClearOperationSuppressionAsync(connection, transaction, item.SourceKey, cancellationToken);
-        }
-
         var link = await ReadValidLinkAsync(
             connection, transaction, "operation_requirement", item.SourceKey, "operation_resource_requirements", counts, cancellationToken);
         if (link is null)
@@ -1417,67 +1420,182 @@ internal sealed class SqliteKitaronSyncRepository(
     }
 
     /// <summary>
-    /// A Kitaron-owned requirement of a synchronized Case whose route step disappeared (route
-    /// changed, station re-decided as IGNORE) is deactivated, not deleted: pins and history keep
-    /// their reference, and the step reactivates when Kitaron lists it again.
+    /// A Kitaron-owned step of a synchronized Case that the current route and station decisions no
+    /// longer produce (the route changed, or its station was re-decided) leaves the Case: the steps
+    /// that followed it follow its predecessor, and it is deleted with its link. A step that a planner
+    /// pin still uses is only deactivated, and its link forgets the step's facts so the step is applied
+    /// in full again when Kitaron produces it again. A step that returns later is simply recreated.
     /// </summary>
-    private static async Task DeactivateMissingRequirementsAsync(
+    private static async Task RemoveMissingRequirementsAsync(
         SqliteConnection connection, SqliteTransaction transaction, IReadOnlySet<string> synchronizedCaseIds,
         IReadOnlySet<string> currentSourceKeys, DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
         await using var read = connection.CreateCommand();
         read.Transaction = transaction;
         read.CommandText = """
-            SELECT link.source_key, link.target_id, operation.case_id
+            SELECT link.source_key, link.target_id, operation.case_id, requirement.is_active,
+                   EXISTS (SELECT 1 FROM resource_schedule_work work WHERE work.requirement_id = requirement.id)
             FROM kitaron_sync_links link
             JOIN operation_resource_requirements requirement ON requirement.id = link.target_id
             JOIN case_operations operation ON operation.id = requirement.case_operation_id
-            WHERE link.source_entity = 'operation_requirement' AND link.owns_target = 1 AND requirement.is_active = 1;
+            WHERE link.source_entity = 'operation_requirement' AND link.owns_target = 1;
             """;
-        var stale = new List<string>();
+        var missing = new List<(string Id, bool Active, bool Pinned)>();
         await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
         {
             while (await reader.ReadAsync(cancellationToken))
             {
                 if (!currentSourceKeys.Contains(reader.GetString(0)) && synchronizedCaseIds.Contains(reader.GetString(2)))
-                    stale.Add(reader.GetString(1));
+                    missing.Add((reader.GetString(1), reader.GetInt64(3) == 1, reader.GetInt64(4) == 1));
             }
         }
-        foreach (var id in stale)
+        foreach (var (id, active, pinned) in missing)
         {
-            await using var update = connection.CreateCommand();
-            update.Transaction = transaction;
-            // The link forgets the step's facts, so the step is applied (and reactivated) in full
-            // when Kitaron lists it again.
-            update.CommandText = """
-                UPDATE operation_resource_requirements SET is_active=0, version=version+1, updated_at=$now WHERE id=$id AND is_active=1;
-                UPDATE kitaron_sync_links SET source_hash='deactivated' WHERE source_entity='operation_requirement' AND target_id=$id;
+            if (pinned && !active) continue;
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            Add(command, "$now", now.ToString("O"));
+            Add(command, "$id", id);
+            if (pinned)
+            {
+                command.CommandText = """
+                    UPDATE operation_resource_requirements SET is_active=0, version=version+1, updated_at=$now WHERE id=$id;
+                    UPDATE kitaron_sync_links SET source_hash='deactivated' WHERE source_entity='operation_requirement' AND target_id=$id;
+                    """;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+                counts.RequirementsUpdated++;
+                continue;
+            }
+            command.CommandText = """
+                UPDATE operation_resource_requirements
+                SET predecessor_requirement_id = (
+                        SELECT removed.predecessor_requirement_id FROM operation_resource_requirements removed WHERE removed.id = $id),
+                    version = version + 1, updated_at = $now
+                WHERE predecessor_requirement_id = $id;
+                DELETE FROM kitaron_sync_links WHERE source_entity = 'operation_requirement' AND target_id = $id;
+                DELETE FROM operation_resource_requirements WHERE id = $id;
                 """;
-            Add(update, "$now", now.ToString("O")); Add(update, "$id", id);
-            if (await update.ExecuteNonQueryAsync(cancellationToken) >= 1) counts.RequirementsUpdated++;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            counts.RequirementsRemoved++;
         }
     }
 
-    private static async Task<bool> IsOperationSuppressedAsync(
-        SqliteConnection connection, SqliteTransaction transaction, string sourceKey,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// A Kitaron-owned Case Operation of a Case whose route comes from the Kitaron route master, which
+    /// the current route and station decisions no longer produce, leaves the route: the operations
+    /// that followed it follow its predecessor, and it is deleted with its link and its default
+    /// Manufacturing Program. It is kept, and reported, while production or planner data uses it: a
+    /// Production Batch or Run, a G-code, process or tool-table release, a Manufacturing Program output,
+    /// a remaining resource requirement, a locked group, or a following operation the synchronization
+    /// does not own or that a planner locked to it. Planning-view operations are never removed this
+    /// way, because that view lists only open work. A decision that produces the operation again
+    /// recreates it.
+    /// </summary>
+    private static async Task RemoveMissingOperationsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, IReadOnlySet<string> routeCaseIds,
+        IReadOnlySet<string> currentSourceKeys, DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM kitaron_suppressed_operations WHERE source_key=$key);";
-        Add(command, "$key", sourceKey);
-        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
-    }
-
-    private static async Task ClearOperationSuppressionAsync(
-        SqliteConnection connection, SqliteTransaction transaction, string sourceKey,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "DELETE FROM kitaron_suppressed_operations WHERE source_key=$key;";
-        Add(command, "$key", sourceKey);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        if (routeCaseIds.Count == 0) return;
+        await using var read = connection.CreateCommand();
+        read.Transaction = transaction;
+        // The Case route mirrors the Kitaron route exactly: a linked operation the route and
+        // decisions no longer produce leaves it, and so does an operation a planner added by hand
+        // before route locking (new ones are rejected at creation).
+        read.CommandText = """
+            SELECT operation.id, operation.case_id, operation.operation_number, route_case.part_number, link.source_key
+            FROM case_operations operation
+            JOIN cases route_case ON route_case.id = operation.case_id
+            LEFT JOIN kitaron_sync_links link
+              ON link.source_entity = 'case_operation' AND link.target_id = operation.id
+            ORDER BY operation.case_id, operation.operation_number DESC;
+            """;
+        var missing = new List<(string Id, int Number, string Part)>();
+        await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (!routeCaseIds.Contains(reader.GetString(1))) continue;
+                if (reader.IsDBNull(4) || !currentSourceKeys.Contains(reader.GetString(4)))
+                    missing.Add((reader.GetString(0), reader.GetInt32(2), reader.GetString(3)));
+            }
+        }
+        foreach (var operation in missing)
+        {
+            await using var held = connection.CreateCommand();
+            held.Transaction = transaction;
+            held.CommandText = """
+                SELECT CASE
+                    WHEN EXISTS (SELECT 1 FROM batch_operations WHERE source_case_operation_id = $id) THEN 'Production Batch'
+                    WHEN EXISTS (
+                        SELECT 1 FROM production_run_programs run_program
+                        JOIN manufacturing_programs program ON program.id = run_program.manufacturing_program_id
+                        WHERE program.default_case_operation_id = $id) THEN 'Production Run'
+                    WHEN EXISTS (SELECT 1 FROM gcode_releases WHERE case_operation_id = $id)
+                      OR EXISTS (SELECT 1 FROM process_revisions WHERE case_operation_id = $id)
+                      OR EXISTS (
+                          SELECT 1 FROM process_revisions revision
+                          JOIN manufacturing_programs program ON program.id = revision.manufacturing_program_id
+                          WHERE program.default_case_operation_id = $id)
+                      OR EXISTS (SELECT 1 FROM tool_table_releases WHERE case_operation_id = $id) THEN 'release'
+                    WHEN EXISTS (SELECT 1 FROM manufacturing_program_revision_outputs WHERE case_operation_id = $id) THEN 'Manufacturing Program'
+                    WHEN EXISTS (SELECT 1 FROM operation_resource_requirements WHERE case_operation_id = $id) THEN 'resource requirement'
+                    WHEN EXISTS (
+                        SELECT 1 FROM case_operations removed
+                        JOIN case_operations member
+                          ON member.case_id = removed.case_id
+                         AND member.simultaneous_group_key = removed.simultaneous_group_key
+                         AND member.id <> removed.id
+                        WHERE removed.id = $id) THEN 'locked group'
+                    WHEN EXISTS (
+                        SELECT 1 FROM case_operations dependent
+                        WHERE dependent.predecessor_case_operation_id = $id
+                          AND (dependent.dependency_type NOT IN ('sequential', 'parallel_capable')
+                               OR NOT EXISTS (
+                                   SELECT 1 FROM kitaron_sync_links dependent_link
+                                   WHERE dependent_link.source_entity = 'case_operation'
+                                     AND dependent_link.target_id = dependent.id
+                                     AND dependent_link.owns_target = 1))) THEN 'following Operation'
+                    ELSE NULL END;
+                """;
+            Add(held, "$id", operation.Id);
+            if (await held.ExecuteScalarAsync(cancellationToken) is string reason)
+            {
+                counts.OperationsKept++;
+                if (counts.KeptOperations.Count < 10)
+                    counts.KeptOperations.Add($"{operation.Part} OP{operation.Number.ToString(CultureInfo.InvariantCulture)}: {reason}");
+                // Its link forgets the applied Kitaron facts, so the facts and the route sequence are
+                // applied in full when a later decision produces the operation again.
+                await using var forget = connection.CreateCommand();
+                forget.Transaction = transaction;
+                forget.CommandText = "UPDATE kitaron_sync_links SET source_hash = 'not-produced' WHERE source_entity = 'case_operation' AND target_id = $id;";
+                Add(forget, "$id", operation.Id);
+                await forget.ExecuteNonQueryAsync(cancellationToken);
+                continue;
+            }
+            await using var remove = connection.CreateCommand();
+            remove.Transaction = transaction;
+            // The operations that followed it are re-linked to its predecessor; their links forget the
+            // applied facts, so the route sequence is applied again when the removed one returns.
+            remove.CommandText = """
+                UPDATE kitaron_sync_links SET source_hash = 'relinked'
+                WHERE source_entity = 'case_operation'
+                  AND target_id IN (SELECT dependent.id FROM case_operations dependent WHERE dependent.predecessor_case_operation_id = $id);
+                UPDATE case_operations
+                SET predecessor_case_operation_id = (
+                        SELECT removed.predecessor_case_operation_id FROM case_operations removed WHERE removed.id = $id),
+                    dependency_type = CASE
+                        WHEN (SELECT removed.predecessor_case_operation_id FROM case_operations removed WHERE removed.id = $id) IS NULL
+                        THEN 'independent' ELSE dependency_type END,
+                    version = version + 1, updated_at = $now
+                WHERE predecessor_case_operation_id = $id;
+                DELETE FROM kitaron_sync_links WHERE source_entity = 'case_operation' AND target_id = $id;
+                DELETE FROM case_operations WHERE id = $id;
+                """;
+            Add(remove, "$id", operation.Id);
+            Add(remove, "$now", now.ToString("O"));
+            await remove.ExecuteNonQueryAsync(cancellationToken);
+            counts.OperationsRemoved++;
+        }
     }
 
     private static async Task ResolveComponentAsync(
@@ -1777,6 +1895,316 @@ internal sealed class SqliteKitaronSyncRepository(
 
     private static string Limit(string value, int maximum) => value.Length <= maximum ? value : value[..maximum];
 
+    /// <summary>
+    /// Cases whose route the Kitaron route master owns are locked: a planner cannot add or delete
+    /// Case Operations there, only edit the data of the imported ones. The flag follows the route
+    /// master, so a part that loses its route unlocks again.
+    /// </summary>
+    private static async Task ApplyRouteLockAsync(
+        SqliteConnection connection, SqliteTransaction transaction, IReadOnlySet<string> routeCaseIds,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE cases SET kitaron_route_locked = 1, version = version + 1, updated_at = $now
+            WHERE kitaron_route_locked = 0 AND id IN (SELECT value FROM json_each($ids));
+            UPDATE cases SET kitaron_route_locked = 0, version = version + 1, updated_at = $now
+            WHERE kitaron_route_locked = 1 AND id NOT IN (SELECT value FROM json_each($ids));
+            """;
+        Add(command, "$ids", JsonSerializer.Serialize(routeCaseIds.Order(StringComparer.Ordinal)));
+        Add(command, "$now", now.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The open Kitaron work orders are the Production Batches. A new work order becomes a waiting
+    /// batch with its Kitaron order allocations and a snapshot of the Case route; a changed one is
+    /// re-applied while the batch is untouched (no assignment, run, schedule or started work); a
+    /// closed one removes its unstarted batch. Started production is never removed or restructured
+    /// here - it is reported instead. Each batch also carries Kitaron's material verdict.
+    /// </summary>
+    private static async Task ApplyBatchesAsync(
+        SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<KitaronSyncBatch> batches,
+        IReadOnlyDictionary<string, string> caseIds, DateTimeOffset now, MutableCounts counts,
+        CancellationToken cancellationToken)
+    {
+        var currentKeys = batches.Select(item => item.SourceKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stale = new List<(string SourceKey, string BatchId, string Label)>();
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT link.source_key, link.target_id, route_case.part_number, batch.batch_number
+                FROM kitaron_sync_links link
+                JOIN production_batches batch ON batch.id = link.target_id
+                JOIN cases route_case ON route_case.id = batch.case_id
+                WHERE link.source_entity = 'production_batch' AND link.owns_target = 1
+                ORDER BY batch.batch_number;
+                """;
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (!currentKeys.Contains(reader.GetString(0)))
+                    stale.Add((reader.GetString(0), reader.GetString(1), $"{reader.GetString(2)} batch {reader.GetString(3)}"));
+            }
+        }
+        foreach (var (sourceKey, batchId, label) in stale)
+        {
+            if (await BatchHasStartedWorkAsync(connection, transaction, batchId, cancellationToken))
+            {
+                counts.BatchesKeptStarted++;
+                if (counts.KeptBatches.Count < 10) counts.KeptBatches.Add(label);
+                await using var forget = connection.CreateCommand();
+                forget.Transaction = transaction;
+                forget.CommandText = """
+                    UPDATE kitaron_sync_links SET source_hash = 'closed-in-kitaron'
+                    WHERE source_entity = 'production_batch' AND source_key = $key;
+                    """;
+                Add(forget, "$key", sourceKey);
+                await forget.ExecuteNonQueryAsync(cancellationToken);
+                continue;
+            }
+            await SqlitePlanningDeletionRepository.DeleteBatchGraphAsync(
+                connection, transaction, batchId, now, cancellationToken);
+            await DeleteLinkAsync(connection, transaction, "production_batch", sourceKey, cancellationToken);
+            counts.BatchesRemovedWithWorkOrder++;
+        }
+
+        foreach (var item in batches)
+        {
+            if (!caseIds.TryGetValue(item.CaseSourceKey, out var caseId))
+                throw new KitaronSyncDataException($"Work order {item.SourceKey} references an unresolved Case.");
+            var link = await ReadValidLinkAsync(
+                connection, transaction, "production_batch", item.SourceKey, "production_batches", counts, cancellationToken);
+            string batchId;
+            if (link is null)
+            {
+                var reason = await BatchCreationBlockerAsync(connection, transaction, caseId, item.BatchNumber, cancellationToken);
+                if (reason is not null)
+                {
+                    counts.BatchesWaitingForRoute++;
+                    if (counts.WaitingBatches.Count < 10)
+                        counts.WaitingBatches.Add($"{item.CaseSourceKey} work order {item.BatchNumber}: {reason}");
+                    continue;
+                }
+                batchId = StableId("kit-batch", item.SourceKey);
+                await using (var insert = connection.CreateCommand())
+                {
+                    insert.Transaction = transaction;
+                    insert.CommandText = """
+                        INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity,
+                            route_revision, version, created_at, updated_at)
+                        VALUES ($id, $caseId, $number, 'waiting', $quantity, NULL, 1, $now, $now);
+                        """;
+                    Add(insert, "$id", batchId); Add(insert, "$caseId", caseId);
+                    Add(insert, "$number", item.BatchNumber); Add(insert, "$quantity", item.PlannedQuantity);
+                    Add(insert, "$now", now.ToString("O"));
+                    await insert.ExecuteNonQueryAsync(cancellationToken);
+                }
+                await InsertBatchAllocationsAsync(connection, transaction, item, batchId, caseId, now, cancellationToken);
+                await SqliteProductionBatchRepository.InstantiateOperationsForImportAsync(
+                    connection, transaction, batchId, caseId, now, cancellationToken);
+                await SqliteOrderLifecycle.RecomputeForBatchAsync(connection, transaction, batchId, now, cancellationToken);
+                await UpsertLinkAsync(connection, transaction, "production_batch", item.SourceKey,
+                    batchId, true, item.SourceHash, now, cancellationToken);
+                counts.BatchesImported++;
+            }
+            else
+            {
+                batchId = link.Value.TargetId;
+                if (!StringComparer.Ordinal.Equals(link.Value.SourceHash, item.SourceHash))
+                {
+                    if (await BatchIsPlannedOrStartedAsync(connection, transaction, batchId, cancellationToken))
+                    {
+                        counts.BatchesKeptStarted++;
+                        if (counts.KeptBatches.Count < 10)
+                            counts.KeptBatches.Add($"{item.CaseSourceKey} batch {item.BatchNumber}");
+                    }
+                    else
+                    {
+                        await using (var update = connection.CreateCommand())
+                        {
+                            update.Transaction = transaction;
+                            update.CommandText = """
+                                DELETE FROM batch_allocations WHERE production_batch_id = $id;
+                                DELETE FROM batch_operations WHERE production_batch_id = $id;
+                                UPDATE production_batches
+                                SET planned_quantity = $quantity, batch_number = $number,
+                                    version = version + 1, updated_at = $now
+                                WHERE id = $id;
+                                """;
+                            Add(update, "$id", batchId); Add(update, "$quantity", item.PlannedQuantity);
+                            Add(update, "$number", item.BatchNumber); Add(update, "$now", now.ToString("O"));
+                            await update.ExecuteNonQueryAsync(cancellationToken);
+                        }
+                        await InsertBatchAllocationsAsync(connection, transaction, item, batchId, caseId, now, cancellationToken);
+                        await SqliteProductionBatchRepository.InstantiateOperationsForImportAsync(
+                            connection, transaction, batchId, caseId, now, cancellationToken);
+                        await SqliteOrderLifecycle.RecomputeForBatchAsync(connection, transaction, batchId, now, cancellationToken);
+                        await UpsertLinkAsync(connection, transaction, "production_batch", item.SourceKey,
+                            batchId, link.Value.OwnsTarget, item.SourceHash, now, cancellationToken);
+                        counts.BatchesUpdatedFromKitaron++;
+                    }
+                }
+            }
+            await using var material = connection.CreateCommand();
+            material.Transaction = transaction;
+            material.CommandText = """
+                INSERT INTO kitaron_batch_material_checks (production_batch_id, state, detail, updated_at)
+                VALUES ($id, $state, $detail, $now)
+                ON CONFLICT (production_batch_id) DO UPDATE SET
+                    state = excluded.state, detail = excluded.detail, updated_at = excluded.updated_at
+                WHERE state IS NOT excluded.state OR detail IS NOT excluded.detail;
+                """;
+            Add(material, "$id", batchId); Add(material, "$state", item.MaterialState);
+            Add(material, "$detail", item.MaterialDetail); Add(material, "$now", now.ToString("O"));
+            await material.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>Why a work order cannot become a batch yet; null when it can.</summary>
+    private static async Task<string?> BatchCreationBlockerAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string caseId, string batchNumber,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT CASE
+                WHEN NOT EXISTS (SELECT 1 FROM case_operations WHERE case_id = $caseId) THEN 'no Case Operations yet'
+                WHEN EXISTS (SELECT 1 FROM case_components WHERE parent_case_id = $caseId AND is_active = 1) THEN 'a parent Case cannot own batches'
+                WHEN EXISTS (SELECT 1 FROM production_batches WHERE case_id = $caseId AND batch_number = $number) THEN 'a planner batch already uses this number'
+                ELSE NULL END;
+            """;
+        Add(command, "$caseId", caseId);
+        Add(command, "$number", batchNumber);
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    private static async Task InsertBatchAllocationsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, KitaronSyncBatch item, string batchId,
+        string caseId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var resolved = new List<(string Type, string? OrderId, int Quantity)>();
+        var stock = 0;
+        var scrap = 0;
+        foreach (var allocation in item.Allocations)
+        {
+            if (allocation.OrderSourceKey is null)
+            {
+                if (allocation.ScrapAllowance) scrap += allocation.Quantity;
+                else stock += allocation.Quantity;
+                continue;
+            }
+            await using var find = connection.CreateCommand();
+            find.Transaction = transaction;
+            find.CommandText = """
+                SELECT link.target_id
+                FROM kitaron_sync_links link
+                JOIN orders o ON o.id = link.target_id
+                WHERE link.source_entity = 'order' AND link.source_key = $key
+                  AND o.case_id = $caseId AND o.status <> 'cancelled'
+                LIMIT 1;
+                """;
+            Add(find, "$key", $"{item.CaseSourceKey}\u001f{allocation.OrderSourceKey}");
+            Add(find, "$caseId", caseId);
+            if (await find.ExecuteScalarAsync(cancellationToken) is string orderId)
+                resolved.Add(("order", orderId, allocation.Quantity));
+            else
+                stock += allocation.Quantity;
+        }
+        if (stock > 0) resolved.Add(("stock", null, stock));
+        if (scrap > 0) resolved.Add(("scrap_allowance", null, scrap));
+        var index = 0;
+        foreach (var (type, orderId, quantity) in resolved)
+        {
+            await using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO batch_allocations (id, production_batch_id, allocation_type, order_id,
+                    derived_order_key, quantity, version, created_at, updated_at)
+                VALUES ($id, $batchId, $type, $orderId, NULL, $quantity, 1, $now, $now);
+                """;
+            Add(insert, "$id", StableId("kit-alloc", $"{item.SourceKey}:{index.ToString(CultureInfo.InvariantCulture)}"));
+            Add(insert, "$batchId", batchId); Add(insert, "$type", type);
+            Add(insert, "$orderId", orderId); Add(insert, "$quantity", quantity);
+            Add(insert, "$now", now.ToString("O"));
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+            index++;
+        }
+    }
+
+    /// <summary>Started production: the batch or an operation left `waiting`/`not_started`, a run
+    /// whose structure is locked (every assignment is wrapped in an unstarted run), or a package. Such a batch is never removed by the synchronization.</summary>
+    private static async Task<bool> BatchHasStartedWorkAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string batchId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1 FROM production_batches batch
+                WHERE batch.id = $id AND batch.status <> 'waiting'
+                UNION ALL
+                SELECT 1 FROM batch_operations operation
+                WHERE operation.production_batch_id = $id AND operation.status <> 'not_started'
+                UNION ALL
+                SELECT 1 FROM production_runs run
+                WHERE run.structure_locked_at IS NOT NULL
+                  AND run.legacy_batch_operation_id IN (
+                    SELECT id FROM batch_operations WHERE production_batch_id = $id)
+                UNION ALL
+                SELECT 1 FROM production_run_outputs output
+                JOIN production_run_programs program ON program.id = output.production_run_program_id
+                JOIN production_runs run ON run.id = program.production_run_id
+                JOIN batch_operations operation ON operation.id = output.batch_operation_id
+                WHERE operation.production_batch_id = $id AND run.structure_locked_at IS NOT NULL
+                UNION ALL
+                SELECT 1 FROM production_packages package
+                JOIN batch_operations operation ON operation.id = package.batch_operation_id
+                WHERE operation.production_batch_id = $id);
+            """;
+        Add(command, "$id", batchId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+    }
+
+    /// <summary>Planner work on the batch (an assignment, auxiliary schedule, E-Ink package or
+    /// bench session) or started production: Kitaron changes are then reported, not applied.</summary>
+    private static async Task<bool> BatchIsPlannedOrStartedAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string batchId,
+        CancellationToken cancellationToken)
+    {
+        if (await BatchHasStartedWorkAsync(connection, transaction, batchId, cancellationToken)) return true;
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1 FROM machine_assignments assignment
+                JOIN batch_operations operation ON operation.id = assignment.batch_operation_id
+                WHERE operation.production_batch_id = $id
+                UNION ALL
+                SELECT 1 FROM resource_schedule_work work
+                JOIN batch_operations operation ON operation.id = work.batch_operation_id
+                WHERE operation.production_batch_id = $id
+                UNION ALL
+                SELECT 1 FROM eink_package_revisions revision
+                WHERE revision.production_batch_id = $id
+                   OR revision.batch_operation_id IN (
+                       SELECT id FROM batch_operations WHERE production_batch_id = $id)
+                UNION ALL
+                SELECT 1 FROM haas_bench_sessions bench
+                JOIN batch_operations operation ON operation.id = bench.batch_operation_id
+                WHERE operation.production_batch_id = $id
+                UNION ALL
+                SELECT 1 FROM batch_material_reservations reservation
+                WHERE reservation.production_batch_id = $id);
+            """;
+        Add(command, "$id", batchId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+    }
+
     private static async Task<KitaronSyncStatus> ReadStatusAsync(
         SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
     {
@@ -1804,10 +2232,15 @@ internal sealed class SqliteKitaronSyncRepository(
     private sealed class MutableCounts
     {
         internal int CasesCreated, CasesUpdated, CasesMatched, OrdersCreated, OrdersUpdated, OrdersMatched, OrdersDeleted, BatchesDeleted;
-        internal int OperationsCreated, OperationsUpdated, OperationsMatched, OperationsSuppressed, Warnings;
+        internal int OperationsCreated, OperationsUpdated, OperationsMatched, Warnings;
         internal int HistoricalOrdersRetained, BatchesRetained;
         internal int ComponentsCreated, ComponentsUpdated, ComponentsMatched;
         internal int RequirementsCreated, RequirementsUpdated, RequirementsMatched, RequirementsSuppressed;
         internal int OperationDependenciesSet, OperationsReordered;
+        internal int OperationsRemoved, OperationsKept, RequirementsRemoved;
+        internal int BatchesImported, BatchesUpdatedFromKitaron, BatchesRemovedWithWorkOrder, BatchesKeptStarted, BatchesWaitingForRoute;
+        internal readonly List<string> KeptOperations = [];
+        internal readonly List<string> KeptBatches = [];
+        internal readonly List<string> WaitingBatches = [];
     }
 }

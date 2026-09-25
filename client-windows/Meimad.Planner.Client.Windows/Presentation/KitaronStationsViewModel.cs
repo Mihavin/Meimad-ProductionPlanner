@@ -14,6 +14,9 @@ namespace Meimad.Planner.Client.Windows.Presentation;
 /// </summary>
 internal sealed class KitaronStationsViewModel : INotifyPropertyChanged
 {
+    /// <summary>A saved decision asks the Server to synchronize Kitaron at once.</summary>
+    internal const string SynchronizationNote = "The Server synchronizes Kitaron now; the Case operations follow within about a minute.";
+
     private IPlannerApiClient? apiClient;
     private string clientId = string.Empty;
     private long editGeneration;
@@ -232,7 +235,7 @@ internal sealed class KitaronStationsViewModel : INotifyPropertyChanged
         if (decision is null) { StatusMessage = problem!; return; }
         var station = SelectedStation!;
         await MutateAsync(async () => await apiClient!.DecideKitaronStationAsync(station.KitaronStationId, decision, clientId, editGeneration),
-            $"{station.StationName} saved as {KitaronStationRoleLabels.Label(decision.ImportRole)}.");
+            $"{station.StationName} saved as {KitaronStationRoleLabels.Label(decision.ImportRole)}. " + SynchronizationNote);
     }
 
     private Task AcceptMachineSuggestionsAsync() => DecideSuggestedAsync("MACHINE");
@@ -254,7 +257,7 @@ internal sealed class KitaronStationsViewModel : INotifyPropertyChanged
                 await apiClient!.DecideKitaronStationAsync(station.KitaronStationId, new KitaronStationDecision(
                     role, null, null, null, 0, 0, 1, null, station.Version), clientId, editGeneration);
             }
-        }, $"{candidates.Length} station(s) decided as {KitaronStationRoleLabels.Label(role)}.");
+        }, $"{candidates.Length} station(s) decided as {KitaronStationRoleLabels.Label(role)}. " + SynchronizationNote);
     }
 
     private async Task MutateAsync(Func<Task> action, string success)

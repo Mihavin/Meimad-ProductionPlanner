@@ -28,7 +28,7 @@ public sealed class KitaronRouteImportMigrationTests
         }
         SqliteConnection.ClearAllPools();
 
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(81);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         Assert.Equal("kitaron_route_import", await ScalarAsync(connection, "SELECT name FROM schema_migrations WHERE version = 81;"));

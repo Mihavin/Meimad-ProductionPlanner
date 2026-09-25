@@ -1322,7 +1322,7 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
-    public async Task Sync_keeps_a_planner_deleted_case_operation_removed_until_it_is_added_again()
+    public async Task A_synchronized_case_operation_cannot_be_deleted_by_the_planner()
     {
         await RunAsync(new CapturingTester(), async (application, client) =>
         {
@@ -1361,43 +1361,18 @@ public sealed class KitaronConnectionApiTests
                 await grant.ExecuteNonQueryAsync();
             }
 
-            // The planner removes the imported Operation through the normal deletion endpoint.
+            // The operation list mirrors Kitaron: the deletion endpoint rejects the request and
+            // the next synchronization still matches the same row.
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "kitaron-remove-test");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
             using var delete = await client.DeleteAsync($"/api/v1/cases/{caseId}/operations/{operationId}");
-            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await delete.Content.ReadAsStringAsync());
 
-            // The next synchronization must not bring it back, and it is not a warning.
             var second = await repository.ApplyAsync(plan, now.AddMinutes(1), CancellationToken.None);
             Assert.Equal("succeeded", second.Status);
             Assert.Equal(0, second.OperationsCreated);
             Assert.Equal(0, second.WarningCount);
-
-            await using (var connection = await database.OpenConnectionAsync())
-            {
-                await using var verify = connection.CreateCommand();
-                verify.CommandText = "SELECT COUNT(*) FROM case_operations;";
-                Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
-                verify.CommandText =
-                    "SELECT COUNT(*) FROM kitaron_suppressed_operations WHERE source_key='REMOVED-PART' || char(31) || '10';";
-                Assert.Equal(1L, (long)(await verify.ExecuteScalarAsync())!);
-
-                // The planner later adds Operation 10 again by hand: Kitaron re-adopts that row
-                // instead of creating a duplicate, and the suppression ends.
-                await using var readd = connection.CreateCommand();
-                readd.CommandText = """
-                    INSERT INTO case_operations (id, case_id, operation_number, route_position, name,
-                        dependency_type, version, created_at, updated_at)
-                    VALUES ('manual-op-10', $caseId, 10, 0, 'Cut again', 'independent', 1,
-                        '2026-09-16T07:00:00Z', '2026-09-16T07:00:00Z');
-                    """;
-                readd.Parameters.AddWithValue("$caseId", caseId);
-                await readd.ExecuteNonQueryAsync();
-            }
-
-            var third = await repository.ApplyAsync(plan, now.AddMinutes(2), CancellationToken.None);
-            Assert.Equal("succeeded", third.Status);
-            Assert.Equal(0, third.OperationsCreated);
 
             await using var verifyConnection = await database.OpenConnectionAsync();
             await using var verifyLink = verifyConnection.CreateCommand();
@@ -1406,9 +1381,7 @@ public sealed class KitaronConnectionApiTests
                 FROM kitaron_sync_links
                 WHERE source_entity='case_operation' AND source_key='REMOVED-PART' || char(31) || '10';
                 """;
-            Assert.Equal("manual-op-10|0", await verifyLink.ExecuteScalarAsync());
-            verifyLink.CommandText = "SELECT COUNT(*) FROM kitaron_suppressed_operations;";
-            Assert.Equal(0L, (long)(await verifyLink.ExecuteScalarAsync())!);
+            Assert.Equal($"{operationId}|1", await verifyLink.ExecuteScalarAsync());
             verifyLink.CommandText = "SELECT COUNT(*) FROM case_operations;";
             Assert.Equal(1L, (long)(await verifyLink.ExecuteScalarAsync())!);
         });

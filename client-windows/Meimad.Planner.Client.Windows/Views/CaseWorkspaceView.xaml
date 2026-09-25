@@ -393,15 +393,15 @@
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button Content="Delete Selected" Click="DeleteOperation_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Delete Selected" Click="DeleteOperation_Click" IsEnabled="{Binding CanDeleteSelectedOperation}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditOperationCommand}" />
                                     <Button Command="{Binding BeginCreateOperationCommand}" Style="{StaticResource TemplateIconButton}"
                                             ToolTip="Add Operation" AutomationProperties.Name="Add Operation" Margin="0">
                                         <Image Source="{StaticResource OperationsButtonIcon}" Width="24" Height="24" />
                                     </Button>
                                 </StackPanel>
-                                <TextBlock Text="Ordered route template. New operations append to the route."
-                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding OperationListAuthorityText}"
+                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
                             </DockPanel>
                             <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
                                     BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
@@ -888,6 +888,14 @@
                                     <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="120" />
                                     <DataGridTextColumn Header="Planned quantity" Binding="{Binding PlannedQuantity}" Width="130" />
                                     <DataGridTextColumn Header="Operations" Binding="{Binding BatchOperationCount}" Width="100" />
+                                    <DataGridTextColumn Header="Source" Binding="{Binding SourceDisplay}" Width="90" />
+                                    <DataGridTextColumn Header="Material" Binding="{Binding MaterialDisplay}" Width="110">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="ToolTip" Value="{Binding KitaronMaterialDetail}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
                                     <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />
                                 </DataGrid.Columns>
                             </DataGrid>

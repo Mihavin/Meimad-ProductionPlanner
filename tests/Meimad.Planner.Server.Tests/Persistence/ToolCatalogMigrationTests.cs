@@ -38,7 +38,7 @@ public sealed class ToolCatalogMigrationTests
         }
         SqliteConnection.ClearAllPools();
 
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(80);
 
         await using var connection = await fixture.Database.OpenConnectionAsync();
         Assert.Equal("tool_catalog", await ScalarAsync(connection, "SELECT name FROM schema_migrations WHERE version = 80;"));
