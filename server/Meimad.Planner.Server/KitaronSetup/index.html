@@ -25,7 +25,7 @@
       <strong>One-way boundary:</strong> Kitaron is always opened with <code>ApplicationIntent=ReadOnly</code>.
       Synchronization creates or updates linked Cases, canonical delivery-row Orders, reusable Case Operations, and Case Components in Meimad only.
       It also imports raw-material purchase lines and the latest supplier delivery approval into a separate advisory register.
-      Each Order uses <code>OrderNumber/RecordID</code>, imports <code>PriceInCurr</code> as unit Price,
+      Each Order uses <code>OrderNumber/RecordID</code>, imports <code>CostShkalim</code> as unit Price in NIS (a zero means no price),
       and becomes Active, Inactive, or Cancelled from the Kitaron closed/StopProduction facts.
       Orders absent from the authoritative Kitaron snapshot are removed; dependent test Production Batches are removed atomically first.
       Component Cases never receive automatic Orders or Batches.

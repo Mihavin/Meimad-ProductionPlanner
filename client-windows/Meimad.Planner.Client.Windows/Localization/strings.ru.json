@@ -2136,6 +2136,7 @@
   "Preview workbook": "Предпросмотр книги",
   "Preview: {0} rows — {1}": "Предпросмотр: строк {0} — {1}",
   "Price": "Цена",
+  "Price (NIS)": "Цена (шек.)",
   "Price must be a non-negative number or blank.": "Цена должна быть неотрицательным числом или пустой.",
   "Primary": "Основной",
   "Probe": "Щуп",

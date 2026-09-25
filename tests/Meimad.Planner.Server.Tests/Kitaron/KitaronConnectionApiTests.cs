@@ -34,7 +34,7 @@ public sealed class KitaronConnectionApiTests
             Assert.Contains("One-way Server synchronization", pageText, StringComparison.Ordinal);
             Assert.Contains("Synchronize now", pageText, StringComparison.Ordinal);
             Assert.Contains("CONNECTOR MANAGED", pageText, StringComparison.Ordinal);
-            Assert.Contains("PriceInCurr", pageText, StringComparison.Ordinal);
+            Assert.Contains("CostShkalim", pageText, StringComparison.Ordinal);
 
             using var script = await client.GetAsync("/kitaron-setup/app.js");
             var scriptText = await script.Content.ReadAsStringAsync();
@@ -101,7 +101,7 @@ public sealed class KitaronConnectionApiTests
             Assert.True(statusField.GetProperty("connectorManaged").GetBoolean());
             Assert.Equal("canonical_order_status", statusField.GetProperty("transform").GetString());
             Assert.True(priceField.GetProperty("connectorManaged").GetBoolean());
-            Assert.Equal("PriceInCurr", priceField.GetProperty("sourceColumn").GetString());
+            Assert.Equal("CostShkalim", priceField.GetProperty("sourceColumn").GetString());
             Assert.Equal(3, mappingJson.RootElement.GetProperty("detectedColumns").GetArrayLength());
 
             using var after = await client.GetAsync("/api/v1/kitaron/connection");
@@ -299,7 +299,7 @@ public sealed class KitaronConnectionApiTests
     public void Canonical_order_query_reads_all_delivery_rows_without_mutating_kitaron()
     {
         var query = SqlServerKitaronSourceReader.BuildOrderQuery(
-            "dbo", "VQWorkPlanningForStationF4", "PriceInCurr");
+            "dbo", "VQWorkPlanningForStationF4", "CostShkalim");
 
         Assert.Contains("so.StopProduction", query, StringComparison.Ordinal);
         Assert.Contains("so.RecordID", query, StringComparison.Ordinal);
@@ -309,7 +309,8 @@ public sealed class KitaronConnectionApiTests
         Assert.Contains("SELECT DISTINCT node.TreeHead", query, StringComparison.Ordinal);
         Assert.Contains("SELECT DISTINCT node.IDNodeContens", query, StringComparison.Ordinal);
         Assert.Contains("so.DetailID = source.DetailID", query, StringComparison.Ordinal);
-        Assert.Contains("so.[PriceInCurr] AS Price", query, StringComparison.Ordinal);
+        // Kitaron keeps 0 for "no price entered": it must not become a price of 0.
+        Assert.Contains("NULLIF(so.[CostShkalim], 0) AS Price", query, StringComparison.Ordinal);
         Assert.Contains("CAST(NULL AS float) AS Supplied", query, StringComparison.Ordinal);
         Assert.Contains("o.OrderNumber)) <> N'הזמנה לדוגמא 1'", query, StringComparison.Ordinal);
         Assert.Contains("WHERE StopProduction = 1", query, StringComparison.Ordinal);
@@ -320,12 +321,18 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
-    public void Canonical_order_price_prefers_Kitaron_unit_price_in_order_currency()
+    public void Canonical_order_price_prefers_the_invoiced_shekel_unit_price()
     {
+        // The commissioned schema: CostShkalim is the NIS unit price the invoices use; PriceInCurr
+        // is set on a handful of rows only and read every other order as 0.
         var selected = SqlServerKitaronSourceReader.SelectOrderPriceColumn(
-            ["FullCost", "PriceRow", "PriceInCurr", "COOrderUnitPriceBOM"]);
+            ["FullCost", "PriceRow", "PriceInCurr", "COOrderUnitPriceBOM", "CostShkalim", "CostDolar"]);
+        Assert.Equal("CostShkalim", selected);
 
-        Assert.Equal("PriceInCurr", selected);
+        // Without it the older candidates still apply, never a cost or row total.
+        Assert.Equal("PriceInCurr", SqlServerKitaronSourceReader.SelectOrderPriceColumn(
+            ["FullCost", "PriceRow", "PriceInCurr", "COOrderUnitPriceBOM"]));
+        Assert.Null(SqlServerKitaronSourceReader.SelectOrderPriceColumn(["FullCost", "COOrderUnitPriceBOM", "CostDolar"]));
     }
 
     [Fact]
@@ -903,6 +910,87 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(1, reader.GetInt32(2));
             Assert.Equal(1, reader.GetInt32(3));
             Assert.Equal(0, reader.GetInt32(4));
+        });
+    }
+
+    [Fact]
+    public async Task Cancelled_current_order_keeps_its_batch_with_started_production_and_the_sync_continues()
+    {
+        await RunAsync(new CapturingTester(), async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO cases (id,part_number,name,working_folder_path)
+                    VALUES ('started-case','30P647004101-002','Started part','started');
+                    INSERT INTO orders (
+                        id,case_id,order_reference,quantity,work_finish_date,status,kitaron_status,price)
+                    VALUES (
+                        'started-order','started-case','3000030662/40777',16,'2026-12-21',
+                        'active','active',0);
+                    INSERT INTO case_operations
+                        (id,case_id,operation_number,route_position,name)
+                    VALUES ('started-case-operation','started-case',30,0,'Mill');
+                    INSERT INTO production_batches
+                        (id,case_id,batch_number,status,planned_quantity)
+                    VALUES ('started-batch','started-case','1','in_production',16);
+                    INSERT INTO batch_allocations
+                        (id,production_batch_id,allocation_type,order_id,quantity)
+                    VALUES ('started-allocation','started-batch','order','started-order',16);
+                    INSERT INTO batch_operations
+                        (id,production_batch_id,source_case_operation_id,operation_number,route_position,name,status)
+                    VALUES ('started-operation','started-batch','started-case-operation',30,0,'Mill','in_progress');
+                    INSERT INTO production_runs
+                        (id,status,shared_setup_seconds,setup_snapshot_json,structure_locked_at,
+                         legacy_batch_operation_id,version,created_at,updated_at)
+                    VALUES ('started-run','IN_PROGRESS',0,'{}','2026-09-24T13:00:00Z',
+                            'started-operation',1,'2026-09-24T12:00:00Z','2026-09-24T13:00:00Z');
+                    INSERT INTO kitaron_sync_links (
+                        source_entity,source_key,target_id,owns_target,source_hash,
+                        first_seen_at,last_seen_at)
+                    VALUES (
+                        'order','40777','started-order',1,'old-hash',
+                        '2026-09-24T12:00:00Z','2026-09-24T13:00:00Z');
+                    """;
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            var item = new KitaronSyncCase(
+                "30P647004101-002", "30P647004101-002", "Started part", null, null,
+                "started", "case-hash");
+            // Kitaron stopped the order (and now carries its price) after production started.
+            var canonical = new KitaronSyncOrder(
+                "40777", item.SourceKey, "3000030662/40777", 16,
+                new DateOnly(2026, 12, 21), "cancelled", "order-hash-2")
+            { CanonicalOrderNumber = "3000030662", Price = 547.56m };
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+
+            var result = await repository.ApplyAsync(
+                new KitaronSyncPlan(1, [item], [canonical], [], [], new HashSet<string>(), [], 1),
+                new DateTimeOffset(2026, 9, 25, 9, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+            Assert.Equal("succeeded", result.Status);
+            Assert.Contains("1 Production Batch(es) with started production kept", result.Message, StringComparison.Ordinal);
+
+            await using var verifyConnection = await database.OpenConnectionAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT
+                    (SELECT COUNT(*) FROM production_batches WHERE id='started-batch'),
+                    (SELECT COUNT(*) FROM production_runs WHERE id='started-run'),
+                    (SELECT status FROM orders WHERE id='started-order'),
+                    (SELECT kitaron_status FROM orders WHERE id='started-order'),
+                    (SELECT price FROM orders WHERE id='started-order');
+                """;
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1L, reader.GetInt64(0));
+            Assert.Equal(1L, reader.GetInt64(1));
+            Assert.Equal("cancelled", reader.GetString(2));
+            Assert.Equal("cancelled", reader.GetString(3));
+            Assert.Equal(547.56, reader.GetDouble(4), 2);
         });
     }
 

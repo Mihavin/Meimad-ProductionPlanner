@@ -9,9 +9,13 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     private static readonly string[] OrderSuppliedColumnCandidates = ["Supplied"];
     private static readonly string[] OrderPriceColumnCandidates =
     [
-        // The commissioned Kitaron schema stores the sales-order unit price in
-        // the order currency as PriceInCurr. Do not substitute manufacturing
-        // cost, BOM cost, or calculated row-total fields for this value.
+        // On the commissioned Kitaron schema the sales-order line's unit price is CostShkalim
+        // (NIS; a foreign-currency order carries its NIS value at order entry) with CostDolar as
+        // the USD twin: the invoiced sums (InvSum, InvSumDol) equal these per unit, and they are
+        // filled on 97 % of the 20,455 TSubOrder rows. PriceInCurr, the earlier choice, is set on
+        // 35 rows only and read every other order as 0. Do not substitute FullCost (the unit price
+        // after the order discount), manufacturing cost, BOM cost or row-total fields.
+        "CostShkalim",
         "PriceInCurr",
         "UnitPrice",
         "PriceForOne",
@@ -231,7 +235,8 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         IReadOnlyList<string>? headerClosedColumns = null,
         string? suppliedColumn = null)
     {
-        var price = priceColumn is null ? "CAST(NULL AS decimal(19,4))" : $"so.{Quote(priceColumn)}";
+        // A zero is Kitaron's "no price entered"; the Order then carries no price rather than 0.
+        var price = priceColumn is null ? "CAST(NULL AS decimal(19,4))" : $"NULLIF(so.{Quote(priceColumn)}, 0)";
         var supplied = suppliedColumn is null ? "CAST(NULL AS float)" : $"so.{Quote(suppliedColumn)}";
         var closedChecks = (rowClosedColumns ?? [])
             .Select(column => ClosedCheck("so", column))

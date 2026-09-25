@@ -124,6 +124,7 @@ internal sealed class SqliteKitaronSyncRepository(
             $"{counts.OperationsCreated} Case Operation(s), and {counts.ComponentsCreated} Case Component(s) created. " +
             $"{counts.BatchesDeleted} dependent Production Batch(es) and {counts.OrdersDeleted} non-Kitaron Order(s) removed. " +
             $"{counts.HistoricalOrdersRetained} superseded Order(s) retained only for locked production history. " +
+            $"{counts.BatchesRetained} Production Batch(es) with started production kept although Kitaron changed their Order. " +
             $"{counts.OperationsSuppressed} Kitaron route Operation(s) left out because a planner removed them in Meimad Planner. " +
             $"{plan.MaterialOrders?.Count ?? 0:N0} Kitaron material order line(s) with delivery approval data imported as advisory records. " +
             "Existing or linked records were reused safely.";
@@ -883,8 +884,17 @@ internal sealed class SqliteKitaronSyncRepository(
                     connection, transaction, link.Value.TargetId, cancellationToken);
                 foreach (var batchId in affectedBatchIds)
                 {
-                    await SqlitePlanningDeletionRepository.DeleteBatchGraphAsync(
-                        connection, transaction, batchId, now, cancellationToken);
+                    // A Batch whose Production Run already started is immutable production history:
+                    // it stays (counted as a warning) and the Order still takes Kitaron's new facts.
+                    if (await BatchHasLockedRunAsync(connection, transaction, batchId, cancellationToken))
+                    {
+                        counts.BatchesRetained++;
+                        counts.Warnings++;
+                        continue;
+                    }
+                    if (await SqlitePlanningDeletionRepository.DeleteBatchGraphAsync(
+                            connection, transaction, batchId, now, cancellationToken))
+                        counts.BatchesDeleted++;
                 }
             }
             await using var update = connection.CreateCommand();
@@ -933,6 +943,42 @@ internal sealed class SqliteKitaronSyncRepository(
         "cancelled" => "cancelled",
         _ => "active"
     };
+
+    /// <summary>
+    /// Whether one of the Batch's operations has a Production Run whose structure is locked
+    /// (started or completed); the same rule the planning deletion guard enforces.
+    /// </summary>
+    private static async Task<bool> BatchHasLockedRunAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM batch_operations operation
+                WHERE operation.production_batch_id=$id
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM production_runs run
+                        WHERE run.legacy_batch_operation_id=operation.id
+                          AND run.structure_locked_at IS NOT NULL)
+                    OR EXISTS (
+                        SELECT 1
+                        FROM production_run_outputs output
+                        JOIN production_run_programs program
+                          ON program.id=output.production_run_program_id
+                        JOIN production_runs output_run
+                          ON output_run.id=program.production_run_id
+                        WHERE output.batch_operation_id=operation.id
+                          AND output_run.structure_locked_at IS NOT NULL)));
+            """;
+        command.Parameters.AddWithValue("$id", batchId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+    }
 
     private static async Task<IReadOnlyList<string>> ReadOrderBatchIdsAsync(
         SqliteConnection connection,
@@ -1422,7 +1468,7 @@ internal sealed class SqliteKitaronSyncRepository(
     {
         internal int CasesCreated, CasesUpdated, CasesMatched, OrdersCreated, OrdersUpdated, OrdersMatched, OrdersDeleted, BatchesDeleted;
         internal int OperationsCreated, OperationsUpdated, OperationsMatched, OperationsSuppressed, Warnings;
-        internal int HistoricalOrdersRetained;
+        internal int HistoricalOrdersRetained, BatchesRetained;
         internal int ComponentsCreated, ComponentsUpdated, ComponentsMatched;
     }
 }

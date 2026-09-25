@@ -43,9 +43,9 @@ internal sealed partial class KitaronMappingService(
         new("orders", "status", "Kitaron Order Status",
             "Connector-managed projection: cancelled when StopProduction is set, inactive when the delivery row is closed/supplied, otherwise active.",
             true, null, "high", "canonical_order_status", [], BothModes, true),
-        new("orders", "price", "Unit Price",
-            "Connector-managed unit sales price from TSubOrder.PriceInCurr in the Kitaron order currency; never a row total or manufacturing/BOM cost.",
-            false, "PriceInCurr", "high", "canonical_order_price", ["PriceInCurr"], BothModes, true),
+        new("orders", "price", "Unit Price (NIS)",
+            "Connector-managed unit sales price in NIS from TSubOrder.CostShkalim (the NIS line price Kitaron invoices; a foreign-currency order carries its NIS value at order entry); a zero is stored as no price; never a row total or manufacturing/BOM cost.",
+            false, "CostShkalim", "high", "canonical_order_price", ["CostShkalim", "PriceInCurr"], BothModes, true),
 
         new("case_operations", "operation_number", "Route Operation Number", "Reusable Case-route operation number.", true,
             "ActionNumber", "medium", "positive_int", ["OPER_NUMBER", "OPERATION_NUMBER", "ActionNumber"], BothModes),

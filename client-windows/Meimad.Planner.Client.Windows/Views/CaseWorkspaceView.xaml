@@ -700,7 +700,7 @@
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderQuantity}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Work Finish Date (YYYY-MM-DD)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderWorkFinishDate}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Status" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OrderStatuses}" SelectedItem="{Binding NewOrderStatus}" MinHeight="38" Padding="7"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Price" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderPrice}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Price (NIS)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderPrice}"/></StackPanel>
                                     </UniformGrid>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderNotes}" AcceptsReturn="True" MinHeight="65" TextWrapping="Wrap"/></StackPanel>
                                     <DockPanel>
@@ -722,7 +722,7 @@
                                     <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90" />
                                     <DataGridTextColumn Header="Work Finish Date" Binding="{Binding WorkFinishDate}" Width="140" />
                                     <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="110" />
-                                    <DataGridTextColumn Header="Price" Binding="{Binding Price, StringFormat={}{0:N2}}" Width="100" />
+                                    <DataGridTextColumn Header="Price (NIS)" Binding="{Binding Price, StringFormat={}{0:N2}}" Width="100" />
                                     <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="2*" />
                                 </DataGrid.Columns>
                             </DataGrid>
