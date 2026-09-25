@@ -148,11 +148,18 @@ internal sealed class SqliteResourceMasterDataRepository(SqliteDatabase database
     public async Task DeleteRequirementAsync(string id,int expected,EditAuthority authority,CancellationToken token)
     {
         await using var c=await database.OpenConnectionAsync(token);await using var t=c.BeginTransaction(deferred:false);await EnsureEditAuthorityAsync(c,t,authority,token);
-        await using(var blocked=c.CreateCommand())
+        // A chain of steps closes over the removed one: the steps that followed it now follow its
+        // predecessor (or the Machine anchor when it had none).
+        await using(var relink=c.CreateCommand())
         {
-            blocked.Transaction=t;blocked.CommandText="SELECT EXISTS(SELECT 1 FROM operation_resource_requirements WHERE predecessor_requirement_id=$id);";blocked.Parameters.AddWithValue("$id",id);
-            if(Convert.ToInt32(await blocked.ExecuteScalarAsync(token),CultureInfo.InvariantCulture)==1)
-                throw new ResourceMasterDataException("resource_in_use","predecessorRequirementId","Another requirement follows this one. Remove that link first.");
+            relink.Transaction=t;relink.CommandText="""
+                UPDATE operation_resource_requirements
+                SET predecessor_requirement_id=(SELECT removed.predecessor_requirement_id FROM operation_resource_requirements removed WHERE removed.id=$id),
+                    version=version+1,updated_at=$at
+                WHERE predecessor_requirement_id=$id;
+                """;
+            relink.Parameters.AddWithValue("$id",id);relink.Parameters.AddWithValue("$at",Now());
+            await relink.ExecuteNonQueryAsync(token);
         }
         await SuppressKitaronRequirementAsync(c,t,id,Now(),token);
         await using(var pins=c.CreateCommand())

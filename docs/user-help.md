@@ -28,7 +28,9 @@ The downloaded installer and its log (`install-client-update.log`) are kept unde
 
 Cases are part masters. Search by part number, name, customer, or active state. Open a Case to review its engineering preview, route, operations, dependencies, orders, batches, and revisions.
 
-Under **Operations**, the selected Operation also lists its **auxiliary steps**: inspection, deburring, packing, plating and similar work on Workstations, External Resources or Employees before or after the Machine. Add, edit or delete them with Edit Mode; steps imported from Kitaron show the origin **Kitaron**, and a step you delete is not brought back by the next synchronization.
+Under **Operations**, the selected Operation also lists its **auxiliary steps**: inspection, deburring, packing, plating and similar work on Workstations, External Resources or Employees before or after the Machine. Add, edit or delete them with Edit Mode; steps imported from Kitaron show the origin **Kitaron**, and a step you delete is not brought back by the next synchronization. Your edit of an imported step stays until Kitaron itself changes that step.
+
+Operations imported from Kitaron follow the Kitaron route in operation-number order: the first is **INDEPENDENT** and each next one is **SEQUENTIAL** after the one before it. You can change a dependency; it stays until Kitaron changes that operation, and a **PARALLEL_CAPABLE** or **LOCKED_SIMULTANEOUS** choice is never replaced. Deleting an imported operation links the next imported operation to the one before it. Times you type on an imported operation are kept; only a real Kitaron time replaces them.
 
 The Case working folder contains the source engineering files. The Planner does not modify original CAD, NC, or customer files. Generated Planner material is kept in the designated `_MeimadPlanner` area.
 

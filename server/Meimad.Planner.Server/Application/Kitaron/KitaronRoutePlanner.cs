@@ -89,19 +89,23 @@ internal static class KitaronRoutePlanner
                 continue;
             }
 
+            // The machining steps form one sequence: each operation follows the one before it.
             var machiningIndex = 0;
+            string? previousOperationKey = null;
             foreach (var item in classified.Where(item => item.Station.ImportRole == KitaronStationRoles.Machine))
             {
                 var step = item.Step;
                 var number = ActionNumber(step)!.Value;
                 var name = StepName(step, number);
+                var key = OperationKey(part, number);
+                var setup = Seconds(step.DirectionTimeMinutes);
+                var cycle = Seconds(step.TimeProductionMinutes);
                 operations.Add(new KitaronSyncOperation(
-                    OperationKey(part, number), part, number, machiningIndex++, name,
-                    item.Station.MachineType,
-                    Seconds(step.DirectionTimeMinutes),
-                    Seconds(step.TimeProductionMinutes),
-                    Hash(OperationKey(part, number), machiningIndex - 1, name, item.Station.MachineType,
-                        Seconds(step.DirectionTimeMinutes), Seconds(step.TimeProductionMinutes))));
+                    key, part, number, machiningIndex, name, item.Station.MachineType, setup, cycle,
+                    Hash(key, machiningIndex, name, item.Station.MachineType, setup, cycle, previousOperationKey),
+                    previousOperationKey));
+                previousOperationKey = key;
+                machiningIndex++;
             }
 
             // Auxiliary steps attach to the nearest machining step: the ones before the first
@@ -187,16 +191,17 @@ internal static class KitaronRoutePlanner
         && string.Equals(step.PartRevision.Trim(), step.HeaderRevision?.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Kitaron orders by NumOrder, but 1,912 live headers repeat a NumOrder, so the numeric
-    /// ActionNumber and finally the row id break ties. Rows without a numeric ActionNumber and
-    /// repeated ActionNumbers cannot become stable Meimad identities and are reported.
+    /// The process sequence of a Kitaron route is its operation number (ActionNumber 10, 20, 30,
+    /// ...). NumOrder is not: in 4,157 of the 4,335 commissioned routes it disagrees with the
+    /// operation numbers, for example the purchasing step 10 of 16W1120-13 has NumOrder 27. The row
+    /// id breaks ties. Rows without a numeric ActionNumber and repeated ActionNumbers cannot become
+    /// stable Meimad identities and are reported.
     /// </summary>
     private static IReadOnlyList<KitaronSourceRouteStep> OrderSteps(
         IReadOnlyList<KitaronSourceRouteStep> steps, string part, ICollection<string> warnings)
     {
         var ordered = steps
-            .OrderBy(step => step.NumOrder ?? int.MaxValue)
-            .ThenBy(step => ActionNumber(step) ?? int.MaxValue)
+            .OrderBy(step => ActionNumber(step) ?? int.MaxValue)
             .ThenBy(step => step.DirectionId)
             .ToList();
         var result = new List<KitaronSourceRouteStep>(ordered.Count);

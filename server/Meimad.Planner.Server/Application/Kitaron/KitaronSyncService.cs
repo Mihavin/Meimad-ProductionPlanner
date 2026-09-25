@@ -283,12 +283,24 @@ internal sealed class KitaronSyncService
                     ChooseInt(group.Select(item => item.SetupSeconds)),
                     ChooseInt(group.Select(item => item.CycleSeconds)));
             }).ToArray();
-        var operations = rawOperations.GroupBy(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase)
-            .SelectMany(group => group.OrderBy(item => item.SourcePosition).ThenBy(item => item.OperationNumber)
-                .Select((item, index) => new KitaronSyncOperation(
+        // Planning-view operations form a sequence in route order like the route master's.
+        var viewOperations = new List<KitaronSyncOperation>();
+        foreach (var group in rawOperations.GroupBy(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase))
+        {
+            string? previousKey = null;
+            var index = 0;
+            foreach (var item in group.OrderBy(item => item.SourcePosition).ThenBy(item => item.OperationNumber))
+            {
+                viewOperations.Add(new KitaronSyncOperation(
                     item.SourceKey, item.CaseSourceKey, item.OperationNumber, index, item.Name,
                     item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds,
-                    Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds))))
+                    Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds, previousKey),
+                    previousKey));
+                previousKey = item.SourceKey;
+                index++;
+            }
+        }
+        var operations = viewOperations
             .Concat(routePlan.Operations)
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 

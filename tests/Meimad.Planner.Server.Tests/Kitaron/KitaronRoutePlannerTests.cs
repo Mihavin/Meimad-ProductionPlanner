@@ -59,6 +59,9 @@ public sealed class KitaronRoutePlannerTests
         Assert.Equal(90, operations[1].OperationNumber);
         Assert.Equal(1, operations[1].RoutePosition);
         Assert.Null(operations[1].SetupSeconds);
+        // The machining operations form one sequence.
+        Assert.Null(operations[0].PredecessorSourceKey);
+        Assert.Equal(operations[0].SourceKey, operations[1].PredecessorSourceKey);
 
         var requirements = plan.Requirements;
         Assert.Equal(5, requirements.Count);
@@ -99,6 +102,49 @@ public sealed class KitaronRoutePlannerTests
         // Requirements come predecessor-first so the apply can resolve ids in one pass.
         Assert.True(Index(requirements, deburr) < Index(requirements, plating));
         Assert.True(Index(requirements, plating) < Index(requirements, final));
+    }
+
+    [Fact]
+    public void The_route_follows_the_operation_numbers_not_the_kitaron_NumOrder()
+    {
+        // The shape of the live route of 16W1120-13: NumOrder is not the process order (the
+        // purchasing step 10 has NumOrder 27, the setup inspection 80 NumOrder 43).
+        var stations = Stations(
+            Station(Engineering, "Purchasing", "IGNORE"),
+            Station(Receiving, "Receiving inspection", "WORKSTATION", workstationTypeId: "type-inspection"),
+            Station(Generic, "Production", "MACHINE", machineType: "Mill 3x"),
+            Station(SetupInspection, "Inspection", "WORKSTATION", workstationTypeId: "type-inspection"));
+        var steps = new[]
+        {
+            Step("16W1120-13", 27, "10", Engineering, "Order material", directionId: 82516),
+            Step("16W1120-13", 1, "20", Receiving, "Receiving inspection", directionId: 82517),
+            Step("16W1120-13", 2, "30", Generic, "Mill stage 1", directionId: 82518),
+            Step("16W1120-13", 2, "40", Generic, "Roughness", directionId: 82519),
+            Step("16W1120-13", 50, "50", Generic, "Contour report", directionId: 82520),
+            Step("16W1120-13", 43, "80", SetupInspection, "Setup inspection", directionId: 82523),
+            Step("16W1120-13", 2, "90", Generic, "Mill stage 2", directionId: 82524),
+            Step("16W1120-13", 3, "130", SetupInspection, "Setup inspection 2", directionId: 82527)
+        };
+        var warnings = new List<string>();
+
+        var plan = KitaronRoutePlanner.Plan(steps, stations, Parts("16W1120-13"), Parts(), warnings);
+
+        Assert.Empty(warnings);
+        var operations = plan.Operations.OrderBy(item => item.RoutePosition).ToArray();
+        Assert.Equal([30, 40, 50, 90], operations.Select(item => item.OperationNumber).ToArray());
+        Assert.Equal([0, 1, 2, 3], operations.Select(item => item.RoutePosition).ToArray());
+        Assert.Null(operations[0].PredecessorSourceKey);
+        Assert.Equal(operations[0].SourceKey, operations[1].PredecessorSourceKey);
+        Assert.Equal(operations[1].SourceKey, operations[2].PredecessorSourceKey);
+        Assert.Equal(operations[2].SourceKey, operations[3].PredecessorSourceKey);
+
+        var receipt = Assert.Single(plan.Requirements, item => item.StepNumber == 20);
+        Assert.Equal(("BACKWARD", operations[0].SourceKey), (receipt.Direction, receipt.OperationSourceKey));
+        var setup = Assert.Single(plan.Requirements, item => item.StepNumber == 80);
+        Assert.Equal(("FORWARD", operations[2].SourceKey), (setup.Direction, setup.OperationSourceKey));
+        var secondSetup = Assert.Single(plan.Requirements, item => item.StepNumber == 130);
+        Assert.Equal(("FORWARD", operations[3].SourceKey), (secondSetup.Direction, secondSetup.OperationSourceKey));
+        Assert.Null(secondSetup.PredecessorSourceKey);
     }
 
     [Fact]

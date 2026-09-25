@@ -250,6 +250,31 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             await reader.DisposeAsync();
             await BlockIfAnyAsync(c, t, "batch_operations", "source_case_operation_id", id, "The Operation has already been instantiated in a Production Batch.", token);
             await BlockIfAnyAsync(c, t, "process_revisions", "case_operation_id", id, "The Operation has immutable process or G-code release history.", token);
+            // An imported Kitaron route is a sequence. Removing one of its operations re-links the
+            // Kitaron-owned operations that followed it to the operation before it (or lets them start
+            // the route), as the next synchronization would; any other dependent still blocks.
+            await using (var relink = c.CreateCommand())
+            {
+                relink.Transaction = t;
+                relink.CommandText = """
+                    UPDATE case_operations
+                    SET predecessor_case_operation_id = (SELECT removed.predecessor_case_operation_id FROM case_operations removed WHERE removed.id = $id),
+                        dependency_type = CASE
+                            WHEN (SELECT removed.predecessor_case_operation_id FROM case_operations removed WHERE removed.id = $id) IS NULL
+                            THEN 'independent' ELSE dependency_type END,
+                        version = version + 1, updated_at = $now
+                    WHERE predecessor_case_operation_id = $id
+                      AND case_id = $caseId
+                      AND dependency_type IN ('sequential', 'parallel_capable')
+                      AND EXISTS (
+                          SELECT 1 FROM kitaron_sync_links link
+                          WHERE link.source_entity = 'case_operation' AND link.target_id = case_operations.id AND link.owns_target = 1);
+                    """;
+                relink.Parameters.AddWithValue("$id", id);
+                relink.Parameters.AddWithValue("$caseId", caseId);
+                relink.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
+                await relink.ExecuteNonQueryAsync(token);
+            }
             await BlockIfAnyAsync(c, t, "case_operations", "predecessor_case_operation_id", id, "Another Case Operation depends on this Operation.", token);
             if (group is not null)
             {

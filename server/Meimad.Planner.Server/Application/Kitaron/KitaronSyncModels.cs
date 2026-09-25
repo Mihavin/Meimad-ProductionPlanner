@@ -97,6 +97,11 @@ internal sealed record KitaronSyncComponent(
     int SortOrder,
     string SourceHash);
 
+/// <summary>
+/// A Kitaron route operation. `RoutePosition` is its place in the Kitaron route and
+/// `PredecessorSourceKey` the route operation it follows (null for the first one); the
+/// synchronization makes the Case Operation SEQUENTIAL after that predecessor.
+/// </summary>
 internal sealed record KitaronSyncOperation(
     string SourceKey,
     string CaseSourceKey,
@@ -106,7 +111,8 @@ internal sealed record KitaronSyncOperation(
     string? RequiredMachineType,
     int? SetupSeconds,
     int? CycleSeconds,
-    string SourceHash);
+    string SourceHash,
+    string? PredecessorSourceKey = null);
 
 internal sealed record KitaronSyncMaterialOrder(
     string SourceKey,

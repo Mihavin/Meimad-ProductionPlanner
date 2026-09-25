@@ -282,6 +282,254 @@ public sealed class KitaronRouteSyncTests
         });
     }
 
+    [Fact]
+    public async Task Imported_operations_follow_the_route_as_a_sequence_and_keep_planner_values()
+    {
+        await RunAsync(async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+
+            var first = await repository.ApplyAsync(Plan(
+                [RouteOperation(30, 0, null, "a30"), RouteOperation(40, 1, 30, "a40"), RouteOperation(90, 2, 40, "a90")], []),
+                Now, CancellationToken.None);
+            Assert.Equal(3, first.OperationsCreated);
+            Assert.Contains("2 Case Operation dependency(ies) set from the Kitaron route sequence", first.Message);
+            Assert.Equal("30:independent:|40:sequential:30|90:sequential:40", await RouteAsync(database));
+
+            // A planner types times on OP40 and lets OP90 overlap OP40; a waiting Batch carries OP40.
+            await ExecuteAsync(database, """
+                UPDATE case_operations SET setup_seconds = 600, cycle_seconds = 120 WHERE operation_number = 40;
+                UPDATE case_operations SET dependency_type = 'parallel_capable' WHERE operation_number = 90;
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                SELECT 'batch-r', case_id, 'B-R', 'waiting', 5 FROM case_operations WHERE operation_number = 40;
+                INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position,
+                    name, required_machine_type, setup_seconds, cycle_seconds, status, dependency_type)
+                SELECT 'batch-op-40', 'batch-r', id, 40, 0, 'OP40', 'Mill 3x', 600, 120, 'not_started', 'independent'
+                FROM case_operations WHERE operation_number = 40;
+                """);
+
+            // Kitaron inserts OP35 before OP40 and still carries no times for OP40.
+            var second = await repository.ApplyAsync(Plan(
+                [RouteOperation(30, 0, null, "a30"), RouteOperation(35, 1, 30, "b35"), RouteOperation(40, 2, 35, "b40"),
+                 RouteOperation(90, 3, 40, "b90")], []),
+                Now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal(1, second.OperationsCreated);
+            Assert.Equal("30:independent:|35:sequential:30|40:sequential:35|90:parallel_capable:40", await RouteAsync(database));
+            Assert.Equal("30@0|35@1|40@2|90@3", await PositionsAsync(database));
+            Assert.Contains("3 Case Operation(s) moved to the Kitaron route order", second.Message);
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal(600L, await ScalarAsync(connection, "SELECT setup_seconds FROM case_operations WHERE operation_number = 40;"));
+                Assert.Equal(120L, await ScalarAsync(connection, "SELECT cycle_seconds FROM case_operations WHERE operation_number = 40;"));
+                Assert.Equal(600L, await ScalarAsync(connection, "SELECT setup_seconds FROM batch_operations WHERE id = 'batch-op-40';"));
+                Assert.Equal(120L, await ScalarAsync(connection, "SELECT cycle_seconds FROM batch_operations WHERE id = 'batch-op-40';"));
+            }
+
+            // A real Kitaron time still replaces the planner's value and reaches the waiting Batch.
+            var third = await repository.ApplyAsync(Plan(
+                [RouteOperation(30, 0, null, "a30"), RouteOperation(35, 1, 30, "b35"),
+                 RouteOperation(40, 2, 35, "c40", setup: 900), RouteOperation(90, 3, 40, "b90")], []),
+                Now.AddMinutes(2), CancellationToken.None);
+            Assert.Equal(1, third.OperationsUpdated);
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal(900L, await ScalarAsync(connection, "SELECT setup_seconds FROM case_operations WHERE operation_number = 40;"));
+                Assert.Equal(120L, await ScalarAsync(connection, "SELECT cycle_seconds FROM case_operations WHERE operation_number = 40;"));
+                Assert.Equal(900L, await ScalarAsync(connection, "SELECT setup_seconds FROM batch_operations WHERE id = 'batch-op-40';"));
+                Assert.Equal(120L, await ScalarAsync(connection, "SELECT cycle_seconds FROM batch_operations WHERE id = 'batch-op-40';"));
+            }
+            Assert.Equal("30:independent:|35:sequential:30|40:sequential:35|90:parallel_capable:40", await RouteAsync(database));
+        });
+    }
+
+    [Fact]
+    public async Task Operations_imported_as_independent_by_version_0_1_136_become_a_sequence_on_the_next_sync()
+    {
+        await RunAsync(async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            await repository.ApplyAsync(Plan(
+                [RouteOperation(30, 0, null, "a30"), RouteOperation(90, 1, 30, "a90"), RouteOperation(50, 2, 90, "a50")], []),
+                Now, CancellationToken.None);
+            // The state 0.1.136 left behind: independent operations, NumOrder positions, old hashes.
+            await ExecuteAsync(database, """
+                UPDATE case_operations SET dependency_type = 'independent', predecessor_case_operation_id = NULL;
+                UPDATE kitaron_sync_links SET source_hash = 'hash-from-0.1.136' WHERE source_entity = 'case_operation';
+                UPDATE case_operations SET cycle_seconds = 300 WHERE operation_number = 50;
+                """);
+
+            var next = await repository.ApplyAsync(Plan(
+                [RouteOperation(30, 0, null, "b30"), RouteOperation(50, 1, 30, "b50"), RouteOperation(90, 2, 50, "b90")], []),
+                Now.AddMinutes(1), CancellationToken.None);
+
+            Assert.Equal(0, next.OperationsCreated);
+            Assert.Equal("30:independent:|50:sequential:30|90:sequential:50", await RouteAsync(database));
+            Assert.Equal("30@0|50@1|90@2", await PositionsAsync(database));
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal(300L, await ScalarAsync(connection, "SELECT cycle_seconds FROM case_operations WHERE operation_number = 50;"));
+        });
+    }
+
+    [Fact]
+    public async Task Deleting_an_imported_operation_relinks_the_route_and_the_next_sync_keeps_it_out()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var plan = Plan([RouteOperation(30, 0, null, "a30"), RouteOperation(40, 1, 30, "a40"), RouteOperation(90, 2, 40, "a90")], []);
+            await repository.ApplyAsync(plan, Now, CancellationToken.None);
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "route-editor");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+
+            using var deleteMiddle = await client.DeleteAsync(await OperationUrlAsync(database, 40));
+            Assert.Equal(HttpStatusCode.NoContent, deleteMiddle.StatusCode);
+            Assert.Equal("30:independent:|90:sequential:30", await RouteAsync(database));
+
+            var next = await repository.ApplyAsync(plan, Now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal(0, next.OperationsCreated);
+            Assert.Contains("1 Kitaron route Operation(s) left out because a planner removed them", next.Message);
+            Assert.Equal("30:independent:|90:sequential:30", await RouteAsync(database));
+
+            using var deleteFirst = await client.DeleteAsync(await OperationUrlAsync(database, 30));
+            Assert.Equal(HttpStatusCode.NoContent, deleteFirst.StatusCode);
+            Assert.Equal("90:independent:", await RouteAsync(database));
+
+            // An operation a planner made depend on an imported one still blocks its deletion.
+            await ExecuteAsync(database, """
+                INSERT INTO case_operations (id, case_id, operation_number, route_position, name, dependency_type,
+                    predecessor_case_operation_id, version, created_at, updated_at)
+                SELECT 'manual-op-95', case_id, 95, 5, 'Manual follow-up', 'sequential', id, 1,
+                    '2026-09-25T09:00:00Z', '2026-09-25T09:00:00Z'
+                FROM case_operations WHERE operation_number = 90;
+                """);
+            using var blocked = await client.DeleteAsync(await OperationUrlAsync(database, 90));
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            Assert.Equal("90:independent:|95:sequential:90", await RouteAsync(database));
+        });
+    }
+
+    [Fact]
+    public async Task A_planner_edit_of_an_imported_step_stands_and_deleting_a_middle_step_closes_the_chain()
+    {
+        await RunAsync(async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var operationKey = KitaronRoutePlanner.OperationKey("PN-ROUTE", 30);
+            var deburr = Requirement("PN-ROUTE", operationKey, 40, 0, "Deburr", "type-inspection", null, 300);
+            var inspect = Requirement("PN-ROUTE", operationKey, 50, 1, "Inspect", "type-inspection", deburr.SourceKey, 600);
+            var pack = Requirement("PN-ROUTE", operationKey, 60, 2, "Pack", "type-inspection", inspect.SourceKey, 120);
+            var plan = Plan([RouteOperation(30, 0, null, "a30")], [deburr, inspect, pack]);
+            var first = await repository.ApplyAsync(plan, Now, CancellationToken.None);
+            Assert.Equal(3, first.RequirementsCreated);
+
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "route-editor");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            string deburrId, inspectId;
+            long inspectVersion;
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                deburrId = (string)(await ScalarAsync(connection, "SELECT id FROM operation_resource_requirements WHERE step_number = 40;"))!;
+                inspectId = (string)(await ScalarAsync(connection, "SELECT id FROM operation_resource_requirements WHERE step_number = 50;"))!;
+                inspectVersion = (long)(await ScalarAsync(connection, "SELECT version FROM operation_resource_requirements WHERE step_number = 50;"))!;
+            }
+            using var edit = await client.PatchAsJsonAsync($"/api/v1/resource-requirements/{inspectId}", new
+            {
+                sequencePosition = 1, resourceClass = "WORKSTATION", workstationTypeId = "type-inspection", capacityRequired = 1,
+                estimatedDurationSeconds = 1234, durationPerUnitSeconds = 0, direction = "FORWARD",
+                predecessorRequirementId = deburrId, name = "Inspect (measured)", stepNumber = 50, isActive = true,
+                expectedVersion = inspectVersion
+            });
+            Assert.Equal(HttpStatusCode.OK, edit.StatusCode);
+
+            var second = await repository.ApplyAsync(plan, Now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal(0, second.RequirementsUpdated);
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal(1234L, await ScalarAsync(connection, "SELECT estimated_duration_seconds FROM operation_resource_requirements WHERE step_number = 50;"));
+                Assert.Equal("Inspect (measured)", await ScalarAsync(connection, "SELECT name FROM operation_resource_requirements WHERE step_number = 50;"));
+                inspectVersion = (long)(await ScalarAsync(connection, "SELECT version FROM operation_resource_requirements WHERE step_number = 50;"))!;
+            }
+
+            // Deleting the middle step closes the chain: packing now follows deburring.
+            using var delete = await client.DeleteAsync($"/api/v1/resource-requirements/{inspectId}?version={inspectVersion}");
+            Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+            Assert.Equal(deburrId, await PredecessorOfStepAsync(database, 60));
+            var third = await repository.ApplyAsync(plan, Now.AddMinutes(2), CancellationToken.None);
+            Assert.Equal(0, third.RequirementsCreated);
+            Assert.Equal(deburrId, await PredecessorOfStepAsync(database, 60));
+
+            // When Kitaron changes the packing step, its facts apply and the chain still skips step 50.
+            var changedPack = Requirement("PN-ROUTE", operationKey, 60, 2, "Pack", "type-inspection", inspect.SourceKey, 180);
+            var fourth = await repository.ApplyAsync(Plan([RouteOperation(30, 0, null, "a30")], [deburr, inspect, changedPack]),
+                Now.AddMinutes(3), CancellationToken.None);
+            Assert.Equal(1, fourth.RequirementsUpdated);
+            Assert.Equal(deburrId, await PredecessorOfStepAsync(database, 60));
+            await using var verify = await database.OpenConnectionAsync();
+            Assert.Equal(180L, await ScalarAsync(verify, "SELECT estimated_duration_seconds FROM operation_resource_requirements WHERE step_number = 60;"));
+        });
+    }
+
+    private static KitaronSyncOperation RouteOperation(
+        int number, int position, int? predecessor, string hash, int? setup = null, int? cycle = null) => new(
+        KitaronRoutePlanner.OperationKey("PN-ROUTE", number), "PN-ROUTE", number, position, $"OP{number}", "Mill 3x",
+        setup, cycle, hash, predecessor is null ? null : KitaronRoutePlanner.OperationKey("PN-ROUTE", predecessor.Value));
+
+    private static async Task<string> RouteAsync(SqliteDatabase database)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        return (string)(await ScalarAsync(connection, """
+            SELECT group_concat(entry, '|') FROM (
+                SELECT operation.operation_number || ':' || operation.dependency_type || ':'
+                       || COALESCE(predecessor.operation_number, '') AS entry
+                FROM case_operations operation
+                LEFT JOIN case_operations predecessor ON predecessor.id = operation.predecessor_case_operation_id
+                ORDER BY operation.operation_number);
+            """))!;
+    }
+
+    private static async Task<string> PositionsAsync(SqliteDatabase database)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        return (string)(await ScalarAsync(connection, """
+            SELECT group_concat(entry, '|') FROM (
+                SELECT operation_number || '@' || route_position AS entry FROM case_operations ORDER BY operation_number);
+            """))!;
+    }
+
+    private static async Task<string> OperationUrlAsync(SqliteDatabase database, int operationNumber)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT case_id || '/operations/' || id FROM case_operations WHERE operation_number = $number;";
+        command.Parameters.AddWithValue("$number", operationNumber);
+        return $"/api/v1/cases/{(string)(await command.ExecuteScalarAsync())!}";
+    }
+
+    private static async Task<string?> PredecessorOfStepAsync(SqliteDatabase database, int stepNumber)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT predecessor_requirement_id FROM operation_resource_requirements WHERE step_number = $step;";
+        command.Parameters.AddWithValue("$step", stepNumber);
+        return await command.ExecuteScalarAsync() as string;
+    }
+
+    private static async Task ExecuteAsync(SqliteDatabase database, string sql)
+    {
+        await using var connection = await database.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static KitaronSyncPlan Plan(
         IReadOnlyList<KitaronSyncOperation> operations,
         IReadOnlyList<KitaronSyncRequirement> requirements,
