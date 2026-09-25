@@ -2,6 +2,7 @@
 
 - **Status:** Logical model plus implemented SQLite schema version 67, including immutable Production Run workflow events, Offset Loader and setup-verification state, raw cycle attempts/session closure, the operational-anomaly ledger, Kitaron Order authority/history projection, and upgrade-safe CNC finalizer/sequence mappings
 - **Authority:** Server-owned SQLite in MVP
+- **Physical view:** `docs/database-structure-report.md` lists every table, column, foreign key and trigger of the live schema (version 80) with its purpose, the data-flow charts between domains and the rules of use; regenerate it after a migration.
 
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
 verification variables: SUPPORTED** only inside the configured, separately

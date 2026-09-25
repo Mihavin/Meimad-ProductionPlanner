@@ -50,6 +50,7 @@ The implemented browser-facing Server URLs are listed in [Server HTTP pages](doc
 - [ESP32 / Color E-Ink Work Tablet](docs/esp32-eink-work-tablet.md)
 - [Architecture](docs/architecture.md)
 - [Data model](docs/data-model.md)
+- [Database structure report](docs/database-structure-report.md) — every table of the live schema, data flows, relations and rules of use
 - [API contract](docs/api-contract.md)
 - [Implementation plan](docs/implementation-plan.md)
 
