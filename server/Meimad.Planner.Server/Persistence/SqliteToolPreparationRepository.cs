@@ -85,20 +85,29 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
             ("$savedBy", preparation.SavedBy), ("$comment", Db(preparation.Comment)),
             ("$hash", preparation.ContentHash));
 
+        // A prepared tool may name the catalog tool it is; the link must exist.
+        var unknownCatalogTool = await SqliteToolCatalogRepository.FirstUnknownAsync(
+            connection, transaction, preparation.Tools.Select(tool => tool.CatalogToolId).OfType<string>(), cancellationToken);
+        if (unknownCatalogTool is not null)
+            throw new ToolPreparationValidationException(
+                "tool_preparation_catalog_tool_unknown",
+                $"Catalog tool '{unknownCatalogTool}' does not exist.", "catalogToolId");
+
         foreach (var tool in preparation.Tools)
         {
             var toolId = Guid.NewGuid().ToString("N");
             await ExecuteAsync(connection, transaction, """
                 INSERT INTO tool_preparation_tools (
                     id, tool_preparation_id, row_number, tool_identifier, offset_number,
-                    measured_length, measured_diameter, shape_type, shape_json, notes)
-                VALUES ($id, $preparationId, $row, $identifier, $offset, $length, $diameter, $shape, $shapeJson, $notes);
+                    measured_length, measured_diameter, shape_type, shape_json, notes, hand, catalog_tool_id)
+                VALUES ($id, $preparationId, $row, $identifier, $offset, $length, $diameter, $shape, $shapeJson, $notes, $hand, $catalogToolId);
                 """, cancellationToken,
                 ("$id", toolId), ("$preparationId", preparation.ToolPreparationId),
                 ("$row", tool.RowNumber), ("$identifier", tool.ToolIdentifier),
                 ("$offset", Db(tool.OffsetNumber)), ("$length", Db(tool.MeasuredLength)),
                 ("$diameter", Db(tool.MeasuredDiameter)), ("$shape", tool.ShapeType),
-                ("$shapeJson", JsonSerializer.Serialize(tool.Shape)), ("$notes", Db(tool.Notes)));
+                ("$shapeJson", JsonSerializer.Serialize(tool.Shape)), ("$notes", Db(tool.Notes)),
+                ("$hand", Db(tool.Hand)), ("$catalogToolId", Db(tool.CatalogToolId)));
             foreach (var component in tool.Components)
             {
                 await ExecuteAsync(connection, transaction, """
@@ -188,7 +197,7 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, row_number, tool_identifier, offset_number, measured_length, measured_diameter,
-                   shape_type, shape_json, notes
+                   shape_type, shape_json, notes, hand, catalog_tool_id
             FROM tool_preparation_tools
             WHERE tool_preparation_id = $preparationId
             ORDER BY row_number;
@@ -205,7 +214,9 @@ internal sealed class SqliteToolPreparationRepository(SqliteDatabase database) :
                 toolReader.IsDBNull(5) ? null : toolReader.GetDouble(5),
                 toolReader.GetString(6), new SortedDictionary<string, double>(shape, StringComparer.Ordinal),
                 toolReader.IsDBNull(8) ? null : toolReader.GetString(8),
-                components.TryGetValue(toolReader.GetString(0), out var list) ? list : []));
+                components.TryGetValue(toolReader.GetString(0), out var list) ? list : [],
+                toolReader.IsDBNull(9) ? null : toolReader.GetString(9),
+                toolReader.IsDBNull(10) ? null : toolReader.GetString(10)));
         }
         return tools;
     }

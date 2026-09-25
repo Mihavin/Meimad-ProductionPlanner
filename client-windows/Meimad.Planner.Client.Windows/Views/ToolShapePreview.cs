@@ -76,11 +76,35 @@ internal sealed class ToolShapePreview : FrameworkElement
             var brush = segment.Kind switch
             {
                 "HOLDER" => HolderBrush,
-                "CUTTER" or "BALL" or "POINT" or "CONE" or "DISC" or "INSERT" or "SPHERE" => CutterBrush,
+                "CUTTER" or "BALL" or "POINT" or "CONE" or "DISC" or "INSERT" or "SPHERE" or "BLADE" or "DOVETAIL" => CutterBrush,
                 _ => BodyBrush
             };
             switch (segment.Kind)
             {
+                case "DOVETAIL":
+                {
+                    // Narrow at the neck, full diameter at the tip.
+                    var neckWidth = Math.Max(width * 0.45, 2);
+                    var dovetail = new StreamGeometry();
+                    using (var figure = dovetail.Open())
+                    {
+                        figure.BeginFigure(new Point(centerX - neckWidth / 2, top), true, true);
+                        figure.LineTo(new Point(centerX + neckWidth / 2, top), true, false);
+                        figure.LineTo(new Point(left + width, top + height), true, false);
+                        figure.LineTo(new Point(left, top + height), true, false);
+                    }
+                    dovetail.Freeze();
+                    context.DrawGeometry(brush, pen, dovetail);
+                    break;
+                }
+                case "BLADE":
+                {
+                    // A grooving or parting blade hangs from one side of the holder.
+                    var bladeWidth = Math.Max(width, 2);
+                    var bladeLeft = centerX + Math.Max(2, geometry.MaximumDiameter * scale * 0.5) - bladeWidth;
+                    context.DrawRectangle(brush, pen, new Rect(bladeLeft, top, bladeWidth, height));
+                    break;
+                }
                 case "GAP":
                     // The undescribed part of the assembly: only the spindle axis down to the cutter.
                     context.DrawLine(DefaultPen, new Point(centerX, top), new Point(centerX, top + height));

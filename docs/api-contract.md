@@ -689,6 +689,12 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/machine-types/{machineTypeId}` | Read one Machine Type and its version. |
 | `PATCH` | `/api/v1/machine-types/{machineTypeId}` | Optimistically update a Machine Type. |
 | `DELETE` | `/api/v1/machine-types/{machineTypeId}` | Delete an unreferenced Machine Type. |
+| `GET` | `/api/v1/tool-catalog` | List catalog tools (`query`, `type`, `includeInactive`). |
+| `POST` | `/api/v1/tool-catalog` | Create a catalog tool; the Server assigns the internal id (client identity headers, no Edit Mode). |
+| `GET` | `/api/v1/tool-catalog/types` | The shared tool type list with families, hands, dimension and attribute keys. |
+| `GET` | `/api/v1/tool-catalog/{toolId}` | Read one catalog tool. |
+| `PUT` | `/api/v1/tool-catalog/{toolId}` | Replace a catalog tool at its `expectedVersion`. |
+| `DELETE` | `/api/v1/tool-catalog/{toolId}` | Delete an unreferenced catalog tool (`409 tool_catalog_in_use` otherwise). |
 | `GET` | `/api/v1/postprocessors` | List managed Postprocessors. |
 | `POST` | `/api/v1/postprocessors` | Create a Postprocessor configuration. |
 | `GET` | `/api/v1/postprocessors/{postprocessorId}` | Read one Postprocessor and its version. |
@@ -2273,9 +2279,11 @@ identity, `processType`, `ncDialect`, `toolDiameterOffsetKind`, the current
 was re-released after the last save) and `tools`. Each tool carries the released
 `rowNumber`, `toolIdentifier`, `description`, `isRequired`, `magazinePosition`
 and the saved `offsetNumber`, `measuredLength`, `measuredDiameter` (mm, four
-decimals), `shapeType`, `shape` (named dimensions in mm or degrees), `notes` and
-`components` (`sequence`, `componentType`, `name`, `catalogNumber`, `length`,
-`diameter`, `notes`). Unassigned Operations return `404`; an Operation whose
+decimals), `shapeType` (the shared tool type list of §8.12b), `hand` (`RIGHT`,
+`LEFT` or `NEUTRAL` for turning tools, null otherwise), `catalogToolId` (the
+catalog tool the Tool Room picked, or null), `shape` (named dimensions in mm,
+degrees or a flute count), `notes` and `components` (`sequence`,
+`componentType`, `name`, `catalogNumber`, `length`, `diameter`, `notes`). Unassigned Operations return `404`; an Operation whose
 process has no released Tool Table returns `422
 tool_preparation_tool_table_missing`.
 
@@ -2284,7 +2292,8 @@ Mode; `428` without them) and the body `expectedVersion`,
 `toolTableReleaseId`, optional `comment` and `tools`. Every tool must name a
 released identifier (`tool_preparation_unknown_tool`) at most once; offset
 numbers are 1–9999 and unique; millimetre values are 0–10000; shape types,
-component types and dimension keys are the documented sets. The Server
+hands, component types and dimension keys are the documented sets; a
+`catalogToolId` must exist (`422 tool_preparation_catalog_tool_unknown`). The Server
 validates, appends version `expectedVersion + 1` as an immutable row set with
 a SHA-256 content hash, and returns the merged read. A stale
 `expectedVersion` fails with `409 tool_preparation_version_conflict`; a
@@ -2304,6 +2313,63 @@ keeps counting on its own. A save writes no `tool_offset_readiness_records`
 row; the state is projected. The Windows NC viewer reads the same
 representation when it opens a release for a known Batch Operation and applies
 the tools to its preview.
+
+### 8.12b Tool catalog
+
+```http
+GET    /api/v1/tool-catalog?query=&type=&includeInactive=
+POST   /api/v1/tool-catalog
+GET    /api/v1/tool-catalog/types
+GET    /api/v1/tool-catalog/{toolId}
+PUT    /api/v1/tool-catalog/{toolId}
+DELETE /api/v1/tool-catalog/{toolId}
+```
+
+The tool catalog is the factory's list of tool definitions: each tool has a
+stable Meimad internal id, its type from the shared tool type list, the holder
+hand of a turning tool, dimensions, ISO codes and other attributes, and its ids
+in other systems. It describes tools; it is not an inventory and holds no
+quantities or locations.
+
+A tool is `catalogToolId` (stable), `internalNumber` and `internalCode`
+(`MT-00001`; assigned as the next number on create and never reused, even after
+a delete), `name`, `toolType`, `family` (`MILLING`, `HOLE_MAKING`, `TURNING`,
+`OTHER`), `hand` (`RIGHT`, `LEFT`, `NEUTRAL` for turning tools, null otherwise;
+a hand sent for another type is dropped), `description`, `shape` (named
+dimensions: the tool preparation keys plus `cuttingWidth`, `maxDepth`,
+`minBoreDiameter`, `shankWidth`, `shankHeight`, `leadAngle`,
+`insertEdgeLength`, `pitch`, `fluteCount`; millimetres, degrees up to 180, or a
+whole flute count), `attributes` (`insertCode`, `holderCode`, `threadProfile`,
+`material`, `coating`, `manufacturer`; at most 200 characters each),
+`externalIds` (`system`, `value`; at most 50, unique per tool ignoring case),
+`isActive`, `version`, `createdAt`, `updatedAt` and `updatedBy`.
+
+The list is ordered by internal number and hides inactive tools unless
+`includeInactive=true`; `query` matches the internal code, name, description
+and external id values (case-insensitive substring); `type` filters by tool
+type. `GET …/types` returns `types` (`code`, `family`, `handed`),
+`dimensionKeys`, `hands` and `attributeKeys`, so a client can offer exactly
+the Server's lists.
+
+Writes need `X-Meimad-Client-Id` and `X-Meimad-User-Id` (no Edit Mode; `428`
+without them), like the Tool Room's measurements. `POST` creates the tool and
+returns `201` with its assigned id and code. `PUT` replaces the whole tool and
+requires `expectedVersion` (the version being replaced; `400
+tool_catalog_expected_version_required` without it, `409
+tool_catalog_version_conflict` when it moved). Validation failures are `422`
+with `tool_catalog_name_invalid`, `tool_catalog_tool_type_invalid`,
+`tool_catalog_hand_invalid`, `tool_catalog_description_too_long`,
+`tool_catalog_shape_dimension_unknown`, `tool_catalog_shape_dimension_invalid`,
+`tool_catalog_attribute_unknown`, `tool_catalog_attribute_too_long`,
+`tool_catalog_external_id_system_invalid`,
+`tool_catalog_external_id_value_invalid`,
+`tool_catalog_external_id_duplicate` or `tool_catalog_too_many_external_ids`.
+`DELETE` returns `204`; a tool a prepared tool refers to answers `409
+tool_catalog_in_use` and is deactivated instead. Unknown tools are `404`.
+
+The Windows Tool Catalog tab edits the catalog, and the Tool Room window picks
+a catalog tool for a released tool row, which copies its type, hand and
+dimensions into the prepared tool and records `catalogToolId`.
 
 ### 8.13 Windows QC Queue and decision contract
 

@@ -49,6 +49,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         SetupQueue = new PreparationQueueViewModel(
             "SETUP_PENDING", "Setup — Setup Pending",
             "Operations whose NC and Tool Room gates are complete and remain in the setup workflow.");
+        ToolCatalog = new ToolCatalog.ToolCatalogViewModel();
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
@@ -129,6 +130,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public PreparationQueueViewModel ToolRoomQueue { get; }
 
     public PreparationQueueViewModel SetupQueue { get; }
+
+    public ToolCatalog.ToolCatalogViewModel ToolCatalog { get; }
 
     public string ClientId
     {
@@ -508,6 +511,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         NcCreatorQueue.AttachSession(client, ClientId, userId);
         ToolRoomQueue.AttachSession(client, ClientId, userId);
         SetupQueue.AttachSession(client, ClientId, userId);
+        ToolCatalog.AttachSession(client, ClientId, userId);
     }
 
     private bool CanDecideTransfer() => !IsBusy

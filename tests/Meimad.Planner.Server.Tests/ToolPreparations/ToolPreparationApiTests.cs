@@ -289,7 +289,7 @@ public sealed class ToolPreparationApiTests
     private sealed record ToolPreparationRequest(int ExpectedVersion, string ToolTableReleaseId, string? Comment, IReadOnlyList<ToolRequest> Tools);
 
     /// <summary>A Server with one assigned CNC Operation whose released Tool Table lists T1, T2 (required) and T3 (optional).</summary>
-    private sealed class TestServer : IAsyncDisposable
+    internal sealed class TestServer : IAsyncDisposable
     {
         private readonly string root;
 

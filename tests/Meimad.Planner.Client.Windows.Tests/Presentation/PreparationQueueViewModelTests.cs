@@ -1,3 +1,4 @@
+using System.Net;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
 using Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
@@ -214,6 +215,78 @@ public sealed class PreparationQueueViewModelTests
                 Tools = tools
             };
             return Task.FromResult(ToolPreparation);
+        }
+
+        // ----- tool catalog: an in-memory catalog that behaves like the Server -----
+        internal List<PlannerCatalogTool> CatalogTools { get; } = [];
+        internal string? CatalogClientId { get; private set; }
+        internal string? CatalogUserId { get; private set; }
+        internal CatalogToolUpdate? LastCatalogUpdate { get; private set; }
+
+        public Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
+            string? query, string? toolType, bool includeInactive, CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<PlannerCatalogTool> result = CatalogTools
+                .Where(tool => includeInactive || tool.IsActive)
+                .Where(tool => toolType is null || tool.ToolType == toolType)
+                .Where(tool => query is null
+                    || tool.InternalCode.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || tool.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || (tool.Description ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || tool.ExternalIds.Any(entry => entry.Value.Contains(query, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(tool => tool.InternalNumber)
+                .ToArray();
+            return Task.FromResult(result);
+        }
+
+        public Task<PlannerCatalogTool> GetCatalogToolAsync(string catalogToolId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(CatalogTools.FirstOrDefault(tool => tool.CatalogToolId == catalogToolId)
+                ?? throw new PlannerApiException(HttpStatusCode.NotFound, "resource_not_found", "The catalog tool was not found."));
+
+        public Task<PlannerCatalogTool> CreateCatalogToolAsync(
+            CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+        {
+            CatalogClientId = clientId;
+            CatalogUserId = userId;
+            LastCatalogUpdate = update;
+            var number = (CatalogTools.Count == 0 ? 0 : CatalogTools.Max(tool => tool.InternalNumber)) + 1;
+            var now = DateTimeOffset.Parse("2026-09-25T09:00:00Z");
+            var created = new PlannerCatalogTool(
+                $"catalog-{number}", number, $"MT-{number:D5}", update.Name, update.ToolType, "TURNING", update.Hand, update.Description,
+                update.Shape, update.Attributes, update.ExternalIds, update.IsActive, 1, now, now, userId);
+            CatalogTools.Add(created);
+            return Task.FromResult(created);
+        }
+
+        public Task<PlannerCatalogTool> UpdateCatalogToolAsync(
+            string catalogToolId, CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+        {
+            CatalogClientId = clientId;
+            CatalogUserId = userId;
+            LastCatalogUpdate = update;
+            var index = CatalogTools.FindIndex(tool => tool.CatalogToolId == catalogToolId);
+            if (index < 0) throw new PlannerApiException(HttpStatusCode.NotFound, "resource_not_found", "The catalog tool was not found.");
+            var current = CatalogTools[index];
+            if (update.ExpectedVersion != current.Version)
+                throw new PlannerApiException(HttpStatusCode.Conflict, "tool_catalog_version_conflict",
+                    $"Catalog tool {current.InternalCode} was changed by someone else (version {current.Version}); reload it before saving.");
+            var updated = current with
+            {
+                Name = update.Name, ToolType = update.ToolType, Hand = update.Hand, Description = update.Description, Shape = update.Shape,
+                Attributes = update.Attributes, ExternalIds = update.ExternalIds, IsActive = update.IsActive, Version = current.Version + 1,
+                UpdatedAt = DateTimeOffset.Parse("2026-09-25T10:00:00Z"), UpdatedBy = userId
+            };
+            CatalogTools[index] = updated;
+            return Task.FromResult(updated);
+        }
+
+        public Task DeleteCatalogToolAsync(string catalogToolId, string clientId, string userId, CancellationToken cancellationToken = default)
+        {
+            CatalogClientId = clientId;
+            CatalogUserId = userId;
+            if (CatalogTools.RemoveAll(tool => tool.CatalogToolId == catalogToolId) == 0)
+                throw new PlannerApiException(HttpStatusCode.NotFound, "resource_not_found", "The catalog tool was not found.");
+            return Task.CompletedTask;
         }
 
         public Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(

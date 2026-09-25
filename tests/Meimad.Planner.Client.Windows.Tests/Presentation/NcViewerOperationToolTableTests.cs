@@ -129,6 +129,43 @@ public sealed class NcViewerOperationToolTableTests
     }
 
     [Fact]
+    public void Every_tool_type_maps_onto_a_viewer_cutter_and_turning_tools_bring_hand_and_width()
+    {
+        Assert.Equal("groove", NcViewerOperationToolTable.LatheType("EXTERNAL_GROOVING"));
+        Assert.Equal("groove", NcViewerOperationToolTable.LatheType("FACE_GROOVING"));
+        Assert.Equal("cutoff", NcViewerOperationToolTable.LatheType("PARTING"));
+        Assert.Equal("threading", NcViewerOperationToolTable.LatheType("INTERNAL_THREADING"));
+        Assert.Equal("internal-cutter", NcViewerOperationToolTable.LatheType("BORING_BAR"));
+        Assert.Equal("external-cutter", NcViewerOperationToolTable.LatheType("TURNING_TOOL"));
+        Assert.Equal("slot-mill", NcViewerOperationToolTable.MillType("T_SLOT_MILL"));
+        Assert.Equal("thread-mill", NcViewerOperationToolTable.MillType("THREAD_MILL"));
+        Assert.Equal("spot-drill", NcViewerOperationToolTable.MillType("SPOT_DRILL"));
+        Assert.Equal("boring-head", NcViewerOperationToolTable.MillType("BORING_HEAD"));
+        Assert.Equal("chamfer-mill", NcViewerOperationToolTable.MillType("COUNTERSINK"));
+        Assert.Equal("ball-mill", NcViewerOperationToolTable.MillType("LOLLIPOP_MILL"));
+
+        var table = NcViewerOperationToolTable.From(Preparation() with
+        {
+            Tools =
+            [
+                new(1, "T1", "Groove 3 mm", true, "1", 1, 50, 20, "EXTERNAL_GROOVING",
+                    new Dictionary<string, double> { ["cuttingWidth"] = 3, ["cornerRadius"] = 0.2 }, null, [], "LEFT", "catalog-9")
+            ]
+        })!;
+        var tool = Assert.Single(table.Tools);
+        Assert.Equal("left", tool.Hand);
+        Assert.Equal(3, tool.Width);
+        var lathe = JsonDocument.Parse(Editable
+            .Replace("\"machineType\":\"mill\"", "\"machineType\":\"lathe\"", StringComparison.Ordinal)
+            .Replace("\"toolTypes\":[\"end-mill\"", "\"toolTypes\":[\"groove\",\"external-cutter\",\"end-mill\"", StringComparison.Ordinal)).RootElement;
+        var row = table.ApplyTo(lathe, null, out _)["tools"]![0]!;
+        Assert.Equal("groove", row["type"]!.GetValue<string>());
+        Assert.Equal("left", row["hand"]!.GetValue<string>());
+        Assert.Equal(3, row["width"]!.GetValue<double>());
+        Assert.Equal(0.2, row["cornerRadius"]!.GetValue<double>());
+    }
+
+    [Fact]
     public void Nothing_is_applied_without_a_table_or_without_released_rows()
     {
         Assert.Null(NcViewerOperationToolTable.From(null));

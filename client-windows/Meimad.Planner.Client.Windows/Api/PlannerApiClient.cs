@@ -264,6 +264,29 @@ internal interface IPlannerApiClient : IDisposable
         string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The tool catalog; `query` matches internal codes, names, descriptions and external ids.</summary>
+    Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
+        string? query, string? toolType, bool includeInactive,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<PlannerCatalogTool> GetCatalogToolAsync(
+        string catalogToolId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Creates a catalog tool; the Server assigns the internal id (no Edit Mode; identified like the Tool Room).</summary>
+    Task<PlannerCatalogTool> CreateCatalogToolAsync(
+        CatalogToolUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Replaces a catalog tool at the update's expected version.</summary>
+    Task<PlannerCatalogTool> UpdateCatalogToolAsync(
+        string catalogToolId, CatalogToolUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Deletes an unreferenced catalog tool; a referenced one fails with `tool_catalog_in_use`.</summary>
+    Task DeleteCatalogToolAsync(
+        string catalogToolId, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     /// <summary>The immutable released NC file exactly as stored (encoding and line endings kept).</summary>
     Task<byte[]> ReadGCodeFileBytesAsync(
         string caseId, string caseOperationId, string releaseId,
@@ -1773,6 +1796,53 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Content = JsonContent.Create(update, options: JsonOptions);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
+        string? query, string? toolType, bool includeInactive,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new List<string>();
+        if (!string.IsNullOrWhiteSpace(query)) parameters.Add($"query={Uri.EscapeDataString(query.Trim())}");
+        if (!string.IsNullOrWhiteSpace(toolType)) parameters.Add($"type={Uri.EscapeDataString(toolType.Trim())}");
+        if (includeInactive) parameters.Add("includeInactive=true");
+        var url = "api/v1/tool-catalog" + (parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters));
+        return await ReadListAsync<PlannerCatalogTool>(url, cancellationToken);
+    }
+
+    public async Task<PlannerCatalogTool> GetCatalogToolAsync(string catalogToolId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/tool-catalog/{Uri.EscapeDataString(catalogToolId)}", cancellationToken);
+        return await ReadSuccessAsync<PlannerCatalogTool>(response, cancellationToken);
+    }
+
+    public async Task<PlannerCatalogTool> CreateCatalogToolAsync(
+        CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/tool-catalog", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerCatalogTool>(response, cancellationToken);
+    }
+
+    public async Task<PlannerCatalogTool> UpdateCatalogToolAsync(
+        string catalogToolId, CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, $"api/v1/tool-catalog/{Uri.EscapeDataString(catalogToolId)}", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerCatalogTool>(response, cancellationToken);
+    }
+
+    public async Task DeleteCatalogToolAsync(
+        string catalogToolId, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete, $"api/v1/tool-catalog/{Uri.EscapeDataString(catalogToolId)}", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
 
     public async Task<QcDecisionResult> DecideQcAsync(

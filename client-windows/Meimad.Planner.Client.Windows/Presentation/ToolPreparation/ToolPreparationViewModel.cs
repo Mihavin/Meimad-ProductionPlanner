@@ -7,48 +7,6 @@ using Meimad.Planner.Client.Windows.Api;
 
 namespace Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 
-internal sealed record ToolShapeOption(string Id, string Name);
-
-internal sealed record ToolComponentTypeOption(string Id, string Name);
-
-/// <summary>The shapes and component kinds the Tool Room can pick; ids are the Server's codes.</summary>
-internal static class ToolPreparationCatalog
-{
-    internal static readonly IReadOnlyList<ToolShapeOption> Shapes =
-    [
-        new("END_MILL", "Flat end mill"),
-        new("BALL_END_MILL", "Ball end mill"),
-        new("BULL_NOSE_END_MILL", "Bull-nose end mill"),
-        new("CHAMFER_MILL", "Chamfer mill"),
-        new("FACE_MILL", "Face mill"),
-        new("DRILL", "Drill"),
-        new("TAP", "Tap"),
-        new("REAMER", "Reamer"),
-        new("BORING_BAR", "Boring bar"),
-        new("TURNING_TOOL", "Turning tool"),
-        new("PROBE", "Probe"),
-        new("OTHER", "Other")
-    ];
-
-    internal static readonly IReadOnlyList<ToolComponentTypeOption> ComponentTypes =
-    [
-        new("HOLDER", "Holder"),
-        new("EXTENSION", "Extension"),
-        new("COLLET", "Collet"),
-        new("ARBOR", "Arbor"),
-        new("SHANK", "Shank"),
-        new("CUTTER", "Cutter"),
-        new("INSERT", "Insert"),
-        new("OTHER", "Other")
-    ];
-
-    internal static ToolShapeOption Shape(string? id) =>
-        Shapes.FirstOrDefault(option => string.Equals(option.Id, id, StringComparison.OrdinalIgnoreCase)) ?? Shapes[^1];
-
-    internal static ToolComponentTypeOption ComponentType(string? id) =>
-        ComponentTypes.FirstOrDefault(option => string.Equals(option.Id, id, StringComparison.OrdinalIgnoreCase)) ?? ComponentTypes[^1];
-}
-
 internal sealed class ToolPreparationValidationException(string message) : Exception(message);
 
 internal abstract class ToolPreparationObservable : INotifyPropertyChanged
@@ -82,6 +40,12 @@ internal abstract class ToolPreparationObservable : INotifyPropertyChanged
 
     internal static string Text(double? value) =>
         value?.ToString("0.####", CultureInfo.InvariantCulture) ?? string.Empty;
+
+    internal static double? TryParseNumber(string? text)
+    {
+        try { return ParseNumber(text, "value"); }
+        catch (ToolPreparationValidationException) { return null; }
+    }
 }
 
 internal sealed class ToolPreparationComponentViewModel : ToolPreparationObservable
@@ -142,24 +106,25 @@ internal sealed class ToolPreparationComponentViewModel : ToolPreparationObserva
     }
 }
 
-/// <summary>One released tool row with its measurements, shape and components.</summary>
+/// <summary>One released tool row with its measurements, type, hand, dimensions, catalog link and components.</summary>
 internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
 {
-    private static readonly string[] DimensionKeys =
-        ["cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "cornerRadius", "pointAngle", "taperAngle", "tipDiameter"];
-
-    private readonly Dictionary<string, string> dimensions = DimensionKeys.ToDictionary(key => key, _ => string.Empty, StringComparer.Ordinal);
+    private readonly ToolDimensionSet dimensions;
     private readonly Action changed;
     private string offsetNumberText;
     private string measuredLengthText;
     private string measuredDiameterText;
     private ToolShapeOption shape;
+    private ToolHandOption hand;
+    private string? catalogToolId;
+    private string catalogToolText;
     private string notes;
     private ToolPreparationComponentViewModel? selectedComponent;
 
     internal ToolPreparationToolViewModel(PlannerToolPreparationTool tool, Action changed)
     {
         this.changed = changed;
+        dimensions = new ToolDimensionSet(Changed);
         RowNumber = tool.RowNumber;
         ToolIdentifier = tool.ToolIdentifier;
         Description = tool.Description;
@@ -170,11 +135,12 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
         measuredLengthText = Text(tool.MeasuredLength);
         measuredDiameterText = Text(tool.MeasuredDiameter);
         shape = ToolPreparationCatalog.Shape(tool.ShapeType);
+        hand = ToolPreparationCatalog.Hand(tool.Hand);
+        catalogToolId = string.IsNullOrWhiteSpace(tool.CatalogToolId) ? null : tool.CatalogToolId;
+        catalogToolText = catalogToolId is null ? string.Empty : catalogToolId;
         notes = tool.Notes ?? string.Empty;
-        foreach (var (key, value) in tool.Shape)
-        {
-            if (dimensions.ContainsKey(key)) dimensions[key] = Text(value);
-        }
+        dimensions.Load(tool.Shape);
+        dimensions.ShowFor(shape);
         Components = new ObservableCollection<ToolPreparationComponentViewModel>(
             tool.Components.OrderBy(component => component.Sequence).Select(component => ToolPreparationComponentViewModel.From(this, component)));
         selectedComponent = Components.FirstOrDefault();
@@ -187,7 +153,9 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
     public string MagazinePosition { get; }
     public string RequiredText => IsRequired ? "Required" : "Optional";
     public IReadOnlyList<ToolShapeOption> Shapes => ToolPreparationCatalog.Shapes;
+    public IReadOnlyList<ToolHandOption> Hands => ToolPreparationCatalog.Hands;
     public ObservableCollection<ToolPreparationComponentViewModel> Components { get; }
+    public ObservableCollection<ToolDimensionFieldViewModel> DimensionFields => dimensions.Fields;
 
     public string OffsetNumberText { get => offsetNumberText; set { if (Set(ref offsetNumberText, value ?? string.Empty)) Changed(); } }
     public string MeasuredLengthText { get => measuredLengthText; set { if (Set(ref measuredLengthText, value ?? string.Empty)) Changed(); } }
@@ -197,35 +165,92 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
     public ToolShapeOption Shape
     {
         get => shape;
-        set { if (Set(ref shape, value ?? ToolPreparationCatalog.Shapes[^1])) { Raise(nameof(ShapeName)); Changed(); } }
+        set
+        {
+            if (!Set(ref shape, value ?? ToolPreparationCatalog.Shapes[^1])) return;
+            dimensions.ShowFor(shape);
+            Raise(nameof(ShapeName));
+            Raise(nameof(HasHand));
+            Changed();
+        }
     }
 
     public string ShapeName => shape.Name;
 
-    public string CuttingDiameterText { get => dimensions["cuttingDiameter"]; set => SetDimension("cuttingDiameter", value); }
-    public string FluteLengthText { get => dimensions["fluteLength"]; set => SetDimension("fluteLength", value); }
-    public string OverallLengthText { get => dimensions["overallLength"]; set => SetDimension("overallLength", value); }
-    public string ShankDiameterText { get => dimensions["shankDiameter"]; set => SetDimension("shankDiameter", value); }
-    public string CornerRadiusText { get => dimensions["cornerRadius"]; set => SetDimension("cornerRadius", value); }
-    public string PointAngleText { get => dimensions["pointAngle"]; set => SetDimension("pointAngle", value); }
-    public string TaperAngleText { get => dimensions["taperAngle"]; set => SetDimension("taperAngle", value); }
-    public string TipDiameterText { get => dimensions["tipDiameter"]; set => SetDimension("tipDiameter", value); }
+    /// <summary>Turning tools are handed; the hand of other tools is not sent.</summary>
+    public bool HasHand => shape.HasHand;
+
+    public ToolHandOption Hand
+    {
+        get => hand;
+        set { if (Set(ref hand, value ?? ToolPreparationCatalog.Hands[0])) { Raise(nameof(HandName)); Changed(); } }
+    }
+
+    public string HandName => HasHand ? hand.Name : string.Empty;
+
+    /// <summary>The catalog tool this prepared tool is, when picked from the tool catalog.</summary>
+    public string? CatalogToolId => catalogToolId;
+
+    public string CatalogToolText { get => catalogToolText; private set => Set(ref catalogToolText, value); }
+
+    public bool HasCatalogTool => catalogToolId is not null;
+
+    public string CuttingDiameterText { get => dimensions.Get("cuttingDiameter"); set => dimensions.Set("cuttingDiameter", value); }
+    public string FluteLengthText { get => dimensions.Get("fluteLength"); set => dimensions.Set("fluteLength", value); }
+    public string OverallLengthText { get => dimensions.Get("overallLength"); set => dimensions.Set("overallLength", value); }
+    public string ShankDiameterText { get => dimensions.Get("shankDiameter"); set => dimensions.Set("shankDiameter", value); }
+    public string CornerRadiusText { get => dimensions.Get("cornerRadius"); set => dimensions.Set("cornerRadius", value); }
+    public string PointAngleText { get => dimensions.Get("pointAngle"); set => dimensions.Set("pointAngle", value); }
+    public string TaperAngleText { get => dimensions.Get("taperAngle"); set => dimensions.Set("taperAngle", value); }
+    public string TipDiameterText { get => dimensions.Get("tipDiameter"); set => dimensions.Set("tipDiameter", value); }
 
     public ToolPreparationComponentViewModel? SelectedComponent { get => selectedComponent; set => Set(ref selectedComponent, value); }
 
     /// <summary>Length, diameter and an offset number are what the Production Package needs.</summary>
     public bool IsComplete =>
-        TryParse(MeasuredLengthText) is not null && TryParse(MeasuredDiameterText) is not null && OffsetNumber() is not null;
+        TryParseNumber(MeasuredLengthText) is not null && TryParseNumber(MeasuredDiameterText) is not null && OffsetNumber() is not null;
 
     public string CompletionText => IsComplete ? "Measured" : IsRequired ? "Missing" : "Optional";
     public int ComponentCount => Components.Count;
 
     public ToolShapeGeometry Geometry => ToolShapeBuilder.Build(
         Shape.Id,
-        DimensionValues(),
+        dimensions.Preview(),
         Components.Select(component => component.ToShape()).ToArray(),
-        TryParse(MeasuredLengthText),
-        TryParse(MeasuredDiameterText));
+        TryParseNumber(MeasuredLengthText),
+        TryParseNumber(MeasuredDiameterText));
+
+    /// <summary>Takes the type, hand and dimensions of a catalog tool and remembers the link.</summary>
+    internal void ApplyCatalogTool(PlannerCatalogTool tool)
+    {
+        catalogToolId = tool.CatalogToolId;
+        CatalogToolText = tool.DisplayName;
+        shape = ToolPreparationCatalog.Shape(tool.ToolType);
+        hand = ToolPreparationCatalog.Hand(tool.Hand);
+        dimensions.Load(tool.Shape);
+        dimensions.ShowFor(shape);
+        foreach (var name in new[] { nameof(Shape), nameof(ShapeName), nameof(HasHand), nameof(Hand), nameof(HandName), nameof(CatalogToolId), nameof(HasCatalogTool) })
+        {
+            Raise(name);
+        }
+        Changed();
+    }
+
+    internal void ClearCatalogTool()
+    {
+        if (catalogToolId is null) return;
+        catalogToolId = null;
+        CatalogToolText = string.Empty;
+        Raise(nameof(CatalogToolId));
+        Raise(nameof(HasCatalogTool));
+        Changed();
+    }
+
+    /// <summary>Shows the catalog tool's code and name once the catalog was read.</summary>
+    internal void ResolveCatalogTool(IReadOnlyDictionary<string, PlannerCatalogTool> catalog)
+    {
+        if (catalogToolId is not null && catalog.TryGetValue(catalogToolId, out var tool)) CatalogToolText = tool.DisplayName;
+    }
 
     internal ToolPreparationComponentViewModel AddComponent(string? type = null)
     {
@@ -251,21 +276,17 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
         var offset = OffsetNumber();
         if (!string.IsNullOrWhiteSpace(OffsetNumberText) && offset is null)
             throw new ToolPreparationValidationException($"Tool {ToolIdentifier}: the offset number must be a whole number between 1 and 9999.");
-        var shapeValues = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var (key, text) in dimensions)
-        {
-            var value = ParseNumber(text, $"Tool {ToolIdentifier}: {key}");
-            if (value is not null) shapeValues[key] = value.Value;
-        }
         return new ToolPreparationToolUpdate(
             ToolIdentifier,
             offset,
             ParseNumber(MeasuredLengthText, $"Tool {ToolIdentifier}: measured length"),
             ParseNumber(MeasuredDiameterText, $"Tool {ToolIdentifier}: measured diameter"),
             Shape.Id,
-            shapeValues,
+            dimensions.Parse($"Tool {ToolIdentifier}"),
             string.IsNullOrWhiteSpace(Notes) ? null : Notes.Trim(),
-            Components.Select((component, index) => component.ToUpdate(index + 1, ToolIdentifier)).ToArray());
+            Components.Select((component, index) => component.ToUpdate(index + 1, ToolIdentifier)).ToArray(),
+            HasHand ? Hand.Id : null,
+            catalogToolId);
     }
 
     internal void Changed()
@@ -289,41 +310,6 @@ internal sealed class ToolPreparationToolViewModel : ToolPreparationObservable
         int.TryParse(OffsetNumberText.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number is >= 1 and <= 9999
             ? number
             : null;
-
-    private IReadOnlyDictionary<string, double> DimensionValues()
-    {
-        var values = new Dictionary<string, double>(StringComparer.Ordinal);
-        foreach (var (key, text) in dimensions)
-        {
-            if (TryParse(text) is { } value) values[key] = value;
-        }
-        return values;
-    }
-
-    private void SetDimension(string key, string? value)
-    {
-        var text = value ?? string.Empty;
-        if (dimensions[key] == text) return;
-        dimensions[key] = text;
-        Raise(key switch
-        {
-            "cuttingDiameter" => nameof(CuttingDiameterText),
-            "fluteLength" => nameof(FluteLengthText),
-            "overallLength" => nameof(OverallLengthText),
-            "shankDiameter" => nameof(ShankDiameterText),
-            "cornerRadius" => nameof(CornerRadiusText),
-            "pointAngle" => nameof(PointAngleText),
-            "taperAngle" => nameof(TaperAngleText),
-            _ => nameof(TipDiameterText)
-        });
-        Changed();
-    }
-
-    private static double? TryParse(string text)
-    {
-        try { return ParseNumber(text, "value"); }
-        catch (ToolPreparationValidationException) { return null; }
-    }
 }
 
 /// <summary>
@@ -361,6 +347,7 @@ internal sealed class ToolPreparationViewModel : ToolPreparationObservable
 
     public ObservableCollection<ToolPreparationToolViewModel> Tools { get; }
     public AsyncCommand SaveCommand { get; }
+    internal IPlannerApiClient Api => api;
     public AsyncCommand ReloadCommand { get; }
     public AsyncCommand AddComponentCommand { get; }
     public AsyncCommand RemoveComponentCommand { get; }
@@ -485,6 +472,22 @@ internal sealed class ToolPreparationViewModel : ToolPreparationObservable
                      nameof(SavedText), nameof(ShowsOlderToolTableWarning), nameof(CompleteCount), nameof(RequiredMissingCount), nameof(ProgressText) })
         {
             Raise(name);
+        }
+        if (Tools.Any(tool => tool.HasCatalogTool)) _ = ResolveCatalogToolsAsync();
+    }
+
+    /// <summary>Shows code and name for the linked catalog tools (best effort; the ids are what is saved).</summary>
+    internal async Task ResolveCatalogToolsAsync()
+    {
+        try
+        {
+            var catalog = (await api.ListCatalogToolsAsync(null, null, includeInactive: true))
+                .ToDictionary(tool => tool.CatalogToolId, tool => tool, StringComparer.Ordinal);
+            foreach (var tool in Tools) tool.ResolveCatalogTool(catalog);
+        }
+        catch (Exception exception) when (exception is PlannerApiException or HttpRequestException or TaskCanceledException or NotSupportedException)
+        {
+            // The link is kept by id; the catalog page shows the names.
         }
     }
 

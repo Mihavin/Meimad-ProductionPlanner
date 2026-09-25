@@ -84,7 +84,8 @@ internal sealed class DatabaseMigrator
         new SchemaV76MachineNcDialectMigration(),
         new SchemaV77ClientPortalCustomersMigration(),
         new SchemaV78MachineNcViewerMachineMigration(),
-        new SchemaV79ToolPreparationMigration()
+        new SchemaV79ToolPreparationMigration(),
+        new SchemaV80ToolCatalogMigration()
     ];
 
     private readonly SqliteDatabase database;
@@ -99,15 +100,23 @@ internal sealed class DatabaseMigrator
         ValidateMigrationSequence();
     }
 
-    internal async Task MigrateAsync(CancellationToken cancellationToken = default)
+    internal Task MigrateAsync(CancellationToken cancellationToken = default) => MigrateAsync(null, cancellationToken);
+
+    /// <summary>
+    /// Applies the missing migrations up to <paramref name="upToVersion"/> (null: all of them). The
+    /// bound lets a test prepare an older schema with data and then migrate on.
+    /// </summary>
+    internal async Task MigrateAsync(int? upToVersion, CancellationToken cancellationToken = default)
     {
+        var migrations = upToVersion is null ? Migrations : Migrations.Where(migration => migration.Version <= upToVersion.Value).ToArray();
+        if (migrations.Count == 0) throw new ArgumentOutOfRangeException(nameof(upToVersion));
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await EnsureWriteAheadLoggingAsync(connection, cancellationToken);
         await EnsureMigrationTableAsync(connection, cancellationToken);
 
         var appliedMigrations = await ReadAppliedMigrationsAsync(connection, cancellationToken);
         var databaseVersion = await ReadUserVersionAsync(connection, cancellationToken);
-        var latestKnownVersion = Migrations[^1].Version;
+        var latestKnownVersion = migrations[^1].Version;
 
         if (databaseVersion > latestKnownVersion)
         {
@@ -115,7 +124,7 @@ internal sealed class DatabaseMigrator
                 $"Database schema version {databaseVersion} is newer than supported version {latestKnownVersion}.");
         }
 
-        foreach (var migration in Migrations)
+        foreach (var migration in migrations)
         {
             if (appliedMigrations.TryGetValue(migration.Version, out var appliedName))
             {

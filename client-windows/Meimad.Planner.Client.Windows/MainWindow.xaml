@@ -202,6 +202,9 @@
             <TabItem Header="Tool Room" ToolTip="View NC-ready operations waiting for tool preparation">
                 <views:PreparationQueueView DataContext="{Binding ToolRoomQueue}" Margin="5" />
             </TabItem>
+            <TabItem Header="Tool Catalog" ToolTip="Search and describe the factory's tools: internal id, type, hand, dimensions and external ids">
+                <views:ToolCatalogView DataContext="{Binding ToolCatalog}" Margin="5" />
+            </TabItem>
             <TabItem Header="Setup Queue" ToolTip="View operations whose NC and Tool Room gates are complete">
                 <views:PreparationQueueView DataContext="{Binding SetupQueue}" Margin="5" />
             </TabItem>

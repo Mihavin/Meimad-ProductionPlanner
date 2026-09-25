@@ -5,7 +5,12 @@ using System.Text.Json;
 
 namespace Meimad.Planner.Server.Domain.ToolPreparations;
 
-/// <summary>Cutter shapes the Tool Room can describe; the client previews them.</summary>
+/// <summary>
+/// Tool types the Tool Room and the tool catalog describe; the client previews them and the NC
+/// viewer maps them onto its simulation cutters. Milling and hole-making cutters, the ISO turning
+/// families (external and internal turning, external, internal and face grooving, parting,
+/// external and internal threading) and probes; <see cref="Families"/> groups them.
+/// </summary>
 internal static class ToolShapeTypes
 {
     internal const string EndMill = "END_MILL";
@@ -13,19 +18,73 @@ internal static class ToolShapeTypes
     internal const string BullNoseEndMill = "BULL_NOSE_END_MILL";
     internal const string ChamferMill = "CHAMFER_MILL";
     internal const string FaceMill = "FACE_MILL";
+    internal const string SlotMill = "SLOT_MILL";
+    internal const string TSlotMill = "T_SLOT_MILL";
+    internal const string ThreadMill = "THREAD_MILL";
+    internal const string DovetailMill = "DOVETAIL_MILL";
+    internal const string LollipopMill = "LOLLIPOP_MILL";
+    internal const string Engraver = "ENGRAVER";
     internal const string Drill = "DRILL";
+    internal const string SpotDrill = "SPOT_DRILL";
+    internal const string CenterDrill = "CENTER_DRILL";
     internal const string Tap = "TAP";
     internal const string Reamer = "REAMER";
-    internal const string BoringBar = "BORING_BAR";
+    internal const string BoringHead = "BORING_HEAD";
+    internal const string Countersink = "COUNTERSINK";
+    internal const string Counterbore = "COUNTERBORE";
     internal const string TurningTool = "TURNING_TOOL";
+    internal const string BoringBar = "BORING_BAR";
+    internal const string ExternalGrooving = "EXTERNAL_GROOVING";
+    internal const string InternalGrooving = "INTERNAL_GROOVING";
+    internal const string FaceGrooving = "FACE_GROOVING";
+    internal const string Parting = "PARTING";
+    internal const string ExternalThreading = "EXTERNAL_THREADING";
+    internal const string InternalThreading = "INTERNAL_THREADING";
     internal const string Probe = "PROBE";
     internal const string Other = "OTHER";
 
+    internal const string MillingFamily = "MILLING";
+    internal const string HoleMakingFamily = "HOLE_MAKING";
+    internal const string TurningFamily = "TURNING";
+    internal const string OtherFamily = "OTHER";
+
     internal static readonly IReadOnlyList<string> All =
     [
-        EndMill, BallEndMill, BullNoseEndMill, ChamferMill, FaceMill, Drill, Tap, Reamer, BoringBar,
-        TurningTool, Probe, Other
+        EndMill, BallEndMill, BullNoseEndMill, ChamferMill, FaceMill, SlotMill, TSlotMill, ThreadMill, DovetailMill,
+        LollipopMill, Engraver,
+        Drill, SpotDrill, CenterDrill, Tap, Reamer, BoringHead, Countersink, Counterbore,
+        TurningTool, BoringBar, ExternalGrooving, InternalGrooving, FaceGrooving, Parting, ExternalThreading, InternalThreading,
+        Probe, Other
     ];
+
+    internal static readonly IReadOnlyDictionary<string, string> Families = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [EndMill] = MillingFamily, [BallEndMill] = MillingFamily, [BullNoseEndMill] = MillingFamily, [ChamferMill] = MillingFamily,
+        [FaceMill] = MillingFamily, [SlotMill] = MillingFamily, [TSlotMill] = MillingFamily, [ThreadMill] = MillingFamily,
+        [DovetailMill] = MillingFamily, [LollipopMill] = MillingFamily, [Engraver] = MillingFamily,
+        [Drill] = HoleMakingFamily, [SpotDrill] = HoleMakingFamily, [CenterDrill] = HoleMakingFamily, [Tap] = HoleMakingFamily,
+        [Reamer] = HoleMakingFamily, [BoringHead] = HoleMakingFamily, [Countersink] = HoleMakingFamily, [Counterbore] = HoleMakingFamily,
+        [TurningTool] = TurningFamily, [BoringBar] = TurningFamily, [ExternalGrooving] = TurningFamily, [InternalGrooving] = TurningFamily,
+        [FaceGrooving] = TurningFamily, [Parting] = TurningFamily, [ExternalThreading] = TurningFamily, [InternalThreading] = TurningFamily,
+        [Probe] = OtherFamily, [Other] = OtherFamily
+    };
+
+    internal static bool IsSupported(string? value) => value is not null && All.Contains(value, StringComparer.Ordinal);
+
+    internal static string Family(string type) => Families.TryGetValue(type, out var family) ? family : OtherFamily;
+
+    /// <summary>Turning tools are handed (right, left or neutral holders).</summary>
+    internal static bool IsTurning(string? type) => type is not null && Families.TryGetValue(type, out var family) && family == TurningFamily;
+}
+
+/// <summary>Holder hand of a turning tool.</summary>
+internal static class ToolHands
+{
+    internal const string Right = "RIGHT";
+    internal const string Left = "LEFT";
+    internal const string Neutral = "NEUTRAL";
+
+    internal static readonly IReadOnlyList<string> All = [Right, Left, Neutral];
 
     internal static bool IsSupported(string? value) => value is not null && All.Contains(value, StringComparer.Ordinal);
 }
@@ -48,18 +107,38 @@ internal static class ToolComponentTypes
     internal static bool IsSupported(string? value) => value is not null && All.Contains(value, StringComparer.Ordinal);
 }
 
-/// <summary>Cutter dimensions in millimetres (angles in degrees); every key is optional.</summary>
+/// <summary>
+/// Tool dimensions in millimetres (angles in degrees, fluteCount a count); every key is optional.
+/// Milling: cuttingDiameter, fluteLength, overallLength, shankDiameter, cornerRadius, pointAngle,
+/// taperAngle, neckDiameter, neckLength, tipDiameter, cuttingWidth, pitch, fluteCount. Turning:
+/// cornerRadius (nose radius), leadAngle, insertEdgeLength, cuttingWidth, maxDepth,
+/// minBoreDiameter, shankWidth, shankHeight, shankDiameter (round bars), overallLength, pitch.
+/// </summary>
 internal static class ToolShapeDimensions
 {
     internal static readonly IReadOnlyList<string> Keys =
     [
         "cuttingDiameter", "fluteLength", "overallLength", "shankDiameter", "cornerRadius",
-        "pointAngle", "taperAngle", "neckDiameter", "neckLength", "tipDiameter"
+        "pointAngle", "taperAngle", "neckDiameter", "neckLength", "tipDiameter",
+        "cuttingWidth", "maxDepth", "minBoreDiameter", "shankWidth", "shankHeight",
+        "leadAngle", "insertEdgeLength", "pitch", "fluteCount"
     ];
 
-    internal static readonly IReadOnlySet<string> Angles = new HashSet<string>(["pointAngle", "taperAngle"], StringComparer.Ordinal);
+    internal static readonly IReadOnlySet<string> Angles = new HashSet<string>(["pointAngle", "taperAngle", "leadAngle"], StringComparer.Ordinal);
 
     internal const double MaximumMillimetres = 10000;
+
+    /// <summary>Validates one dimension: a finite value from 0 to 10000 mm, 0 to 180 degrees or 0 to 100 flutes.</summary>
+    internal static bool IsValid(string key, double value)
+    {
+        if (!double.IsFinite(value) || value < 0) return false;
+        if (Angles.Contains(key)) return value <= 180;
+        if (key == "fluteCount") return value <= 100 && Math.Abs(value - Math.Round(value)) < 1e-9;
+        return value <= MaximumMillimetres;
+    }
+
+    internal static string Range(string key) =>
+        Angles.Contains(key) ? "0 and 180 degrees" : key == "fluteCount" ? "0 and 100 (whole number)" : $"0 and {MaximumMillimetres} mm";
 }
 
 /// <summary>Whether the Machine's control keeps cutter compensation (D) values as radius or diameter.</summary>
@@ -80,6 +159,8 @@ internal sealed record ToolPreparationComponent(
     double? Diameter,
     string? Notes);
 
+/// <param name="Hand">Holder hand of a turning tool (<see cref="ToolHands"/>), null for other tools.</param>
+/// <param name="CatalogToolId">The tool catalog entry this prepared tool is, when the Tool Room picked one.</param>
 internal sealed record ToolPreparationTool(
     int RowNumber,
     string ToolIdentifier,
@@ -89,7 +170,9 @@ internal sealed record ToolPreparationTool(
     string ShapeType,
     IReadOnlyDictionary<string, double> Shape,
     string? Notes,
-    IReadOnlyList<ToolPreparationComponent> Components)
+    IReadOnlyList<ToolPreparationComponent> Components,
+    string? Hand = null,
+    string? CatalogToolId = null)
 {
     /// <summary>The offset register: the explicit number, else the digits of the tool identifier (T12 → 12).</summary>
     internal int? EffectiveOffsetNumber => OffsetNumber ?? ParseToolNumber(ToolIdentifier);
@@ -194,15 +277,27 @@ internal static class ToolPreparationValidator
             var shapeType = tool.ShapeType?.Trim().ToUpperInvariant();
             if (!ToolShapeTypes.IsSupported(shapeType))
                 throw Invalid("tool_preparation_shape_type_invalid", $"Tool '{identifier}': shapeType must be one of {string.Join(", ", ToolShapeTypes.All)}.", "shapeType");
+            var hand = Hand(tool.Hand, shapeType!, identifier, "tool_preparation");
             var shape = Shape(tool.Shape, identifier);
             var notes = Text(tool.Notes, 1000, identifier, "notes");
+            var catalogToolId = Text(tool.CatalogToolId, 64, identifier, "catalogToolId");
             var components = Components(tool.Components, identifier);
             tools.Add(new ToolPreparationTool(
                 releasedTool.RowNumber, releasedTool.ToolIdentifier, tool.OffsetNumber, length, diameter,
-                shapeType!, shape, notes, components));
+                shapeType!, shape, notes, components, hand, catalogToolId));
         }
 
         return tools.OrderBy(tool => tool.RowNumber).ToArray();
+    }
+
+    /// <summary>A turning tool's hand (default neutral); other tools carry none.</summary>
+    internal static string? Hand(string? value, string toolType, string identifier, string prefix)
+    {
+        var hand = value?.Trim().ToUpperInvariant();
+        if (string.IsNullOrEmpty(hand)) return ToolShapeTypes.IsTurning(toolType) ? ToolHands.Neutral : null;
+        if (!ToolHands.IsSupported(hand))
+            throw new ToolPreparationValidationException($"{prefix}_hand_invalid", $"Tool '{identifier}': hand must be one of {string.Join(", ", ToolHands.All)}.", "hand");
+        return ToolShapeTypes.IsTurning(toolType) ? hand : null;
     }
 
     /// <summary>Canonical JSON of the tools, hashed so a package can prove which measurements it used.</summary>
@@ -220,8 +315,10 @@ internal static class ToolPreparationValidator
                 tool.ShapeType,
                 Shape = tool.Shape.OrderBy(entry => entry.Key, StringComparer.Ordinal).ToDictionary(entry => entry.Key, entry => entry.Value),
                 tool.Notes,
-                Components = tool.Components.OrderBy(component => component.Sequence)
-            }), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                Components = tool.Components.OrderBy(component => component.Sequence),
+                tool.Hand,
+                tool.CatalogToolId
+            }), new JsonSerializerOptions(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
         return Convert.ToHexStringLower(SHA256.HashData(canonical));
     }
 
@@ -252,17 +349,20 @@ internal static class ToolPreparationValidator
         return result.OrderBy(component => component.Sequence).ToArray();
     }
 
-    private static IReadOnlyDictionary<string, double> Shape(IReadOnlyDictionary<string, double>? shape, string identifier)
+    private static IReadOnlyDictionary<string, double> Shape(IReadOnlyDictionary<string, double>? shape, string identifier) =>
+        Shape(shape, identifier, "tool_preparation");
+
+    /// <summary>Named dimensions, each checked against its unit's range (shared with the tool catalog).</summary>
+    internal static IReadOnlyDictionary<string, double> Shape(IReadOnlyDictionary<string, double>? shape, string identifier, string prefix)
     {
         var result = new SortedDictionary<string, double>(StringComparer.Ordinal);
         if (shape is null) return result;
         foreach (var (key, value) in shape)
         {
             if (!ToolShapeDimensions.Keys.Contains(key, StringComparer.Ordinal))
-                throw Invalid("tool_preparation_shape_dimension_unknown", $"Tool '{identifier}': shape dimension '{key}' is not supported.", "shape");
-            var maximum = ToolShapeDimensions.Angles.Contains(key) ? 180 : ToolShapeDimensions.MaximumMillimetres;
-            if (!double.IsFinite(value) || value < 0 || value > maximum)
-                throw Invalid("tool_preparation_shape_dimension_invalid", $"Tool '{identifier}': shape dimension '{key}' must be between 0 and {maximum}.", "shape");
+                throw new ToolPreparationValidationException($"{prefix}_shape_dimension_unknown", $"Tool '{identifier}': shape dimension '{key}' is not supported.", "shape");
+            if (!ToolShapeDimensions.IsValid(key, value))
+                throw new ToolPreparationValidationException($"{prefix}_shape_dimension_invalid", $"Tool '{identifier}': shape dimension '{key}' must be between {ToolShapeDimensions.Range(key)}.", "shape");
             result[key] = value;
         }
         return result;

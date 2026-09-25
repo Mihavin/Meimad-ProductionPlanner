@@ -24,4 +24,14 @@ public partial class ToolPreparationWindow : Window
     internal ToolPreparationViewModel ViewModel => (ToolPreparationViewModel)DataContext;
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>Takes type, hand and dimensions from a catalog tool and keeps the link on the prepared tool.</summary>
+    private void PickCatalogTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedTool is not { } tool) return;
+        var picked = ToolCatalogPickerWindow.Pick(this, ViewModel.Api, tool.Description);
+        if (picked is not null) tool.ApplyCatalogTool(picked);
+    }
+
+    private void ClearCatalogTool_Click(object sender, RoutedEventArgs e) => ViewModel.SelectedTool?.ClearCatalogTool();
 }

@@ -45,6 +45,65 @@ public sealed class ToolPreparationViewModelTests
     }
 
     [Fact]
+    public void Turning_tools_carry_a_hand_and_a_catalog_tool_fills_type_hand_and_dimensions()
+    {
+        var api = new PreparationQueueViewModelTests.FakeApiClient([]) { ToolPreparation = Preparation() };
+        var viewModel = new ToolPreparationViewModel(api, "client-1", "tool-room-1", api.ToolPreparation);
+        var tool = viewModel.Tools[0];
+        Assert.False(tool.HasHand);
+        Assert.Equal("OTHER", tool.Shape.Id);
+
+        tool.Shape = ToolPreparationCatalog.Shape("EXTERNAL_GROOVING");
+        Assert.True(tool.HasHand);
+        Assert.Equal("Neutral", tool.HandName);
+        // Only the type's dimensions are shown; a value entered for another type stays until the save.
+        Assert.Equal(["cuttingWidth", "maxDepth", "cornerRadius", "shankWidth", "shankHeight", "overallLength"], tool.DimensionFields.Select(field => field.Key));
+        tool.Hand = ToolPreparationCatalog.Hand("LEFT");
+        tool.DimensionFields.First(field => field.Key == "cuttingWidth").Text = "3";
+        tool.PointAngleText = "118"; // hidden for a grooving tool
+        var update = tool.ToUpdate();
+        Assert.Equal("EXTERNAL_GROOVING", update.ShapeType);
+        Assert.Equal("LEFT", update.Hand);
+        Assert.Equal(3, update.Shape["cuttingWidth"]);
+        Assert.DoesNotContain("pointAngle", update.Shape.Keys);
+        Assert.Null(update.CatalogToolId);
+
+        // A milling type has no hand.
+        tool.Shape = ToolPreparationCatalog.Shape("DRILL");
+        Assert.False(tool.HasHand);
+        Assert.Null(tool.ToUpdate().Hand);
+        Assert.Equal(118, tool.ToUpdate().Shape["pointAngle"]);
+
+        // Picking a catalog tool takes its type, hand and dimensions and keeps the link.
+        var now = DateTimeOffset.Parse("2026-09-25T08:00:00Z");
+        var catalog = new PlannerCatalogTool(
+            "catalog-9", 9, "MT-00009", "PCLNR 2525 M12", "TURNING_TOOL", "TURNING", "RIGHT", null,
+            new Dictionary<string, double> { ["cornerRadius"] = 0.8, ["leadAngle"] = 95, ["shankWidth"] = 25 },
+            new Dictionary<string, string> { ["insertCode"] = "CNMG120408" }, [], true, 1, now, now, "tool-room-1");
+        tool.ApplyCatalogTool(catalog);
+        Assert.Equal("TURNING_TOOL", tool.Shape.Id);
+        Assert.Equal("RIGHT", tool.Hand.Id);
+        Assert.Equal("0.8", tool.CornerRadiusText);
+        Assert.Equal("95", tool.DimensionFields.First(field => field.Key == "leadAngle").Text);
+        Assert.Equal("catalog-9", tool.CatalogToolId);
+        Assert.Equal("MT-00009  PCLNR 2525 M12", tool.CatalogToolText);
+        Assert.True(tool.HasCatalogTool);
+        Assert.True(viewModel.IsDirty);
+        var linked = tool.ToUpdate();
+        Assert.Equal("catalog-9", linked.CatalogToolId);
+        Assert.Equal("RIGHT", linked.Hand);
+        Assert.Equal(0.8, linked.Shape["cornerRadius"]);
+        Assert.Equal(25, linked.Shape["shankWidth"]);
+
+        // Clearing the link keeps the values.
+        tool.ClearCatalogTool();
+        Assert.Null(tool.CatalogToolId);
+        Assert.False(tool.HasCatalogTool);
+        Assert.Equal("TURNING_TOOL", tool.Shape.Id);
+        Assert.Equal("0.8", tool.CornerRadiusText);
+    }
+
+    [Fact]
     public async Task Save_sends_the_next_version_with_measurements_shape_and_components()
     {
         var api = new PreparationQueueViewModelTests.FakeApiClient([]) { ToolPreparation = Preparation() };

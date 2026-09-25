@@ -1,0 +1,166 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.ToolCatalogView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:Meimad.Planner.Client.Windows.Views"
+             MinHeight="560">
+  <UserControl.Resources>
+    <Style x:Key="CatalogFieldLabel" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,3" />
+    </Style>
+    <Style x:Key="CatalogField" TargetType="StackPanel">
+      <Setter Property="Margin" Value="0,0,10,8" />
+    </Style>
+    <Style x:Key="CatalogSection" TargetType="Border">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#D8DDE3" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Padding" Value="14" />
+    </Style>
+  </UserControl.Resources>
+  <Grid Margin="8">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="11*" MinWidth="460" />
+      <ColumnDefinition Width="12" />
+      <ColumnDefinition Width="9*" MinWidth="420" />
+    </Grid.ColumnDefinitions>
+
+    <Border Grid.Column="0" Style="{StaticResource CatalogSection}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,8">
+          <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewCommand}" Margin="8,0,0,0" />
+          <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
+          <TextBlock Text="TOOL CATALOG" FontWeight="Bold" VerticalAlignment="Center" />
+        </DockPanel>
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="8" />
+            <ColumnDefinition Width="170" />
+            <ColumnDefinition Width="8" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBox Grid.Column="0" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" KeyDown="Search_KeyDown"
+                   AutomationProperties.Name="Search tools" ToolTip="Internal id, name, description or an external id; press Enter" />
+          <ComboBox Grid.Column="2" ItemsSource="{Binding TypeFilters}" SelectedItem="{Binding TypeFilter}" DisplayMemberPath="Name"
+                    AutomationProperties.Name="Type filter" />
+          <CheckBox Grid.Column="4" Content="Include inactive" IsChecked="{Binding IncludeInactive}" VerticalAlignment="Center" />
+        </Grid>
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Tools}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                  CanUserAddRows="False" CanUserDeleteRows="False" IsReadOnly="True" HeadersVisibility="Column" SelectionMode="Single"
+                  AutomationProperties.Name="Catalog tools">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Internal id" Binding="{Binding InternalCode}" Width="90" />
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" />
+            <DataGridTextColumn Header="Type" Binding="{Binding ToolType}" Width="150" />
+            <DataGridTextColumn Header="Hand" Binding="{Binding Hand}" Width="70" />
+            <DataGridTextColumn Header="External ids" Binding="{Binding ExternalIdsText}" Width="2*" />
+            <DataGridTextColumn Header="State" Binding="{Binding ActiveText}" Width="70" />
+          </DataGrid.Columns>
+        </DataGrid>
+        <TextBlock Grid.Row="3" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+      </Grid>
+    </Border>
+
+    <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Center" VerticalAlignment="Stretch" />
+
+    <Border Grid.Column="2" Style="{StaticResource CatalogSection}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel DataContext="{Binding Editor}" IsEnabled="{Binding DataContext.IsConnected, RelativeSource={RelativeSource AncestorType=UserControl}}">
+          <TextBlock Text="{Binding Heading}" FontSize="17" FontWeight="Bold" Margin="0,0,0,10" />
+          <StackPanel Style="{StaticResource CatalogField}">
+            <TextBlock Text="Internal id" Style="{StaticResource CatalogFieldLabel}" />
+            <TextBlock Text="{Binding InternalCode}" Foreground="{StaticResource MutedTextBrush}" />
+          </StackPanel>
+          <StackPanel Style="{StaticResource CatalogField}">
+            <TextBlock Text="Name" Style="{StaticResource CatalogFieldLabel}" />
+            <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+          </StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="8" />
+              <ColumnDefinition Width="150" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Style="{StaticResource CatalogField}">
+              <TextBlock Text="Type" Style="{StaticResource CatalogFieldLabel}" />
+              <ComboBox ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}" DisplayMemberPath="Name" AutomationProperties.Name="Tool type" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Style="{StaticResource CatalogField}">
+              <TextBlock Text="Hand" Style="{StaticResource CatalogFieldLabel}" />
+              <ComboBox ItemsSource="{Binding Hands}" SelectedItem="{Binding Hand}" DisplayMemberPath="Name" IsEnabled="{Binding HasHand}"
+                        AutomationProperties.Name="Holder hand" ToolTip="Holder hand of a turning tool" />
+            </StackPanel>
+          </Grid>
+          <StackPanel Style="{StaticResource CatalogField}">
+            <TextBlock Text="Description" Style="{StaticResource CatalogFieldLabel}" />
+            <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" MinHeight="40" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <TextBlock Text="Dimensions (mm)" FontWeight="SemiBold" Margin="0,4,0,4" />
+          <ItemsControl ItemsSource="{Binding DimensionFields}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,0,8,6">
+                  <TextBlock Text="{Binding Label}" />
+                  <TextBox Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <TextBlock Text="Preview" FontWeight="SemiBold" Margin="0,6,0,4" />
+          <views:ToolShapePreview Geometry="{Binding Geometry}" Height="220" />
+
+          <TextBlock Text="ISO codes and material" FontWeight="SemiBold" Margin="0,10,0,4" />
+          <UniformGrid Columns="2">
+            <StackPanel Margin="0,0,8,6"><TextBlock Text="Insert code (ISO)" /><TextBox Text="{Binding InsertCode, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+            <StackPanel Margin="0,0,0,6"><TextBlock Text="Holder code (ISO)" /><TextBox Text="{Binding HolderCode, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+            <StackPanel Margin="0,0,8,6"><TextBlock Text="Thread profile" /><TextBox Text="{Binding ThreadProfile, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+            <StackPanel Margin="0,0,0,6"><TextBlock Text="Manufacturer" /><TextBox Text="{Binding Manufacturer, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+            <StackPanel Margin="0,0,8,6"><TextBlock Text="Material" /><TextBox Text="{Binding Material, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+            <StackPanel Margin="0,0,0,6"><TextBlock Text="Coating" /><TextBox Text="{Binding Coating, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+          </UniformGrid>
+
+          <DockPanel Margin="0,8,0,4">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button Content="Add external id" Margin="0,0,6,0"
+                      Command="{Binding DataContext.AddExternalIdCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+              <Button Content="Remove"
+                      Command="{Binding DataContext.RemoveExternalIdCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+            </StackPanel>
+            <TextBlock Text="External ids (supplier, ERP, CAM, presetter, ...)" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </DockPanel>
+          <DataGrid ItemsSource="{Binding ExternalIds}" SelectedItem="{Binding SelectedExternalId}" AutoGenerateColumns="False"
+                    CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" MinHeight="90" MaxHeight="220"
+                    AutomationProperties.Name="External ids">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="System" Binding="{Binding System, UpdateSourceTrigger=PropertyChanged}" Width="150" />
+              <DataGridTextColumn Header="Id" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <CheckBox Content="Active (offered to the Tool Room)" IsChecked="{Binding IsActive}" Margin="0,10,0,0" />
+          <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="Save tool" Width="110" Margin="0,0,8,0"
+                    Command="{Binding DataContext.SaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+            <Button Content="Delete tool" Width="110" Click="DeleteTool_Click"
+                    IsEnabled="{Binding DataContext.DeleteCommand.CanExecute, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=OneWay, FallbackValue=False}" />
+          </StackPanel>
+          <TextBlock Text="A tool that a Tool Room preparation refers to cannot be deleted; make it inactive instead. The catalog describes tools; it keeps no stock quantities."
+                     Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+  </Grid>
+</UserControl>

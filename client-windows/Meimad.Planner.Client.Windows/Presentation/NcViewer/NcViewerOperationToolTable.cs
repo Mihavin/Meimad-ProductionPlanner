@@ -18,7 +18,9 @@ internal sealed record NcViewerOperationTool(
     string LatheType,
     double? Diameter,
     double? Length,
-    double CornerRadius);
+    double CornerRadius,
+    string? Hand = null,
+    double? Width = null);
 
 /// <summary>
 /// The Operation's released tool table for the NC viewer, with the Tool Room's cutter shapes and
@@ -48,7 +50,8 @@ internal sealed record NcViewerOperationToolTable(
             var length = tool.MeasuredLength ?? Value(tool.Shape, "overallLength");
             tools.Add(new NcViewerOperationTool(
                 number.Value, tool.ToolIdentifier, tool.Description.Trim(), shapeKnown,
-                MillType(shape), LatheType(shape), diameter, length, CornerRadius(shape, tool.Shape, diameter)));
+                MillType(shape), LatheType(shape), diameter, length, CornerRadius(shape, tool.Shape, diameter),
+                Hand(tool.Hand), Value(tool.Shape, "cuttingWidth")));
         }
         if (tools.Count == 0) return null;
         var source = string.Create(CultureInfo.InvariantCulture,
@@ -128,6 +131,8 @@ internal sealed record NcViewerOperationToolTable(
                 var type = lathe ? tool.LatheType : tool.MillType;
                 if (allowedTypes.Count == 0 || allowedTypes.Contains(type)) row["type"] = type;
                 row["cornerRadius"] = Round(tool.CornerRadius * scale);
+                if (lathe && tool.Hand is not null) row["hand"] = tool.Hand;
+                if (lathe && tool.Width is { } width) row["width"] = Round(width * scale);
             }
             else if (reading is not null)
             {
@@ -155,26 +160,36 @@ internal sealed record NcViewerOperationToolTable(
             : null;
     }
 
-    private static string MillType(string shape) => shape switch
+    /// <summary>The NC viewer's mill cutter for a tool type (the viewer simulates these shapes).</summary>
+    internal static string MillType(string shape) => shape switch
     {
-        "END_MILL" => "end-mill",
-        "BALL_END_MILL" => "ball-mill",
+        "END_MILL" or "COUNTERBORE" or "DOVETAIL_MILL" => "end-mill",
+        "BALL_END_MILL" or "LOLLIPOP_MILL" => "ball-mill",
         "BULL_NOSE_END_MILL" => "bull-nose-mill",
-        "CHAMFER_MILL" => "chamfer-mill",
+        "CHAMFER_MILL" or "COUNTERSINK" => "chamfer-mill",
         "FACE_MILL" => "face-mill",
+        "SLOT_MILL" or "T_SLOT_MILL" => "slot-mill",
+        "THREAD_MILL" => "thread-mill",
+        "ENGRAVER" => "engraver",
         "DRILL" => "drill",
+        "SPOT_DRILL" => "spot-drill",
+        "CENTER_DRILL" => "center-drill",
         "TAP" => "tap",
         "REAMER" => "reamer",
-        "BORING_BAR" => "boring-head",
+        "BORING_HEAD" or "BORING_BAR" => "boring-head",
         "PROBE" => "probe",
         _ => "other"
     };
 
-    private static string LatheType(string shape) => shape switch
+    /// <summary>The NC viewer's lathe tool for a tool type.</summary>
+    internal static string LatheType(string shape) => shape switch
     {
         "TURNING_TOOL" => "external-cutter",
         "BORING_BAR" => "internal-cutter",
-        "DRILL" => "drill",
+        "EXTERNAL_GROOVING" or "INTERNAL_GROOVING" or "FACE_GROOVING" => "groove",
+        "PARTING" => "cutoff",
+        "EXTERNAL_THREADING" or "INTERNAL_THREADING" => "threading",
+        "DRILL" or "SPOT_DRILL" or "CENTER_DRILL" => "drill",
         "TAP" => "tap",
         "REAMER" => "reamer",
         "PROBE" => "non-cutting",
@@ -183,9 +198,18 @@ internal sealed record NcViewerOperationToolTable(
 
     private static double CornerRadius(string shape, IReadOnlyDictionary<string, double> dimensions, double? diameter) => shape switch
     {
-        "BALL_END_MILL" => Round((diameter ?? 0) / 2),
-        "BULL_NOSE_END_MILL" or "TURNING_TOOL" or "BORING_BAR" => Math.Max(0, Value(dimensions, "cornerRadius") ?? 0),
+        "BALL_END_MILL" or "LOLLIPOP_MILL" => Round((diameter ?? 0) / 2),
+        "BULL_NOSE_END_MILL" or "TURNING_TOOL" or "BORING_BAR" or "BORING_HEAD" or "FACE_MILL" or "SLOT_MILL" or "T_SLOT_MILL"
+            or "EXTERNAL_GROOVING" or "INTERNAL_GROOVING" or "FACE_GROOVING" or "PARTING" => Math.Max(0, Value(dimensions, "cornerRadius") ?? 0),
         _ => 0
+    };
+
+    private static string? Hand(string? hand) => hand?.ToUpperInvariant() switch
+    {
+        "RIGHT" => "right",
+        "LEFT" => "left",
+        "NEUTRAL" => "neutral",
+        _ => null
     };
 
     private static double? Value(IReadOnlyDictionary<string, double> dimensions, string key) =>

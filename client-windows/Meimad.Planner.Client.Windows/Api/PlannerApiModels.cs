@@ -2036,6 +2036,8 @@ internal sealed record PlannerToolPreparationComponent(
     string? Notes);
 
 /// <summary>A released Tool Table row merged with its latest Tool Room measurements, if any.</summary>
+/// <param name="Hand">Holder hand of a turning tool (RIGHT, LEFT, NEUTRAL); null for other tools.</param>
+/// <param name="CatalogToolId">The tool catalog entry the Tool Room picked for this tool, if any.</param>
 internal sealed record PlannerToolPreparationTool(
     int RowNumber,
     string ToolIdentifier,
@@ -2048,7 +2050,9 @@ internal sealed record PlannerToolPreparationTool(
     string ShapeType,
     IReadOnlyDictionary<string, double> Shape,
     string? Notes,
-    IReadOnlyList<PlannerToolPreparationComponent> Components);
+    IReadOnlyList<PlannerToolPreparationComponent> Components,
+    string? Hand = null,
+    string? CatalogToolId = null);
 
 /// <summary>
 /// The Tool Room's tool preparation of one Batch Operation on its assigned Machine: the released
@@ -2091,7 +2095,9 @@ internal sealed record ToolPreparationToolUpdate(
     string ShapeType,
     IReadOnlyDictionary<string, double> Shape,
     string? Notes,
-    IReadOnlyList<ToolPreparationComponentUpdate> Components);
+    IReadOnlyList<ToolPreparationComponentUpdate> Components,
+    string? Hand = null,
+    string? CatalogToolId = null);
 
 /// <summary>Saves the next tool preparation version; the Server rejects a stale version or Tool Table release.</summary>
 internal sealed record ToolPreparationUpdate(
@@ -2099,6 +2105,48 @@ internal sealed record ToolPreparationUpdate(
     string ToolTableReleaseId,
     string? Comment,
     IReadOnlyList<ToolPreparationToolUpdate> Tools);
+
+/// <summary>One id of a catalog tool in another system (supplier, ERP, CAM library, presetter, ...).</summary>
+internal sealed record PlannerCatalogToolExternalId(string System, string Value);
+
+/// <summary>
+/// A tool of the factory's tool catalog: the Meimad internal id (<c>MT-00001</c>), type, hand,
+/// dimensions, attributes, external ids and version. A definition, not an inventory record.
+/// </summary>
+internal sealed record PlannerCatalogTool(
+    string CatalogToolId,
+    int InternalNumber,
+    string InternalCode,
+    string Name,
+    string ToolType,
+    string Family,
+    string? Hand,
+    string? Description,
+    IReadOnlyDictionary<string, double> Shape,
+    IReadOnlyDictionary<string, string> Attributes,
+    IReadOnlyList<PlannerCatalogToolExternalId> ExternalIds,
+    bool IsActive,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    string UpdatedBy)
+{
+    public string ExternalIdsText => string.Join(", ", ExternalIds.Select(entry => $"{entry.System}: {entry.Value}"));
+    public string DisplayName => $"{InternalCode}  {Name}";
+    public string ActiveText => IsActive ? "Active" : "Inactive";
+}
+
+/// <summary>Creates a catalog tool, or replaces one at <c>ExpectedVersion</c>.</summary>
+internal sealed record CatalogToolUpdate(
+    string Name,
+    string ToolType,
+    string? Hand,
+    string? Description,
+    IReadOnlyDictionary<string, double> Shape,
+    IReadOnlyDictionary<string, string> Attributes,
+    IReadOnlyList<PlannerCatalogToolExternalId> ExternalIds,
+    bool IsActive,
+    int? ExpectedVersion = null);
 
 internal sealed class PlannerApiException : Exception
 {

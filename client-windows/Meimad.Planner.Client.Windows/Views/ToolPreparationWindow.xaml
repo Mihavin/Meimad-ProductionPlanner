@@ -91,19 +91,39 @@
               <TextBlock Text="Shape preview" FontWeight="SemiBold" Margin="0,8,0,4" />
               <views:ToolShapePreview Geometry="{Binding Geometry}" Height="300" />
 
-              <TextBlock Text="Shape and dimensions (mm)" FontWeight="SemiBold" Margin="0,10,0,4" />
-              <ComboBox ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}" DisplayMemberPath="Name"
-                        AutomationProperties.Name="Cutter shape" />
-              <UniformGrid Columns="2" Margin="0,6,0,0">
-                <StackPanel Margin="0,0,8,6"><TextBlock Text="Cutting diameter" /><TextBox Text="{Binding CuttingDiameterText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,0,6"><TextBlock Text="Flute length" /><TextBox Text="{Binding FluteLengthText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,8,6"><TextBlock Text="Overall cutter length" /><TextBox Text="{Binding OverallLengthText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,0,6"><TextBlock Text="Shank diameter" /><TextBox Text="{Binding ShankDiameterText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,8,6"><TextBlock Text="Corner radius" /><TextBox Text="{Binding CornerRadiusText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,0,6"><TextBlock Text="Point angle (degrees)" /><TextBox Text="{Binding PointAngleText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,8,6"><TextBlock Text="Chamfer angle (degrees)" /><TextBox Text="{Binding TaperAngleText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel Margin="0,0,0,6"><TextBlock Text="Tip diameter" /><TextBox Text="{Binding TipDiameterText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              </UniformGrid>
+              <TextBlock Text="Catalog tool" FontWeight="SemiBold" Margin="0,10,0,4" />
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Clear" Margin="6,0,0,0" Click="ClearCatalogTool_Click" IsEnabled="{Binding HasCatalogTool}" />
+                <Button DockPanel.Dock="Right" Content="Pick from catalog…" Click="PickCatalogTool_Click"
+                        ToolTip="Take the type, hand and dimensions of a tool from the tool catalog and keep the link" />
+                <TextBlock Text="{Binding CatalogToolText}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+              </DockPanel>
+
+              <TextBlock Text="Type, hand and dimensions (mm)" FontWeight="SemiBold" Margin="0,10,0,4" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="8" />
+                  <ColumnDefinition Width="140" />
+                </Grid.ColumnDefinitions>
+                <ComboBox Grid.Column="0" ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}" DisplayMemberPath="Name"
+                          AutomationProperties.Name="Tool type" />
+                <ComboBox Grid.Column="2" ItemsSource="{Binding Hands}" SelectedItem="{Binding Hand}" DisplayMemberPath="Name"
+                          IsEnabled="{Binding HasHand}" AutomationProperties.Name="Holder hand" ToolTip="Holder hand of a turning tool" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding DimensionFields}" Margin="0,6,0,0">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="0,0,8,6">
+                      <TextBlock Text="{Binding Label}" />
+                      <TextBox Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
 
               <DockPanel Margin="0,8,0,4">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

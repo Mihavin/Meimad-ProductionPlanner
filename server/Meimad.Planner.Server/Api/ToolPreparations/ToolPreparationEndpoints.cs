@@ -82,6 +82,8 @@ internal sealed record ToolPreparationComponentRequest(
         new(Sequence, ComponentType ?? string.Empty, Name ?? string.Empty, CatalogNumber, Length, Diameter, Notes);
 }
 
+/// <param name="Hand">Holder hand of a turning tool (RIGHT, LEFT or NEUTRAL); ignored for other tools.</param>
+/// <param name="CatalogToolId">The catalog tool this prepared tool is, when picked from the tool catalog.</param>
 internal sealed record ToolPreparationToolRequest(
     string? ToolIdentifier,
     int? OffsetNumber,
@@ -90,12 +92,14 @@ internal sealed record ToolPreparationToolRequest(
     string? ShapeType,
     Dictionary<string, double>? Shape,
     string? Notes,
-    IReadOnlyList<ToolPreparationComponentRequest>? Components)
+    IReadOnlyList<ToolPreparationComponentRequest>? Components,
+    string? Hand = null,
+    string? CatalogToolId = null)
 {
     internal ToolPreparationTool ToDomain() => new(
         0, ToolIdentifier ?? string.Empty, OffsetNumber, MeasuredLength, MeasuredDiameter,
         ShapeType ?? ToolShapeTypes.Other, Shape ?? [], Notes,
-        (Components ?? []).Select(component => component.ToDomain()).ToArray());
+        (Components ?? []).Select(component => component.ToDomain()).ToArray(), Hand, CatalogToolId);
 }
 
 internal sealed record ToolPreparationRequest(
@@ -131,7 +135,9 @@ internal sealed record ToolPreparationToolResponse(
     string ShapeType,
     IReadOnlyDictionary<string, double> Shape,
     string? Notes,
-    IReadOnlyList<ToolPreparationComponentResponse> Components);
+    IReadOnlyList<ToolPreparationComponentResponse> Components,
+    string? Hand,
+    string? CatalogToolId);
 
 internal sealed record ToolPreparationResponse(
     string BatchOperationId,
@@ -167,7 +173,8 @@ internal sealed record ToolPreparationResponse(
                 measured?.Shape ?? new Dictionary<string, double>(StringComparer.Ordinal), measured?.Notes,
                 (measured?.Components ?? []).Select(component => new ToolPreparationComponentResponse(
                     component.Sequence, component.ComponentType, component.Name, component.CatalogNumber,
-                    component.Length, component.Diameter, component.Notes)).ToArray());
+                    component.Length, component.Diameter, component.Notes)).ToArray(),
+                measured?.Hand, measured?.CatalogToolId);
         }).ToArray();
         return new ToolPreparationResponse(
             view.BatchOperationId, view.MachineId, view.MachineNumber, view.MachineName, view.ProcessType,
