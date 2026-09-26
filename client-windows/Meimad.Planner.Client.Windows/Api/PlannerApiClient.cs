@@ -1073,6 +1073,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             parameters.Add($"isActive={query.IsActive.Value.ToString().ToLowerInvariant()}");
         }
         AddQueryParameter(parameters, "sort", query.Sort);
+        AddQueryParameter(parameters, "workOrders", query.WorkOrders);
+        AddQueryParameter(parameters, "release", query.Release);
+        AddQueryParameter(parameters, "orders", query.Orders);
+        AddQueryParameter(parameters, "operations", query.Operations);
+        AddQueryParameter(parameters, "materialOrders", query.MaterialOrders);
+        AddQueryParameter(parameters, "supplyFrom", query.SupplyFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        AddQueryParameter(parameters, "supplyTo", query.SupplyTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        AddQueryParameter(parameters, "startFrom", query.StartFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        AddQueryParameter(parameters, "startTo", query.StartTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
 
         var path = "api/v1/cases" + (parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters));
         using var response = await httpClient.GetAsync(path, cancellationToken);

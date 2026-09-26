@@ -153,6 +153,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         this.folderLauncher = folderLauncher;
         SearchCommand = new AsyncCommand(LoadCasesAsync, () => apiClient is not null && !IsBusy);
         ClearFiltersCommand = new AsyncCommand(ClearFiltersAsync, () => apiClient is not null && !IsBusy);
+        PoolFilters.FiltersChanged += (_, _) => _ = ReloadPoolForFiltersAsync();
         SaveCommand = new AsyncCommand(SaveAsync, () => CanSave);
         BeginCreateCommand = new AsyncCommand(BeginCreateAsync, () => CanBeginCreate);
         CancelCreateCommand = new AsyncCommand(CancelCreateAsync, () => IsCreating && !IsBusy);
@@ -241,6 +242,43 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public IReadOnlyList<string> ActiveFilters { get; } = ["All", "Active", "Inactive"];
 
+    /// <summary>Jira-style chip filters of the Case pool; every chip change reloads the pool.</summary>
+    public CasePoolFilterSet PoolFilters { get; } = new();
+
+    private bool suppressPoolReload;
+    private bool poolReloadPending;
+    private string poolFilterSummary = "No filters";
+
+    /// <summary>The current pool condition, e.g. "12 Cases · Work Orders = With AND Release = Pending".</summary>
+    public string PoolFilterSummary
+    {
+        get => poolFilterSummary;
+        private set => SetField(ref poolFilterSummary, value);
+    }
+
+    private async Task ReloadPoolForFiltersAsync()
+    {
+        if (suppressPoolReload || !hasLoaded || apiClient is null) return;
+        if (IsBusy)
+        {
+            poolReloadPending = true;
+            return;
+        }
+        await LoadCasesAsync();
+    }
+
+    /// <summary>Clears every pool filter without one reload per cleared chip.</summary>
+    private void ResetPoolFilters()
+    {
+        suppressPoolReload = true;
+        SearchText = string.Empty;
+        CustomerFilter = string.Empty;
+        ActiveFilter = "All";
+        CaseSort = "Part Number";
+        PoolFilters.Reset();
+        suppressPoolReload = false;
+    }
+
     public IReadOnlyList<string> CaseSortOptions { get; } = ["Part Number", "Closest Order delivery date", "Customer name"];
 
     public IReadOnlyList<string> OrderStatuses => isEditingOrder
@@ -328,7 +366,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string ActiveFilter
     {
         get => activeFilter;
-        set => SetField(ref activeFilter, value);
+        set { if (SetField(ref activeFilter, value)) _ = ReloadPoolForFiltersAsync(); }
     }
 
     public CasePoolItemViewModel? SelectedCase
@@ -535,7 +573,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string CaseSort
     {
         get => caseSort;
-        set => SetField(ref caseSort, value);
+        set { if (SetField(ref caseSort, value)) _ = ReloadPoolForFiltersAsync(); }
     }
     public ProductionBatch? SelectedBatch
     {
@@ -901,7 +939,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 "Customer name" => "customerName",
                 _ => "partNumber"
             };
-            var cases = await apiClient.ListCasesAsync(new CaseQuery(SearchText, CustomerFilter, active, sort));
+            var cases = await apiClient.ListCasesAsync(PoolFilters.ApplyTo(
+                new CaseQuery(SearchText, CustomerFilter, active, sort), DateOnly.FromDateTime(DateTime.Today)));
             var selectedId = SelectedCase?.CaseId;
             Cases.Clear();
             foreach (var plannerCase in cases)
@@ -914,6 +953,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
             hasLoaded = true;
             StatusMessage = $"{Cases.Count} Case{(Cases.Count == 1 ? string.Empty : "s")} loaded from the Server.";
+            var extra = new List<string>();
+            if (!string.IsNullOrWhiteSpace(SearchText)) extra.Add($"Text ~ \"{SearchText.Trim()}\"");
+            if (!string.IsNullOrWhiteSpace(CustomerFilter) && CustomerFilter != "All") extra.Add($"Customer ~ \"{CustomerFilter.Trim()}\"");
+            if (ActiveFilter != "All") extra.Add($"Case = {ActiveFilter}");
+            PoolFilterSummary = $"{Cases.Count} Case{(Cases.Count == 1 ? string.Empty : "s")} · {PoolFilters.Describe(extra)}";
             SelectedCase = Cases.FirstOrDefault(item => item.CaseId == selectedId) ?? Cases.FirstOrDefault();
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -928,6 +972,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         if (SelectedCase is not null)
         {
             await LoadSelectedCaseSafeAsync();
+        }
+
+        if (poolReloadPending)
+        {
+            poolReloadPending = false;
+            await LoadCasesAsync();
         }
     }
 
@@ -1203,9 +1253,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var target = Cases.FirstOrDefault(value => value.CaseId == caseId);
         if (target is null)
         {
-            SearchText = string.Empty;
-            CustomerFilter = "All";
-            ActiveFilter = "All";
+            ResetPoolFilters();
             await LoadCasesAsync();
             target = Cases.FirstOrDefault(value => value.CaseId == caseId);
         }
@@ -2034,10 +2082,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     private async Task ClearFiltersAsync()
     {
-        SearchText = string.Empty;
-        CustomerFilter = string.Empty;
-        ActiveFilter = "All";
-        CaseSort = "Part Number";
+        ResetPoolFilters();
         await LoadCasesAsync();
     }
 

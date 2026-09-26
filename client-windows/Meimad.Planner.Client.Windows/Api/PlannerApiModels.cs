@@ -96,7 +96,18 @@ internal sealed record CaseModelFileUpdate(
     bool? IsPrimary = null,
     int? SortOrder = null);
 
-internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive, string? Sort = null);
+internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive, string? Sort = null)
+{
+    public string? WorkOrders { get; init; }
+    public string? Release { get; init; }
+    public string? Orders { get; init; }
+    public string? Operations { get; init; }
+    public string? MaterialOrders { get; init; }
+    public DateOnly? SupplyFrom { get; init; }
+    public DateOnly? SupplyTo { get; init; }
+    public DateOnly? StartFrom { get; init; }
+    public DateOnly? StartTo { get; init; }
+}
 
 internal sealed record CaseUpdate(
     string PartNumber,

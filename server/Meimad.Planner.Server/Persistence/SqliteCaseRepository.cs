@@ -171,6 +171,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         string? customer,
         bool? isActive,
         CaseSortOrder sortOrder,
+        CaseListFilter filter,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -231,6 +232,53 @@ internal sealed class SqliteCaseRepository : ICaseRepository
               AND ($customer IS NULL
                    OR instr(lower(coalesce(customer, '')), lower($customer)) > 0)
               AND ($isActive IS NULL OR is_active = $isActive)
+              AND ($workOrders IS NULL OR ($workOrders = 'with') = EXISTS (
+                    SELECT 1 FROM production_batches b WHERE b.case_id = case_pool.id AND b.status <> 'cancelled'))
+              AND ($release IS NULL OR EXISTS (
+                    SELECT 1 FROM production_batches b
+                    WHERE b.case_id = case_pool.id AND b.status <> 'cancelled' AND b.release_state = $release))
+              AND ($orders IS NULL OR ($orders = 'active') = EXISTS (
+                    SELECT 1 FROM orders o
+                    WHERE o.case_id = case_pool.id AND o.status IN ('active', 'in_production') AND o.kitaron_history_only = 0))
+              AND ($operations IS NULL OR ($operations = 'with') = EXISTS (
+                    SELECT 1 FROM case_operations op
+                    WHERE op.case_id = case_pool.id
+                      AND lower(trim(COALESCE(op.required_machine_type, ''))) <> 'production note'))
+              AND ($materialOrders IS NULL
+                   OR ($materialOrders = 'verified' AND EXISTS (
+                        SELECT 1 FROM production_batches b JOIN work_order_material_orders v ON v.production_batch_id = b.id
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled'))
+                   OR ($materialOrders = 'toVerify' AND EXISTS (
+                        SELECT 1 FROM production_batches b
+                        JOIN kitaron_batch_material_checks m ON m.production_batch_id = b.id
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled'
+                          AND json_array_length(m.material_order_keys) > 0
+                          AND NOT EXISTS (SELECT 1 FROM work_order_material_orders v WHERE v.production_batch_id = b.id))))
+              AND (($supplyFrom IS NULL AND $supplyTo IS NULL)
+                   OR EXISTS (
+                        SELECT 1 FROM production_batches b
+                        JOIN kitaron_sync_links l ON l.source_entity = 'production_batch' AND l.target_id = b.id
+                        JOIN kitaron_work_orders w ON 'wo:' || w.work_order_number = l.source_key
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled' AND w.supply_date IS NOT NULL
+                          AND ($supplyFrom IS NULL OR w.supply_date >= $supplyFrom)
+                          AND ($supplyTo IS NULL OR w.supply_date <= $supplyTo))
+                   OR EXISTS (
+                        SELECT 1 FROM orders o
+                        WHERE o.case_id = case_pool.id AND o.status IN ('active', 'in_production') AND o.kitaron_history_only = 0
+                          AND ($supplyFrom IS NULL OR o.work_finish_date >= $supplyFrom)
+                          AND ($supplyTo IS NULL OR o.work_finish_date <= $supplyTo)))
+              AND (($startFrom IS NULL AND $startTo IS NULL) OR EXISTS (
+                    SELECT 1 FROM (
+                        SELECT COALESCE(
+                                   (SELECT substr(MIN(op.actual_start), 1, 10) FROM batch_operations op WHERE op.production_batch_id = b.id),
+                                   w.start_date) AS start_date
+                        FROM production_batches b
+                        LEFT JOIN kitaron_sync_links l ON l.source_entity = 'production_batch' AND l.target_id = b.id
+                        LEFT JOIN kitaron_work_orders w ON 'wo:' || w.work_order_number = l.source_key
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled') starts
+                    WHERE starts.start_date IS NOT NULL
+                      AND ($startFrom IS NULL OR starts.start_date >= $startFrom)
+                      AND ($startTo IS NULL OR starts.start_date <= $startTo)))
             ORDER BY
                 CASE WHEN $sort = 'closestOrderDeliveryDate' AND closest_order_delivery_date IS NULL THEN 1 ELSE 0 END,
                 CASE WHEN $sort = 'closestOrderDeliveryDate' THEN closest_order_delivery_date END,
@@ -248,6 +296,18 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         command.Parameters.AddWithValue(
             "$isActive",
             isActive.HasValue ? isActive.Value : DBNull.Value);
+        foreach (var (name, value) in new (string, string?)[]
+                 {
+                     ("$workOrders", filter.WorkOrders), ("$release", filter.Release), ("$orders", filter.Orders),
+                     ("$operations", filter.Operations), ("$materialOrders", filter.MaterialOrders),
+                     ("$supplyFrom", filter.SupplyFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                     ("$supplyTo", filter.SupplyTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                     ("$startFrom", filter.StartFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                     ("$startTo", filter.StartTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+                 })
+        {
+            command.Parameters.AddWithValue(name, (object?)value ?? DBNull.Value);
+        }
         command.Parameters.AddWithValue("$sort", sortOrder switch
         {
             CaseSortOrder.ClosestOrderDeliveryDate => "closestOrderDeliveryDate",

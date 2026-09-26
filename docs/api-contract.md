@@ -2611,3 +2611,7 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
 ### Work Order material orders (schema v84)
 
 `GET /api/v1/batches/{batchId}/material-orders` returns `{ items: [ { sourceKey, purchaseOrderNumber, lineNumber, materialNumber, description, supplier, orderedQuantity, receivedQuantity, unit, requestedDeliveryDate, approvedDeliveryDate, closed, verified, verifiedBy, verifiedAt } ] }`: the candidate purchase lines of the Work Order's raw material plus every verified line. `PUT .../material-orders/{sourceKey}` verifies a line and `DELETE` removes the verification (Edit Mode headers); both return the list. Batch responses carry `kitaronMaterialOrders` (verified lines only) and `materialOrderCandidates`; Material Orders page work orders carry `verified`.
+
+### Case pool filters (schema v85)
+
+`GET /api/v1/cases` also accepts `workOrders=with|without`, `release=pending|released`, `orders=active|none`, `operations=with|without`, `materialOrders=verified|toVerify`, and `supplyFrom`, `supplyTo`, `startFrom`, `startTo` (`yyyy-MM-dd`, inclusive). All given filters must match; an unknown token returns 400 `invalid_case_filter`.

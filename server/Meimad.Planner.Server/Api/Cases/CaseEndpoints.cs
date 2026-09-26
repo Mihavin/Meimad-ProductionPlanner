@@ -41,6 +41,15 @@ internal static class CaseEndpoints
         string? customer,
         bool? isActive,
         string? sort,
+        string? workOrders,
+        string? release,
+        string? orders,
+        string? operations,
+        string? materialOrders,
+        DateOnly? supplyFrom,
+        DateOnly? supplyTo,
+        DateOnly? startFrom,
+        DateOnly? startTo,
         HttpContext httpContext,
         CaseService service,
         CancellationToken cancellationToken)
@@ -49,7 +58,19 @@ internal static class CaseEndpoints
         {
             return Error(StatusCodes.Status400BadRequest, "invalid_case_sort", "sort must be partNumber, closestOrderDeliveryDate, or customerName.", httpContext);
         }
-        var items = await service.ListAsync(search, customer, isActive, sortOrder, cancellationToken);
+        foreach (var (name, value) in new[]
+                 {
+                     ("workOrders", workOrders), ("release", release), ("orders", orders),
+                     ("operations", operations), ("materialOrders", materialOrders)
+                 })
+        {
+            if (value is not null && !CaseListFilter.Tokens[name].Contains(value, StringComparer.Ordinal))
+                return Error(StatusCodes.Status400BadRequest, "invalid_case_filter",
+                    $"{name} must be {string.Join(" or ", CaseListFilter.Tokens[name])}.", httpContext);
+        }
+        var filter = new CaseListFilter(workOrders, release, orders, operations, materialOrders,
+            supplyFrom, supplyTo, startFrom, startTo);
+        var items = await service.ListAsync(search, customer, isActive, sortOrder, filter, cancellationToken);
         return Results.Ok(new CaseListResponse(
             items.Select(CaseResponse.FromDomain).ToArray(),
             null));
@@ -63,7 +84,7 @@ internal static class CaseEndpoints
     /// </summary>
     private static async Task<IResult> ListCustomersAsync(CaseService service, CancellationToken cancellationToken)
     {
-        var items = await service.ListAsync(null, null, null, CaseSortOrder.CustomerName, cancellationToken);
+        var items = await service.ListAsync(null, null, null, CaseSortOrder.CustomerName, cancellationToken: cancellationToken);
         var customers = items
             .Select(item => (item.Customer ?? string.Empty).Trim())
             .Where(customer => customer.Length > 0)

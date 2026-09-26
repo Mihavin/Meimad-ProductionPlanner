@@ -119,7 +119,8 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                 reader.IsDBNull(8) ? null : KitaronTextNormalization.Clean(reader.GetString(8)),
                 reader.IsDBNull(9) ? null : KitaronTextNormalization.Clean(reader.GetString(9)),
                 reader.IsDBNull(10) ? null : KitaronTextNormalization.Clean(reader.GetString(10)),
-                reader.IsDBNull(11) ? null : KitaronTextNormalization.Clean(reader.GetString(11))));
+                reader.IsDBNull(11) ? null : KitaronTextNormalization.Clean(reader.GetString(11)),
+                reader.IsDBNull(12) ? null : reader.GetDateTime(12)));
         }
         return result;
     }
@@ -170,7 +171,7 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
     internal const string WorkOrderQuery = """
         SELECT rc.NUMBER, d.DetailNumber, rc.RecordID, rc.Amount, rc.ProductionAmount,
                rc.SupplyDate, rc.LotNumber, NULLIF(rc.RowMaterialID, 0), o.OrderNumber, c.CompanyName,
-               d.DetailName, d.REV
+               d.DetailName, d.REV, rc.StartDate
         FROM dbo.TRootCard rc
         JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
         JOIN dbo.TDetails d ON d.DetailID = rc.DetailID

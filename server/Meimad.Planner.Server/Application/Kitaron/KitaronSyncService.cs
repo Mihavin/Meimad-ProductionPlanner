@@ -392,7 +392,8 @@ internal sealed class KitaronSyncService
             snapshot.WorkOrders?.Select(item => new KitaronSyncWorkOrderSnapshot(
                 item.Number, item.PartNumber, item.RawMaterialId, item.CustomerOrderNumber, item.Customer,
                 Quantity(item.Amount) ?? Quantity(item.ProductionAmount),
-                item.SupplyDate is null ? null : DateOnly.FromDateTime(item.SupplyDate.Value))).ToArray());
+                item.SupplyDate is null ? null : DateOnly.FromDateTime(item.SupplyDate.Value),
+                item.StartDate is null ? null : DateOnly.FromDateTime(item.StartDate.Value))).ToArray());
     }
 
     /// <summary>

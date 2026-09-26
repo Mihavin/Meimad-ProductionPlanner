@@ -12,7 +12,7 @@ public sealed class CaseWorkspaceViewTests
             "Views",
             "CaseWorkspaceView.xaml"));
 
-        Assert.Contains("Sort Cases by", caseView, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Sort:\"", caseView, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding CaseSortOptions}\"", caseView, StringComparison.Ordinal);
         Assert.Contains("SelectedItem=\"{Binding CaseSort}\"", caseView, StringComparison.Ordinal);
     }

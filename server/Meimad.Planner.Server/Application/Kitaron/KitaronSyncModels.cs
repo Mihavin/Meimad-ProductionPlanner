@@ -66,7 +66,8 @@ internal sealed record KitaronSourceWorkOrder(
     string? CustomerOrderNumber = null,
     string? Customer = null,
     string? PartName = null,
-    string? PartRevision = null);
+    string? PartRevision = null,
+    DateTime? StartDate = null);
 
 /// <summary>An order-line allocation of a work order (`TOrderLinkRoot`).</summary>
 internal sealed record KitaronSourceWorkOrderLink(
@@ -193,7 +194,8 @@ internal sealed record KitaronSyncWorkOrderSnapshot(
     string? CustomerOrderNumber,
     string? Customer,
     int? Quantity,
-    DateOnly? SupplyDate);
+    DateOnly? SupplyDate,
+    DateOnly? StartDate = null);
 
 /// <summary>
 /// An auxiliary route step (inspection, deburring, packing, subcontract, ...) imported as a resource

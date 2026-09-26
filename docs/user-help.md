@@ -331,3 +331,7 @@ A Work Order shown as "Pending (no operations)" exists in Kitaron but its Case h
 Example: when drive J: is mapped to \\192.168.0.240\data, enter \\192.168.0.240\data as the network folder and J:\ as the alias. The preview J:\customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png is then stored as customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png and every PC opens it as \\192.168.0.240\data\customers files\.... The Case browse buttons (working folder, picture, model files) open at the Case's working folder, or at the network folder when the Case has none; G-code and tool-table files may be selected from any folder.
 
 Kitaron does not record which purchase order is for which work order. On a Work Order, "Kitaron material orders" lists the open purchase lines of its raw material; select the right one and press Verify (Edit Mode). Only verified lines show in the Material order column. An operation with Machine Type "Production Note" is a note that travels with the Work Order; it is not planned on a Machine.
+
+### Filtering the Case pool
+
+The filter row above the Case pool works like Jira: pick a value in any chip (Work Orders, Release, Supply date, Production start, Orders, Operations, Material order) and the list updates at once. All chosen chips must match together. The line under the row shows the condition, for example "12 Cases · Work Orders = With Work Orders AND Release = Pending". Clear resets every chip.

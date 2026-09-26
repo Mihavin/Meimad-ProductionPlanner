@@ -705,8 +705,8 @@ internal sealed class SqliteKitaronSyncRepository(
             insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT OR REPLACE INTO kitaron_work_orders (work_order_number, part_number, raw_material_id,
-                    customer_order_number, customer, quantity, supply_date, imported_at)
-                VALUES ($number, $part, $material, $order, $customer, $quantity, $supplyDate, $now);
+                    customer_order_number, customer, quantity, supply_date, imported_at, start_date)
+                VALUES ($number, $part, $material, $order, $customer, $quantity, $supplyDate, $now, $startDate);
                 """;
             insert.Parameters.AddWithValue("$number", item.Number);
             insert.Parameters.AddWithValue("$part", item.PartNumber);
@@ -715,6 +715,7 @@ internal sealed class SqliteKitaronSyncRepository(
             insert.Parameters.AddWithValue("$customer", (object?)item.Customer ?? DBNull.Value);
             insert.Parameters.AddWithValue("$quantity", (object?)item.Quantity ?? DBNull.Value);
             insert.Parameters.AddWithValue("$supplyDate", item.SupplyDate?.ToString("yyyy-MM-dd") ?? (object)DBNull.Value);
+            insert.Parameters.AddWithValue("$startDate", item.StartDate?.ToString("yyyy-MM-dd") ?? (object)DBNull.Value);
             insert.Parameters.AddWithValue("$now", now.ToString("O"));
             await insert.ExecuteNonQueryAsync(cancellationToken);
         }
