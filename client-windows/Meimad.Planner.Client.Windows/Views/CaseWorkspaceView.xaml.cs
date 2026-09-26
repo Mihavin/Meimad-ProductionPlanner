@@ -613,6 +613,24 @@ public partial class CaseWorkspaceView : UserControl
             await viewModel.DeleteSelectedCaseAsync();
     }
 
+    private CasePoolFilterWindow? poolFilterWindow;
+
+    private void OpenPoolFilters_Click(object sender, RoutedEventArgs e)
+    {
+        if (poolFilterWindow is { IsLoaded: true })
+        {
+            poolFilterWindow.Activate();
+            return;
+        }
+        poolFilterWindow = new CasePoolFilterWindow
+        {
+            DataContext = DataContext,
+            Owner = Window.GetWindow(this)
+        };
+        poolFilterWindow.Closed += (_, _) => poolFilterWindow = null;
+        poolFilterWindow.Show();
+    }
+
     private async void DeleteOperation_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel

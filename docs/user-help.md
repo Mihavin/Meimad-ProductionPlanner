@@ -334,4 +334,4 @@ Kitaron does not record which purchase order is for which work order. On a Work 
 
 ### Filtering the Case pool
 
-The filter row above the Case pool works like Jira: pick a value in any chip (Work Orders, Release, Supply date, Production start, Orders, Operations, Material order) and the list updates at once. All chosen chips must match together. The line under the row shows the condition, for example "12 Cases · Work Orders = With Work Orders AND Release = Pending". Clear resets every chip.
+Press Filters above the Case pool to open the Case pool filters window. It works like Jira: pick a value in any chip (Work Orders, Release, Supply date, Production start, Orders, Operations, Material order) and the list updates at once. All chosen chips must match together. The line under the row shows the condition, for example "12 Cases · Work Orders = With Work Orders AND Release = Pending". Clear resets every chip.

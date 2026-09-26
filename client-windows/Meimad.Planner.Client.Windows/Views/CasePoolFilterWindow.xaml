@@ -1,0 +1,135 @@
+<Window x:Class="Meimad.Planner.Client.Windows.Views.CasePoolFilterWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Case pool filters"
+        Width="620" SizeToContent="Height" MinHeight="240"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource CanvasBrush}">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Every chip is one condition; all set chips must match (AND). Chips apply at once; Customer applies with Apply."
+                   TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
+        <WrapPanel Grid.Row="1" Margin="0,0,0,8">
+            <WrapPanel.Resources>
+                <Style x:Key="PoolChip" TargetType="Border">
+                    <Setter Property="Background" Value="#F2F5F8" />
+                    <Setter Property="BorderBrush" Value="#C9D1D9" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="CornerRadius" Value="12" />
+                    <Setter Property="Padding" Value="9,2,4,2" />
+                    <Setter Property="Margin" Value="0,0,6,6" />
+                </Style>
+                <Style x:Key="PoolChipLabel" TargetType="TextBlock">
+                    <Setter Property="VerticalAlignment" Value="Center" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Setter Property="Margin" Value="0,0,4,0" />
+                </Style>
+                <Style x:Key="PoolChipCombo" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+                    <Setter Property="MinWidth" Value="90" />
+                    <Setter Property="MinHeight" Value="26" />
+                    <Setter Property="Padding" Value="5,2" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+            </WrapPanel.Resources>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Customer:" Style="{StaticResource PoolChipLabel}" />
+                    <TextBox Text="{Binding CustomerFilter, UpdateSourceTrigger=PropertyChanged}" MinWidth="90" BorderThickness="0" Background="Transparent"
+                             ToolTip="Customer name contains; press Search to apply." />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Case:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding ActiveFilters}" SelectedItem="{Binding ActiveFilter}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+            <ContentControl Content="{Binding PoolFilters}" Focusable="False">
+                <ContentControl.ContentTemplate>
+                    <DataTemplate>
+                        <WrapPanel>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Work Orders:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding WorkOrderOptions}" SelectedItem="{Binding WorkOrders}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Release:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding ReleaseOptions}" SelectedItem="{Binding Release}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Supply date:" Style="{StaticResource PoolChipLabel}" />
+                        <ComboBox ItemsSource="{Binding SupplyDateOptions}" SelectedItem="{Binding SupplyDate}" Style="{StaticResource PoolChipCombo}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0"
+                                Visibility="{Binding IsSupplyCustom, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <DatePicker SelectedDate="{Binding SupplyFrom}" Width="118" ToolTip="From" />
+                        <TextBlock Text="–" VerticalAlignment="Center" Margin="4,0" />
+                        <DatePicker SelectedDate="{Binding SupplyTo}" Width="118" ToolTip="To" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Production start:" Style="{StaticResource PoolChipLabel}" />
+                        <ComboBox ItemsSource="{Binding StartDateOptions}" SelectedItem="{Binding StartDate}" Style="{StaticResource PoolChipCombo}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0"
+                                Visibility="{Binding IsStartCustom, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <DatePicker SelectedDate="{Binding StartFrom}" Width="118" ToolTip="From" />
+                        <TextBlock Text="–" VerticalAlignment="Center" Margin="4,0" />
+                        <DatePicker SelectedDate="{Binding StartTo}" Width="118" ToolTip="To" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Orders:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding OrderOptions}" SelectedItem="{Binding Orders}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Operations:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding OperationOptions}" SelectedItem="{Binding Operations}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Material order:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding MaterialOrderOptions}" SelectedItem="{Binding MaterialOrders}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+                        </WrapPanel>
+                    </DataTemplate>
+                </ContentControl.ContentTemplate>
+            </ContentControl>
+            <Border Style="{StaticResource PoolChip}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Sort:" Style="{StaticResource PoolChipLabel}" />
+                    <ComboBox ItemsSource="{Binding CaseSortOptions}" SelectedItem="{Binding CaseSort}" Style="{StaticResource PoolChipCombo}" />
+                </StackPanel>
+            </Border>
+        </WrapPanel>
+        <TextBlock Grid.Row="2" Text="{Binding PoolFilterSummary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,10" />
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Apply" Command="{Binding SearchCommand}" ToolTip="Apply the Customer text and reload the pool." />
+            <Button Content="Clear all" Command="{Binding ClearFiltersCommand}" Margin="8,0,0,0" />
+            <Button Content="Close" Click="Close_Click" IsCancel="True" Margin="8,0,0,0" />
+        </StackPanel>
+    </Grid>
+</Window>

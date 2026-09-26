@@ -256,6 +256,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         private set => SetField(ref poolFilterSummary, value);
     }
 
+    private string poolFilterButtonText = "Filters";
+
+    /// <summary>"Filters" or "Filters (n)" with the number of set conditions.</summary>
+    public string PoolFilterButtonText
+    {
+        get => poolFilterButtonText;
+        private set => SetField(ref poolFilterButtonText, value);
+    }
+
     private async Task ReloadPoolForFiltersAsync()
     {
         if (suppressPoolReload || !hasLoaded || apiClient is null) return;
@@ -957,7 +966,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (!string.IsNullOrWhiteSpace(SearchText)) extra.Add($"Text ~ \"{SearchText.Trim()}\"");
             if (!string.IsNullOrWhiteSpace(CustomerFilter) && CustomerFilter != "All") extra.Add($"Customer ~ \"{CustomerFilter.Trim()}\"");
             if (ActiveFilter != "All") extra.Add($"Case = {ActiveFilter}");
-            PoolFilterSummary = $"{Cases.Count} Case{(Cases.Count == 1 ? string.Empty : "s")} · {PoolFilters.Describe(extra)}";
+            var condition = PoolFilters.Describe(extra);
+            PoolFilterSummary = $"{Cases.Count} Case{(Cases.Count == 1 ? string.Empty : "s")} · {condition}";
+            var setCount = condition == "No filters" ? 0 : condition.Split(" AND ").Length;
+            PoolFilterButtonText = setCount == 0 ? "Filters" : $"Filters ({setCount})";
             SelectedCase = Cases.FirstOrDefault(item => item.CaseId == selectedId) ?? Cases.FirstOrDefault();
         }
         catch (Exception exception) when (IsExpected(exception))
