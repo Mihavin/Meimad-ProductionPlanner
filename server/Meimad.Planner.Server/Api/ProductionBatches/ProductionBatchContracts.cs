@@ -64,7 +64,8 @@ internal sealed record ProductionBatchResponse(
     string ReleaseState = "pending",
     DateTimeOffset? ReleasedAt = null,
     string? ReleasedBy = null,
-    string? KitaronMaterialOrders = null)
+    string? KitaronMaterialOrders = null,
+    int MaterialOrderCandidates = 0)
 {
     internal static ProductionBatchResponse FromDomain(ProductionBatch batch) => new(
         batch.BatchId,
@@ -84,7 +85,8 @@ internal sealed record ProductionBatchResponse(
         batch.ReleaseState,
         batch.ReleasedAt,
         batch.ReleasedBy,
-        batch.KitaronMaterialOrders);
+        batch.KitaronMaterialOrders,
+        batch.MaterialOrderCandidates);
 }
 
 internal sealed record ProductionBatchListResponse(

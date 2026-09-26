@@ -260,12 +260,43 @@ public sealed class KitaronBatchSyncTests
                 batchId = (string)(await ScalarAsync(connection, "SELECT id FROM production_batches WHERE batch_number = '4010';"))!;
             }
 
-            // The imported batch shows its material order and starts pending.
+            // The imported batch starts pending; its raw-material purchase line is only a candidate.
+            await ExecuteAsync(database, """
+                INSERT INTO kitaron_material_orders (source_key, purchase_order_number, line_number, material_number,
+                    ordered_quantity, received_quantity, closed, active, source_hash, first_imported_at, last_imported_at, updated_at)
+                VALUES ('buy-1', '76423', '1', '58', 12, 0, 0, 1, 'h', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z');
+                """);
             using (var read = await client.GetAsync($"/api/v1/batches/{batchId}"))
             {
                 using var document = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
                 Assert.Equal("pending", document.RootElement.GetProperty("releaseState").GetString());
-                Assert.Equal("76423/1 due 2026-10-06", document.RootElement.GetProperty("kitaronMaterialOrders").GetString());
+                Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("kitaronMaterialOrders").ValueKind);
+                Assert.Equal(1, document.RootElement.GetProperty("materialOrderCandidates").GetInt32());
+            }
+            using (var candidates = await client.GetAsync($"/api/v1/batches/{batchId}/material-orders"))
+            {
+                using var document = JsonDocument.Parse(await candidates.Content.ReadAsStringAsync());
+                var candidate = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+                Assert.False(candidate.GetProperty("verified").GetBoolean());
+            }
+            // The planner verifies it by hand; only then it is the Work Order's material order.
+            using (var verified = await client.PutAsync($"/api/v1/batches/{batchId}/material-orders/buy-1", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
+                using var document = JsonDocument.Parse(await verified.Content.ReadAsStringAsync());
+                var line = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+                Assert.True(line.GetProperty("verified").GetBoolean());
+                Assert.Equal("planner", line.GetProperty("verifiedBy").GetString());
+            }
+            using (var read = await client.GetAsync($"/api/v1/batches/{batchId}"))
+            {
+                using var document = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+                Assert.Equal("76423/1", document.RootElement.GetProperty("kitaronMaterialOrders").GetString());
+            }
+            using (var removed = await client.DeleteAsync($"/api/v1/batches/{batchId}/material-orders/buy-1"))
+            {
+                using var document = JsonDocument.Parse(await removed.Content.ReadAsStringAsync());
+                Assert.False(Assert.Single(document.RootElement.GetProperty("items").EnumerateArray()).GetProperty("verified").GetBoolean());
             }
             using (var released = await client.PostAsync($"/api/v1/batches/{batchId}/release", null))
             {
@@ -296,6 +327,48 @@ public sealed class KitaronBatchSyncTests
             });
             Assert.Equal(HttpStatusCode.Conflict, created.StatusCode);
             Assert.Contains("kitaron_managed_read_only", await created.Content.ReadAsStringAsync());
+        });
+    }
+
+    [Fact]
+    public async Task A_production_note_stays_in_the_work_order_but_off_the_board_and_off_machines()
+    {
+        await RunAsync(async application =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var note = new KitaronSyncOperation(
+                KitaronRoutePlanner.OperationKey("PN-ROUTE", 50), "PN-ROUTE", 50, 1, "FOR CONTOUR SEE REPORT 16PR006",
+                "Production Note", 0, 0, "note-hash");
+            var batch = new KitaronSyncBatch(
+                "wo:4020", "PN-ROUTE", "4020", 5, [new KitaronSyncBatchAllocation("7001", 5)], "unknown", null, "hash-note");
+            await repository.ApplyAsync(Plan([Operation(), note], [batch]), Now, CancellationToken.None);
+            await ExecuteAsync(database, """
+                INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active)
+                VALUES ('machine-1', '10', 'Machine 10', 'Mill 3x', 'calendar-r', 'active', 1);
+                UPDATE edit_tokens SET holder_client_id = 'batch-editor', holder_user_id = 'planner', generation = 1,
+                    acquired_at = '2026-09-25T00:00:00Z', version = version + 1 WHERE id = 1;
+                """);
+            string noteOperationId;
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("30:Mill 3x|50:Production Note", await ScalarAsync(connection,
+                    "SELECT group_concat(operation_number || ':' || required_machine_type, '|') FROM (SELECT * FROM batch_operations ORDER BY operation_number);"));
+                noteOperationId = (string)(await ScalarAsync(connection, "SELECT id FROM batch_operations WHERE operation_number = 50;"))!;
+            }
+
+            var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "batch-editor");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            using (var board = await client.GetAsync("/api/v1/planning-board"))
+            {
+                var text = await board.Content.ReadAsStringAsync();
+                Assert.DoesNotContain(noteOperationId, text);
+            }
+            using var assign = await client.PutAsJsonAsync($"/api/v1/batch-operations/{noteOperationId}/assignment",
+                new { machineId = "machine-1", backlogPosition = 0 });
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, assign.StatusCode);
         });
     }
 

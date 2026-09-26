@@ -29,8 +29,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         release_state,
         released_at,
         released_by,
-        (SELECT material_orders_text FROM kitaron_batch_material_checks
-          WHERE production_batch_id = production_batches.id) AS kitaron_material_orders
+        (SELECT group_concat(m.purchase_order_number || '/' || m.line_number, ', ')
+           FROM work_order_material_orders v
+           JOIN kitaron_material_orders m ON m.source_key = v.material_order_source_key
+          WHERE v.production_batch_id = production_batches.id) AS kitaron_material_orders,
+        COALESCE((SELECT json_array_length(material_order_keys) FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id), 0) AS material_order_candidates
         """;
 
     private const string AllocationProjection = """
@@ -1008,7 +1012,8 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         ReleaseState = reader.GetString(12),
         ReleasedAt = GetNullableString(reader, 13) is string releasedAt ? ParseInstant(releasedAt) : null,
         ReleasedBy = GetNullableString(reader, 14),
-        KitaronMaterialOrders = GetNullableString(reader, 15)
+        KitaronMaterialOrders = GetNullableString(reader, 15),
+        MaterialOrderCandidates = reader.GetInt32(16)
     };
 
     /// <summary>
@@ -1029,7 +1034,7 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             // A Work Order without operations stays pending: nothing could be planned or produced.
             if (released && await ExistsAsync(
                     connection, transaction,
-                    "SELECT EXISTS(SELECT 1 FROM production_batches b WHERE b.id = $id AND NOT EXISTS (SELECT 1 FROM batch_operations o WHERE o.production_batch_id = b.id));",
+                    "SELECT EXISTS(SELECT 1 FROM production_batches b WHERE b.id = $id AND NOT EXISTS (SELECT 1 FROM batch_operations o WHERE o.production_batch_id = b.id AND lower(trim(COALESCE(o.required_machine_type, ''))) <> 'production note'));",
                     "$id", batchId, cancellationToken))
             {
                 throw new ProductionBatchReleaseException(

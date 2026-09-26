@@ -1312,6 +1312,27 @@ internal sealed class SqliteKitaronSyncRepository(
             foreach (var item in route.OrderBy(item => item.RoutePosition).ThenBy(item => item.OperationNumber))
             {
                 if (!operationIds.TryGetValue(item.SourceKey, out var id)) continue;
+                // A Production Note sits in the list but outside the sequence: it follows nothing
+                // and nothing follows it, so it never blocks planning.
+                if (Domain.CaseOperations.ProductionNote.Is(item.RequiredMachineType))
+                {
+                    if (targets.Contains(item.SourceKey))
+                    {
+                        await using var independent = connection.CreateCommand();
+                        independent.Transaction = transaction;
+                        independent.CommandText = """
+                            UPDATE case_operations
+                            SET dependency_type = 'independent', predecessor_case_operation_id = NULL,
+                                version = version + 1, updated_at = $now
+                            WHERE id = $id AND dependency_type IN ('independent', 'sequential')
+                              AND (dependency_type <> 'independent' OR predecessor_case_operation_id IS NOT NULL);
+                            """;
+                        Add(independent, "$now", now.ToString("O"));
+                        Add(independent, "$id", id);
+                        if (await independent.ExecuteNonQueryAsync(cancellationToken) == 1) counts.OperationDependenciesSet++;
+                    }
+                    continue;
+                }
                 if (targets.Contains(item.SourceKey)
                     && (previousId is null
                         || !await WouldCloseDependencyCycleAsync(connection, transaction, previousId, id, cancellationToken)))

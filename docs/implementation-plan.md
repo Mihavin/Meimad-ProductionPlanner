@@ -934,3 +934,11 @@ Work order 41508 (16W1120-13) was not imported: every machining step of its rout
 ### Network folder with a drive-root alias - 2026-09-26
 
 The owner's share is mapped as a whole drive (J: = \\192.168.0.240\data). A drive-root alias such as J:\ did not match J:\customers files\... because the comparison kept the trailing separator; aliases now compare without it, so the example stores `customers files\DPD\...`. Case browse dialogs open at the Case working folder or the network folder; G-code and tool-table selection stays unrestricted. Test: `NetworkFolderPathTests.A_drive_mapped_to_the_share_root_is_stored_relative`.
+
+### Notes to production skipped - 2026-09-26
+
+Investigation (read-only): ייצור (station 38) carries 2,075 machining steps in the route master and never records a specific machine; `TSubRootCardSub` is empty and `TChartsOperation` covers 18 of 3,625 ייצור steps with MACHINE = ייצור. Decision: skip route steps whose operation name is "הערה לייצור" (574 steps). Other note names exist and are still imported: הערה לביקורת (431), הערה לסימון (144), הערה (about 90), הערה להרכבה (46), NOTE / NOTE FOR CRITICALITY PART (23) and a few more. Test: `KitaronRoutePlannerTests.Notes_to_production_are_not_imported_as_operations`.
+
+### Production Note operations and manual material-order verification - 2026-09-26
+
+The owner chose to keep "הערה לייצור" steps as operations marked "Production Note" instead of skipping them, and to verify Work Order material orders by hand after the audit showed Kitaron has no purchase-to-work-order link. Implemented: `Domain.CaseOperations.ProductionNote`, route planner and route-sequence handling, exclusion from the Planning Board, Machine assignment, Timeline and the release count; schema v84 `work_order_material_orders`, `/api/v1/batches/{id}/material-orders` endpoints, client panel. Tests: `KitaronRoutePlannerTests.Notes_to_production_become_production_note_operations_outside_the_sequence`, `KitaronBatchSyncTests.A_production_note_stays_in_the_work_order_but_off_the_board_and_off_machines`, updated `KitaronBatchSyncTests` and `KitaronBatchPlanTests`.

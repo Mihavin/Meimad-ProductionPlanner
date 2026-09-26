@@ -27,7 +27,12 @@ internal static class KitaronMaterialOrderEndpoints
                        work.customer, work.quantity, work.supply_date,
                        EXISTS (SELECT 1 FROM kitaron_sync_links link
                                WHERE link.source_entity = 'production_batch'
-                                 AND link.source_key = 'wo:' || work.work_order_number)
+                                 AND link.source_key = 'wo:' || work.work_order_number),
+                       (SELECT group_concat(v.material_order_source_key, char(31))
+                          FROM kitaron_sync_links link
+                          JOIN work_order_material_orders v ON v.production_batch_id = link.target_id
+                         WHERE link.source_entity = 'production_batch'
+                           AND link.source_key = 'wo:' || work.work_order_number)
                 FROM kitaron_work_orders work
                 WHERE work.raw_material_id IS NOT NULL
                 ORDER BY work.supply_date IS NULL, work.supply_date, work.work_order_number;
@@ -41,7 +46,12 @@ internal static class KitaronMaterialOrderEndpoints
                     workReader.GetInt64(1).ToString(CultureInfo.InvariantCulture), workReader.GetString(2),
                     Text(workReader, 3), Text(workReader, 4),
                     workReader.IsDBNull(5) ? null : workReader.GetInt32(5), Date(workReader, 6),
-                    workReader.GetInt64(7) == 1));
+                    workReader.GetInt64(7) == 1)
+                {
+                    VerifiedMaterialOrderKeys = workReader.IsDBNull(8)
+                        ? []
+                        : workReader.GetString(8).Split('')
+                });
             }
         }
         await using var command = connection.CreateCommand();
@@ -75,7 +85,9 @@ internal static class KitaronMaterialOrderEndpoints
                 reader.IsDBNull(16) ? null : reader.GetDouble(16),
                 reader.IsDBNull(17) ? null : reader.GetDouble(17),
                 Text(reader, 18),
-                workOrders.GetValueOrDefault(reader.GetString(3)) ?? []));
+                (workOrders.GetValueOrDefault(reader.GetString(3)) ?? [])
+                    .Select(item => item with { Verified = item.VerifiedMaterialOrderKeys.Contains(reader.GetString(0)) })
+                    .ToArray()));
         }
         return Results.Ok(new KitaronMaterialOrderListResponse(items));
     }
@@ -138,4 +150,11 @@ internal sealed record KitaronMaterialWorkOrderResponse(
     string? Customer,
     int? Quantity,
     DateOnly? SupplyDate,
-    bool HasBatch);
+    bool HasBatch)
+{
+    /// <summary>True when a planner verified this purchase line for the Work Order.</summary>
+    public bool Verified { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal IReadOnlyList<string> VerifiedMaterialOrderKeys { get; init; } = [];
+}

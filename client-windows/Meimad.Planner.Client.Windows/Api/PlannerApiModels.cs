@@ -1443,8 +1443,14 @@ internal sealed record ProductionBatch(
     string ReleaseState = "pending",
     DateTimeOffset? ReleasedAt = null,
     string? ReleasedBy = null,
-    string? KitaronMaterialOrders = null)
+    string? KitaronMaterialOrders = null,
+    int MaterialOrderCandidates = 0)
 {
+    /// <summary>Verified material orders, or the number of candidates still to verify.</summary>
+    public string MaterialOrdersDisplay => !string.IsNullOrWhiteSpace(KitaronMaterialOrders)
+        ? "✓ " + KitaronMaterialOrders
+        : MaterialOrderCandidates > 0 ? $"? {MaterialOrderCandidates} to verify" : string.Empty;
+
     public bool IsReleased => ReleaseState == "released";
 
     /// <summary>Release state with a symbol, readable without color.</summary>
@@ -2048,6 +2054,35 @@ internal sealed record NetworkFolderUpdate(
     string KitaronCaseFolder,
     int ExpectedVersion);
 
+/// <summary>A Kitaron purchase line offered to, or verified for, a Work Order.</summary>
+internal sealed record WorkOrderMaterialOrder(
+    string SourceKey,
+    string PurchaseOrderNumber,
+    string LineNumber,
+    string MaterialNumber,
+    string? Description,
+    string? Supplier,
+    double OrderedQuantity,
+    double? ReceivedQuantity,
+    string? Unit,
+    DateOnly? RequestedDeliveryDate,
+    DateOnly? ApprovedDeliveryDate,
+    bool Closed,
+    bool Verified,
+    string? VerifiedBy,
+    DateTimeOffset? VerifiedAt)
+{
+    public string PurchaseOrderText => $"{PurchaseOrderNumber}/{LineNumber}";
+
+    public string VerifiedText => Verified ? $"✓ {VerifiedBy}" : "? candidate";
+
+    public string DueText => (ApprovedDeliveryDate ?? RequestedDeliveryDate)?.ToString("yyyy-MM-dd") ?? string.Empty;
+
+    public string QuantityText => $"{OrderedQuantity:0.###} ordered, {ReceivedQuantity ?? 0:0.###} received {Unit}".Trim();
+}
+
+internal sealed record WorkOrderMaterialOrderList(IReadOnlyList<WorkOrderMaterialOrder> Items);
+
 /// <summary>An open Kitaron work order that uses a purchased raw material.</summary>
 internal sealed record KitaronMaterialWorkOrder(
     string WorkOrderNumber,
@@ -2056,7 +2091,8 @@ internal sealed record KitaronMaterialWorkOrder(
     string? Customer,
     int? Quantity,
     DateOnly? SupplyDate,
-    bool HasBatch)
+    bool HasBatch,
+    bool Verified = false)
 {
     public string CustomerText => string.Join(" ",
         new[] { CustomerOrderNumber, Customer is null ? null : $"({Customer})" }.Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -2099,7 +2135,7 @@ internal sealed record KitaronMaterialOrder(
     public string LineTotalText => LineTotal is double value && value != 0 ? Money(value) : string.Empty;
 
     /// <summary>Open Kitaron work orders (Production Batches, same number) that use this material.</summary>
-    public string BatchesText => string.Join(", ", (WorkOrders ?? []).Select(item => item.WorkOrderNumber));
+    public string BatchesText => string.Join(", ", (WorkOrders ?? []).Select(item => item.Verified ? "✓" + item.WorkOrderNumber : item.WorkOrderNumber));
 
     /// <summary>The customer order the purchase names, else the customer orders of those work orders.</summary>
     public string CustomerOrdersText

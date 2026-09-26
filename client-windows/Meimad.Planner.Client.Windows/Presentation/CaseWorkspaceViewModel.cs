@@ -208,7 +208,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public ObservableCollection<CaseOperation> OperationReferenceOptions { get; } = [];
 
-    public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty];
+    public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty, ProductionNoteMachineType];
+
+    /// <summary>Machine Type of an operation that is only a note in the production chain.</summary>
+    internal const string ProductionNoteMachineType = "Production Note";
 
     public ObservableCollection<PlannerOrder> Orders { get; } = [];
 
@@ -280,6 +283,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand BeginCreateBatchCommand { get; }
 
     public AsyncCommand ReleaseBatchCommand { get; }
+
+    /// <summary>Candidate and verified Kitaron material orders of the selected Work Order.</summary>
+    public WorkOrderMaterialOrdersViewModel WorkOrderMaterialOrders { get; } = new();
 
     public AsyncCommand UnreleaseBatchCommand { get; }
 
@@ -541,6 +547,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanBeginEditBatch));
                 OnPropertyChanged(nameof(CanCancelBatchProduction));
                 OnPropertyChanged(nameof(CanDeleteSelectedBatch));
+                _ = WorkOrderMaterialOrders.LoadAsync(value);
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
                 ReleaseBatchCommand.RaiseCanExecuteChanged();
                 UnreleaseBatchCommand.RaiseCanExecuteChanged();
@@ -831,6 +838,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var nextIsEditor = editStatus?.State == ClientEditState.Editor;
         var nextGeneration = editStatus?.Generation ?? 0;
         Requirements.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        WorkOrderMaterialOrders.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (newApiClient is not null && (apiChanged || networkRootPath is null)) _ = LoadNetworkRootAsync(newApiClient);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
@@ -848,6 +856,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ClearDetails();
             OperationMachineTypeOptions.Clear();
             OperationMachineTypeOptions.Add(string.Empty);
+            OperationMachineTypeOptions.Add(ProductionNoteMachineType);
         }
 
         clientId = newClientId;
@@ -2688,6 +2697,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             .Concat(machineTypes.SelectMany(machineType =>
                 new[] { machineType.Name }.Concat(machineType.Capabilities)))
             .Concat(Operations.Select(operation => operation.RequiredMachineType))
+            // A note-only operation in the production chain: no Machine, no time.
+            .Append(ProductionNoteMachineType)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)

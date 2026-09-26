@@ -2607,3 +2607,7 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
 ### Network folder (schema v83)
 
 `GET /api/v1/network-folder` returns `{ rootPath, aliases, kitaronCaseFolder, version, updatedAt }` to every client. `PUT /api/v1/network-folder` (Edit Mode headers, body `{ rootPath, aliases, kitaronCaseFolder, expectedVersion }`) saves it, converts the stored Case links, and returns the settings with `convertedLinks`. Case, model file, job package and TV responses carry resolved network paths.
+
+### Work Order material orders (schema v84)
+
+`GET /api/v1/batches/{batchId}/material-orders` returns `{ items: [ { sourceKey, purchaseOrderNumber, lineNumber, materialNumber, description, supplier, orderedQuantity, receivedQuantity, unit, requestedDeliveryDate, approvedDeliveryDate, closed, verified, verifiedBy, verifiedAt } ] }`: the candidate purchase lines of the Work Order's raw material plus every verified line. `PUT .../material-orders/{sourceKey}` verifies a line and `DELETE` removes the verification (Edit Mode headers); both return the list. Batch responses carry `kitaronMaterialOrders` (verified lines only) and `materialOrderCandidates`; Material Orders page work orders carry `verified`.

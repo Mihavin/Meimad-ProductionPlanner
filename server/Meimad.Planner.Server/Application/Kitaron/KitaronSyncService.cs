@@ -483,11 +483,13 @@ internal sealed class KitaronSyncService
                 : string.Join(", ", assignedMaterialOrders.Take(5).Select(item =>
                     $"{item.PurchaseOrderNumber}/{item.LineNumber}"
                     + ((item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate) is DateOnly due ? $" due {due:yyyy-MM-dd}" : "")));
+            // Kitaron records no purchase-to-work-order link, so these purchase lines are only
+            // candidates for a planner to verify on the Work Order; they do not set the state.
             if (materialState == "unknown" && workOrder.RawMaterialId is not null)
             {
-                (materialState, materialDetail) = assignedMaterialOrders.Length > 0
-                    ? ("on_order", $"Raw material {workOrder.RawMaterialId} on purchase order {materialOrdersText}.")
-                    : ("unknown", $"No open purchase order for raw material {workOrder.RawMaterialId}; Kitaron has no stock calculation for this work order.");
+                materialDetail = assignedMaterialOrders.Length > 0
+                    ? $"{assignedMaterialOrders.Length} open purchase line(s) for raw material {workOrder.RawMaterialId} ({materialOrdersText}); verify the right ones on the Work Order."
+                    : $"No open purchase order for raw material {workOrder.RawMaterialId}; Kitaron has no stock calculation for this work order.";
             }
             var sourceKey = $"wo:{workOrder.Number.ToString(CultureInfo.InvariantCulture)}";
             var batchNumber = workOrder.Number.ToString(CultureInfo.InvariantCulture);

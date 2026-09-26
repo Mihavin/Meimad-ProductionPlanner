@@ -415,6 +415,8 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
               ON relevant_move_pauses.batch_operation_id = batch_operations.id
             LEFT JOIN working_calendars AS external_delay_calendars
               ON external_delay_calendars.id = batch_operations.external_delay_calendar_id
+            -- Production Notes are notes in the chain: nothing to schedule.
+            WHERE lower(trim(COALESCE(batch_operations.required_machine_type, ''))) <> 'production note'
             ORDER BY production_batches.id, batch_operations.route_position;
             """;
         var values = new List<TimelineSourceOperation>();

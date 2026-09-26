@@ -190,7 +190,9 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
               ON operation_pause_events.batch_operation_id = batch_operations.id
              AND operation_pause_events.status = 'active'
             WHERE batch_operations.status NOT IN ('completed','cancelled')
-              AND production_batches.status <> 'cancelled';
+              AND production_batches.status <> 'cancelled'
+              -- Production Notes are notes in the chain, not Machine work.
+              AND lower(trim(COALESCE(batch_operations.required_machine_type, ''))) <> 'production note';
             """;
         var operations = new List<PlanningBoardOperation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

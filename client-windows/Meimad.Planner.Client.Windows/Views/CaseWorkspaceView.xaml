@@ -895,13 +895,38 @@
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
-                                    <DataGridTextColumn Header="Material order" Binding="{Binding KitaronMaterialOrders}" Width="200" />
+                                    <DataGridTextColumn Header="Material order" Binding="{Binding MaterialOrdersDisplay}" Width="200" />
                                     <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <Border Grid.Row="3" Padding="12" Margin="0,10,0,0" Background="#F6F8FA"
                                     BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
                                 <StackPanel>
+                                    <StackPanel DataContext="{Binding WorkOrderMaterialOrders}" Margin="0,0,0,12">
+                                        <DockPanel>
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                <Button Content="Verify" Command="{Binding VerifyCommand}"
+                                                        ToolTip="Confirm that the selected Kitaron purchase line serves this Work Order." />
+                                                <Button Content="Remove verification" Command="{Binding UnverifyCommand}" Margin="8,0,0,0" />
+                                            </StackPanel>
+                                            <StackPanel>
+                                                <TextBlock Text="Kitaron material orders" FontWeight="Bold"/>
+                                                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                                                  IsReadOnly="True" CanUserAddRows="False" MaxHeight="220" Margin="0,6,0,0">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Verified" Binding="{Binding VerifiedText}" Width="120" />
+                                                <DataGridTextColumn Header="Purchase order" Binding="{Binding PurchaseOrderText}" Width="110" />
+                                                <DataGridTextColumn Header="Material" Binding="{Binding MaterialNumber}" Width="80" />
+                                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" />
+                                                <DataGridTextColumn Header="Supplier" Binding="{Binding Supplier}" Width="150" />
+                                                <DataGridTextColumn Header="Quantity" Binding="{Binding QuantityText}" Width="190" />
+                                                <DataGridTextColumn Header="Due" Binding="{Binding DueText}" Width="95" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </StackPanel>
                                     <DockPanel>
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                             <Button Content="Refresh material" Command="{Binding RefreshBatchMaterialCommand}"/>

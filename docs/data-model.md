@@ -692,3 +692,5 @@ Key target constraints are: one or more programs per run; one or more outputs pe
 - `production_batches`: `release_state` (`pending`/`released`, default `pending`), `released_at`, `released_by`.
 
 - Schema v83 also adds `network_folder_settings(id = 1, root_path, aliases_json, kitaron_case_folder, version, updated_at)`. `cases.working_folder_path`, `cases.preview_reference` and `case_model_files.file_path` hold a path relative to `root_path` when it lies under the root or an alias (`.` is the root itself); readers resolve it to `root_path\<relative>`.
+
+- Schema v84 adds `work_order_material_orders(production_batch_id -> production_batches ON DELETE CASCADE, material_order_source_key -> kitaron_material_orders ON DELETE CASCADE, verified_by, verified_at, PRIMARY KEY both)`: the purchase lines a planner verified for a Work Order. `kitaron_batch_material_checks.material_order_keys` keeps only the candidates.

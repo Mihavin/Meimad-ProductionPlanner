@@ -54,7 +54,7 @@ public sealed class KitaronBatchPlanTests
     }
 
     [Fact]
-    public void A_batch_is_assigned_the_open_purchase_lines_of_its_raw_material()
+    public void A_batch_is_offered_the_open_purchase_lines_of_its_raw_material_as_candidates()
     {
         var open = new KitaronSyncMaterialOrder("buy-2", "76500", "1", "58", null, null, 10, 0, null,
             new DateOnly(2026, 11, 1), null, null, null, null, false, "h");
@@ -71,7 +71,9 @@ public sealed class KitaronBatchPlanTests
 
         Assert.Equal(["buy-1", "buy-2"], batches[0].MaterialOrderKeys);
         Assert.Equal("76423/1 due 2026-10-06, 76500/1 due 2026-11-01", batches[0].MaterialOrdersText);
-        Assert.Equal("on_order", batches[0].MaterialState);
+        // Candidates only: Kitaron records no purchase-to-work-order link, so they need manual verification.
+        Assert.Equal("unknown", batches[0].MaterialState);
+        Assert.Contains("verify the right ones on the Work Order", batches[0].MaterialDetail);
         Assert.Empty(batches[1].MaterialOrderKeys);
         Assert.Equal("unknown", batches[1].MaterialState);
         Assert.Contains("No open purchase order for raw material 99", batches[1].MaterialDetail);

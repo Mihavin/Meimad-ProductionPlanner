@@ -239,6 +239,14 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<KitaronMaterialOrder>>([]);
 
+    Task<IReadOnlyList<WorkOrderMaterialOrder>> ListWorkOrderMaterialOrdersAsync(
+        string batchId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<WorkOrderMaterialOrder>>([]);
+
+    Task<IReadOnlyList<WorkOrderMaterialOrder>> SetWorkOrderMaterialOrderVerifiedAsync(
+        string batchId, string sourceKey, bool verified, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<NetworkFolderSettings> GetNetworkFolderAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new NetworkFolderSettings(null, [], "Meimad Cases", 1, DateTimeOffset.UnixEpoch));
 
@@ -1729,6 +1737,24 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public async Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
+
+    public async Task<IReadOnlyList<WorkOrderMaterialOrder>> ListWorkOrderMaterialOrdersAsync(
+        string batchId, CancellationToken cancellationToken = default) =>
+        await ReadListAsync<WorkOrderMaterialOrder>(
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/material-orders", cancellationToken);
+
+    public async Task<IReadOnlyList<WorkOrderMaterialOrder>> SetWorkOrderMaterialOrderVerifiedAsync(
+        string batchId, string sourceKey, bool verified, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            verified ? HttpMethod.Put : HttpMethod.Delete,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/material-orders/{Uri.EscapeDataString(sourceKey)}",
+            clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return (await ReadSuccessAsync<WorkOrderMaterialOrderList>(response, cancellationToken)).Items;
+    }
 
     public async Task<NetworkFolderSettings> GetNetworkFolderAsync(CancellationToken cancellationToken = default)
     {

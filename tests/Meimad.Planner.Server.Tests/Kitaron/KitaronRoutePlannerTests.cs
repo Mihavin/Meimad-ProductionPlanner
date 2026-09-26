@@ -274,6 +274,39 @@ public sealed class KitaronRoutePlannerTests
         Assert.Equal(KitaronStationRoles.Ignore, KitaronStationService.SuggestRole(0, 0, 0));
     }
 
+    [Fact]
+    public void Notes_to_production_become_production_note_operations_outside_the_sequence()
+    {
+        const int Production = 38;
+        var stations = Stations(
+            Station(Production, "ייצור", "MACHINE"),
+            Station(SetupInspection, "ביקורת", "WORKSTATION", workstationTypeId: "type-inspection"));
+        // Shape of 16W1120-13: two milling stages at the general production station, with
+        // "הערה לייצור" note steps between them.
+        var steps = new[]
+        {
+            Step("P", 1, "30", Production, "MACHINE FINISH STAGE 1") with { OperationName = "ייצור" },
+            Step("P", 2, "50", Production, "FOR CONTOUR SEE REPORT 16PR006") with { OperationName = "הערה לייצור" },
+            Step("P", 3, "60", Production, "FOR LINE DATA SEE 16W5101") with { OperationName = "הערה לייצור " },
+            Step("P", 4, "80", SetupInspection, "SET UP") with { OperationName = "ביקורת" },
+            Step("P", 5, "90", Production, "MACHINE FINISH STAGE 2") with { OperationName = "ייצור" }
+        };
+
+        var plan = KitaronRoutePlanner.Plan(steps, stations, Parts("P"), Parts(), new List<string>());
+
+        // The notes stay in the list, in route order, as Production Notes without time.
+        Assert.Equal([30, 50, 60, 90], plan.Operations.OrderBy(item => item.RoutePosition).Select(item => item.OperationNumber));
+        var notes = plan.Operations.Where(item => item.RequiredMachineType == "Production Note").ToArray();
+        Assert.Equal([50, 60], notes.Select(item => item.OperationNumber));
+        Assert.All(notes, note => { Assert.Null(note.PredecessorSourceKey); Assert.Equal(0, note.SetupSeconds); Assert.Equal(0, note.CycleSeconds); });
+        // The machining sequence skips them: stage 2 follows stage 1.
+        var stage2 = Assert.Single(plan.Operations, item => item.OperationNumber == 90);
+        Assert.Equal(KitaronRoutePlanner.OperationKey("P", 30), stage2.PredecessorSourceKey);
+        // The inspection after the notes still belongs to stage 1, not to a note.
+        var inspection = Assert.Single(plan.Requirements);
+        Assert.Equal(KitaronRoutePlanner.OperationKey("P", 30), inspection.OperationSourceKey);
+    }
+
     private static KitaronSourceRouteStep Step(
         string part, int order, string actionNumber, int stationId, string description,
         double? production = null, double? setup = null, int headerId = 1, string? partRevision = null,

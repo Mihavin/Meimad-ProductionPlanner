@@ -17,6 +17,20 @@ internal static class KitaronRoutePlanner
 {
     internal const string RequirementKeyMarker = "step";
 
+    /// <summary>The Machine Type of a note-only operation; see Domain.CaseOperations.ProductionNote.</summary>
+    internal const string ProductionNoteMachineType = Domain.CaseOperations.ProductionNote.MachineType;
+
+    /// <summary>
+    /// Kitaron operation names that mark a route step as a note to production, not work
+    /// ("FOR CONTOUR SEE REPORT ...", gauge reminders). At a machining station such a step becomes a
+    /// Production Note operation (2026-09-26 decision).
+    /// </summary>
+    internal static readonly IReadOnlySet<string> NoteOperationNames =
+        new HashSet<string>(["הערה לייצור"], StringComparer.OrdinalIgnoreCase);
+
+    internal static bool IsNoteStep(KitaronSourceRouteStep step) =>
+        step.OperationName is { } name && NoteOperationNames.Contains(name.Trim());
+
     internal sealed record Result(
         IReadOnlyList<KitaronSyncOperation> Operations,
         IReadOnlyList<KitaronSyncRequirement> Requirements,
@@ -76,7 +90,7 @@ internal static class KitaronRoutePlanner
                 }
             }
 
-            if (!classified.Any(item => item.Station.ImportRole == KitaronStationRoles.Machine))
+            if (!classified.Any(item => item.Station.ImportRole == KitaronStationRoles.Machine && !IsNoteStep(item.Step)))
             {
                 if (classified.Count > 0)
                 {
@@ -87,7 +101,9 @@ internal static class KitaronRoutePlanner
                 continue;
             }
 
-            // The machining steps form one sequence: each operation follows the one before it.
+            // The machining steps form one sequence: each operation follows the one before it. A note
+            // to production ("הערה לייצור") at a machining station stays in the list as a Production
+            // Note operation, outside the sequence, with no Machine Type and no time.
             var machiningIndex = 0;
             string? previousOperationKey = null;
             foreach (var item in classified.Where(item => item.Station.ImportRole == KitaronStationRoles.Machine))
@@ -96,6 +112,14 @@ internal static class KitaronRoutePlanner
                 var number = ActionNumber(step)!.Value;
                 var name = StepName(step, number);
                 var key = OperationKey(part, number);
+                if (IsNoteStep(step))
+                {
+                    operations.Add(new KitaronSyncOperation(
+                        key, part, number, machiningIndex, name, ProductionNoteMachineType, 0, 0,
+                        Hash(key, machiningIndex, name, ProductionNoteMachineType, "note"), null));
+                    machiningIndex++;
+                    continue;
+                }
                 var setup = Seconds(step.DirectionTimeMinutes);
                 var cycle = Seconds(step.TimeProductionMinutes);
                 operations.Add(new KitaronSyncOperation(
@@ -115,6 +139,8 @@ internal static class KitaronRoutePlanner
             var sequence = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var item in classified)
             {
+                if (item.Station.ImportRole == KitaronStationRoles.Machine && IsNoteStep(item.Step))
+                    continue;
                 if (item.Station.ImportRole == KitaronStationRoles.Machine)
                 {
                     var operationKey = OperationKey(part, ActionNumber(item.Step)!.Value);

@@ -436,6 +436,7 @@ public static class ServerApplication
         application.MapKitaronStationEndpoints();
         application.MapKitaronMaterialOrderEndpoints();
         application.MapNetworkFolderEndpoints();
+        application.MapWorkOrderMaterialOrderEndpoints();
         application.MapClientPortalCustomerEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();

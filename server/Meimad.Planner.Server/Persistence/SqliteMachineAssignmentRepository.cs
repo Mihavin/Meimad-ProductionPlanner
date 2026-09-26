@@ -44,6 +44,11 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             machineId,
             cancellationToken)
             ?? throw new AssignmentMachineNotFoundException(machineId);
+        // A Production Note is only a note in the production chain; it never goes on a Machine.
+        if (Domain.CaseOperations.ProductionNote.Is(requiredMachineType))
+        {
+            throw new IncompatibleMachineException(batchOperationId, machineId);
+        }
         var requiresOverride = targetMachine.IsActive
             && !string.IsNullOrWhiteSpace(requiredMachineType)
             && !string.Equals(

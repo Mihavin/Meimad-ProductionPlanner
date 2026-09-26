@@ -29,8 +29,11 @@ internal sealed record ProductionBatch(
 
     internal string? ReleasedBy { get; init; }
 
-    /// <summary>The open Kitaron purchase lines assigned to the batch, e.g. "76423/1 due 2026-10-06".</summary>
+    /// <summary>The Kitaron purchase lines a planner verified for this Work Order, e.g. "76423/1, 76500/2".</summary>
     internal string? KitaronMaterialOrders { get; init; }
+
+    /// <summary>Open purchase lines of the Work Order's raw material, offered for manual verification.</summary>
+    internal int MaterialOrderCandidates { get; init; }
 }
 
 internal sealed record BatchAllocation(
