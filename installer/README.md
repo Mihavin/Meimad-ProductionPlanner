@@ -1,6 +1,6 @@
 # Windows installers
 
-Current package version: `0.1.138`. `build-installers.ps1` increases it by one on every run (in both csproj files and both `Package.wxs`), so every distributed rebuild is a real Windows Installer major upgrade instead of merely reconfiguring an older payload; keep `test-install-server-upgrade.ps1` and this line at the version that was actually shipped.
+Current package version: `0.1.139`. `build-installers.ps1` increases it by one on every run (in both csproj files and both `Package.wxs`), so every distributed rebuild is a real Windows Installer major upgrade instead of merely reconfiguring an older payload; keep `test-install-server-upgrade.ps1` and this line at the version that was actually shipped.
 
 The repository builds two independent 64-bit Windows Installer packages:
 
