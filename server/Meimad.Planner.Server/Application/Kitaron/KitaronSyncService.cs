@@ -409,9 +409,18 @@ internal sealed class KitaronSyncService
         IReadOnlySet<string> partNumbers,
         IReadOnlyList<KitaronSyncMaterialOrder> materialOrders,
         ICollection<string> warnings,
-        IReadOnlyList<KitaronSyncOrder>? orders = null)
+        IReadOnlyList<KitaronSyncOrder>? orders = null,
+        DateOnly? today = null)
     {
         if (workOrders is null || workOrders.Count == 0) return [];
+        // Candidate material orders: every open purchase line of the raw material plus the lines
+        // due or delivered within the last CandidateWindowDays - material bought for a work order
+        // is often already received when the work order is planned.
+        var candidateFrom = (today ?? DateOnly.FromDateTime(DateTime.Today)).AddDays(-CandidateWindowDays);
+        var candidatesByMaterial = materialOrders
+            .Where(item => (!item.Closed && item.OrderedQuantity > (item.ReceivedQuantity ?? 0))
+                || (item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate) >= candidateFrom)
+            .ToLookup(item => item.MaterialNumber, StringComparer.OrdinalIgnoreCase);
         _ = links; // Kept in the snapshot for diagnostics; see the allocation note below.
         var activeOrders = (orders ?? [])
             .Where(item => item.Status == "active" && item.Quantity > 0)
@@ -473,10 +482,15 @@ internal sealed class KitaronSyncService
             // material calculation, an open purchase line makes the material "on order".
             var assignedMaterialOrders = workOrder.RawMaterialId is null
                 ? []
-                : purchasesByMaterial[workOrder.RawMaterialId]
-                    .Where(item => item.OrderedQuantity > (item.ReceivedQuantity ?? 0))
-                    .OrderBy(item => item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate ?? DateOnly.MaxValue)
+                : candidatesByMaterial[workOrder.RawMaterialId]
+                    // Still-open lines first by due date, then received lines newest first.
+                    .OrderBy(item => item.Closed || item.OrderedQuantity <= (item.ReceivedQuantity ?? 0) ? 1 : 0)
+                    .ThenBy(item => item.Closed || item.OrderedQuantity <= (item.ReceivedQuantity ?? 0)
+                        ? -(item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate ?? DateOnly.MinValue).DayNumber
+                        : (item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate ?? DateOnly.MaxValue).DayNumber)
                     .ThenBy(item => item.PurchaseOrderNumber, StringComparer.Ordinal)
+                    .ThenBy(item => item.LineNumber, StringComparer.Ordinal)
+                    .Take(MaximumCandidates)
                     .ToArray();
             var materialOrdersText = assignedMaterialOrders.Length == 0
                 ? null
@@ -489,7 +503,7 @@ internal sealed class KitaronSyncService
             {
                 materialDetail = assignedMaterialOrders.Length > 0
                     ? $"{assignedMaterialOrders.Length} open purchase line(s) for raw material {workOrder.RawMaterialId} ({materialOrdersText}); verify the right ones on the Work Order."
-                    : $"No open purchase order for raw material {workOrder.RawMaterialId}; Kitaron has no stock calculation for this work order.";
+                    : $"No purchase line for raw material {workOrder.RawMaterialId} is open or was due in the last {CandidateWindowDays} days; Kitaron has no stock calculation for this work order.";
             }
             var sourceKey = $"wo:{workOrder.Number.ToString(CultureInfo.InvariantCulture)}";
             var batchNumber = workOrder.Number.ToString(CultureInfo.InvariantCulture);
@@ -505,6 +519,11 @@ internal sealed class KitaronSyncService
         }
         return result;
     }
+
+    /// <summary>Received purchase lines stay candidates this many days after their due date.</summary>
+    internal const int CandidateWindowDays = 180;
+
+    private const int MaximumCandidates = 20;
 
     private static (string State, string? Detail) MaterialCheck(
         IReadOnlyList<KitaronSourceWorkOrderMaterial> lines,

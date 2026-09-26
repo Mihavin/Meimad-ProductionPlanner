@@ -54,29 +54,33 @@ public sealed class KitaronBatchPlanTests
     }
 
     [Fact]
-    public void A_batch_is_offered_the_open_purchase_lines_of_its_raw_material_as_candidates()
+    public void A_batch_is_offered_open_and_recently_received_purchase_lines_of_its_raw_material()
     {
         var open = new KitaronSyncMaterialOrder("buy-2", "76500", "1", "58", null, null, 10, 0, null,
             new DateOnly(2026, 11, 1), null, null, null, null, false, "h");
         var earlier = new KitaronSyncMaterialOrder("buy-1", "76423", "1", "58", null, null, 10, 2, null,
             new DateOnly(2026, 10, 6), null, null, null, null, false, "h");
-        var received = new KitaronSyncMaterialOrder("buy-0", "70000", "1", "58", null, null, 10, 10, null,
-            new DateOnly(2026, 1, 1), null, null, null, null, false, "h");
+        // Like purchase order 76504 for work order 41508: received in full and closed a few weeks ago.
+        var receivedRecently = new KitaronSyncMaterialOrder("buy-9", "76504", "1", "58", null, null, 10, 10, null,
+            new DateOnly(2026, 9, 1), null, null, null, null, true, "h");
+        var receivedLongAgo = new KitaronSyncMaterialOrder("buy-0", "70000", "1", "58", null, null, 10, 10, null,
+            new DateOnly(2026, 1, 1), null, null, null, null, true, "h");
         var batches = KitaronSyncService.BuildBatches(
             [
                 new KitaronSourceWorkOrder(1, "PN-1", "10", 5, 5, null, null, RawMaterialId: "58"),
                 new KitaronSourceWorkOrder(2, "PN-1", "10", 5, 5, null, null, RawMaterialId: "99")
             ],
-            [], [], Parts, [open, earlier, received], new List<string>());
+            [], [], Parts, [open, earlier, receivedRecently, receivedLongAgo], new List<string>(),
+            today: new DateOnly(2026, 9, 26));
 
-        Assert.Equal(["buy-1", "buy-2"], batches[0].MaterialOrderKeys);
-        Assert.Equal("76423/1 due 2026-10-06, 76500/1 due 2026-11-01", batches[0].MaterialOrdersText);
+        // Open lines first by due date, then the recently received one; the old one is left out.
+        Assert.Equal(["buy-1", "buy-2", "buy-9"], batches[0].MaterialOrderKeys);
         // Candidates only: Kitaron records no purchase-to-work-order link, so they need manual verification.
         Assert.Equal("unknown", batches[0].MaterialState);
         Assert.Contains("verify the right ones on the Work Order", batches[0].MaterialDetail);
         Assert.Empty(batches[1].MaterialOrderKeys);
         Assert.Equal("unknown", batches[1].MaterialState);
-        Assert.Contains("No open purchase order for raw material 99", batches[1].MaterialDetail);
+        Assert.Contains("No purchase line for raw material 99", batches[1].MaterialDetail);
     }
 
     private static KitaronSyncOrder Order(string recordId, int quantity, DateOnly due, string status = "active") =>
