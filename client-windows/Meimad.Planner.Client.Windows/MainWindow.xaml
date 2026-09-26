@@ -211,6 +211,9 @@
             <TabItem Header="QC Queue" ToolTip="Inspect Production Runs sent to Quality Control">
                 <views:QcQueueView DataContext="{Binding QcQueue}" Margin="5" />
             </TabItem>
+            <TabItem Header="Material Orders" ToolTip="Kitaron material purchase-order lines with their reported delivery status">
+                <views:MaterialOrdersView DataContext="{Binding MaterialOrders}" Margin="5" />
+            </TabItem>
         </TabControl>
 
         <Border Grid.Row="3" Background="#E7EBEF" Padding="14,5">

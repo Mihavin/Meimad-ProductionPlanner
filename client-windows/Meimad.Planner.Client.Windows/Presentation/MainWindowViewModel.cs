@@ -40,6 +40,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             () => !IsBusy && apiClient is not null);
         UserTerminals = new UserTerminalsViewModel();
         QcQueue = new QcQueueViewModel();
+        MaterialOrders = new MaterialOrdersViewModel();
         NcCreatorQueue = new PreparationQueueViewModel(
             "PROGRAMMING_PENDING", "NC Creator — Programming Pending",
             "Assigned operations that do not yet have one current Machine-compatible NC release selection.");
@@ -124,6 +125,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public UserTerminalsViewModel UserTerminals { get; }
 
     public QcQueueViewModel QcQueue { get; }
+
+    public MaterialOrdersViewModel MaterialOrders { get; }
 
     public PreparationQueueViewModel NcCreatorQueue { get; }
 
@@ -459,6 +462,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals.AttachSession(apiClient, ClientId, status);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, status);
+        MaterialOrders.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
     }
 
@@ -481,6 +485,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
+        MaterialOrders.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }
@@ -501,6 +506,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
+        MaterialOrders.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }

@@ -228,6 +228,10 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<QcQueueItem>>([]);
 
+    Task<IReadOnlyList<KitaronMaterialOrder>> ListKitaronMaterialOrdersAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<KitaronMaterialOrder>>([]);
+
     Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
         string stage,
         CancellationToken cancellationToken = default) =>
@@ -1693,6 +1697,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public async Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
+
+    public async Task<IReadOnlyList<KitaronMaterialOrder>> ListKitaronMaterialOrdersAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<KitaronMaterialOrder>("api/v1/kitaron/material-orders", cancellationToken);
 
     public async Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
         string stage,

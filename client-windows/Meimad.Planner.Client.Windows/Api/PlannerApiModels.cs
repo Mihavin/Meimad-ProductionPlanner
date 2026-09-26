@@ -2022,6 +2022,54 @@ internal sealed record QcQueueItem(
 
 internal sealed record QcDecisionRequest(string Decision, string? Reason);
 
+/// <summary>One Kitaron material purchase-order line as the synchronization imported it.</summary>
+internal sealed record KitaronMaterialOrder(
+    string SourceKey,
+    string PurchaseOrderNumber,
+    string LineNumber,
+    string MaterialNumber,
+    string? Description,
+    string? Supplier,
+    double OrderedQuantity,
+    double? ReceivedQuantity,
+    string? Unit,
+    DateOnly? RequestedDeliveryDate,
+    DateOnly? ApprovedDeliveryDate,
+    double? ApprovedQuantity,
+    string? ApprovalNote,
+    string? KitaronStatus,
+    bool Closed,
+    string DeliveryStatus,
+    DateTimeOffset LastImportedAt)
+{
+    public string PurchaseOrderText => $"{PurchaseOrderNumber}/{LineNumber}";
+
+    public string OrderedText => Quantity(OrderedQuantity);
+
+    public string ReceivedText => ReceivedQuantity is double value ? Quantity(value) : string.Empty;
+
+    public string RequestedText => RequestedDeliveryDate?.ToString("yyyy-MM-dd") ?? string.Empty;
+
+    public string ApprovedText => ApprovedDeliveryDate?.ToString("yyyy-MM-dd") ?? string.Empty;
+
+    /// <summary>Status text with a leading symbol, so the state is readable without color.</summary>
+    public string DeliveryStatusText => DeliveryStatus switch
+    {
+        "received" => "✓ Received",
+        "closed" => "■ Closed",
+        "partially_received" => "◐ Partially received",
+        "late" => "⚠ Late",
+        "supplier_confirmed" => "● Supplier confirmed",
+        "open" => "○ Open",
+        _ => DeliveryStatus
+    };
+
+    public bool IsOpen => DeliveryStatus is not ("received" or "closed");
+
+    private static string Quantity(double value) =>
+        value.ToString("0.###", System.Globalization.CultureInfo.CurrentCulture);
+}
+
 internal sealed record QcDecisionResult(
     string EventId,
     string ProductionRunId,

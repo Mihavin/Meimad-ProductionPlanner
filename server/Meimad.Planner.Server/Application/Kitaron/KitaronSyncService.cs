@@ -372,7 +372,7 @@ internal sealed class KitaronSyncService
         var batches = BuildBatches(
             snapshot.WorkOrders, snapshot.WorkOrderLinks, snapshot.WorkOrderMaterials,
             cases.Select(item => item.PartNumber).ToHashSet(StringComparer.OrdinalIgnoreCase),
-            materialOrders, warnings);
+            materialOrders, warnings, orders);
 
         return new KitaronSyncPlan(
             snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count
@@ -385,8 +385,9 @@ internal sealed class KitaronSyncService
     }
 
     /// <summary>
-    /// Builds the Production Batches from the open Kitaron work orders. Order-line allocations
-    /// follow `TOrderLinkRoot`; a launched surplus above the net ordered quantity is the cutting
+    /// Builds the Production Batches from the open Kitaron work orders, oldest work order first.
+    /// The net quantity fills the part's open Orders by earliest due date, each up to its open
+    /// demand; the rest is stock, and the launched surplus above the net quantity is the cutting
     /// reserve and becomes the batch's scrap allowance. The material state mirrors Kitaron's own
     /// per-work-order material rows; Kitaron stays authoritative for stock.
     /// </summary>
@@ -396,10 +397,21 @@ internal sealed class KitaronSyncService
         IReadOnlyList<KitaronSourceWorkOrderMaterial>? materials,
         IReadOnlySet<string> partNumbers,
         IReadOnlyList<KitaronSyncMaterialOrder> materialOrders,
-        ICollection<string> warnings)
+        ICollection<string> warnings,
+        IReadOnlyList<KitaronSyncOrder>? orders = null)
     {
         if (workOrders is null || workOrders.Count == 0) return [];
-        var linksByNumber = (links ?? []).ToLookup(item => item.WorkOrderNumber);
+        _ = links; // Kept in the snapshot for diagnostics; see the allocation note below.
+        var activeOrders = (orders ?? [])
+            .Where(item => item.Status == "active" && item.Quantity > 0)
+            .OrderBy(item => item.WorkFinishDate)
+            .ThenBy(item => item.SourceKey.Length)
+            .ThenBy(item => item.SourceKey, StringComparer.Ordinal)
+            .ToArray();
+        var ordersByPart = activeOrders.ToLookup(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase);
+        var openDemand = activeOrders
+            .GroupBy(item => item.SourceKey, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Quantity, StringComparer.Ordinal);
         var materialsByNumber = (materials ?? []).ToLookup(item => item.WorkOrderNumber);
         var purchasesByMaterial = materialOrders
             .Where(item => !item.Closed)
@@ -420,23 +432,28 @@ internal sealed class KitaronSyncService
                     $"Kitaron work order {workOrder.Number} was skipped: its quantity is missing or not a whole number.");
                 continue;
             }
+            // Kitaron links a work order to one order line even when it produces for several
+            // (TOrderLinkRoot holds the whole quantity on that line). The net quantity is therefore
+            // spread over the part's open Orders, earliest due date first, each up to its open
+            // demand that earlier work orders have not taken; what no Order needs is stock. The
+            // launched quantity above the net quantity is the cutting reserve (scrap allowance).
+            var net = Math.Min(Quantity(workOrder.ProductionAmount) ?? planned.Value, planned.Value);
             var allocations = new List<KitaronSyncBatchAllocation>();
-            var remaining = planned.Value;
-            foreach (var link in linksByNumber[workOrder.Number]
-                         .OrderBy(item => item.OrderRecordId, StringComparer.Ordinal))
+            var remaining = net;
+            foreach (var order in ordersByPart[workOrder.PartNumber])
             {
-                var quantity = Math.Min(Quantity(link.ProductionAmount) ?? 0, remaining);
-                if (quantity <= 0) continue;
-                allocations.Add(new KitaronSyncBatchAllocation(link.OrderRecordId, quantity));
+                if (remaining == 0) break;
+                var open = openDemand[order.SourceKey];
+                if (open <= 0) continue;
+                var quantity = Math.Min(open, remaining);
+                allocations.Add(new KitaronSyncBatchAllocation(order.SourceKey, quantity));
+                openDemand[order.SourceKey] = open - quantity;
                 remaining -= quantity;
             }
-            if (allocations.Count == 0)
-            {
-                allocations.Add(new KitaronSyncBatchAllocation(null, remaining));
-                remaining = 0;
-            }
             if (remaining > 0)
-                allocations.Add(new KitaronSyncBatchAllocation(null, remaining, ScrapAllowance: true));
+                allocations.Add(new KitaronSyncBatchAllocation(null, remaining));
+            if (planned.Value > net)
+                allocations.Add(new KitaronSyncBatchAllocation(null, planned.Value - net, ScrapAllowance: true));
 
             var (materialState, materialDetail) = MaterialCheck(
                 materialsByNumber[workOrder.Number].ToArray(), purchasesByMaterial);

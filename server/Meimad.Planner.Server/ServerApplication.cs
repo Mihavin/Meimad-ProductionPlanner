@@ -433,6 +433,7 @@ public static class ServerApplication
         application.MapLegacyImportEndpoints();
         application.MapKitaronConnectionEndpoints();
         application.MapKitaronStationEndpoints();
+        application.MapKitaronMaterialOrderEndpoints();
         application.MapClientPortalCustomerEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();

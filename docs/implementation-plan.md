@@ -910,3 +910,11 @@ The owner decided: the operation lists of Kitaron and Meimad Planner must be ide
 - **Superseded.** The deletion/suppression behavior recorded in "Kitaron station remapping updates the route" and in OD-038 option 3 is replaced: imported operations and steps can no longer be deleted by a planner.
 - **Tests.** `KitaronBatchSyncTests`, `KitaronBatchPlanTests`, `KitaronBatchAuthorityMigrationTests`, and updated `KitaronRouteSyncTests`, `KitaronConnectionApiTests`, `PlanningDeletionApiTests`.
 - **Open.** Material is judged from Kitaron's own calculation rows; parts without them show `unknown` rather than a Meimad-computed stock balance, because ERP remains the stock authority.
+
+### Batch allocation by due date - 2026-09-26
+
+Work order 41043 (56 pieces) was allocated entirely to order line 40449 (demand 8), because every open work order in Kitaron links to exactly one order line (195 of 195) with the whole quantity. The import now ignores that single link for allocation: it fills the part's active Orders by earliest due date, each up to its open demand not taken by an older work order, puts the rest in stock, and keeps the cutting reserve as scrap allowance. A batch still unplanned re-applies at the next synchronization because its allocation hash changes. Tests: `KitaronBatchPlanTests`.
+
+### Material Orders page - 2026-09-26
+
+The owner reported the material order lists empty. The weekly material order report lists material for Production Batches due next week, so it was empty after the v82 reset; the 9,073 imported Kitaron purchase lines had no screen. Added `GET /api/v1/kitaron/material-orders` and the read-only Material Orders tab with Kitaron's status text and a derived delivery status. Live data at the time: 5,067 received, 2,766 closed short, 1,020 late, 219 open, 1 partially received. Many late lines are old lines never closed in Kitaron; the page reports them as Kitaron has them. Tests: `KitaronMaterialOrderApiTests`, `MaterialOrdersViewModelTests`.

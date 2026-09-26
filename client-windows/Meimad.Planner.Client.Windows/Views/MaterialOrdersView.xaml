@@ -1,0 +1,49 @@
+<UserControl x:Class="Meimad.Planner.Client.Windows.Views.MaterialOrdersView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+  <Grid Margin="8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,8">
+      <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" />
+      <StackPanel>
+        <TextBlock Text="Material Orders" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Kitaron material purchase-order lines with their reported delivery status. Kitaron owns this data; the list is read-only."
+                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+      </StackPanel>
+    </DockPanel>
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+      <TextBlock Text="Search" VerticalAlignment="Center" Margin="0,0,6,0" />
+      <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="260"
+               ToolTip="Purchase order, material, description, supplier or Kitaron status" />
+      <TextBlock Text="Status" VerticalAlignment="Center" Margin="18,0,6,0" />
+      <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" Width="200" />
+    </StackPanel>
+    <TextBlock Grid.Row="2" Text="{Binding Status}" Foreground="{StaticResource MutedTextBrush}"
+               TextWrapping="Wrap" Margin="0,0,0,8" />
+    <DataGrid Grid.Row="3" ItemsSource="{Binding Items}" AutoGenerateColumns="False" IsReadOnly="True"
+              CanUserAddRows="False" HorizontalScrollBarVisibility="Auto" FrozenColumnCount="1"
+              EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True"
+              VirtualizingPanel.VirtualizationMode="Recycling">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Purchase order" Binding="{Binding PurchaseOrderText}" Width="120" />
+        <DataGridTextColumn Header="Status" Binding="{Binding DeliveryStatusText}" Width="160" />
+        <DataGridTextColumn Header="Material" Binding="{Binding MaterialNumber}" Width="150" />
+        <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="220" />
+        <DataGridTextColumn Header="Supplier" Binding="{Binding Supplier}" Width="170" />
+        <DataGridTextColumn Header="Ordered" Binding="{Binding OrderedText}" Width="80" />
+        <DataGridTextColumn Header="Received" Binding="{Binding ReceivedText}" Width="80" />
+        <DataGridTextColumn Header="Unit" Binding="{Binding Unit}" Width="60" />
+        <DataGridTextColumn Header="Requested date" Binding="{Binding RequestedText}" Width="110" />
+        <DataGridTextColumn Header="Supplier date" Binding="{Binding ApprovedText}" Width="110" />
+        <DataGridTextColumn Header="Supplier note" Binding="{Binding ApprovalNote}" Width="180" />
+        <DataGridTextColumn Header="Kitaron status" Binding="{Binding KitaronStatus}" Width="*" MinWidth="180" />
+      </DataGrid.Columns>
+    </DataGrid>
+  </Grid>
+</UserControl>
