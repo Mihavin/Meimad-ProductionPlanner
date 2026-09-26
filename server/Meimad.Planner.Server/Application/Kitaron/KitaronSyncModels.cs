@@ -61,7 +61,12 @@ internal sealed record KitaronSourceWorkOrder(
     double? Amount,
     double? ProductionAmount,
     DateTime? SupplyDate,
-    string? LotNumber);
+    string? LotNumber,
+    string? RawMaterialId = null,
+    string? CustomerOrderNumber = null,
+    string? Customer = null,
+    string? PartName = null,
+    string? PartRevision = null);
 
 /// <summary>An order-line allocation of a work order (`TOrderLinkRoot`).</summary>
 internal sealed record KitaronSourceWorkOrderLink(
@@ -167,7 +172,28 @@ internal sealed record KitaronSyncMaterialOrder(
     string? ApprovalNote,
     string? Status,
     bool Closed,
-    string SourceHash);
+    string SourceHash)
+{
+    internal double? UnitPrice { get; init; }
+
+    internal double? LineTotal { get; init; }
+
+    /// <summary>Customer order row the purchase names directly (rare in Kitaron).</summary>
+    internal string? CustomerOrderReference { get; init; }
+}
+
+/// <summary>
+/// Snapshot of one open Kitaron work order for reference lists: its raw material ties it to the
+/// material purchase lines. Replaced by every synchronization.
+/// </summary>
+internal sealed record KitaronSyncWorkOrderSnapshot(
+    int Number,
+    string PartNumber,
+    string? RawMaterialId,
+    string? CustomerOrderNumber,
+    string? Customer,
+    int? Quantity,
+    DateOnly? SupplyDate);
 
 /// <summary>
 /// An auxiliary route step (inspection, deburring, packing, subcontract, ...) imported as a resource
@@ -213,7 +239,15 @@ internal sealed record KitaronSyncBatch(
     IReadOnlyList<KitaronSyncBatchAllocation> Allocations,
     string MaterialState,
     string? MaterialDetail,
-    string SourceHash);
+    string SourceHash)
+{
+    /// <summary>Open Kitaron raw-material purchase lines (material order source keys) assigned to
+    /// this batch because its work order uses that raw material, earliest due first.</summary>
+    internal IReadOnlyList<string> MaterialOrderKeys { get; init; } = [];
+
+    /// <summary>Readable form of the assigned purchase lines, e.g. "76423/1 due 2026-10-06".</summary>
+    internal string? MaterialOrdersText { get; init; }
+}
 
 internal sealed record KitaronSyncPlan(
     int SourceRows,
@@ -229,7 +263,8 @@ internal sealed record KitaronSyncPlan(
     IReadOnlyList<KitaronDiscoveredStation>? Stations = null,
     int RouteStepsSkipped = 0,
     IReadOnlySet<string>? RoutePartNumbers = null,
-    IReadOnlyList<KitaronSyncBatch>? Batches = null);
+    IReadOnlyList<KitaronSyncBatch>? Batches = null,
+    IReadOnlyList<KitaronSyncWorkOrderSnapshot>? WorkOrders = null);
 
 internal sealed record KitaronSyncStatus(
     string Status,

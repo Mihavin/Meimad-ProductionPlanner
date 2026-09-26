@@ -2597,3 +2597,13 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
 ### Kitaron material orders (read-only)
 
 `GET /api/v1/kitaron/material-orders` is readable by every client and returns `{ items: [ { sourceKey, purchaseOrderNumber, lineNumber, materialNumber, description, supplier, orderedQuantity, receivedQuantity, unit, requestedDeliveryDate, approvedDeliveryDate, approvedQuantity, approvalNote, kitaronStatus, closed, deliveryStatus, lastImportedAt } ] }` for every active imported line, open lines first by latest delivery date. `kitaronStatus` is Kitaron's own purchase-line status text as reported. `deliveryStatus` is derived from the Kitaron facts: `received` (received at least the ordered quantity), `closed` (closed in Kitaron short of the ordered quantity), `partially_received`, `late` (open and the supplier or requested date has passed), `supplier_confirmed` (open with a supplier date), or `open`.
+
+### Batch release and Kitaron ownership (schema v83)
+
+- `POST /api/v1/batches/{batchId}/release` and `/unrelease` (Edit Mode headers) set `releaseState`; the batch response adds `releaseState`, `releasedAt`, `releasedBy` and `kitaronMaterialOrders`.
+- `POST /api/v1/batches` returns 409 `kitaron_managed_read_only` while the Kitaron connector is enabled; `PATCH` and `DELETE` of a Kitaron-imported batch return the same.
+- `GET /api/v1/kitaron/material-orders` items add `unitPrice`, `lineTotal`, `customerOrderReference` and `workOrders: [ { workOrderNumber, partNumber, customerOrderNumber, customer, quantity, supplyDate, hasBatch } ]`.
+
+### Network folder (schema v83)
+
+`GET /api/v1/network-folder` returns `{ rootPath, aliases, kitaronCaseFolder, version, updatedAt }` to every client. `PUT /api/v1/network-folder` (Edit Mode headers, body `{ rootPath, aliases, kitaronCaseFolder, expectedVersion }`) saves it, converts the stored Case links, and returns the settings with `convertedLinks`. Case, model file, job package and TV responses carry resolved network paths.

@@ -133,8 +133,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditOrderCommand = new AsyncCommand(BeginEditOrderAsync, () => CanBeginEditOrder);
         CancelCreateOrderCommand = new AsyncCommand(CancelCreateOrderAsync, () => IsOrderFormOpen && !IsBusy);
         CreateOrderCommand = new AsyncCommand(CreateOrderAsync, () => CanCreateOrder);
-        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanManageBatches && Operations.Count > 0);
+        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanAddBatches && Operations.Count > 0);
         BeginEditBatchCommand = new AsyncCommand(BeginEditBatchAsync, () => CanBeginEditBatch);
+        ReleaseBatchCommand = new AsyncCommand(() => SetSelectedBatchReleaseAsync(true), () => CanReleaseBatch);
+        UnreleaseBatchCommand = new AsyncCommand(() => SetSelectedBatchReleaseAsync(false), () => CanUnreleaseBatch);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
         RefreshBatchMaterialCommand = new AsyncCommand(LoadSelectedBatchMaterialSafeAsync,
@@ -243,6 +245,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public AsyncCommand CreateOrderCommand { get; }
 
     public AsyncCommand BeginCreateBatchCommand { get; }
+
+    public AsyncCommand ReleaseBatchCommand { get; }
+
+    public AsyncCommand UnreleaseBatchCommand { get; }
 
     public AsyncCommand BeginEditBatchCommand { get; }
 
@@ -501,7 +507,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanBeginEditBatch));
                 OnPropertyChanged(nameof(CanCancelBatchProduction));
+                OnPropertyChanged(nameof(CanDeleteSelectedBatch));
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
+                ReleaseBatchCommand.RaiseCanExecuteChanged();
+                UnreleaseBatchCommand.RaiseCanExecuteChanged();
                 BatchMaterial = null;
                 MaterialReceiptReservations.Clear();
                 RaiseCommandStates();
@@ -525,9 +534,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     }
 
     public bool HasBatchMaterial => BatchMaterial is not null;
-    public string BatchMaterialState => BatchMaterial?.State ?? "Select a Batch";
+    public string BatchMaterialState => BatchMaterial?.State ?? "Select a Work Order";
     public string BatchMaterialMessage => BatchMaterial?.Message
-        ?? "Select a Production Batch to reconcile its raw-material pieces.";
+        ?? "Select a Work Order to reconcile its raw-material pieces.";
     public string MaterialReceiptQuantity { get => materialReceiptQuantity; set => SetField(ref materialReceiptQuantity, value); }
     public string MaterialReceiptReference { get => materialReceiptReference; set => SetField(ref materialReceiptReference, value); }
     public string MaterialReceiptComment { get => materialReceiptComment; set => SetField(ref materialReceiptComment, value); }
@@ -615,7 +624,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public string BatchFormHeading => isEditingBatch ? "EDIT PRODUCTION BATCH" : "NEW PRODUCTION BATCH";
 
-    public string BatchSaveButtonText => isEditingBatch ? "Save Batch" : "Create Batch";
+    public string BatchSaveButtonText => isEditingBatch ? "Save Work Order" : "Create Work Order";
 
     public bool IsCreatingOperation => isCreatingOperation || isEditingOperation;
 
@@ -636,9 +645,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool IsChildCase => isChildCase;
 
-    public bool CanShowBatches => !IsParentCase;
+    public bool CanShowBatches => true;
 
-    public bool CanManageOperations => CanBeginChildCreate && !IsParentCase;
+    public bool CanManageOperations => CanBeginChildCreate;
 
     /// <summary>The Kitaron route master owns a locked Case's operation list: the list mirrors
     /// Kitaron, so operations cannot be added or deleted here. Operation data stays editable.</summary>
@@ -654,7 +663,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanManageDirectOrders => CanBeginChildCreate && !isKitaronManagedCase && (!IsChildCase || IsParentCase);
 
-    public bool CanManageBatches => CanBeginChildCreate && !IsParentCase;
+    public bool CanManageBatches => CanBeginChildCreate;
 
     public bool CanCreateOrder => IsCreatingOrder && CanManageDirectOrders;
 
@@ -663,8 +672,22 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanCreateBatch => IsCreatingBatch && CanManageBatches;
 
+    /// <summary>Production Batches of a Kitaron Case come only from Kitaron work orders.</summary>
+    public bool CanAddBatches => CanManageBatches && !isKitaronManagedCase;
+
+    public bool CanDeleteSelectedBatch => CanDelete && SelectedBatch is { IsKitaronManaged: false };
+
+    public bool CanReleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: false }
+        && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
+
+    public bool CanUnreleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: true };
+
+    public string BatchListAuthorityText => isKitaronManagedCase
+        ? "Work Orders come from Kitaron. Release a pending Work Order to production; allocations follow Kitaron."
+        : "Standalone and child production launches use direct or parent-derived demand, stock, and scrap allocations.";
+
     public bool CanBeginEditBatch => CanManageBatches
-        && SelectedBatch is not null
+        && SelectedBatch is { IsKitaronManaged: false }
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
         && !IsCreatingBatch;
 
@@ -961,7 +984,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOperationPredecessor = OperationReferenceOptions.FirstOrDefault(value =>
             value.CaseOperationId == operation.PredecessorCaseOperationId);
         NewOperationSimultaneousGroupKey = operation.SimultaneousGroupKey ?? string.Empty;
-        StatusMessage = $"Editing Case Operation {operation.OperationNumber}. Existing Production Batch snapshots will not be changed.";
+        StatusMessage = $"Editing Case Operation {operation.OperationNumber}. Existing Work Order snapshots will not be changed.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1061,7 +1084,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     Operations[index] = saved;
                 }
                 SelectedOperation = saved;
-                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Not-started Production Batch operations received the revised times.";
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Not-started Work Order operations received the revised times.";
             }
             else
             {
@@ -1090,7 +1113,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 Operations.Add(saved);
                 Replace(Batches, await apiClient.ListBatchesAsync(SelectedCase.CaseId));
                 SelectedOperation = saved;
-                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. It was appended as a not-started operation to every open Production Batch of this Case.";
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. It was appended as a not-started operation to every open Work Order of this Case.";
             }
 
             isCreatingOperation = false;
@@ -1187,7 +1210,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         editingOrderId = order.OrderId;
         editingOrderEntityTag = $"\"order:{order.OrderId}:v{order.Version}\"";
         NewOrderNotes = order.Notes ?? string.Empty;
-        StatusMessage = $"Editing Order {order.OrderNumber}. The Server protects existing Batch allocations and production-derived status.";
+        StatusMessage = $"Editing Order {order.OrderNumber}. The Server protects existing Work Order allocations and production-derived status.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1318,7 +1341,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         if (CanManageBatches && Operations.Count == 0)
         {
-            StatusMessage = "Cannot generate Production Batch because this Case has no defined operations. Create operations first.";
+            StatusMessage = "Cannot generate Work Order because this Case has no defined operations. Create operations first.";
             return Task.CompletedTask;
         }
         if (!CanManageBatches)
@@ -1343,7 +1366,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         if (IsChildCase)
             foreach (var order in DerivedOrders.Where(order => order.Status != "cancelled" && order.RemainingQuantity > 0))
                 BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
-        StatusMessage = "Allocate the Batch to this Case's own Orders, any parent-derived demand, stock, and optional scrap allowance.";
+        StatusMessage = "Allocate the Work Order to this Case's own Orders, any parent-derived demand, stock, and optional scrap allowance.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1386,7 +1409,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 BatchOrderAllocations.Add(row);
             }
         }
-        StatusMessage = $"Editing Production Batch {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
+        StatusMessage = $"Editing Work Order {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1396,7 +1419,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingBatch = false;
         isEditingBatch = false;
         ResetBatchForm();
-        StatusMessage = "Production Batch edit cancelled.";
+        StatusMessage = "Work Order edit cancelled.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1482,8 +1505,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ResetBatchForm();
             await RefreshSelectedCaseSummaryAsync();
             StatusMessage = editing
-                ? $"Production Batch {saved.BatchNumber} saved; its {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")} remain unchanged."
-                : $"Production Batch {saved.BatchNumber} created with {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")}.";
+                ? $"Work Order {saved.BatchNumber} saved; its {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")} remain unchanged."
+                : $"Work Order {saved.BatchNumber} created with {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")}.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -1560,7 +1583,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 SelectedBatch.BatchId, new(reservations), clientId, editGeneration);
             ApplyBatchMaterial(value);
             StatusMessage = value.State == "READY"
-                ? $"Material reconciled for Production Batch {value.BatchNumber}."
+                ? $"Material reconciled for Work Order {value.BatchNumber}."
                 : value.Message;
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -2003,23 +2026,6 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (SelectedComponent is null)
             {
                 if (SelectedComponentCase is null) return;
-                if (!IsParentCase && Batches.Count > 0)
-                {
-                    if (Operations.Count > 0)
-                    {
-                        StatusMessage = "Remove this Case's direct Operations before adding a component. Parent Cases cannot have direct Operations.";
-                        return;
-                    }
-                    if (!ConfirmBatchRemoval(Batches.Count))
-                    {
-                        StatusMessage = "Adding the component was cancelled; existing Production Batches were kept.";
-                        return;
-                    }
-                    foreach (var batch in Batches.ToArray())
-                        await apiClient.DeleteBatchAsync(batch.BatchId, clientId, editGeneration);
-                    Batches.Clear();
-                    SelectedBatch = null;
-                }
                 saved = await apiClient.CreateCaseComponentAsync(
                     SelectedCase.CaseId,
                     new CaseComponentCreate(SelectedComponentCase.CaseId, quantity, Components.Count, NullIfBlank(ComponentNotes)),
@@ -2038,7 +2044,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             SelectedComponent = saved;
             Replace(WhereUsed, await apiClient.ListCaseWhereUsedAsync(SelectedCase.CaseId));
             await RefreshSelectedCaseSummaryAsync();
-            StatusMessage = $"Component {saved.ChildPartNumber} saved. This Case is now a parent, so direct Production Batches are unavailable.";
+            StatusMessage = $"Component {saved.ChildPartNumber} saved. This Case is now a parent, so direct Work Orders are unavailable.";
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
         finally { IsBusy = false; }
@@ -2322,13 +2328,40 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ? Task.CompletedTask
             : DeleteAsync(
                 () => apiClient.DeleteBatchAsync(batch.BatchId, clientId, editGeneration),
-                $"Production Batch {batch.BatchNumber} deleted.",
+                $"Work Order {batch.BatchNumber} deleted.",
                 () =>
                 {
                     Batches.Remove(batch);
                     SelectedBatch = null;
                     PlanChanged?.Invoke(this, EventArgs.Empty);
                 });
+    }
+
+    internal async Task SetSelectedBatchReleaseAsync(bool released)
+    {
+        var batch = SelectedBatch;
+        if (batch is null || apiClient is null || (released ? !CanReleaseBatch : !CanUnreleaseBatch)) return;
+        IsBusy = true;
+        try
+        {
+            var saved = await apiClient.SetBatchReleaseStateAsync(batch.BatchId, released, clientId, editGeneration);
+            var index = Batches.IndexOf(batch);
+            if (index >= 0) Batches[index] = saved;
+            SelectedBatch = saved;
+            StatusMessage = released
+                ? $"Work Order {saved.BatchNumber} released to production."
+                : $"Work Order {saved.BatchNumber} returned to pending.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
     }
 
     internal async Task CancelSelectedBatchProductionAsync()
@@ -2341,7 +2374,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         {
             var cancelled = await apiClient.CancelBatchProductionAsync(
                 batch.BatchId,
-                new CancelProductionBatchRequest("Cancelled from the Case Batch workspace."),
+                new CancelProductionBatchRequest("Cancelled from the Case Work Order workspace."),
                 $"\"batch:{batch.BatchId}:v{batch.Version}\"",
                 clientId,
                 editGeneration);
@@ -2350,7 +2383,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             SelectedBatch = cancelled;
             Replace(Orders, await apiClient.ListOrdersAsync(cancelled.CaseId));
             Replace(DerivedOrders, await apiClient.ListDerivedCaseOrdersAsync(cancelled.CaseId));
-            StatusMessage = $"Production Batch {cancelled.BatchNumber} cancelled. Done parts were reset to 0 and active production resources were released.";
+            StatusMessage = $"Work Order {cancelled.BatchNumber} cancelled. Done parts were reset to 0 and active production resources were released.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -2880,6 +2913,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanCreateBatch));
         OnPropertyChanged(nameof(CanBeginEditBatch));
         OnPropertyChanged(nameof(CanCancelBatchProduction));
+        OnPropertyChanged(nameof(CanAddBatches));
+        OnPropertyChanged(nameof(CanDeleteSelectedBatch));
+        OnPropertyChanged(nameof(CanReleaseBatch));
+        OnPropertyChanged(nameof(CanUnreleaseBatch));
+        OnPropertyChanged(nameof(BatchListAuthorityText));
         OnPropertyChanged(nameof(CanCreateOperation));
         OnPropertyChanged(nameof(CanBeginEditOperation));
         OnPropertyChanged(nameof(CanReleaseGCode));
@@ -2904,6 +2942,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CancelCreateOrderCommand.RaiseCanExecuteChanged();
         CreateOrderCommand.RaiseCanExecuteChanged();
         BeginCreateBatchCommand.RaiseCanExecuteChanged();
+        ReleaseBatchCommand.RaiseCanExecuteChanged();
+        UnreleaseBatchCommand.RaiseCanExecuteChanged();
         BeginEditBatchCommand.RaiseCanExecuteChanged();
         CancelCreateBatchCommand.RaiseCanExecuteChanged();
         CreateBatchCommand.RaiseCanExecuteChanged();

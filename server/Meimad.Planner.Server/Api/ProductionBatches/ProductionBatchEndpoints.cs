@@ -20,6 +20,35 @@ internal static class ProductionBatchEndpoints
         batches.MapGet("/{batchId}", GetByIdAsync);
         batches.MapGet("/{batchId}/operations", GetOperationsAsync);
         batches.MapPost("/{batchId}/cancel-production", CancelProductionAsync);
+        batches.MapPost("/{batchId}/release", (string batchId, HttpContext context, ProductionBatchService service, CancellationToken token) =>
+            SetReleaseStateAsync(batchId, true, context, service, token));
+        batches.MapPost("/{batchId}/unrelease", (string batchId, HttpContext context, ProductionBatchService service, CancellationToken token) =>
+            SetReleaseStateAsync(batchId, false, context, service, token));
+    }
+
+    /// <summary>POST /api/v1/batches/{id}/release and /unrelease: planner release state (Edit Mode).</summary>
+    private static async Task<IResult> SetReleaseStateAsync(
+        string batchId,
+        bool released,
+        HttpContext httpContext,
+        ProductionBatchService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var editAuthority, out var accessError))
+            return accessError!;
+        try
+        {
+            var value = await service.SetReleaseStateAsync(batchId, released, editAuthority!, cancellationToken);
+            return Results.Ok(ProductionBatchResponse.FromDomain(value));
+        }
+        catch (ProductionBatchNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Production Batch was not found.", httpContext);
+        }
+        catch (EditModeMutationException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
     }
 
     private static async Task<IResult> CancelProductionAsync(
@@ -109,6 +138,10 @@ internal static class ProductionBatchEndpoints
         {
             return Error(StatusCodes.Status409Conflict, "batch_number_conflict", exception.Message, httpContext);
         }
+        catch (Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
+        }
         catch (EditModeMutationException exception)
         {
             return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
@@ -189,6 +222,10 @@ internal static class ProductionBatchEndpoints
         catch (ProductionBatchParentCaseForbiddenException exception)
         {
             return Error(StatusCodes.Status422UnprocessableEntity, "parent_case_batches_forbidden", exception.Message, httpContext);
+        }
+        catch (Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, "kitaron_managed_read_only", exception.Message, httpContext);
         }
         catch (EditModeMutationException exception)
         {

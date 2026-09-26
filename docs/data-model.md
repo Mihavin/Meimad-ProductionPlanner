@@ -683,3 +683,12 @@ Key target constraints are: one or more programs per run; one or more outputs pe
 - `wipe_v82_archive(table_name, row_json)`: every row the one-time reset removed, as a JSON object of its columns.
 - `kitaron_suppressed_operations` is dropped.
 - The reset deletes all rows of the planning/execution graph (see the functional specification) with foreign keys checked at commit; immutability triggers on those ledgers are dropped for the reset and recreated from their stored SQL.
+
+### Schema v83 - Kitaron material order references (`kitaron_material_order_references`)
+
+- `kitaron_material_orders`: `unit_price`, `line_total` (REAL), `customer_order_reference` (TEXT).
+- `kitaron_work_orders(work_order_number PK, part_number, raw_material_id, customer_order_number, customer, quantity, supply_date, imported_at)`: snapshot of the open Kitaron work orders, replaced by every synchronization.
+- `kitaron_batch_material_checks`: `material_order_keys` (JSON array of `kitaron_material_orders.source_key`), `material_orders_text`.
+- `production_batches`: `release_state` (`pending`/`released`, default `pending`), `released_at`, `released_by`.
+
+- Schema v83 also adds `network_folder_settings(id = 1, root_path, aliases_json, kitaron_case_folder, version, updated_at)`. `cases.working_folder_path`, `cases.preview_reference` and `case_model_files.file_path` hold a path relative to `root_path` when it lies under the root or an alias (`.` is the root itself); readers resolve it to `root_path\<relative>`.

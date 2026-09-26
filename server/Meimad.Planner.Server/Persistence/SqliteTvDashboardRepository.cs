@@ -81,7 +81,7 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
+        command.CommandText = $$"""
             SELECT machine_assignments.machine_id,
                    batch_operations.id,
                    production_batches.id,
@@ -95,8 +95,8 @@ internal sealed class SqliteTvDashboardRepository : ITvDashboardRepository
                    production_batches.planned_quantity,
                    batch_operations.setup_seconds,
                    batch_operations.cycle_seconds,
-                   cases.preview_reference,
-                   cases.working_folder_path,
+                   {{SqliteNetworkFolderSettings.ResolveSql("cases.preview_reference")}},
+                   {{SqliteNetworkFolderSettings.ResolveSql("cases.working_folder_path")}},
                    batch_operations.actual_start,
                    batch_operations.actual_end,
                    COALESCE((

@@ -116,8 +116,19 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
     }
 
     public Task<bool> DeleteBatchAsync(string id, EditAuthority authority, CancellationToken token) =>
-        ExecuteAsync(id, authority, (c, t) =>
-            DeleteBatchGraphAsync(c, t, id, timeProvider.GetUtcNow(), token), token);
+        ExecuteAsync(id, authority, async (c, t) =>
+        {
+            // A batch imported from a Kitaron work order leaves with its work order, not by hand.
+            await using (var link = c.CreateCommand())
+            {
+                link.Transaction = t;
+                link.CommandText = "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'production_batch' AND target_id = $id);";
+                link.Parameters.AddWithValue("$id", id);
+                if (Convert.ToInt32(await link.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1)
+                    throw new KitaronManagedResourceException("Production Batch", id);
+            }
+            return await DeleteBatchGraphAsync(c, t, id, timeProvider.GetUtcNow(), token);
+        }, token);
 
     internal static async Task<bool> DeleteBatchGraphAsync(
         SqliteConnection c,

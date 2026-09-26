@@ -292,6 +292,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public KitaronStationsViewModel KitaronStations { get; } = new();
 
+    public NetworkFolderViewModel NetworkFolder { get; } = new();
+
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
 
     public IReadOnlyList<WorkingCalendar> MachineWorkingCalendars => WorkingCalendars
@@ -886,6 +888,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             newApiClient, newClientId, LocalUserName, nextGeneration, nextIsEditor, ServerAddress);
         ResourceMasterData.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         KitaronStations.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        NetworkFolder.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
             && isEditor == nextIsEditor

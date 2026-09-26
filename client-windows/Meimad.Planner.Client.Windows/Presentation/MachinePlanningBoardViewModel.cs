@@ -219,6 +219,69 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         private set => SetField(ref statusMessage, value);
     }
 
+    private int selectedBoardTab;
+    private bool auxiliaryLoaded;
+    private string auxiliaryStatus = "Open this tab to load the stations from the Timeline.";
+
+    /// <summary>Internal station (Workstation) columns with the auxiliary steps placed on them.</summary>
+    public ObservableCollection<PlanningResourceLane> InternalStationLanes { get; } = [];
+
+    /// <summary>External Resource columns with the subcontracted steps placed on them.</summary>
+    public ObservableCollection<PlanningResourceLane> ExternalOperationLanes { get; } = [];
+
+    public string AuxiliaryStatus
+    {
+        get => auxiliaryStatus;
+        private set => SetField(ref auxiliaryStatus, value);
+    }
+
+    /// <summary>0 = Machines, 1 = Internal stations, 2 = External operations; the station tabs
+    /// load the Server's provisional auxiliary placement from the Timeline when first opened.</summary>
+    public int SelectedBoardTab
+    {
+        get => selectedBoardTab;
+        set
+        {
+            if (!SetField(ref selectedBoardTab, value)) return;
+            if (value > 0 && !auxiliaryLoaded) _ = LoadAuxiliaryLanesAsync();
+        }
+    }
+
+    /// <summary>
+    /// Loads the Workstation and External Resource lanes of the next weeks' Timeline. The Server
+    /// places these steps automatically around the Machine assignments (rule 34); pins are set on
+    /// the Timeline. The board shows them per station, ordered by predicted start.
+    /// </summary>
+    internal async Task LoadAuxiliaryLanesAsync()
+    {
+        if (apiClient is null) return;
+        AuxiliaryStatus = "Loading the stations from the Timeline...";
+        try
+        {
+            var today = DateTime.UtcNow.Date;
+            var from = new DateTimeOffset(DateTime.SpecifyKind(today.AddDays(-7), DateTimeKind.Utc));
+            var to = new DateTimeOffset(DateTime.SpecifyKind(today.AddDays(90), DateTimeKind.Utc));
+            var snapshot = await apiClient.GetTimelineAsync(from, to);
+            var lanes = snapshot.Resources ?? [];
+            Fill(InternalStationLanes, lanes.Where(lane => lane.ResourceClass == "workstation"));
+            Fill(ExternalOperationLanes, lanes.Where(lane => lane.ResourceClass == "external"));
+            auxiliaryLoaded = true;
+            var steps = InternalStationLanes.Sum(lane => lane.Cards.Count) + ExternalOperationLanes.Sum(lane => lane.Cards.Count);
+            AuxiliaryStatus = $"{InternalStationLanes.Count} internal station(s), {ExternalOperationLanes.Count} External Resource(s), {steps} step(s) placed by the Server; pin a step on the Timeline to keep it. Refresh reloads.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AuxiliaryStatus = FriendlyMessage(exception);
+        }
+
+        static void Fill(ObservableCollection<PlanningResourceLane> target, IEnumerable<TimelineResourceLane> source)
+        {
+            target.Clear();
+            foreach (var lane in source.OrderBy(lane => lane.Name, StringComparer.CurrentCultureIgnoreCase))
+                target.Add(PlanningResourceLane.From(lane));
+        }
+    }
+
     public string ConflictCalculationStatus
     {
         get => conflictCalculationStatus;
@@ -292,6 +355,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             Apply(snapshot);
             await Task.WhenAll(LoadMachinePicturesAsync(), LoadOperationPreviewsAsync());
             hasLoaded = true;
+            auxiliaryLoaded = false;
+            if (selectedBoardTab > 0) await LoadAuxiliaryLanesAsync();
             StatusMessage = $"Board loaded from the Server at {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.";
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -1546,7 +1611,7 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string PartCaseText => $"{PartNumber} / {CaseName ?? CaseId}";
     public string OperationText => $"OP{OperationNumber} {OperationName}";
     public string BatchOrderText => OrderReferences.Count == 0
-        ? $"Batch {BatchNumber}"
+        ? $"Work Order {BatchNumber}"
         : $"{BatchNumber} / {string.Join(", ", OrderReferences)}";
     public string? ActivePauseReason { get; }
     public string? PausedBy { get; }

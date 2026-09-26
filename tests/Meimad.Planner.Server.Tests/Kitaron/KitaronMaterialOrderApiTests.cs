@@ -51,6 +51,9 @@ public sealed class KitaronMaterialOrderApiTests
                         ('1', '76423', '1', 'AL-6061', 'Bar 50', 'Metals Ltd', 12, 0, 'm', '2099-01-10', '2099-01-12', '(חתימה)', 0, 1, 'h', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z'),
                         ('2', '70378', '2', 'SS-304', NULL, NULL, 5, 5, NULL, '2026-01-01', NULL, NULL, 1, 1, 'h', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z'),
                         ('3', '1', '1', 'OLD', NULL, NULL, 5, 0, NULL, NULL, NULL, NULL, 0, 0, 'h', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z', '2026-09-26T00:00:00Z');
+                    UPDATE kitaron_material_orders SET unit_price = 12.5, line_total = 150, customer_order_reference = 'R000033559/2' WHERE source_key = '1';
+                    INSERT INTO kitaron_work_orders (work_order_number, part_number, raw_material_id, customer_order_number, customer, quantity, supply_date, imported_at)
+                    VALUES (41043, '30P410192202-001', 'AL-6061', '3000030647', 'Elbit', 56, '2026-10-26', '2026-09-26T00:00:00Z');
                     """;
                 await command.ExecuteNonQueryAsync();
             }
@@ -65,6 +68,14 @@ public sealed class KitaronMaterialOrderApiTests
             Assert.Equal("supplier_confirmed", items[0].GetProperty("deliveryStatus").GetString());
             Assert.Equal("(חתימה)", items[0].GetProperty("kitaronStatus").GetString());
             Assert.Equal("2099-01-12", items[0].GetProperty("approvedDeliveryDate").GetString());
+            Assert.Equal(12.5, items[0].GetProperty("unitPrice").GetDouble());
+            Assert.Equal(150, items[0].GetProperty("lineTotal").GetDouble());
+            Assert.Equal("R000033559/2", items[0].GetProperty("customerOrderReference").GetString());
+            var workOrder = Assert.Single(items[0].GetProperty("workOrders").EnumerateArray());
+            Assert.Equal("41043", workOrder.GetProperty("workOrderNumber").GetString());
+            Assert.Equal("3000030647", workOrder.GetProperty("customerOrderNumber").GetString());
+            Assert.False(workOrder.GetProperty("hasBatch").GetBoolean());
+            Assert.Empty(items[1].GetProperty("workOrders").EnumerateArray());
             Assert.Equal("received", items[1].GetProperty("deliveryStatus").GetString());
             await application.StopAsync();
         }

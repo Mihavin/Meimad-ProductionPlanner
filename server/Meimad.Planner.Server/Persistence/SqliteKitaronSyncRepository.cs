@@ -164,6 +164,8 @@ internal sealed class SqliteKitaronSyncRepository(
         }
         foreach (var item in plan.MaterialOrders ?? [])
             await UpsertMaterialOrderAsync(connection, transaction, item, now, cancellationToken);
+        if (plan.WorkOrders is not null)
+            await ReplaceWorkOrderSnapshotAsync(connection, transaction, plan.WorkOrders, now, cancellationToken);
         await DeactivateMissingComponentsAsync(
             connection, transaction, plan.KnownComponentSourceKeys, now, counts, cancellationToken);
         await SynchronizeNotStartedBatchOperationTimesAsync(
@@ -197,6 +199,8 @@ internal sealed class SqliteKitaronSyncRepository(
             $"{counts.BatchesUpdatedFromKitaron} updated, and {counts.BatchesRemovedWithWorkOrder} removed with their Kitaron work orders; " +
             $"{counts.BatchesKeptStarted} kept although the Kitaron work order closed or changed" +
             (counts.KeptBatches.Count == 0 ? ". " : $" ({string.Join(", ", counts.KeptBatches)}). ") +
+            $"{counts.ManualBatchesRemoved} planner-created Production Batch(es) removed because batches come only from Kitaron; " +
+            $"{counts.ManualBatchesKept} kept because production started. " +
             $"{counts.BatchesWaitingForRoute} work order(s) wait for their Case route" +
             (counts.WaitingBatches.Count == 0 ? ". " : $" ({string.Join(", ", counts.WaitingBatches)}). ") +
             "Batch material per Kitaron: " +
@@ -623,14 +627,19 @@ internal sealed class SqliteKitaronSyncRepository(
                 description, supplier, ordered_quantity, received_quantity, unit,
                 requested_delivery_date, approved_delivery_date, approved_quantity,
                 approval_note, status, closed, active, source_hash,
-                first_imported_at, last_imported_at, updated_at)
+                first_imported_at, last_imported_at, updated_at,
+                unit_price, line_total, customer_order_reference)
             VALUES (
                 $sourceKey, $purchaseOrder, $line, $material,
                 $description, $supplier, $ordered, $received, $unit,
                 $requestedDate, $approvedDate, $approvedQuantity,
                 $approvalNote, $status, $closed, 1, $sourceHash,
-                $now, $now, $now)
+                $now, $now, $now,
+                $unitPrice, $lineTotal, $customerOrder)
             ON CONFLICT(source_key) DO UPDATE SET
+                unit_price = excluded.unit_price,
+                line_total = excluded.line_total,
+                customer_order_reference = excluded.customer_order_reference,
                 purchase_order_number = excluded.purchase_order_number,
                 line_number = excluded.line_number,
                 material_number = excluded.material_number,
@@ -667,7 +676,45 @@ internal sealed class SqliteKitaronSyncRepository(
         command.Parameters.AddWithValue("$closed", item.Closed ? 1 : 0);
         command.Parameters.AddWithValue("$sourceHash", item.SourceHash);
         command.Parameters.AddWithValue("$now", now.ToString("O"));
+        command.Parameters.AddWithValue("$unitPrice", (object?)item.UnitPrice ?? DBNull.Value);
+        command.Parameters.AddWithValue("$lineTotal", (object?)item.LineTotal ?? DBNull.Value);
+        command.Parameters.AddWithValue("$customerOrder", (object?)item.CustomerOrderReference ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Replaces the open work-order snapshot the material order list refers to.</summary>
+    private static async Task ReplaceWorkOrderSnapshotAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<KitaronSyncWorkOrderSnapshot> workOrders,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using (var clear = connection.CreateCommand())
+        {
+            clear.Transaction = transaction;
+            clear.CommandText = "DELETE FROM kitaron_work_orders;";
+            await clear.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var item in workOrders)
+        {
+            await using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT OR REPLACE INTO kitaron_work_orders (work_order_number, part_number, raw_material_id,
+                    customer_order_number, customer, quantity, supply_date, imported_at)
+                VALUES ($number, $part, $material, $order, $customer, $quantity, $supplyDate, $now);
+                """;
+            insert.Parameters.AddWithValue("$number", item.Number);
+            insert.Parameters.AddWithValue("$part", item.PartNumber);
+            insert.Parameters.AddWithValue("$material", (object?)item.RawMaterialId ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$order", (object?)item.CustomerOrderNumber ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$customer", (object?)item.Customer ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$quantity", (object?)item.Quantity ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$supplyDate", item.SupplyDate?.ToString("yyyy-MM-dd") ?? (object)DBNull.Value);
+            insert.Parameters.AddWithValue("$now", now.ToString("O"));
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static async Task SynchronizeNotStartedBatchOperationTimesAsync(
@@ -713,10 +760,39 @@ internal sealed class SqliteKitaronSyncRepository(
         await update.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// The working folder the synchronization gives a Kitaron Case: under the network folder's
+    /// Kitaron Case folder when Setup defines a network folder (stored relative), otherwise the
+    /// Server-local generated folder. It only fills an empty folder or replaces one the
+    /// synchronization generated itself; a folder a planner chose stays.
+    /// </summary>
+    private const string KitaronFolderSql = """
+        (CASE
+            WHEN working_folder_path IS NULL OR trim(working_folder_path) = ''
+              OR working_folder_path = $folder
+              OR substr(working_folder_path, 1, length($generatedRoot) + 1) = $generatedRoot || '\'
+              OR substr(working_folder_path, 1, length($kitaronFolder) + 1) = $kitaronFolder || '\'
+            THEN $folder ELSE working_folder_path END)
+        """;
+
+    private static async Task<(string Folder, string GeneratedRoot, string KitaronFolder)> KitaronFolderAsync(
+        SqliteConnection connection, SqliteTransaction transaction, KitaronSyncCase item,
+        CancellationToken cancellationToken)
+    {
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
+        var generatedRoot = Path.GetDirectoryName(item.WorkingFolderPath) ?? item.WorkingFolderPath;
+        var kitaronFolder = NetworkFolderSettings.Normalize(paths.KitaronCaseFolder.Trim().Trim('\\', '/'));
+        var folder = paths.IsConfigured
+            ? paths.KitaronCaseRelativeFolder(Path.GetFileName(item.WorkingFolderPath))
+            : item.WorkingFolderPath;
+        return (folder, generatedRoot, kitaronFolder);
+    }
+
     private async Task<string> ResolveCaseAsync(
         SqliteConnection connection, SqliteTransaction transaction, KitaronSyncCase item,
         DateTimeOffset now, MutableCounts counts, CancellationToken cancellationToken)
     {
+        var (folder, generatedRoot, kitaronFolder) = await KitaronFolderAsync(connection, transaction, item, cancellationToken);
         var link = await ReadValidLinkAsync(
             connection, transaction, "case", item.SourceKey, "cases", counts, cancellationToken);
         if (link is null)
@@ -739,7 +815,7 @@ internal sealed class SqliteKitaronSyncRepository(
                     """;
                 Add(insert, "$id", id); Add(insert, "$part", item.PartNumber); Add(insert, "$name", item.Name);
                 Add(insert, "$revision", item.Revision); Add(insert, "$customer", item.Customer);
-                Add(insert, "$folder", item.WorkingFolderPath); Add(insert, "$now", now.ToString("O"));
+                Add(insert, "$folder", folder); Add(insert, "$now", now.ToString("O"));
                 try
                 {
                     await insert.ExecuteNonQueryAsync(cancellationToken);
@@ -757,13 +833,14 @@ internal sealed class SqliteKitaronSyncRepository(
             {
                 await using var update = connection.CreateCommand();
                 update.Transaction = transaction;
-                update.CommandText = """
+                update.CommandText = $"""
                     UPDATE cases SET part_number=$part, name=$name, revision=$revision, customer=$customer,
-                        working_folder_path=$folder, version=version+1, updated_at=$now WHERE id=$id;
+                        working_folder_path={KitaronFolderSql}, version=version+1, updated_at=$now WHERE id=$id;
                     """;
                 Add(update, "$part", item.PartNumber); Add(update, "$name", item.Name);
                 Add(update, "$revision", item.Revision); Add(update, "$customer", item.Customer);
-                Add(update, "$folder", item.WorkingFolderPath); Add(update, "$now", now.ToString("O"));
+                Add(update, "$folder", folder); Add(update, "$now", now.ToString("O"));
+                Add(update, "$generatedRoot", generatedRoot); Add(update, "$kitaronFolder", kitaronFolder);
                 Add(update, "$id", id);
                 await update.ExecuteNonQueryAsync(cancellationToken);
                 counts.CasesMatched--;
@@ -775,16 +852,17 @@ internal sealed class SqliteKitaronSyncRepository(
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
-            update.CommandText = """
+            update.CommandText = $"""
                 UPDATE cases SET part_number=$part, name=$name, revision=$revision, customer=$customer,
-                    working_folder_path=$folder, version=version+1, updated_at=$now
+                    working_folder_path={KitaronFolderSql}, version=version+1, updated_at=$now
                 WHERE id=$id AND (
                     part_number IS NOT $part OR name IS NOT $name OR revision IS NOT $revision
-                    OR customer IS NOT $customer OR working_folder_path IS NOT $folder);
+                    OR customer IS NOT $customer OR working_folder_path IS NOT {KitaronFolderSql});
                 """;
             Add(update, "$part", item.PartNumber); Add(update, "$name", item.Name);
             Add(update, "$revision", item.Revision); Add(update, "$customer", item.Customer);
-            Add(update, "$folder", item.WorkingFolderPath); Add(update, "$now", now.ToString("O"));
+            Add(update, "$folder", folder); Add(update, "$now", now.ToString("O"));
+            Add(update, "$generatedRoot", generatedRoot); Add(update, "$kitaronFolder", kitaronFolder);
             Add(update, "$id", link.Value.TargetId);
             if (await update.ExecuteNonQueryAsync(cancellationToken) == 1) counts.CasesUpdated++;
             else counts.CasesMatched++;
@@ -1605,13 +1683,7 @@ internal sealed class SqliteKitaronSyncRepository(
     {
         if (parentCaseId == childCaseId)
             throw new KitaronSyncDataException($"Kitaron component {item.SourceKey} contains itself.");
-        if (await ScalarIntAsync(connection, transaction,
-                "SELECT COUNT(*) FROM case_operations WHERE case_id=$caseId;",
-                "$caseId", parentCaseId, cancellationToken) > 0)
-        {
-            counts.Warnings++;
-            return;
-        }
+        // An assembly keeps its own operations and components together (2026-09-26 rule).
 
         var link = await ReadValidLinkAsync(
             connection, transaction, "case_component", item.SourceKey, "case_components", counts, cancellationToken);
@@ -1949,6 +2021,38 @@ internal sealed class SqliteKitaronSyncRepository(
                     stale.Add((reader.GetString(0), reader.GetString(1), $"{reader.GetString(2)} batch {reader.GetString(3)}"));
             }
         }
+        // Kitaron is the only source of Production Batches: a batch a planner created in Meimad is
+        // removed with its planning graph, unless production on it has started (reported instead).
+        var manual = new List<(string BatchId, string Label)>();
+        await using (var readManual = connection.CreateCommand())
+        {
+            readManual.Transaction = transaction;
+            readManual.CommandText = """
+                SELECT batch.id, route_case.part_number || ' batch ' || batch.batch_number
+                FROM production_batches batch
+                JOIN cases route_case ON route_case.id = batch.case_id
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kitaron_sync_links link
+                    WHERE link.source_entity = 'production_batch' AND link.target_id = batch.id)
+                ORDER BY batch.batch_number;
+                """;
+            await using var reader = await readManual.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                manual.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        foreach (var (batchId, label) in manual)
+        {
+            if (await BatchHasStartedWorkAsync(connection, transaction, batchId, cancellationToken))
+            {
+                counts.ManualBatchesKept++;
+                if (counts.KeptBatches.Count < 10) counts.KeptBatches.Add(label + " (planner-created, started)");
+                continue;
+            }
+            await SqlitePlanningDeletionRepository.DeleteBatchGraphAsync(
+                connection, transaction, batchId, now, cancellationToken);
+            counts.ManualBatchesRemoved++;
+        }
+
         foreach (var (sourceKey, batchId, label) in stale)
         {
             if (await BatchHasStartedWorkAsync(connection, transaction, batchId, cancellationToken))
@@ -2051,14 +2155,21 @@ internal sealed class SqliteKitaronSyncRepository(
             await using var material = connection.CreateCommand();
             material.Transaction = transaction;
             material.CommandText = """
-                INSERT INTO kitaron_batch_material_checks (production_batch_id, state, detail, updated_at)
-                VALUES ($id, $state, $detail, $now)
+                INSERT INTO kitaron_batch_material_checks (production_batch_id, state, detail, updated_at,
+                    material_order_keys, material_orders_text)
+                VALUES ($id, $state, $detail, $now, $keys, $ordersText)
                 ON CONFLICT (production_batch_id) DO UPDATE SET
-                    state = excluded.state, detail = excluded.detail, updated_at = excluded.updated_at
-                WHERE state IS NOT excluded.state OR detail IS NOT excluded.detail;
+                    state = excluded.state, detail = excluded.detail, updated_at = excluded.updated_at,
+                    material_order_keys = excluded.material_order_keys,
+                    material_orders_text = excluded.material_orders_text
+                WHERE state IS NOT excluded.state OR detail IS NOT excluded.detail
+                   OR material_order_keys IS NOT excluded.material_order_keys
+                   OR material_orders_text IS NOT excluded.material_orders_text;
                 """;
             Add(material, "$id", batchId); Add(material, "$state", item.MaterialState);
             Add(material, "$detail", item.MaterialDetail); Add(material, "$now", now.ToString("O"));
+            Add(material, "$keys", JsonSerializer.Serialize(item.MaterialOrderKeys));
+            Add(material, "$ordersText", item.MaterialOrdersText);
             await material.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -2073,7 +2184,6 @@ internal sealed class SqliteKitaronSyncRepository(
         command.CommandText = """
             SELECT CASE
                 WHEN NOT EXISTS (SELECT 1 FROM case_operations WHERE case_id = $caseId) THEN 'no Case Operations yet'
-                WHEN EXISTS (SELECT 1 FROM case_components WHERE parent_case_id = $caseId AND is_active = 1) THEN 'a parent Case cannot own batches'
                 WHEN EXISTS (SELECT 1 FROM production_batches WHERE case_id = $caseId AND batch_number = $number) THEN 'a planner batch already uses this number'
                 ELSE NULL END;
             """;
@@ -2239,6 +2349,7 @@ internal sealed class SqliteKitaronSyncRepository(
         internal int OperationDependenciesSet, OperationsReordered;
         internal int OperationsRemoved, OperationsKept, RequirementsRemoved;
         internal int BatchesImported, BatchesUpdatedFromKitaron, BatchesRemovedWithWorkOrder, BatchesKeptStarted, BatchesWaitingForRoute;
+        internal int ManualBatchesRemoved, ManualBatchesKept;
         internal readonly List<string> KeptOperations = [];
         internal readonly List<string> KeptBatches = [];
         internal readonly List<string> WaitingBatches = [];

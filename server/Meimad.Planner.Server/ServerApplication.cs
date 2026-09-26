@@ -14,6 +14,7 @@ using Meimad.Planner.Server.Api.GCode;
 using Meimad.Planner.Server.Api.Haas;
 using Meimad.Planner.Server.Api.ClientPortal;
 using Meimad.Planner.Server.Api.Kitaron;
+using Meimad.Planner.Server.Api.NetworkFolder;
 using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Materials;
@@ -434,6 +435,7 @@ public static class ServerApplication
         application.MapKitaronConnectionEndpoints();
         application.MapKitaronStationEndpoints();
         application.MapKitaronMaterialOrderEndpoints();
+        application.MapNetworkFolderEndpoints();
         application.MapClientPortalCustomerEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();

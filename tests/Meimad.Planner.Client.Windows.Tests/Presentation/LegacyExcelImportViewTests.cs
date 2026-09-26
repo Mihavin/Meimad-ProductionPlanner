@@ -28,7 +28,7 @@ public sealed class LegacyExcelImportViewTests
         Assert.Contains("Content=\"Import Cases and Orders\"", xaml, StringComparison.Ordinal);
         Assert.Contains("LegacyImport.ImportCasesAndOrdersCommand", xaml, StringComparison.Ordinal);
         Assert.Contains("LegacyImport.CaseOrderImportAvailabilityText", xaml, StringComparison.Ordinal);
-        Assert.Contains("never creates Batches, Operations, Machine assignments", xaml, StringComparison.Ordinal);
+        Assert.Contains("never creates Work Orders, Operations, Machine assignments", xaml, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -375,7 +375,7 @@ internal sealed record LegacyImportBatchOperationCandidate(
     int? AssignmentVersion)
 {
     public bool IsAlreadyAssigned => !string.IsNullOrWhiteSpace(AssignmentId);
-    public string BatchContext => $"Batch {BatchNumber ?? BatchId}";
+    public string BatchContext => $"Work Order {BatchNumber ?? BatchId}";
     public string PartContext => string.IsNullOrWhiteSpace(PartNumber) ? string.Empty : $" / {PartNumber}";
     public string DisplayName => IsAlreadyAssigned
         ? $"{BatchContext}{PartContext} / OP{OperationNumber} - {Name} ({Status}; already assigned{(string.IsNullOrWhiteSpace(RequiredMachineType) ? string.Empty : $"; requires {RequiredMachineType}")})"
@@ -1439,8 +1439,17 @@ internal sealed record ProductionBatch(
     IReadOnlyList<BatchAllocation>? Allocations = null,
     bool IsKitaronManaged = false,
     string? KitaronMaterialState = null,
-    string? KitaronMaterialDetail = null)
+    string? KitaronMaterialDetail = null,
+    string ReleaseState = "pending",
+    DateTimeOffset? ReleasedAt = null,
+    string? ReleasedBy = null,
+    string? KitaronMaterialOrders = null)
 {
+    public bool IsReleased => ReleaseState == "released";
+
+    /// <summary>Release state with a symbol, readable without color.</summary>
+    public string ReleaseDisplay => IsReleased ? "▶ Released" : "⏸ Pending";
+
     public string StatusDisplay => Status switch
     {
         "waiting" => "Waiting",
@@ -2022,6 +2031,41 @@ internal sealed record QcQueueItem(
 
 internal sealed record QcDecisionRequest(string Decision, string? Reason);
 
+/// <summary>The shared network folder Case links are stored relative to.</summary>
+internal sealed record NetworkFolderSettings(
+    string? RootPath,
+    IReadOnlyList<string> Aliases,
+    string KitaronCaseFolder,
+    int Version,
+    DateTimeOffset UpdatedAt,
+    int? ConvertedLinks = null);
+
+internal sealed record NetworkFolderUpdate(
+    string? RootPath,
+    IReadOnlyList<string> Aliases,
+    string KitaronCaseFolder,
+    int ExpectedVersion);
+
+/// <summary>An open Kitaron work order that uses a purchased raw material.</summary>
+internal sealed record KitaronMaterialWorkOrder(
+    string WorkOrderNumber,
+    string PartNumber,
+    string? CustomerOrderNumber,
+    string? Customer,
+    int? Quantity,
+    DateOnly? SupplyDate,
+    bool HasBatch)
+{
+    public string CustomerText => string.Join(" ",
+        new[] { CustomerOrderNumber, Customer is null ? null : $"({Customer})" }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    public string DetailText =>
+        $"Work Order {WorkOrderNumber}{(HasBatch ? "" : " (not imported yet)")}: {PartNumber}"
+        + (Quantity is null ? "" : $" × {Quantity}")
+        + (CustomerText.Length == 0 ? "" : $", {CustomerText}")
+        + (SupplyDate is null ? "" : $", due {SupplyDate:yyyy-MM-dd}");
+}
+
 /// <summary>One Kitaron material purchase-order line as the synchronization imported it.</summary>
 internal sealed record KitaronMaterialOrder(
     string SourceKey,
@@ -2040,9 +2084,42 @@ internal sealed record KitaronMaterialOrder(
     string? KitaronStatus,
     bool Closed,
     string DeliveryStatus,
-    DateTimeOffset LastImportedAt)
+    DateTimeOffset LastImportedAt,
+    double? UnitPrice = null,
+    double? LineTotal = null,
+    string? CustomerOrderReference = null,
+    IReadOnlyList<KitaronMaterialWorkOrder>? WorkOrders = null)
 {
     public string PurchaseOrderText => $"{PurchaseOrderNumber}/{LineNumber}";
+
+    public string UnitPriceText => UnitPrice is double value && value != 0 ? Money(value) : string.Empty;
+
+    public string LineTotalText => LineTotal is double value && value != 0 ? Money(value) : string.Empty;
+
+    /// <summary>Open Kitaron work orders (Production Batches, same number) that use this material.</summary>
+    public string BatchesText => string.Join(", ", (WorkOrders ?? []).Select(item => item.WorkOrderNumber));
+
+    /// <summary>The customer order the purchase names, else the customer orders of those work orders.</summary>
+    public string CustomerOrdersText
+    {
+        get
+        {
+            var orders = (WorkOrders ?? [])
+                .Select(item => item.CustomerText)
+                .Where(text => text.Length > 0)
+                .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            if (!string.IsNullOrWhiteSpace(CustomerOrderReference)) orders.Insert(0, CustomerOrderReference!);
+            return string.Join(", ", orders);
+        }
+    }
+
+    public string WorkOrdersToolTip => (WorkOrders ?? []).Count == 0
+        ? "No open Kitaron work order uses this material."
+        : string.Join(Environment.NewLine, (WorkOrders ?? []).Select(item => item.DetailText));
+
+    private static string Money(double value) =>
+        value.ToString("#,0.00", System.Globalization.CultureInfo.CurrentCulture);
 
     public string OrderedText => Quantity(OrderedQuantity);
 

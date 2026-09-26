@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Builder;
@@ -193,6 +195,85 @@ public sealed class KitaronBatchSyncTests
             {
                 Assert.Equal(0L, await ScalarAsync(verify, "SELECT kitaron_route_locked FROM cases;"));
             }
+        });
+    }
+
+    [Fact]
+    public async Task Planner_created_batches_are_removed_and_kitaron_batches_are_released_not_edited()
+    {
+        await RunAsync(async application =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            await repository.ApplyAsync(Plan([Operation()], []), Now, CancellationToken.None);
+            // Two batches a planner created by hand: one untouched, one with started production.
+            await ExecuteAsync(database, """
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                SELECT 'manual-1', id, 'M-1', 'waiting', 3 FROM cases;
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                SELECT 'manual-2', id, 'M-2', 'in_production', 3 FROM cases;
+                UPDATE edit_tokens SET holder_client_id = 'batch-editor', holder_user_id = 'planner', generation = 1,
+                    acquired_at = '2026-09-25T00:00:00Z', version = version + 1 WHERE id = 1;
+                """);
+
+            var batch = new KitaronSyncBatch(
+                "wo:4010", "PN-ROUTE", "4010", 5, [new KitaronSyncBatchAllocation("7001", 5)],
+                "on_order", "Raw material 58 on purchase order 76423/1 due 2026-10-06.", "hash-r")
+            {
+                MaterialOrderKeys = ["buy-1"],
+                MaterialOrdersText = "76423/1 due 2026-10-06"
+            };
+            var result = await repository.ApplyAsync(Plan([Operation()], [batch]), Now.AddMinutes(1), CancellationToken.None);
+            Assert.Contains("1 planner-created Production Batch(es) removed because batches come only from Kitaron; 1 kept because production started", result.Message);
+
+            var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "batch-editor");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            string batchId;
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("4010|M-2", await ScalarAsync(connection,
+                    "SELECT group_concat(batch_number, '|') FROM (SELECT batch_number FROM production_batches ORDER BY batch_number);"));
+                batchId = (string)(await ScalarAsync(connection, "SELECT id FROM production_batches WHERE batch_number = '4010';"))!;
+            }
+
+            // The imported batch shows its material order and starts pending.
+            using (var read = await client.GetAsync($"/api/v1/batches/{batchId}"))
+            {
+                using var document = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+                Assert.Equal("pending", document.RootElement.GetProperty("releaseState").GetString());
+                Assert.Equal("76423/1 due 2026-10-06", document.RootElement.GetProperty("kitaronMaterialOrders").GetString());
+            }
+            using (var released = await client.PostAsync($"/api/v1/batches/{batchId}/release", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, released.StatusCode);
+                using var document = JsonDocument.Parse(await released.Content.ReadAsStringAsync());
+                Assert.Equal("released", document.RootElement.GetProperty("releaseState").GetString());
+                Assert.Equal("planner", document.RootElement.GetProperty("releasedBy").GetString());
+            }
+            using (var pending = await client.PostAsync($"/api/v1/batches/{batchId}/unrelease", null))
+            {
+                using var document = JsonDocument.Parse(await pending.Content.ReadAsStringAsync());
+                Assert.Equal("pending", document.RootElement.GetProperty("releaseState").GetString());
+            }
+
+            // Kitaron owns the batch: it cannot be deleted by hand.
+            using var deleted = await client.DeleteAsync($"/api/v1/batches/{batchId}");
+            Assert.Equal(HttpStatusCode.Conflict, deleted.StatusCode);
+
+            // With the connector enabled, a planner cannot create a batch.
+            await ExecuteAsync(database, "UPDATE kitaron_connection_settings SET enabled = 1;");
+            string caseId;
+            await using (var connection = await database.OpenConnectionAsync())
+                caseId = (string)(await ScalarAsync(connection, "SELECT id FROM cases;"))!;
+            using var created = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId, batchNumber = "M-3", status = "waiting", plannedQuantity = 2,
+                allocations = new[] { new { allocationType = "stock", quantity = 2 } }
+            });
+            Assert.Equal(HttpStatusCode.Conflict, created.StatusCode);
+            Assert.Contains("kitaron_managed_read_only", await created.Content.ReadAsStringAsync());
         });
     }
 

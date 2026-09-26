@@ -61,8 +61,8 @@ public partial class CaseWorkspaceView : UserControl
     }
 
     private static bool ConfirmBatchRemoval(int batchCount) => LocalizedMessageBox.Show(
-        $"Adding a child component converts this Case into a parent. {batchCount} direct Production Batch{(batchCount == 1 ? string.Empty : "es")} and their assignments, execution history, allocations, and generated job-package records will be permanently removed. Continue?",
-        "Remove direct Production Batches?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+        $"Adding a child component converts this Case into a parent. {batchCount} direct Production Work Order{(batchCount == 1 ? string.Empty : "s")} and their assignments, execution history, allocations, and generated job-package records will be permanently removed. Continue?",
+        "Remove direct Work Orders?", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
     private void CaseWorkspace_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -597,7 +597,7 @@ public partial class CaseWorkspaceView : UserControl
     private async void DeleteCase_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
-            && Confirm("Delete the selected Case? It must have no Operations, Orders, Production Batches, active component links, or verified material receipt history."))
+            && Confirm("Delete the selected Case? It must have no Operations, Orders, Work Orders, active component links, or verified material receipt history."))
             await viewModel.DeleteSelectedCaseAsync();
     }
 
@@ -611,14 +611,14 @@ public partial class CaseWorkspaceView : UserControl
     private async void DeleteOrder_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
-            && Confirm("Delete the selected Order? Orders allocated to a Production Batch cannot be deleted."))
+            && Confirm("Delete the selected Order? Orders allocated to a Work Order cannot be deleted."))
             await viewModel.DeleteSelectedOrderAsync();
     }
 
     private async void DeleteBatch_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
-            && Confirm("Delete the selected Production Batch and all of its assignments, Operation execution/pause history, allocations, material reservations, and generated job-package records? Verified receipt history remains. This cannot be undone."))
+            && Confirm("Delete the selected Work Order and all of its assignments, Operation execution/pause history, allocations, material reservations, and generated job-package records? Verified receipt history remains. This cannot be undone."))
             await viewModel.DeleteSelectedBatchAsync();
     }
 
@@ -626,7 +626,7 @@ public partial class CaseWorkspaceView : UserControl
     {
         if (DataContext is CaseWorkspaceViewModel viewModel
             && Confirm(
-                "Cancel production for the selected Batch? The Batch, its Operations, Runs, and Programs will be cancelled; active Machine assignments and material reservations will be released; and Done parts will be reset to 0. Immutable CNC cycle and workflow history is retained. This cannot resume the same Production Run.",
+                "Cancel production for the selected Work Order? The Work Order, its Operations, Runs, and Programs will be cancelled; active Machine assignments and material reservations will be released; and Done parts will be reset to 0. Immutable CNC cycle and workflow history is retained. This cannot resume the same Production Run.",
                 "Confirm production cancellation"))
             await viewModel.CancelSelectedBatchProductionAsync();
     }

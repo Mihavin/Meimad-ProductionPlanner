@@ -18,11 +18,38 @@ internal static class KitaronMaterialOrderEndpoints
     {
         var today = DateOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        // Open Kitaron work orders by raw material: the batches and customer orders a purchase serves.
+        var workOrders = new Dictionary<string, List<KitaronMaterialWorkOrderResponse>>(StringComparer.OrdinalIgnoreCase);
+        await using (var read = connection.CreateCommand())
+        {
+            read.CommandText = """
+                SELECT work.raw_material_id, work.work_order_number, work.part_number, work.customer_order_number,
+                       work.customer, work.quantity, work.supply_date,
+                       EXISTS (SELECT 1 FROM kitaron_sync_links link
+                               WHERE link.source_entity = 'production_batch'
+                                 AND link.source_key = 'wo:' || work.work_order_number)
+                FROM kitaron_work_orders work
+                WHERE work.raw_material_id IS NOT NULL
+                ORDER BY work.supply_date IS NULL, work.supply_date, work.work_order_number;
+                """;
+            await using var workReader = await read.ExecuteReaderAsync(cancellationToken);
+            while (await workReader.ReadAsync(cancellationToken))
+            {
+                var key = workReader.GetString(0);
+                if (!workOrders.TryGetValue(key, out var list)) workOrders[key] = list = [];
+                list.Add(new KitaronMaterialWorkOrderResponse(
+                    workReader.GetInt64(1).ToString(CultureInfo.InvariantCulture), workReader.GetString(2),
+                    Text(workReader, 3), Text(workReader, 4),
+                    workReader.IsDBNull(5) ? null : workReader.GetInt32(5), Date(workReader, 6),
+                    workReader.GetInt64(7) == 1));
+            }
+        }
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT source_key, purchase_order_number, line_number, material_number, description, supplier,
                    ordered_quantity, received_quantity, unit, requested_delivery_date, approved_delivery_date,
-                   approved_quantity, approval_note, status, closed, last_imported_at
+                   approved_quantity, approval_note, status, closed, last_imported_at,
+                   unit_price, line_total, customer_order_reference
             FROM kitaron_material_orders
             WHERE active = 1
             ORDER BY closed, COALESCE(approved_delivery_date, requested_delivery_date) IS NULL,
@@ -44,7 +71,11 @@ internal static class KitaronMaterialOrderEndpoints
                 requested, approved, reader.IsDBNull(11) ? null : reader.GetDouble(11),
                 Text(reader, 12), Text(reader, 13), closed,
                 DeliveryStatus(ordered, received, requested, approved, closed, today),
-                DateTimeOffset.Parse(reader.GetString(15), CultureInfo.InvariantCulture)));
+                DateTimeOffset.Parse(reader.GetString(15), CultureInfo.InvariantCulture),
+                reader.IsDBNull(16) ? null : reader.GetDouble(16),
+                reader.IsDBNull(17) ? null : reader.GetDouble(17),
+                Text(reader, 18),
+                workOrders.GetValueOrDefault(reader.GetString(3)) ?? []));
         }
         return Results.Ok(new KitaronMaterialOrderListResponse(items));
     }
@@ -92,4 +123,19 @@ internal sealed record KitaronMaterialOrderResponse(
     string? KitaronStatus,
     bool Closed,
     string DeliveryStatus,
-    DateTimeOffset LastImportedAt);
+    DateTimeOffset LastImportedAt,
+    double? UnitPrice,
+    double? LineTotal,
+    string? CustomerOrderReference,
+    IReadOnlyList<KitaronMaterialWorkOrderResponse> WorkOrders);
+
+/// <summary>An open Kitaron work order that uses the purchased raw material. `HasBatch` is true
+/// when the work order is imported as a Production Batch (same number).</summary>
+internal sealed record KitaronMaterialWorkOrderResponse(
+    string WorkOrderNumber,
+    string PartNumber,
+    string? CustomerOrderNumber,
+    string? Customer,
+    int? Quantity,
+    DateOnly? SupplyDate,
+    bool HasBatch);

@@ -38,7 +38,6 @@ internal sealed class SqliteCaseComponentRepository(SqliteDatabase database) : I
         await using var transaction = connection.BeginTransaction(deferred: false);
         await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
         await EnsureCasesExistAsync(connection, transaction, parentCaseId, childCaseId, cancellationToken);
-        await EnsureParentHasNoOperationsAsync(connection, transaction, parentCaseId, cancellationToken);
         await EnsureNoCycleAsync(connection, transaction, parentCaseId, childCaseId, null, cancellationToken);
         try
         {
@@ -77,8 +76,6 @@ internal sealed class SqliteCaseComponentRepository(SqliteDatabase database) : I
             ?? throw new CaseComponentNotFoundException();
         if (isActive)
         {
-            await EnsureParentHasNoOperationsAsync(
-                connection, transaction, current.ParentCaseId, cancellationToken);
             await EnsureNoCycleAsync(
                 connection, transaction, current.ParentCaseId, current.ChildCaseId,
                 componentId, cancellationToken);

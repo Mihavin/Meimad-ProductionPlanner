@@ -25,7 +25,12 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
           WHERE production_batch_id = production_batches.id) AS kitaron_material_detail,
         EXISTS(SELECT 1 FROM kitaron_sync_links
                 WHERE source_entity = 'production_batch'
-                  AND target_id = production_batches.id) AS is_kitaron_managed
+                  AND target_id = production_batches.id) AS is_kitaron_managed,
+        release_state,
+        released_at,
+        released_by,
+        (SELECT material_orders_text FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id) AS kitaron_material_orders
         """;
 
     private const string AllocationProjection = """
@@ -91,6 +96,17 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             throw new ProductionBatchCaseNotFoundException(batch.CaseId);
         }
 
+        // While the Kitaron connector is enabled, Production Batches come only from Kitaron work
+        // orders; a planner cannot create one in Meimad Planner.
+        if (await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM kitaron_connection_settings WHERE enabled = 1 AND $unused IS NOT NULL);",
+                "$unused", batch.CaseId, cancellationToken))
+        {
+            throw new Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException(
+                "Production Batch creation (batches come from Kitaron work orders)", batch.CaseId);
+        }
+
         if (!await CaseHasOperationsAsync(connection, transaction, batch.CaseId, cancellationToken))
         {
             throw new ProductionBatchRouteRequiredException();
@@ -154,6 +170,14 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                 ("$version", expectedVersion)))
         {
             return null;
+        }
+        if (await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'production_batch' AND target_id = $id);",
+                "$id", batch.BatchId, cancellationToken))
+        {
+            throw new Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException(
+                "Production Batch", batch.BatchNumber);
         }
         var readinessBefore = await ReadReadinessAsync(
             connection, transaction, batch.BatchId, cancellationToken);
@@ -980,8 +1004,47 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
     {
         KitaronMaterialState = GetNullableString(reader, 9),
         KitaronMaterialDetail = GetNullableString(reader, 10),
-        IsKitaronManaged = reader.GetBoolean(11)
+        IsKitaronManaged = reader.GetBoolean(11),
+        ReleaseState = reader.GetString(12),
+        ReleasedAt = GetNullableString(reader, 13) is string releasedAt ? ParseInstant(releasedAt) : null,
+        ReleasedBy = GetNullableString(reader, 14),
+        KitaronMaterialOrders = GetNullableString(reader, 15)
     };
+
+    /// <summary>
+    /// Sets the planner release state of a batch: `pending` (imported, not yet released) or
+    /// `released` (the planner released it for production). Needs Single Edit Mode.
+    /// </summary>
+    public async Task<ProductionBatch?> SetReleaseStateAsync(
+        string batchId,
+        bool released,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using (var connection = await database.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = connection.BeginTransaction(deferred: false))
+        {
+            var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE production_batches
+                SET release_state = $state,
+                    released_at = CASE WHEN $state = 'released' THEN $now ELSE NULL END,
+                    released_by = CASE WHEN $state = 'released' THEN $actor ELSE NULL END,
+                    version = version + 1, updated_at = $now
+                WHERE id = $id AND release_state <> $state;
+                """;
+            command.Parameters.AddWithValue("$state", released ? "released" : "pending");
+            command.Parameters.AddWithValue("$now", FormatInstant(now));
+            command.Parameters.AddWithValue("$actor", (object?)actor ?? DBNull.Value);
+            command.Parameters.AddWithValue("$id", batchId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        return await GetByIdAsync(batchId, cancellationToken);
+    }
 
     private static BatchAllocation ReadAllocation(SqliteDataReader reader)
     {

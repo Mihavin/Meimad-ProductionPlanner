@@ -62,6 +62,9 @@ internal sealed class SqlServerKitaronConnectionTester : IKitaronConnectionTeste
             CAST(NULL AS float) AS SupplierAmount,
             CAST(NULL AS nvarchar(4000)) AS SupplierRemark,
             purchase_row.Status,
+            purchase_row.Price,
+            purchase_row.RowPrice,
+            purchase_row.CustOrderRow,
             CAST(0 AS bit) AS Closed
         FROM dbo.TBuyRow purchase_row
         JOIN dbo.TBuyMain main ON main.BuyMainID = purchase_row.BuyMainID;

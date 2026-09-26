@@ -21,6 +21,16 @@ internal sealed record ProductionBatch(
 
     /// <summary>True when the batch is linked to a Kitaron work order.</summary>
     internal bool IsKitaronManaged { get; init; }
+
+    /// <summary>Planner release state: `pending` until the planner releases the batch, then `released`.</summary>
+    internal string ReleaseState { get; init; } = "pending";
+
+    internal DateTimeOffset? ReleasedAt { get; init; }
+
+    internal string? ReleasedBy { get; init; }
+
+    /// <summary>The open Kitaron purchase lines assigned to the batch, e.g. "76423/1 due 2026-10-06".</summary>
+    internal string? KitaronMaterialOrders { get; init; }
 }
 
 internal sealed record BatchAllocation(

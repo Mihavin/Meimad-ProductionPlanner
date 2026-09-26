@@ -113,7 +113,9 @@ internal sealed class MaterialOrdersViewModel : INotifyPropertyChanged
         || Contains(item.MaterialNumber, search)
         || Contains(item.Description, search)
         || Contains(item.Supplier, search)
-        || Contains(item.KitaronStatus, search);
+        || Contains(item.KitaronStatus, search)
+        || Contains(item.BatchesText, search)
+        || Contains(item.CustomerOrdersText, search);
 
     private static bool Contains(string? value, string search) =>
         value is not null && value.Contains(search, StringComparison.CurrentCultureIgnoreCase);

@@ -100,7 +100,7 @@
         <DataGrid.Columns>
           <DataGridTextColumn Header="Machine" Binding="{Binding MachineText}" Width="180" />
           <DataGridTextColumn Header="Part" Binding="{Binding PartText}" Width="180" />
-          <DataGridTextColumn Header="Batch" Binding="{Binding BatchNumber}" Width="110" />
+          <DataGridTextColumn Header="Work Order" Binding="{Binding BatchNumber}" Width="110" />
           <DataGridTextColumn Header="Operation" Binding="{Binding OperationText}" Width="190" />
           <DataGridTextColumn Header="Workflow" Binding="{Binding WorkflowText}" Width="145" />
           <DataGridTextColumn Header="Production Run" Binding="{Binding ProductionRunText}" Width="170" />

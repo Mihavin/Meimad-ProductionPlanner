@@ -92,7 +92,7 @@ public sealed class KitaronConnectionApiTests
             using var mappingJson = JsonDocument.Parse(await mapping.Content.ReadAsStringAsync());
             Assert.Equal("domain_aligned", mappingJson.RootElement.GetProperty("modelMode").GetString());
             Assert.Equal("draft", mappingJson.RootElement.GetProperty("status").GetString());
-            Assert.Equal(39, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
+            Assert.Equal(42, mappingJson.RootElement.GetProperty("fields").GetArrayLength());
             var orderFields = mappingJson.RootElement.GetProperty("fields").EnumerateArray()
                 .Where(field => field.GetProperty("targetEntity").GetString() == "orders")
                 .ToArray();
@@ -160,7 +160,7 @@ public sealed class KitaronConnectionApiTests
                     SELECT mapping_status || '/' || json_array_length(mappings_json)
                     FROM kitaron_mapping_settings WHERE id = 1;
                     """;
-                Assert.Equal("draft/39", await command.ExecuteScalarAsync());
+                Assert.Equal("draft/42", await command.ExecuteScalarAsync());
 
                 command.CommandText = """
                     SELECT COUNT(*) FROM sqlite_master
@@ -1152,7 +1152,8 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal("succeeded", firstJson.RootElement.GetProperty("status").GetString());
             Assert.Equal(2, firstJson.RootElement.GetProperty("casesCreated").GetInt32());
             Assert.Equal(1, firstJson.RootElement.GetProperty("ordersCreated").GetInt32());
-            Assert.Equal(0, firstJson.RootElement.GetProperty("operationsCreated").GetInt32());
+            // The assembly keeps its own operations (2026-09-26 rule).
+            Assert.Equal(2, firstJson.RootElement.GetProperty("operationsCreated").GetInt32());
             Assert.Equal(1, firstJson.RootElement.GetProperty("componentsCreated").GetInt32());
 
             using var second = await client.PostAsync("/api/v1/kitaron/sync", null);
@@ -1160,7 +1161,7 @@ public sealed class KitaronConnectionApiTests
             Assert.Equal(0, secondJson.RootElement.GetProperty("casesCreated").GetInt32());
             Assert.Equal(2, secondJson.RootElement.GetProperty("casesMatched").GetInt32());
             Assert.Equal(1, secondJson.RootElement.GetProperty("ordersMatched").GetInt32());
-            Assert.Equal(0, secondJson.RootElement.GetProperty("operationsMatched").GetInt32());
+            Assert.Equal(2, secondJson.RootElement.GetProperty("operationsMatched").GetInt32());
             Assert.Equal(0, secondJson.RootElement.GetProperty("operationsUpdated").GetInt32());
             Assert.Equal(1, secondJson.RootElement.GetProperty("componentsMatched").GetInt32());
 
@@ -1388,7 +1389,7 @@ public sealed class KitaronConnectionApiTests
     }
 
     [Fact]
-    public async Task Legacy_parent_operations_skip_conflicting_component_without_failing_sync()
+    public async Task An_assembly_with_operations_also_gets_its_components()
     {
         await RunAsync(new CapturingTester(), async (application, _) =>
         {
@@ -1408,15 +1409,16 @@ public sealed class KitaronConnectionApiTests
                 new KitaronSyncPlan(1, [parent, child], [], [], [component], new HashSet<string> { "1:2" }, [], 1),
                 now.AddMinutes(1), CancellationToken.None);
 
+            // Since 2026-09-26 an assembly carries its own operations and its components.
             Assert.Equal("succeeded", result.Status);
-            Assert.Equal(0, result.ComponentsCreated);
-            Assert.Equal(1, result.WarningCount);
+            Assert.Equal(1, result.ComponentsCreated);
+            Assert.Equal(0, result.WarningCount);
 
             var database = application.Services.GetRequiredService<SqliteDatabase>();
             await using var connection = await database.OpenConnectionAsync();
             await using var verify = connection.CreateCommand();
             verify.CommandText = "SELECT COUNT(*) FROM case_components;";
-            Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+            Assert.Equal(1L, (long)(await verify.ExecuteScalarAsync())!);
         });
     }
 
@@ -1568,7 +1570,8 @@ public sealed class KitaronConnectionApiTests
                 new("Amount", "float"), new("ReceivedAmount", "float"), new("MeasureUnit", "nvarchar"),
                 new("DateToRecept", "datetime"), new("SupplierDate", "datetime"),
                 new("SupplierAmount", "float"), new("SupplierRemark", "nvarchar"),
-                new("Status", "nvarchar"), new("Closed", "bit")]);
+                new("Status", "nvarchar"), new("Closed", "bit"),
+                new("Price", "float"), new("RowPrice", "float"), new("CustOrderRow", "nvarchar")]);
     }
 
     private sealed class CapturingSourceReader : IKitaronSourceReader

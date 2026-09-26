@@ -220,7 +220,7 @@ public sealed class KitaronRoutePlannerTests
     }
 
     [Fact]
-    public void The_current_revision_header_wins_and_parts_outside_the_scope_or_parents_are_left_out()
+    public void The_current_revision_header_wins_parts_outside_the_scope_are_left_out_and_assemblies_keep_their_route()
     {
         var stations = Stations(Station(Doosan, "DOOSAN-1", "MACHINE"));
         var steps = new[]
@@ -234,12 +234,14 @@ public sealed class KitaronRoutePlannerTests
 
         var plan = KitaronRoutePlanner.Plan(steps, stations, Parts("P", "PARENT"), Parts("PARENT"), warnings);
 
-        var operation = Assert.Single(plan.Operations);
+        var operation = Assert.Single(plan.Operations, item => item.CaseSourceKey == "P");
         Assert.Equal(35, operation.OperationNumber);
         Assert.Equal("Current route", operation.Name);
+        var assembly = Assert.Single(plan.Operations, item => item.CaseSourceKey == "PARENT");
+        Assert.Equal("Assembly step", assembly.Name);
         Assert.Contains("PARENT", plan.PartsWithRoute);
         Assert.DoesNotContain("OUT", plan.PartsWithRoute);
-        Assert.Contains(warnings, warning => warning.StartsWith("PARENT is a parent Case", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, warning => warning.StartsWith("PARENT is a parent Case", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -53,6 +53,30 @@ public sealed class KitaronBatchPlanTests
         Assert.Equal([new KitaronSyncBatchAllocation("2", 6), new KitaronSyncBatchAllocation(null, 4)], batches[1].Allocations);
     }
 
+    [Fact]
+    public void A_batch_is_assigned_the_open_purchase_lines_of_its_raw_material()
+    {
+        var open = new KitaronSyncMaterialOrder("buy-2", "76500", "1", "58", null, null, 10, 0, null,
+            new DateOnly(2026, 11, 1), null, null, null, null, false, "h");
+        var earlier = new KitaronSyncMaterialOrder("buy-1", "76423", "1", "58", null, null, 10, 2, null,
+            new DateOnly(2026, 10, 6), null, null, null, null, false, "h");
+        var received = new KitaronSyncMaterialOrder("buy-0", "70000", "1", "58", null, null, 10, 10, null,
+            new DateOnly(2026, 1, 1), null, null, null, null, false, "h");
+        var batches = KitaronSyncService.BuildBatches(
+            [
+                new KitaronSourceWorkOrder(1, "PN-1", "10", 5, 5, null, null, RawMaterialId: "58"),
+                new KitaronSourceWorkOrder(2, "PN-1", "10", 5, 5, null, null, RawMaterialId: "99")
+            ],
+            [], [], Parts, [open, earlier, received], new List<string>());
+
+        Assert.Equal(["buy-1", "buy-2"], batches[0].MaterialOrderKeys);
+        Assert.Equal("76423/1 due 2026-10-06, 76500/1 due 2026-11-01", batches[0].MaterialOrdersText);
+        Assert.Equal("on_order", batches[0].MaterialState);
+        Assert.Empty(batches[1].MaterialOrderKeys);
+        Assert.Equal("unknown", batches[1].MaterialState);
+        Assert.Contains("No open purchase order for raw material 99", batches[1].MaterialDetail);
+    }
+
     private static KitaronSyncOrder Order(string recordId, int quantity, DateOnly due, string status = "active") =>
         new(recordId, "PN-1", $"SO/{recordId}", quantity, due, status, "h");
 

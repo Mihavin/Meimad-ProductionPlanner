@@ -168,6 +168,13 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ProductionBatch> SetBatchReleaseStateAsync(
+        string batchId,
+        bool released,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<ProductionBatch> CancelBatchProductionAsync(
         string batchId,
         CancelProductionBatchRequest request,
@@ -231,6 +238,13 @@ internal interface IPlannerApiClient : IDisposable
     Task<IReadOnlyList<KitaronMaterialOrder>> ListKitaronMaterialOrdersAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<KitaronMaterialOrder>>([]);
+
+    Task<NetworkFolderSettings> GetNetworkFolderAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new NetworkFolderSettings(null, [], "Meimad Cases", 1, DateTimeOffset.UnixEpoch));
+
+    Task<NetworkFolderSettings> UpdateNetworkFolderAsync(
+        NetworkFolderUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
         string stage,
@@ -1487,6 +1501,24 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
     }
 
+    public async Task<ProductionBatch> SetBatchReleaseStateAsync(
+        string batchId,
+        bool released,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/{(released ? "release" : "unrelease")}",
+            clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
+    }
+
     public async Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
         string batchId,
         CancellationToken cancellationToken = default)
@@ -1697,6 +1729,23 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public async Task<IReadOnlyList<QcQueueItem>> ListQcQueueAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
+
+    public async Task<NetworkFolderSettings> GetNetworkFolderAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/network-folder", cancellationToken);
+        return await ReadSuccessAsync<NetworkFolderSettings>(response, cancellationToken);
+    }
+
+    public async Task<NetworkFolderSettings> UpdateNetworkFolderAsync(
+        NetworkFolderUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/network-folder", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<NetworkFolderSettings>(response, cancellationToken);
+    }
 
     public async Task<IReadOnlyList<KitaronMaterialOrder>> ListKitaronMaterialOrdersAsync(
         CancellationToken cancellationToken = default) =>

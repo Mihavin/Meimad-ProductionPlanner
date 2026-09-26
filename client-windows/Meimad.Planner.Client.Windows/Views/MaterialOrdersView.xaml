@@ -20,7 +20,7 @@
     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
       <TextBlock Text="Search" VerticalAlignment="Center" Margin="0,0,6,0" />
       <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="260"
-               ToolTip="Purchase order, material, description, supplier or Kitaron status" />
+               ToolTip="Purchase order, material, description, supplier, Kitaron status, work order or customer order" />
       <TextBlock Text="Status" VerticalAlignment="Center" Margin="18,0,6,0" />
       <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" Width="200" />
     </StackPanel>
@@ -39,6 +39,22 @@
         <DataGridTextColumn Header="Ordered" Binding="{Binding OrderedText}" Width="80" />
         <DataGridTextColumn Header="Received" Binding="{Binding ReceivedText}" Width="80" />
         <DataGridTextColumn Header="Unit" Binding="{Binding Unit}" Width="60" />
+        <DataGridTextColumn Header="Unit price" Binding="{Binding UnitPriceText}" Width="90" />
+        <DataGridTextColumn Header="Line total" Binding="{Binding LineTotalText}" Width="100" />
+        <DataGridTextColumn Header="Work Orders" Binding="{Binding BatchesText}" Width="140">
+          <DataGridTextColumn.ElementStyle>
+            <Style TargetType="TextBlock">
+              <Setter Property="ToolTip" Value="{Binding WorkOrdersToolTip}" />
+            </Style>
+          </DataGridTextColumn.ElementStyle>
+        </DataGridTextColumn>
+        <DataGridTextColumn Header="Customer orders" Binding="{Binding CustomerOrdersText}" Width="220">
+          <DataGridTextColumn.ElementStyle>
+            <Style TargetType="TextBlock">
+              <Setter Property="ToolTip" Value="{Binding WorkOrdersToolTip}" />
+            </Style>
+          </DataGridTextColumn.ElementStyle>
+        </DataGridTextColumn>
         <DataGridTextColumn Header="Requested date" Binding="{Binding RequestedText}" Width="110" />
         <DataGridTextColumn Header="Supplier date" Binding="{Binding ApprovedText}" Width="110" />
         <DataGridTextColumn Header="Supplier note" Binding="{Binding ApprovalNote}" Width="180" />

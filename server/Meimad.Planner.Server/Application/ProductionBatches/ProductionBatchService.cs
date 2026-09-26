@@ -38,7 +38,6 @@ internal sealed class ProductionBatchService
                 allocation.OrderId,
                 allocation.Quantity,
                 allocation.DerivedOrderKey)).ToArray()));
-        await EnsureCaseCanOwnBatchesAsync(values.CaseId, cancellationToken);
         await ValidateDerivedAllocationsAsync(values.CaseId, values.Allocations, null, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var batchId = Guid.NewGuid().ToString("N");
@@ -68,6 +67,16 @@ internal sealed class ProductionBatchService
         return await repository.CreateAsync(batch, editAuthority, cancellationToken);
     }
 
+    /// <summary>Releases a pending batch for production, or returns a released one to pending.</summary>
+    internal async Task<ProductionBatch> SetReleaseStateAsync(
+        string batchId,
+        bool released,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default) =>
+        await repository.SetReleaseStateAsync(
+            batchId, released, timeProvider.GetUtcNow(), editAuthority, cancellationToken)
+        ?? throw new ProductionBatchNotFoundException(batchId);
+
     internal Task<ProductionBatch?> GetByIdAsync(
         string batchId,
         CancellationToken cancellationToken = default) =>
@@ -92,7 +101,6 @@ internal sealed class ProductionBatchService
                 allocation.OrderId,
                 allocation.Quantity,
                 allocation.DerivedOrderKey)).ToArray()));
-        await EnsureCaseCanOwnBatchesAsync(current.CaseId, cancellationToken);
         await ValidateDerivedAllocationsAsync(current.CaseId, values.Allocations, current, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var allocations = values.Allocations.Select(allocation => new BatchAllocation(

@@ -46,11 +46,9 @@ internal static class KitaronRoutePlanner
             var route = ChooseHeader(partGroup);
             if (route.Count == 0) continue;
             partsWithRoute.Add(part);
-            if (parentParts.Contains(part))
-            {
-                AddWarning(warnings, $"{part} is a parent Case; its Kitaron route steps were skipped.");
-                continue;
-            }
+            // An assembly carries its own route like any other part (2026-09-26); parentParts is
+            // kept in the signature for callers.
+            _ = parentParts;
 
             var ordered = OrderSteps(route, part, warnings);
             var classified = new List<ClassifiedStep>();

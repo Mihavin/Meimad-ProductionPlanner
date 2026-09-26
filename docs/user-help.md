@@ -317,3 +317,11 @@ Production Batches come from the open Kitaron work orders. The batch number is t
 ### Material Orders
 
 The Material Orders tab lists the material purchase-order lines from Kitaron. It opens on the lines not yet received; choose another status or All statuses in the Status list, and type in Search to find a purchase order, material, description or supplier. The Status column says whether the line is received, closed, partially received, late, confirmed by the supplier or open; the Kitaron status column shows Kitaron's own status text. Press Refresh after a Kitaron synchronization to reload the list.
+
+### Releasing Kitaron batches
+
+Production Batches come only from Kitaron. A new batch is Pending; select it on the Case's Batches tab and press Release when it may go to production, or Return to pending to take it back. The Material order column names the open Kitaron purchase lines for the batch's raw material. The Material Orders tab shows each purchase line's price and the batches and customer orders that use its material.
+
+### Work Orders, assemblies, station tabs, network folder
+
+A Work Order is the Kitaron work order (formerly called a Production Batch). Assemblies can have their own operations and Work Orders. The Planning Board has Internal stations and External operations tabs that show, per station, the steps the Server scheduled around the Machine work; pin a step on the Timeline to keep it. In Setup > Network Folder, enter the shared folder as a UNC path and the drive letters people map to it, then press Save network folder: every PC then opens the same Case folders, pictures, models and G-code.

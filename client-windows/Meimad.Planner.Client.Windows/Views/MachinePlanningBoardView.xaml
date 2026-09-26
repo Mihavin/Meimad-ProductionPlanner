@@ -353,6 +353,63 @@
                 </Grid>
             </Border>
         </DataTemplate>
+        <!-- One column per internal station or External Resource with the auxiliary steps the Server
+             placed on it (read-only projection; pin a step on the Timeline to keep it). -->
+        <DataTemplate x:Key="ResourceLanesTemplate">
+            <Grid Margin="0,6,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="{Binding DataContext.AuxiliaryStatus, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="2,0,2,6" />
+                <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="260" Margin="0,0,8,0" Background="#F2F5F8" BorderBrush="#CCD3DA"
+                                        BorderThickness="1" CornerRadius="4" Padding="7">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <DockPanel Margin="2,0,2,7">
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding Cards.Count}" FontWeight="Bold" />
+                                            <TextBlock Text="{Binding Name}" FontWeight="Bold" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Name}" />
+                                        </DockPanel>
+                                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                            <ItemsControl ItemsSource="{Binding Cards}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="White" BorderBrush="#D5DAE0" BorderThickness="1"
+                                                                CornerRadius="3" Padding="7" Margin="2,2,2,5" ToolTip="{Binding Explanation}">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                                <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap"
+                                                                           Foreground="{StaticResource MutedTextBrush}" />
+                                                                <DockPanel Margin="0,3,0,0">
+                                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding PinText}" FontSize="11" />
+                                                                    <TextBlock Text="{Binding TimeText}" FontSize="11" />
+                                                                </DockPanel>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Border Background="{StaticResource PanelBrush}" BorderBrush="#D8DDE3"
@@ -377,7 +434,9 @@
                 </StackPanel>
             </DockPanel>
 
-            <Grid Grid.Row="1">
+            <TabControl Grid.Row="1" SelectedIndex="{Binding SelectedBoardTab}">
+                <TabItem Header="Machines">
+            <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="300" />
                     <ColumnDefinition Width="10" />
@@ -403,7 +462,7 @@
                                     Margin="0,6,0,0" Padding="10,3" Click="CreateProductionRun_Click"
                                     IsEnabled="{Binding CanDrag}" AutomationProperties.Name="Create Production Run"/>
                             <TextBox Text="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
-                                     Margin="0,6,0,0" ToolTip="Search part, Case, batch, order, operation, or ID"
+                                     Margin="0,6,0,0" ToolTip="Search part, Case, work order, order, operation, or ID"
                                      AutomationProperties.Name="Search Planning Board" />
                         </StackPanel>
                         <ListBox x:Name="OperationPool" Grid.Row="1"
@@ -491,6 +550,14 @@
                     </Grid>
                 </Border>
             </Grid>
+                </TabItem>
+                <TabItem Header="Internal stations" ToolTip="Inspection, deburring, packing and other internal stations: the steps the Server placed on each station around the Machine work">
+                    <ContentControl Content="{Binding InternalStationLanes}" ContentTemplate="{StaticResource ResourceLanesTemplate}" />
+                </TabItem>
+                <TabItem Header="External operations" ToolTip="Subcontracted operations (plating, heat treatment, ...): the steps the Server placed on each External Resource">
+                    <ContentControl Content="{Binding ExternalOperationLanes}" ContentTemplate="{StaticResource ResourceLanesTemplate}" />
+                </TabItem>
+            </TabControl>
 
             <Border Grid.Row="3" Background="#FFF8E1" BorderBrush="{StaticResource YellowBrush}"
                     BorderThickness="1" CornerRadius="4" Padding="8">

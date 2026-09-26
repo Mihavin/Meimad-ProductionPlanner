@@ -129,7 +129,7 @@
                     <TextBlock Text="SELECTED BATCH DEPENDENCIES" FontWeight="Bold" FontSize="16" />
                     <ComboBox ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}"
                               DisplayMemberPath="DisplayName" Margin="0,9,0,10" MinHeight="34" />
-                    <TextBlock Text="Only dependency edges for the selected batch are shown."
+                    <TextBlock Text="Only dependency edges for the selected work order are shown."
                                Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
                     <ItemsControl ItemsSource="{Binding SelectedDependencies}">
                         <ItemsControl.ItemTemplate>

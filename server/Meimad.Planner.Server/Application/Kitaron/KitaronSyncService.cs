@@ -193,6 +193,7 @@ internal sealed class KitaronSyncService
 
         var reachableParts = parsed.Select(row => row.Part)
             .Concat(snapshot.Orders.Select(order => order.PartNumber))
+            .Concat((snapshot.WorkOrders ?? []).Select(workOrder => workOrder.PartNumber))
             .Concat(existingCasePartNumbers)
             .Concat(snapshot.Components.Select(component => component.ParentPartNumber))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -217,6 +218,10 @@ internal sealed class KitaronSyncService
                 row.Part, row.Name, row.Revision, row.Customer))
             .Concat(snapshot.Orders.Select(order => new CaseCandidate(
                 order.PartNumber, order.Name, order.Revision, null)))
+            // Every open work order's part is a synchronized Case, so its batch is never skipped
+            // because the part is outside the planning view and the BOM trees.
+            .Concat((snapshot.WorkOrders ?? []).Select(workOrder => new CaseCandidate(
+                workOrder.PartNumber, workOrder.PartName ?? workOrder.PartNumber, workOrder.PartRevision, null)))
             .Concat(selectedComponents.SelectMany(component => new[]
             {
                 new CaseCandidate(component.ParentPartNumber, component.ParentName, component.ParentRevision, null),
@@ -289,11 +294,7 @@ internal sealed class KitaronSyncService
             cases.Select(item => item.PartNumber).ToHashSet(StringComparer.OrdinalIgnoreCase),
             parentParts,
             warnings);
-        foreach (var parentPart in parsed.Where(row => row.OperationNumber > 0)
-                     .Select(row => row.Part).Where(parentParts.Contains)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
-            AddWarning(warnings, $"{parentPart} is a parent Case; its direct Kitaron Operations were skipped.");
-        var rawOperations = parsed.Where(row => row.OperationNumber > 0 && !parentParts.Contains(row.Part)
+        var rawOperations = parsed.Where(row => row.OperationNumber > 0
                 && !routePlan.PartsWithRoute.Contains(row.Part))
             .GroupBy(row => $"{row.Part}\u001f{row.OperationNumber}", StringComparer.OrdinalIgnoreCase)
             .Select(group =>
@@ -355,12 +356,18 @@ internal sealed class KitaronSyncService
                     OptionalText(row, byTarget, "material_orders.approval_note"),
                     OptionalText(row, byTarget, "material_orders.status"),
                     OptionalBoolean(row, byTarget, "material_orders.closed"),
-                    "");
+                    "")
+                {
+                    UnitPrice = OptionalNumber(row, byTarget, "material_orders.unit_price"),
+                    LineTotal = OptionalNumber(row, byTarget, "material_orders.line_total"),
+                    CustomerOrderReference = OptionalText(row, byTarget, "material_orders.customer_order_reference")
+                };
                 return item with { SourceHash = Hash(
                     item.SourceKey, item.PurchaseOrderNumber, item.LineNumber, item.MaterialNumber,
                     item.Description, item.Supplier, item.OrderedQuantity, item.ReceivedQuantity,
                     item.Unit, item.RequestedDeliveryDate, item.ApprovedDeliveryDate,
-                    item.ApprovedQuantity, item.ApprovalNote, item.Status, item.Closed) };
+                    item.ApprovedQuantity, item.ApprovalNote, item.Status, item.Closed,
+                    item.UnitPrice, item.LineTotal, item.CustomerOrderReference) };
             })
             .Where(item => item is not null)
             .Cast<KitaronSyncMaterialOrder>()
@@ -381,7 +388,11 @@ internal sealed class KitaronSyncService
             snapshot.Components.Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
             warnings, mappingVersion, materialOrders,
             routePlan.Requirements, snapshot.Stations, routePlan.StepsSkipped, routePlan.PartsWithRoute,
-            batches);
+            batches,
+            snapshot.WorkOrders?.Select(item => new KitaronSyncWorkOrderSnapshot(
+                item.Number, item.PartNumber, item.RawMaterialId, item.CustomerOrderNumber, item.Customer,
+                Quantity(item.Amount) ?? Quantity(item.ProductionAmount),
+                item.SupplyDate is null ? null : DateOnly.FromDateTime(item.SupplyDate.Value))).ToArray());
     }
 
     /// <summary>
@@ -457,13 +468,38 @@ internal sealed class KitaronSyncService
 
             var (materialState, materialDetail) = MaterialCheck(
                 materialsByNumber[workOrder.Number].ToArray(), purchasesByMaterial);
+            // The work order's raw material ties it to the open Kitaron purchase lines of that
+            // material; they are the batch's material orders. When Kitaron keeps no per-work-order
+            // material calculation, an open purchase line makes the material "on order".
+            var assignedMaterialOrders = workOrder.RawMaterialId is null
+                ? []
+                : purchasesByMaterial[workOrder.RawMaterialId]
+                    .Where(item => item.OrderedQuantity > (item.ReceivedQuantity ?? 0))
+                    .OrderBy(item => item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate ?? DateOnly.MaxValue)
+                    .ThenBy(item => item.PurchaseOrderNumber, StringComparer.Ordinal)
+                    .ToArray();
+            var materialOrdersText = assignedMaterialOrders.Length == 0
+                ? null
+                : string.Join(", ", assignedMaterialOrders.Take(5).Select(item =>
+                    $"{item.PurchaseOrderNumber}/{item.LineNumber}"
+                    + ((item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate) is DateOnly due ? $" due {due:yyyy-MM-dd}" : "")));
+            if (materialState == "unknown" && workOrder.RawMaterialId is not null)
+            {
+                (materialState, materialDetail) = assignedMaterialOrders.Length > 0
+                    ? ("on_order", $"Raw material {workOrder.RawMaterialId} on purchase order {materialOrdersText}.")
+                    : ("unknown", $"No open purchase order for raw material {workOrder.RawMaterialId}; Kitaron has no stock calculation for this work order.");
+            }
             var sourceKey = $"wo:{workOrder.Number.ToString(CultureInfo.InvariantCulture)}";
             var batchNumber = workOrder.Number.ToString(CultureInfo.InvariantCulture);
             result.Add(new KitaronSyncBatch(
                 sourceKey, workOrder.PartNumber, batchNumber, planned.Value, allocations,
                 materialState, materialDetail,
                 Hash(sourceKey, batchNumber, planned.Value,
-                    allocations.Select(item => $"{item.OrderSourceKey}\u001f{item.Quantity}\u001f{item.ScrapAllowance}").ToArray())));
+                    allocations.Select(item => $"{item.OrderSourceKey}\u001f{item.Quantity}\u001f{item.ScrapAllowance}").ToArray()))
+            {
+                MaterialOrderKeys = assignedMaterialOrders.Select(item => item.SourceKey).ToArray(),
+                MaterialOrdersText = materialOrdersText
+            });
         }
         return result;
     }

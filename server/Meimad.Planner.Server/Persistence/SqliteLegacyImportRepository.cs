@@ -530,7 +530,8 @@ internal sealed class SqliteLegacyImportRepository : ILegacyImportRepository
         command.Parameters.AddWithValue("$revision", Db(values.Revision));
         command.Parameters.AddWithValue("$customer", Db(values.Customer));
         command.Parameters.AddWithValue("$customerReference", Db(values.CustomerReference));
-        command.Parameters.AddWithValue("$workingFolderPath", values.WorkingFolderPath);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
+        command.Parameters.AddWithValue("$workingFolderPath", paths.ToStored(values.WorkingFolderPath) ?? values.WorkingFolderPath);
         command.Parameters.AddWithValue("$notes", Db(values.Notes));
         command.Parameters.AddWithValue("$now", FormatInstant(now));
         await command.ExecuteNonQueryAsync(cancellationToken);

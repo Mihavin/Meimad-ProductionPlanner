@@ -107,7 +107,13 @@ internal sealed partial class KitaronMappingService(
         new("material_orders", "status", "Material Order Status", "Kitaron purchase-line status.", false,
             "Status", "high", "trim_or_null", ["Status"], BothModes),
         new("material_orders", "closed", "Closed", "True when the Kitaron purchase row or its purchase order is closed.", false,
-            "Closed", "high", "direct", ["Closed"], BothModes)
+            "Closed", "high", "direct", ["Closed"], BothModes),
+        new("material_orders", "unit_price", "Unit Price", "Price per ordered unit on the purchase line (TBuyRow.Price); Kitaron records no currency, NIS assumed.", false,
+            "Price", "high", "direct", ["Price", "PriceUnit"], BothModes),
+        new("material_orders", "line_total", "Line Total", "Total price of the purchase line (TBuyRow.RowPrice).", false,
+            "RowPrice", "high", "direct", ["RowPrice"], BothModes),
+        new("material_orders", "customer_order_reference", "Customer Order Reference", "Customer order row the purchase was placed for, when Kitaron records it (TBuyRow.CustOrderRow).", false,
+            "CustOrderRow", "high", "trim_or_null", ["CustOrderRow", "StrOrder"], BothModes)
     ];
 
     internal async Task<KitaronMappingSettings> GetAsync(CancellationToken cancellationToken) =>

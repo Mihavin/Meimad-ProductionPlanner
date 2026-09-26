@@ -364,7 +364,7 @@ public sealed class PlannerApiClientTests
                 [batchOperation])), [], owner);
 
         Assert.Empty(row.RouteOperationCandidates);
-        Assert.Contains("Batch B-104 / PN-1", row.ExistingOperationCandidates.Single().DisplayName, StringComparison.Ordinal);
+        Assert.Contains("Work Order B-104 / PN-1", row.ExistingOperationCandidates.Single().DisplayName, StringComparison.Ordinal);
 
         row.SelectedCaseCandidate = firstCase;
         Assert.Equal([firstRouteOperation], row.RouteOperationCandidates);
@@ -898,8 +898,8 @@ public sealed class PlannerApiClientTests
         Assert.Contains("Detected 2 rows", viewModel.PreviewSummary, StringComparison.Ordinal);
         Assert.Contains("1 warning row", viewModel.PreviewSummary, StringComparison.Ordinal);
         Assert.Contains("1 Order(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
-        Assert.Contains("1 Batch(es)", viewModel.PreviewSummary, StringComparison.Ordinal);
-        Assert.Contains("2 route Batch Operation(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("1 Work Order(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
+        Assert.Contains("2 route Work Order Operation(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
         Assert.Contains("1 unmatched Machine section(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
         Assert.Contains("1 duplicate indicator(s)", viewModel.PreviewSummary, StringComparison.Ordinal);
     }

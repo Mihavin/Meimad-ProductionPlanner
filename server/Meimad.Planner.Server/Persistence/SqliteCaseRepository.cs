@@ -100,10 +100,11 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 $createdAt,
                 $updatedAt);
             """;
-        AddWriteParameters(command, plannerCase);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
+        AddWriteParameters(command, ToStored(paths, plannerCase));
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return plannerCase;
+        return Resolve(paths, ToStored(paths, plannerCase));
     }
 
     public async Task<PlannerCase?> GetByIdAsync(
@@ -120,6 +121,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         string caseId,
         CancellationToken cancellationToken)
     {
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = $"""
@@ -160,7 +162,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? ReadCase(reader, includeActiveProjection: true)
+            ? Resolve(paths, ReadCase(reader, includeActiveProjection: true))
             : null;
     }
 
@@ -253,11 +255,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             _ => "partNumber"
         });
 
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, null, cancellationToken);
         var items = new List<PlannerCase>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            items.Add(ReadCase(reader, includeActiveProjection: true));
+            items.Add(Resolve(paths, ReadCase(reader, includeActiveProjection: true)));
         }
 
         return items;
@@ -335,8 +338,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             return null;
         }
 
-        if (await CaseIsParentAsync(connection, transaction, operation.CaseId, cancellationToken))
-            throw new CaseParentOperationsNotAllowedException();
+        // An assembly (parent Case) carries its own operations like any other Case (2026-09-26).
 
         // The Kitaron route master owns this Case's operation list: the lists stay identical, so
         // a planner cannot add an operation here (nor delete one). Operation data stays editable.
@@ -466,8 +468,6 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             transaction,
             editAuthority,
             cancellationToken);
-        if (await CaseIsParentAsync(connection, transaction, caseId, cancellationToken))
-            throw new CaseParentOperationsNotAllowedException();
 
         var currentOperations = await ReadOperationsAsync(
             connection,
@@ -724,7 +724,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
             """;
-        AddWriteParameters(command, plannerCase);
+        AddWriteParameters(command, ToStored(
+            await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken), plannerCase));
         command.Parameters.AddWithValue("$expectedVersion", expectedVersion);
 
         var affected = await command.ExecuteNonQueryAsync(cancellationToken);
@@ -879,6 +880,20 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             .ToArray();
         CaseOperationGraph.Create(caseId, domainOperations, dependencies);
     }
+
+    /// <summary>Case links are stored relative to the network folder set in Setup.</summary>
+    private static PlannerCase ToStored(NetworkFolderSettings paths, PlannerCase plannerCase) => plannerCase with
+    {
+        WorkingFolderPath = paths.ToStored(plannerCase.WorkingFolderPath) ?? plannerCase.WorkingFolderPath,
+        PreviewPath = paths.ToStored(plannerCase.PreviewPath)
+    };
+
+    /// <summary>Stored relative links are handed out resolved against the network folder.</summary>
+    private static PlannerCase Resolve(NetworkFolderSettings paths, PlannerCase plannerCase) => plannerCase with
+    {
+        WorkingFolderPath = paths.ToAbsolute(plannerCase.WorkingFolderPath) ?? plannerCase.WorkingFolderPath,
+        PreviewPath = paths.ToAbsolute(plannerCase.PreviewPath)
+    };
 
     private static void AddWriteParameters(SqliteCommand command, PlannerCase plannerCase)
     {

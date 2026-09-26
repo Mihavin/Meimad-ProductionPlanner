@@ -113,7 +113,13 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                 reader.IsDBNull(3) ? null : Convert.ToDouble(reader.GetValue(3), CultureInfo.InvariantCulture),
                 reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), CultureInfo.InvariantCulture),
                 reader.IsDBNull(5) ? null : reader.GetDateTime(5),
-                reader.IsDBNull(6) ? null : KitaronTextNormalization.Clean(reader.GetString(6))));
+                reader.IsDBNull(6) ? null : KitaronTextNormalization.Clean(reader.GetString(6)),
+                reader.IsDBNull(7) ? null : Convert.ToInt32(reader.GetValue(7), CultureInfo.InvariantCulture)
+                    .ToString(CultureInfo.InvariantCulture),
+                reader.IsDBNull(8) ? null : KitaronTextNormalization.Clean(reader.GetString(8)),
+                reader.IsDBNull(9) ? null : KitaronTextNormalization.Clean(reader.GetString(9)),
+                reader.IsDBNull(10) ? null : KitaronTextNormalization.Clean(reader.GetString(10)),
+                reader.IsDBNull(11) ? null : KitaronTextNormalization.Clean(reader.GetString(11))));
         }
         return result;
     }
@@ -163,10 +169,13 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
 
     internal const string WorkOrderQuery = """
         SELECT rc.NUMBER, d.DetailNumber, rc.RecordID, rc.Amount, rc.ProductionAmount,
-               rc.SupplyDate, rc.LotNumber
+               rc.SupplyDate, rc.LotNumber, NULLIF(rc.RowMaterialID, 0), o.OrderNumber, c.CompanyName,
+               d.DetailName, d.REV
         FROM dbo.TRootCard rc
         JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
         JOIN dbo.TDetails d ON d.DetailID = rc.DetailID
+        LEFT JOIN dbo.TOrder o ON o.OrderID = so.OrderID
+        LEFT JOIN dbo.TCustomer c ON c.CustomerID = o.CustomerID
         WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
           AND so.Closed = 0 AND so.StopProduction = 0
           AND NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL
@@ -467,6 +476,10 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             SELECT DISTINCT DetailID
             FROM dbo.TSubOrder
             WHERE StopProduction = 1
+            UNION
+            SELECT DISTINCT open_work_order.DetailID
+            FROM dbo.TRootCard open_work_order
+            WHERE open_work_order.RauteClosed = 0
         )
         SELECT so.RecordID, d.DetailNumber, d.DetailName, d.REV,
                o.OrderNumber, so.Number, so.SupplyDate, so.StopProduction,
@@ -551,6 +564,9 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                    approval.Amount AS SupplierAmount,
                    approval.Remark AS SupplierRemark,
                    purchase_row.Status,
+                   purchase_row.Price,
+                   purchase_row.RowPrice,
+                   purchase_row.CustOrderRow,
                    CONVERT(bit, CASE WHEN purchase_row.RowClosed = 1 OR purchase_main.OrderClosed = 1
                                     OR purchase_main.Closed = 1 THEN 1 ELSE 0 END) AS Closed
             FROM dbo.TBuyRow purchase_row WITH (NOLOCK)
