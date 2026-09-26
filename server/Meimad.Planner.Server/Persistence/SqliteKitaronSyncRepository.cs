@@ -201,7 +201,10 @@ internal sealed class SqliteKitaronSyncRepository(
             (counts.KeptBatches.Count == 0 ? ". " : $" ({string.Join(", ", counts.KeptBatches)}). ") +
             $"{counts.ManualBatchesRemoved} planner-created Production Batch(es) removed because batches come only from Kitaron; " +
             $"{counts.ManualBatchesKept} kept because production started. " +
-            $"{counts.BatchesWaitingForRoute} work order(s) wait for their Case route" +
+            $"{counts.BatchesWithoutOperations} Work Order(s) have no operations yet and stay pending until the Kitaron route produces them" +
+            (counts.NoOperationBatches.Count == 0 ? "; " : $" ({string.Join(", ", counts.NoOperationBatches)}); ") +
+            $"{counts.BatchesOperationsAdded} received their operations now; " +
+            $"{counts.BatchesWaitingForRoute} work order(s) could not be imported" +
             (counts.WaitingBatches.Count == 0 ? ". " : $" ({string.Join(", ", counts.WaitingBatches)}). ") +
             "Batch material per Kitaron: " +
             $"{materialStates.GetValueOrDefault("available")} available, {materialStates.GetValueOrDefault("on_order")} on order, " +
@@ -2152,6 +2155,34 @@ internal sealed class SqliteKitaronSyncRepository(
                     }
                 }
             }
+            // A Work Order imported before its Case had operations stays pending with none; once the
+            // Kitaron route produces operations, they are instantiated into it.
+            await using (var operationCount = connection.CreateCommand())
+            {
+                operationCount.Transaction = transaction;
+                operationCount.CommandText = """
+                    SELECT (SELECT COUNT(*) FROM batch_operations WHERE production_batch_id = $id),
+                           (SELECT COUNT(*) FROM case_operations WHERE case_id = $caseId);
+                    """;
+                Add(operationCount, "$id", batchId); Add(operationCount, "$caseId", caseId);
+                await using var reader = await operationCount.ExecuteReaderAsync(cancellationToken);
+                await reader.ReadAsync(cancellationToken);
+                var batchOperations = reader.GetInt64(0);
+                var caseOperations = reader.GetInt64(1);
+                await reader.DisposeAsync();
+                if (batchOperations == 0 && caseOperations > 0)
+                {
+                    await SqliteProductionBatchRepository.InstantiateOperationsForImportAsync(
+                        connection, transaction, batchId, caseId, now, cancellationToken);
+                    counts.BatchesOperationsAdded++;
+                }
+                else if (batchOperations == 0)
+                {
+                    counts.BatchesWithoutOperations++;
+                    if (counts.NoOperationBatches.Count < 10)
+                        counts.NoOperationBatches.Add($"{item.CaseSourceKey} work order {item.BatchNumber}");
+                }
+            }
             await using var material = connection.CreateCommand();
             material.Transaction = transaction;
             material.CommandText = """
@@ -2183,7 +2214,6 @@ internal sealed class SqliteKitaronSyncRepository(
         command.Transaction = transaction;
         command.CommandText = """
             SELECT CASE
-                WHEN NOT EXISTS (SELECT 1 FROM case_operations WHERE case_id = $caseId) THEN 'no Case Operations yet'
                 WHEN EXISTS (SELECT 1 FROM production_batches WHERE case_id = $caseId AND batch_number = $number) THEN 'a planner batch already uses this number'
                 ELSE NULL END;
             """;
@@ -2350,8 +2380,10 @@ internal sealed class SqliteKitaronSyncRepository(
         internal int OperationsRemoved, OperationsKept, RequirementsRemoved;
         internal int BatchesImported, BatchesUpdatedFromKitaron, BatchesRemovedWithWorkOrder, BatchesKeptStarted, BatchesWaitingForRoute;
         internal int ManualBatchesRemoved, ManualBatchesKept;
+        internal int BatchesWithoutOperations, BatchesOperationsAdded;
         internal readonly List<string> KeptOperations = [];
         internal readonly List<string> KeptBatches = [];
         internal readonly List<string> WaitingBatches = [];
+        internal readonly List<string> NoOperationBatches = [];
     }
 }

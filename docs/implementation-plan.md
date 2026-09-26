@@ -926,3 +926,11 @@ Audit of the live data against Kitaron (read-only): 357 work orders had an open 
 ### Work Order naming, assembly operations, station tabs, network folder - 2026-09-26
 
 Owner decisions: Work Order = batch (client wording only; identifiers unchanged); assemblies carry their own operations and Work Orders (removes the parent-Case restrictions in the Case repository, component service, Work Order service, route planner, planning-view import, component sync and the Work Order import blocker); the Planning Board adds Internal stations and External operations tabs from the Timeline resource lanes; all Case links are stored relative to a network folder defined in Setup (schema v83 `network_folder_settings`). v83 was validated on a copy of the live database (version 83, no foreign-key violations, integrity ok). Russian translations of the renamed texts were derived by term substitution and may need grammar review. Tests: `NetworkFolderPathTests`, updated `CaseComponentApiTests`, `KitaronRoutePlannerTests`, `KitaronConnectionApiTests`.
+
+### Work Orders without operations - 2026-09-26
+
+Work order 41508 (16W1120-13) was not imported: every machining step of its route is at station ייצור, decided as Ignore, so the Case had no operations and the import waited (53 of 195 open work orders). The owner decided to import such work orders anyway and keep them pending while they have no operations. The import no longer requires Case Operations; a Work Order with none cannot be released; the synchronization instantiates the operations once the route produces them. Test: `KitaronBatchSyncTests.A_work_order_without_operations_is_imported_pending_and_gets_them_from_the_route`.
+
+### Network folder with a drive-root alias - 2026-09-26
+
+The owner's share is mapped as a whole drive (J: = \\192.168.0.240\data). A drive-root alias such as J:\ did not match J:\customers files\... because the comparison kept the trailing separator; aliases now compare without it, so the example stores `customers files\DPD\...`. Case browse dialogs open at the Case working folder or the network folder; G-code and tool-table selection stays unrestricted. Test: `NetworkFolderPathTests.A_drive_mapped_to_the_share_root_is_stored_relative`.

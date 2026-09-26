@@ -239,6 +239,12 @@ internal sealed class ProductionBatchVersionConflictException : Exception
     internal ProductionBatchVersionConflictException(string batchId) : base($"Production Batch '{batchId}' changed after it was read.") { }
 }
 
+/// <summary>A release the Work Order's state does not allow, e.g. no operations yet.</summary>
+internal sealed class ProductionBatchReleaseException(string code, string message) : Exception(message)
+{
+    internal string Code { get; } = code;
+}
+
 internal sealed class ProductionBatchCancellationException(string code, string message) : Exception(message)
 {
     internal string Code { get; } = code;

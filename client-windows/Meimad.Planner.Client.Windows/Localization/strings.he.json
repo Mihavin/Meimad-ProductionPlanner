@@ -4080,6 +4080,7 @@
   "ΔX {deltaX:0.####} ΔY {deltaY:0.####} ΔZ {deltaZ:0.####}": "ΔX {deltaX:0.####}   ΔY {deltaY:0.####}   ΔZ {deltaZ:0.####}",
   "⏳ Requesting Edit Mode": "⏳ מבקש מצב עריכה",
   "⏸ Pending": "⏸ ממתין",
+  "⏸ Pending (no operations)": "⏸ ממתין (אין פעולות)",
   "■ Closed": "■ סגור",
   "▶ Released": "▶ שוחרר",
   "○ Open": "○ פתוח",

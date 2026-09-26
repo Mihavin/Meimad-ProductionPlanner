@@ -1026,6 +1026,16 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         await using (var transaction = connection.BeginTransaction(deferred: false))
         {
             var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+            // A Work Order without operations stays pending: nothing could be planned or produced.
+            if (released && await ExistsAsync(
+                    connection, transaction,
+                    "SELECT EXISTS(SELECT 1 FROM production_batches b WHERE b.id = $id AND NOT EXISTS (SELECT 1 FROM batch_operations o WHERE o.production_batch_id = b.id));",
+                    "$id", batchId, cancellationToken))
+            {
+                throw new ProductionBatchReleaseException(
+                    "work_order_has_no_operations",
+                    "This Work Order has no operations yet; it stays pending until its Kitaron route produces operations.");
+            }
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """

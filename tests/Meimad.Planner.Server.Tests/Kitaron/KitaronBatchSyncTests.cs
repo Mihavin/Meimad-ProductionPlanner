@@ -142,7 +142,7 @@ public sealed class KitaronBatchSyncTests
     }
 
     [Fact]
-    public async Task A_work_order_waits_until_the_case_has_operations()
+    public async Task A_work_order_without_operations_is_imported_pending_and_gets_them_from_the_route()
     {
         await RunAsync(async application =>
         {
@@ -153,20 +153,42 @@ public sealed class KitaronBatchSyncTests
                 "wo:4003", "PN-ROUTE", "4003", 5, [new KitaronSyncBatchAllocation("7001", 5)],
                 "unknown", null, "hash-wait");
 
+            // The Case has no operations yet (its stations are undecided or ignored): the Work Order
+            // is imported anyway, without operations, and stays pending.
             var first = await repository.ApplyAsync(Plan([], [batch]), Now, CancellationToken.None);
-            Assert.Contains("1 work order(s) wait for their Case route (PN-ROUTE work order 4003: no Case Operations yet)", first.Message);
+            Assert.Contains("1 Production Batch(es) imported", first.Message);
+            Assert.Contains("1 Work Order(s) have no operations yet and stay pending until the Kitaron route produces them (PN-ROUTE work order 4003)", first.Message);
+            string batchId;
             await using (var connection = await database.OpenConnectionAsync())
             {
-                Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM production_batches;"));
+                Assert.Equal("pending", await ScalarAsync(connection, "SELECT release_state FROM production_batches;"));
+                Assert.Equal(0L, await ScalarAsync(connection, "SELECT COUNT(*) FROM batch_operations;"));
+                batchId = (string)(await ScalarAsync(connection, "SELECT id FROM production_batches;"))!;
+            }
+            await ExecuteAsync(database, """
+                UPDATE edit_tokens SET holder_client_id = 'batch-editor', holder_user_id = 'planner', generation = 1,
+                    acquired_at = '2026-09-25T00:00:00Z', version = version + 1 WHERE id = 1;
+                """);
+            var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "batch-editor");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            using (var release = await client.PostAsync($"/api/v1/batches/{batchId}/release", null))
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, release.StatusCode);
+                Assert.Contains("work_order_has_no_operations", await release.Content.ReadAsStringAsync());
             }
 
-            // The route arrives (stations decided): the batch is created on the next pass.
+            // The route arrives (stations decided): the same Work Order receives its operations.
             var second = await repository.ApplyAsync(Plan([Operation()], [batch]), Now.AddMinutes(1), CancellationToken.None);
-            Assert.Contains("1 Production Batch(es) imported", second.Message);
+            Assert.Contains("0 Production Batch(es) imported", second.Message);
+            Assert.Contains("1 received their operations now", second.Message);
             await using (var verify = await database.OpenConnectionAsync())
             {
+                Assert.Equal(1L, await ScalarAsync(verify, "SELECT COUNT(*) FROM production_batches;"));
                 Assert.Equal(1L, await ScalarAsync(verify, "SELECT COUNT(*) FROM batch_operations WHERE operation_number = 30;"));
             }
+            using var released = await client.PostAsync($"/api/v1/batches/{batchId}/release", null);
+            Assert.Equal(HttpStatusCode.OK, released.StatusCode);
         });
     }
 

@@ -4080,6 +4080,7 @@
   "ΔX {deltaX:0.####} ΔY {deltaY:0.####} ΔZ {deltaZ:0.####}": "ΔX {deltaX:0.####}   ΔY {deltaY:0.####}   ΔZ {deltaZ:0.####}",
   "⏳ Requesting Edit Mode": "⏳ Запрос режима редактирования",
   "⏸ Pending": "⏸ Ожидает",
+  "⏸ Pending (no operations)": "⏸ Ожидает (нет операций)",
   "■ Closed": "■ Закрыт",
   "▶ Released": "▶ Выпущена",
   "○ Open": "○ Открыт",

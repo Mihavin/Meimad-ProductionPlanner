@@ -325,3 +325,7 @@ Production Batches come only from Kitaron. A new batch is Pending; select it on 
 ### Work Orders, assemblies, station tabs, network folder
 
 A Work Order is the Kitaron work order (formerly called a Production Batch). Assemblies can have their own operations and Work Orders. The Planning Board has Internal stations and External operations tabs that show, per station, the steps the Server scheduled around the Machine work; pin a step on the Timeline to keep it. In Setup > Network Folder, enter the shared folder as a UNC path and the drive letters people map to it, then press Save network folder: every PC then opens the same Case folders, pictures, models and G-code.
+
+A Work Order shown as "Pending (no operations)" exists in Kitaron but its Case has no operations yet, usually because a route station is undecided or set to Ignore on the Kitaron stations page. Decide the station; the next synchronization adds the operations, and the Work Order can then be released.
+
+Example: when drive J: is mapped to \\192.168.0.240\data, enter \\192.168.0.240\data as the network folder and J:\ as the alias. The preview J:\customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png is then stored as customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png and every PC opens it as \\192.168.0.240\data\customers files\.... The Case browse buttons (working folder, picture, model files) open at the Case's working folder, or at the network folder when the Case has none; G-code and tool-table files may be selected from any folder.

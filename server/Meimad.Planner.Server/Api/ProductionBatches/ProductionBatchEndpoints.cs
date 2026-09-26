@@ -41,6 +41,10 @@ internal static class ProductionBatchEndpoints
             var value = await service.SetReleaseStateAsync(batchId, released, editAuthority!, cancellationToken);
             return Results.Ok(ProductionBatchResponse.FromDomain(value));
         }
+        catch (ProductionBatchReleaseException exception)
+        {
+            return Error(StatusCodes.Status422UnprocessableEntity, exception.Code, exception.Message, httpContext);
+        }
         catch (ProductionBatchNotFoundException)
         {
             return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Production Batch was not found.", httpContext);

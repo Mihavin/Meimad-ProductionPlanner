@@ -104,6 +104,39 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private bool isChildCase;
     private bool isKitaronManagedCase;
     private bool isRouteLockedCase;
+    private string? networkRootPath;
+
+    /// <summary>The shared network folder from Setup; Case browse dialogs open there.</summary>
+    public string? NetworkRootPath => networkRootPath;
+
+    /// <summary>Where a Case file or folder dialog opens: the Case working folder when it exists,
+    /// otherwise the network folder defined in Setup.</summary>
+    internal string? CaseBrowseStartFolder()
+    {
+        foreach (var candidate in new[] { WorkingFolderPath, networkRootPath })
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(candidate) && Directory.Exists(candidate)) return candidate;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return null;
+    }
+
+    private async Task LoadNetworkRootAsync(IPlannerApiClient client)
+    {
+        try
+        {
+            var settings = await client.GetNetworkFolderAsync();
+            networkRootPath = string.IsNullOrWhiteSpace(settings.RootPath) ? string.Empty : settings.RootPath;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            networkRootPath = null;
+        }
+    }
     private PlannerPostprocessorReleaseStatus? selectedReleasePostprocessor;
     private string gcodeFilePath = string.Empty;
     private string toolTableFilePath = string.Empty;
@@ -677,7 +710,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanDeleteSelectedBatch => CanDelete && SelectedBatch is { IsKitaronManaged: false };
 
-    public bool CanReleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: false }
+    public bool CanReleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: false, BatchOperationCount: > 0 }
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
 
     public bool CanUnreleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: true };
@@ -798,6 +831,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var nextIsEditor = editStatus?.State == ClientEditState.Editor;
         var nextGeneration = editStatus?.Generation ?? 0;
         Requirements.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        if (newApiClient is not null && (apiChanged || networkRootPath is null)) _ = LoadNetworkRootAsync(newApiClient);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
             && isEditor == nextIsEditor

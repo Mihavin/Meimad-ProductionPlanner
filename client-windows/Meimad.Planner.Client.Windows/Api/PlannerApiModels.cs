@@ -1448,7 +1448,9 @@ internal sealed record ProductionBatch(
     public bool IsReleased => ReleaseState == "released";
 
     /// <summary>Release state with a symbol, readable without color.</summary>
-    public string ReleaseDisplay => IsReleased ? "▶ Released" : "⏸ Pending";
+    public string ReleaseDisplay => IsReleased
+        ? "▶ Released"
+        : BatchOperationCount == 0 ? "⏸ Pending (no operations)" : "⏸ Pending";
 
     public string StatusDisplay => Status switch
     {

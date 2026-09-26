@@ -29,12 +29,15 @@ internal sealed record NetworkFolderSettings(
         if (!Path.IsPathRooted(value)) return value;
         foreach (var prefix in Prefixes())
         {
-            if (value.Length == prefix.Length && value.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+            if (value.Equals(prefix, StringComparison.OrdinalIgnoreCase))
                 return ".";
             if (value.Length > prefix.Length
                 && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
                 && value[prefix.Length] == '\\')
-                return value[(prefix.Length + 1)..];
+            {
+                var relative = value[(prefix.Length + 1)..];
+                return relative.Length == 0 ? "." : relative;
+            }
         }
         return value;
     }
@@ -56,7 +59,9 @@ internal sealed record NetworkFolderSettings(
     private IEnumerable<string> Prefixes() =>
         new[] { RootPath! }.Concat(Aliases)
             .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Select(item => Normalize(item.Trim()))
+            // A drive-root alias such as J:\ compares as "J:", so J:\customers files matches it.
+            .Select(item => Normalize(item.Trim()).TrimEnd('\\'))
+            .Where(item => item.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(item => item.Length);
 

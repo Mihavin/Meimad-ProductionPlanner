@@ -27,6 +27,24 @@ public sealed class NetworkFolderPathTests
         Assert.Equal(stored, Share.ToStored(entered));
     }
 
+    private static readonly NetworkFolderSettings DriveRoot = new(
+        @"\\192.168.0.240\data", [@"J:\"], "Meimad Cases", 2, DateTimeOffset.UnixEpoch);
+
+    [Theory]
+    [InlineData(@"J:\customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png",
+        @"customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png")]
+    [InlineData(@"j:\customers files\DPD", @"customers files\DPD")]
+    [InlineData(@"J:\", ".")]
+    [InlineData(@"\\192.168.0.240\data\customers files\DPD", @"customers files\DPD")]
+    [InlineData(@"\\192.168.0.240\data2\other", @"\\192.168.0.240\data2\other")]
+    [InlineData(@"K:\customers files\DPD", @"K:\customers files\DPD")]
+    public void A_drive_mapped_to_the_share_root_is_stored_relative(string entered, string stored)
+    {
+        Assert.Equal(stored, DriveRoot.ToStored(entered));
+        Assert.Equal(@"\\192.168.0.240\data\customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png",
+            DriveRoot.ToAbsolute(@"customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png"));
+    }
+
     [Fact]
     public void Stored_links_resolve_to_the_network_path_and_rooted_ones_pass_through()
     {

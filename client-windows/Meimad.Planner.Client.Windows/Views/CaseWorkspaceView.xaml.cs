@@ -88,6 +88,10 @@ public partial class CaseWorkspaceView : UserControl
             CheckFileExists = true,
             Multiselect = false
         }.Localized();
+        if (DataContext is CaseWorkspaceViewModel stepViewModel && stepViewModel.CaseBrowseStartFolder() is { } stepStart)
+        {
+            dialog.InitialDirectory = stepStart;
+        }
         if (dialog.ShowDialog() != true)
         {
             return;
@@ -236,9 +240,9 @@ public partial class CaseWorkspaceView : UserControl
             CheckFileExists = true,
             Multiselect = true
         }.Localized();
-        if (!string.IsNullOrWhiteSpace(viewModel.WorkingFolderPath) && Directory.Exists(viewModel.WorkingFolderPath))
+        if (viewModel.CaseBrowseStartFolder() is { } modelStart)
         {
-            dialog.InitialDirectory = viewModel.WorkingFolderPath;
+            dialog.InitialDirectory = modelStart;
         }
         if (dialog.ShowDialog() != true)
         {
@@ -568,6 +572,10 @@ public partial class CaseWorkspaceView : UserControl
             Title = "Select the external Case Working Folder",
             Multiselect = false
         }.Localized();
+        if (viewModel.CaseBrowseStartFolder() is { } folderStart)
+        {
+            dialog.InitialDirectory = folderStart;
+        }
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetWorkingFolderSelection(dialog.FolderName);
@@ -588,6 +596,10 @@ public partial class CaseWorkspaceView : UserControl
             CheckFileExists = true,
             Multiselect = false
         }.Localized();
+        if (viewModel.CaseBrowseStartFolder() is { } pictureStart)
+        {
+            dialog.InitialDirectory = pictureStart;
+        }
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetPreviewSelection(dialog.FileName);
