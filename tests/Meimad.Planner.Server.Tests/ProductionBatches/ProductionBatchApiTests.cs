@@ -470,6 +470,11 @@ public sealed class ProductionBatchApiTests
             using var batchJson = JsonDocument.Parse(await batch.Content.ReadAsStringAsync());
             Assert.Equal(2, batchJson.RootElement.GetProperty("version").GetInt32());
 
+            // The board pool lists only operations of released Work Orders.
+            using (var release = await client.PostAsync($"/api/v1/batches/{batchId}/release", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, release.StatusCode);
+            }
             using var board = await client.GetAsync("/api/v1/planning-board");
             board.EnsureSuccessStatusCode();
             using var boardJson = JsonDocument.Parse(await board.Content.ReadAsStringAsync());

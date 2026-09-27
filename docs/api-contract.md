@@ -689,6 +689,12 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/machine-types/{machineTypeId}` | Read one Machine Type and its version. |
 | `PATCH` | `/api/v1/machine-types/{machineTypeId}` | Optimistically update a Machine Type. |
 | `DELETE` | `/api/v1/machine-types/{machineTypeId}` | Delete an unreferenced Machine Type. |
+| `GET` | `/api/v1/tool-catalog` | List catalog tools (`query`, `type`, `includeInactive`). |
+| `POST` | `/api/v1/tool-catalog` | Create a catalog tool; the Server assigns the internal id (client identity headers, no Edit Mode). |
+| `GET` | `/api/v1/tool-catalog/types` | The shared tool type list with families, hands, dimension and attribute keys. |
+| `GET` | `/api/v1/tool-catalog/{toolId}` | Read one catalog tool. |
+| `PUT` | `/api/v1/tool-catalog/{toolId}` | Replace a catalog tool at its `expectedVersion`. |
+| `DELETE` | `/api/v1/tool-catalog/{toolId}` | Delete an unreferenced catalog tool (`409 tool_catalog_in_use` otherwise). |
 | `GET` | `/api/v1/postprocessors` | List managed Postprocessors. |
 | `POST` | `/api/v1/postprocessors` | Create a Postprocessor configuration. |
 | `GET` | `/api/v1/postprocessors/{postprocessorId}` | Read one Postprocessor and its version. |
@@ -740,6 +746,7 @@ Implemented Machine create request and representation:
   "machineTypeId": "opaque-machine-type-id",
   "executionMode": "CNC_GCODE",
   "ncDialect": "HAAS_NGC",
+  "ncViewerMachine": "haas-vf-3ss",
   "supportedPostprocessorIds": ["opaque-postprocessor-id"],
   "usableToolPositions": 30,
   "rapidRateMillimetersPerMinute": 24000,
@@ -768,6 +775,7 @@ Implemented Machine create request and representation:
   "machineTypeId": "opaque-machine-type-id",
   "executionMode": "CNC_GCODE",
   "ncDialect": "HAAS_NGC",
+  "ncViewerMachine": "haas-vf-3ss",
   "supportedPostprocessorIds": ["opaque-postprocessor-id"],
   "usableToolPositions": 30,
   "rapidRateMillimetersPerMinute": 24000,
@@ -778,7 +786,7 @@ Implemented Machine create request and representation:
 
 `machineTypeId` is an optional stable link to the reusable catalog. Existing schema-v9 Machines are linked during migration from their case-insensitive legacy `processType` values. For compatibility with existing Case Operation requirements, a linked type's name is mirrored into `processType`; Machine-specific `capabilities`, `axisType`, and the linked Machine Type's capabilities all participate in Server assignment validation. Machine and Machine Type changes that would invalidate a current assignment return `409 assigned_operation_incompatible`.
 
-Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior. Schema v76 adds `ncDialect` (`HAAS_NGC` default, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`; any other value fails with issue code `invalid_nc_dialect`). The dialect selects the syntax of every Server-injected NC block (verification hook, event context, cycle events, Offset Loader program) and the variable ranges the Machine verification configuration accepts. A PATCH that changes `ncDialect` while Server Verification is enabled for the Machine fails validation with issue code `verification_enabled` on field `ncDialect`: disable verification, change the dialect, re-enter the mappings in the new range, re-enable.
+Schema v34 adds the Machine execution fields above. `executionMode` accepts only `CNC_GCODE` or `MANUAL`; omitted values default to `MANUAL`. `supportedPostprocessorIds` must contain unique IDs of active managed Postprocessors. Capacity and rapid rate must be positive when supplied, tool-change seconds must be non-negative, and Machine time factor must be positive with default `1.0`. Existing rows migrate to `MANUAL`, null unknown measurements/capacity, and factor `1.0`; no CNC status or mapping is inferred. These fields configure later readiness/estimation services and do not by themselves change assignment or Timeline behavior. Schema v76 adds `ncDialect` (`HAAS_NGC` default, `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`; any other value fails with issue code `invalid_nc_dialect`). The dialect selects the syntax of every Server-injected NC block (verification hook, event context, cycle events, Offset Loader program) and the variable ranges the Machine verification configuration accepts. A PATCH that changes `ncDialect` while Server Verification is enabled for the Machine fails validation with issue code `verification_enabled` on field `ncDialect`: disable verification, change the dialect, re-enter the mappings in the new range, re-enable. Schema v78 adds optional `ncViewerMachine`: the id of the NC engine machine definition (`mazak-variaxis-i-500`, `okuma-genos-l200e-m`, `haas-st-25y`, `haas-vf-3ss`, `fanuc-0i-mc-vmc-3axis`, `fanuc-0i-mc-vmc-4axis-a`, or a vendored `haas-umc-500`, `doosan-dvf-5000`, `chevalier-flc-200mc`) the Windows NC viewer opens this Machine's programs with and the Server NC analysis interprets them with. Null or `"auto"` means automatic detection. A value that is not lower-case letters, digits and hyphens fails with `invalid_nc_viewer_machine`; a well-formed id that is not installed with the Server's NC engine fails with `unknown_nc_viewer_machine` (the message lists the installed ids). The Windows client fills its Setup list from the same catalog installed with its own NC engine, so both sides offer the same ids at the same version. Schema v79 adds `toolDiameterOffsetKind` (`RADIUS`, the default, or `DIAMETER`; any other value fails with `invalid_tool_diameter_offset_kind`): whether the control keeps cutter (D) offsets as radius or diameter values, so a Production Package writes half of the measured diameter or the whole diameter.
 
 Implemented Machine Type create request and representation:
 
@@ -1102,13 +1110,15 @@ These routes are available only when the immediate remote address is loopback. A
 | `GET` | `/api/v1/kitaron/sync` | Return current/last one-way sync status, timestamps, mapping version, and create/update/match/warning counts. |
 | `POST` | `/api/v1/kitaron/sync` | Run one atomic one-way synchronization now using the saved Ready mapping. |
 
+Kitaron station decisions (schema v81) are planning master data, not connector settings: `GET /api/v1/kitaron/stations` is readable by every client and returns `{ items: [ { kitaronStationId, stationName, stationType, retired, routeRows, plannedRows, supplierRows, suggestedRole, importRole, machineType, workstationTypeId, externalResourceId, defaultMinutesPerPart, defaultMinutesPerBatch, capacityRequired, notes, firstSeenAt, lastSeenAt, decidedAt, decidedBy, version, updatedAt } ] }` ordered undecided first; `PUT /api/v1/kitaron/stations/{kitaronStationId}` with `{ importRole, machineType, workstationTypeId, externalResourceId, defaultMinutesPerPart, defaultMinutesPerBatch, capacityRequired, notes, expectedVersion }` requires the normal Edit Mode headers (`X-Meimad-User-Id` is recorded as `decidedBy`), asks the Server to run the Kitaron synchronization at once (the periodic service picks the request up within seconds while the connector is enabled and the mapping Ready; a request during a running synchronization runs once more after it), returns `422 validation_failed` for an unknown role, a `WORKSTATION` role without a Workstation type, an `EXTERNAL` role without an External Resource or an unknown target, `404 kitaron_station_not_found` for a station no synchronization has seen, `412 kitaron_station_stale` on a version mismatch, and `409 edit_mode_required`/`edit_generation_stale` without the token. The sync status adds `requirementsCreated`, `requirementsUpdated`, `requirementsMatched` and `routeStepsSkipped`; the result message counts the auxiliary steps created, updated and left out (planner deletion or missing machining step), the steps skipped for undecided stations or routes without a machining step, the Case Operation dependencies set from the route sequence, the Case Operations moved to the route order, the Case Operations and auxiliary steps removed because the route and station decisions no longer produce them, and the Case Operations kept because production or planner data still uses them (up to ten named with the reason). The route-master rules themselves are specified in `functional-spec.md` § 9.3.
+
 The PUT body contains `serverHost`, `serverPort`, `databaseName`, `viewSchema`, `viewName`, `username`, optional `password`, `clearPassword`, `enabled`, `refreshIntervalSeconds` (30–86400), and `version`. Database/schema/view identifiers accept a conservative SQL-identifier character set and are bracket quoted. Enabling periodic work requires a stored password. The response never contains the password or ciphertext. A stale version returns `412 kitaron_connection_stale`; validation returns `422 validation_failed`. A failed test returns 502 with `succeeded: false`, a bounded diagnostic, no columns, and refreshed non-secret settings. Success returns `succeeded: true`, the detected `{ name, dataType }` columns, and refreshed settings. The same interval controls Ready-mapping synchronization; source access remains read-only.
 
-The mapping PUT body contains `modelMode` (`domain_aligned` or `flat_requested`), `status` (`draft` or `ready_for_implementation`), all catalog `fields`, optional overall `notes`, and optimistic `version`. Ready rejects blocked/missing/unknown active mappings. Sync is localhost-only, requires enabled successfully tested connection settings and a Ready mapping, and never accepts source rows from the caller. It caps each source query at 200,000 rows and returns `succeeded`, `failed`, or `blocked`. Besides mapped work-view columns, the read-only connector resolves parts through the planning view and `TTreeNodes` BOM, includes every canonical `TSubOrder` row for those parts regardless of planning-view Order-number coverage, and reads direct root-child `TTreeNodes` BOM edges and canonical raw-material purchase rows from `TBuyRow`/`TBuyMain`. Valid work-view Orders missing from the canonical result are retained using `work:<RecordID>` source identity. Exact Case/order/quantity/date/status duplicates are collapsed; every distinct row has its own quantity, date, nullable unit Price from `TSubOrder.PriceInCurr` in the Kitaron order currency, and `<Kitaron OrderNumber>/<RecordID>` API `orderNumber`. Canonical status is `active` only when no recognized closure flag is set, `inactive` when any recognized `TSubOrder` row or parent `TOrder` closure/completion flag is set, and `cancelled` when `TSubOrder.StopProduction = 1`; explicit cancellation takes precedence over closure. A `case` source link makes the Case and its complete Order collection Kitaron-managed, including an unlinked legacy child Order; `isKitaronManaged` reflects that parent authority. An `order` source link plus `isHistorical: false` identifies a row as current demand. Case PATCH/DELETE and Order POST/PATCH/DELETE return `409 kitaron_managed_read_only`; legacy import and new Batch allocation cannot bypass those ownership and current-membership rules. Unlinked manual Cases and their Orders keep normal mutation behavior. For synchronized Cases, Orders absent from that combined current Kitaron set are deleted in the same transaction. Any Production Batch with a direct or derived allocation from an absent Order is first deleted using the complete normal Batch deletion graph; the Order is then deleted. Unexpected remaining protected references roll back the entire sync. One linked or unlinked legacy plain-number Order can receive the canonical reference only on an exact match. Each material row uses `TBuyRow.BuyRowID` as stable identity; the latest matching `TAppCostOfferBySupplier` record supplies the supplier-approved delivery date, quantity, and remark, while `TBuyReceptionHeader` supplies an advisory historical received total. Every valid direct BOM edge returned by Kitaron is applied, including roots absent from work/order rows and an empty Planner; duplicate source edges reuse one relationship. The Planner apply is one immediate SQLite transaction and repairs stale source links whose target record was deleted. Material purchase data is stored only in `kitaron_material_orders`; it never creates `verified_material_receipts`, reservations, readiness, Batches, assignments, backlog entries, Timeline positions, or any Kitaron mutation.
+The mapping PUT body contains `modelMode` (`domain_aligned` or `flat_requested`), `status` (`draft` or `ready_for_implementation`), all catalog `fields`, optional overall `notes`, and optimistic `version`. Ready rejects blocked/missing/unknown active mappings. Sync is localhost-only, requires enabled successfully tested connection settings and a Ready mapping, and never accepts source rows from the caller. It caps each source query at 200,000 rows and returns `succeeded`, `failed`, or `blocked`. Besides mapped work-view columns, the read-only connector resolves parts through the planning view and `TTreeNodes` BOM, includes every canonical `TSubOrder` row for those parts regardless of planning-view Order-number coverage, and reads direct root-child `TTreeNodes` BOM edges and canonical raw-material purchase rows from `TBuyRow`/`TBuyMain`. Valid work-view Orders missing from the canonical result are retained using `work:<RecordID>` source identity. Exact Case/order/quantity/date/status duplicates are collapsed; every distinct row has its own quantity, date, nullable unit Price in NIS from `TSubOrder.CostShkalim` (a zero source value is no price), and `<Kitaron OrderNumber>/<RecordID>` API `orderNumber`. Canonical status is `active` only when no recognized closure flag is set, `inactive` when any recognized `TSubOrder` row or parent `TOrder` closure/completion flag is set, and `cancelled` when `TSubOrder.StopProduction = 1`; explicit cancellation takes precedence over closure. A `case` source link makes the Case and its complete Order collection Kitaron-managed, including an unlinked legacy child Order; `isKitaronManaged` reflects that parent authority. An `order` source link plus `isHistorical: false` identifies a row as current demand. Case PATCH/DELETE and Order POST/PATCH/DELETE return `409 kitaron_managed_read_only`; legacy import and new Batch allocation cannot bypass those ownership and current-membership rules. Unlinked manual Cases and their Orders keep normal mutation behavior. For synchronized Cases, Orders absent from that combined current Kitaron set are deleted in the same transaction. Any Production Batch with a direct or derived allocation from an absent Order is first deleted using the complete normal Batch deletion graph; the Order is then deleted. Unexpected remaining protected references roll back the entire sync. One linked or unlinked legacy plain-number Order can receive the canonical reference only on an exact match. Each material row uses `TBuyRow.BuyRowID` as stable identity; the latest matching `TAppCostOfferBySupplier` record supplies the supplier-approved delivery date, quantity, and remark, while `TBuyReceptionHeader` supplies an advisory historical received total. Every valid direct BOM edge returned by Kitaron is applied, including roots absent from work/order rows and an empty Planner; duplicate source edges reuse one relationship. The Planner apply is one immediate SQLite transaction and repairs stale source links whose target record was deleted. Material purchase data is stored only in `kitaron_material_orders`; it never creates `verified_material_receipts`, reservations, readiness, Batches, assignments, backlog entries, Timeline positions, or any Kitaron mutation.
 
 The canonical Order query is scoped by Kitaron parts (`DetailNumber`/`DetailID`) discovered through the planning view or imported `TTreeNodes` BOM, not by an exact planning-view Order-number match. It returns all `TSubOrder` rows for those parts, including rows absent from the planning view and Orders for BOM-only child Cases. The exact known test Order number `הזמנה לדוגמא 1` is excluded from the entire mapped work row as well as canonical Order materialization; it cannot create or claim a Case, Order, or Case Operation.
 
-If an absent/superseded Order is referenced by a Production Run with non-null `structure_locked_at`, synchronization excludes its Batch from deletion and retains the Order as historical evidence while applying all current canonical rows. This applies to both legacy one-operation Runs and locked multi-output Runs. The result message reports the retained count and `warningCount` includes it. Current membership is matched by the exact synchronized Order target ID, not only by display reference, so an unlinked duplicate with the same `<OrderNumber>/<RecordID>` is removed or retained as history according to its own production references. A successful partial synchronization also removes an unlinked orphan under any durable Kitaron Case link, while retaining linked Orders for Cases omitted from that partial snapshot. The retained Order returns `isHistorical: true` when read by ID and is excluded from `GET /api/v1/orders?caseId=...`; the current Case demand list therefore matches the last committed Kitaron snapshot exactly. Attempts to allocate a hidden/noncurrent row through normal Batch create/update or legacy import return `422` with `noncurrent_kitaron_order`. This exception preserves structure-locked production history; it does not make the retained row current Kitaron demand or make its Batch deletable.
+If an absent/superseded Order is referenced by a Production Run with non-null `structure_locked_at`, synchronization excludes its Batch from deletion and retains the Order as historical evidence while applying all current canonical rows. This applies to both legacy one-operation Runs and locked multi-output Runs. The result message reports the retained count and `warningCount` includes it. Current membership is matched by the exact synchronized Order target ID, not only by display reference, so an unlinked duplicate with the same `<OrderNumber>/<RecordID>` is removed or retained as history according to its own production references. A successful partial synchronization also removes an unlinked orphan under any durable Kitaron Case link, while retaining linked Orders for Cases omitted from that partial snapshot. The retained Order returns `isHistorical: true` when read by ID and is excluded from `GET /api/v1/orders?caseId=...`; the current Case demand list therefore matches the last committed Kitaron snapshot exactly. Attempts to allocate a hidden/noncurrent row through normal Batch create/update or legacy import return `422` with `noncurrent_kitaron_order`. This exception preserves structure-locked production history; it does not make the retained row current Kitaron demand or make its Batch deletable. A current linked Order whose new Kitaron quantity or status would remove its Batches keeps every Batch that has a run with non-null `structure_locked_at` (reported in the result message as Batches with started production kept, and counted as a warning) and still takes the new facts; only Batches without such a run are removed.
 
 Mapping responses mark `orders.status` and `orders.price` with `connectorManaged: true`. A mapping PUT must submit their fixed enabled/source/confidence/transform values unchanged; attempts to disable or remap either field return `422 validation_failed`.
 
@@ -1121,7 +1131,7 @@ Mapping responses mark `orders.status` and `orders.price` with `connectorManaged
 | `GET` | `/api/v1/conflicts` | Current explained conflicts, optionally filtered by Machine, Case, Batch, or severity. |
 | `GET` | `/api/v1/tv-dashboard` | Compact, read-only kiosk projection. |
 
-**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing all unfinished Batch Operations partitioned into the unassigned `pool` or exactly one Machine `backlog`. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, nullable estimated seconds, nullable `machineAssignmentId`/`assignmentVersion`, and `planningMode`. Unassigned pool rows use null assignment identity/version and `manual`; an assigned backlog row carries its authoritative schema-v24 values. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
+**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing unfinished Batch Operations: each assigned one in exactly one Machine `backlog`, and in the unassigned `pool` only those with a non-blank Machine Type whose Production Batch `release_state` is `released` (2026-09-27; Production Notes are never included). Other unassigned operations are in neither list. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, nullable estimated seconds, nullable `machineAssignmentId`/`assignmentVersion`, and `planningMode`. Unassigned pool rows use null assignment identity/version and `manual`; an assigned backlog row carries its authoritative schema-v24 values. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
 
 The added operation fields are:
 
@@ -1165,7 +1175,34 @@ For a not-started managed Operation, Task 7 interprets the stored `setupTimeSeco
 
 Schema v38 keeps `cycleTimePerPartSeconds` as the manual Batch Operation snapshot and adds `ncEstimatedCycleTimePerPartSeconds`, `planningCycleTimePerPartSeconds`, `planningCycleTimeSource` (`nc_estimate`, `manual`, or `unavailable`), `ncEstimateConfidence`, `ncEstimateWarnings`, and `ncEstimateGCodeReleaseId`. `estimatedTimeSeconds` uses `planningCycleTimePerPartSeconds`. Only not-started work may select the NC source. The setup fields require no later schema: released required-tool count, fixture snapshot, and planned quantity already exist. `setupEstimateWarnings` makes missing structured tool counts visible; such a count contributes zero loading seconds until resolved.
 
-G-code catalog responses expose optional `ncAnalysis` and `machineCycleEstimates`. Analysis includes parser version/status, raw feed seconds, rapid distance in millimetres, tool-change count, dwell seconds, units, warnings, unsupported constructs, confidence, and analysis time. Each Machine estimate includes the raw metrics, Machine timing inputs, component seconds, raw/final seconds, warnings, confidence, and calculation time. Estimate absence or low confidence does not change G-code readiness.
+G-code catalog responses expose optional `ncAnalysis` and `machineCycleEstimates`. Analysis includes parser version/status, raw feed seconds, rapid distance in millimetres, tool-change count, dwell seconds, units, warnings, unsupported constructs, confidence, and analysis time. Each Machine estimate includes the raw metrics, Machine timing inputs, component seconds, raw/final seconds, warnings, confidence, and calculation time. Estimate absence or low confidence does not change G-code readiness. `ncAnalysis` is the release's newest analysis and `machineCycleEstimates` contains only estimates of that analysis' `parserVersion`. NC-engine analyses report `parserVersion` `nc-engine/<version>+m<revision>` (currently `nc-engine/0.17.0+m1`) and their first warning names the interpreter used (`Interpreted as Haas UMC-500 (haas-mill): ...`); engine program issues appear as `Program issue: ...` warnings; `unsupportedConstructs` may contain `UNTIMED_MOTION`, `ENGINE_RESOURCE_LIMIT` and `OKUMA_OSP_SYNTAX`. A release the engine could not analyze keeps parser version `1.0.0` with the warning `NC engine unavailable (...); basic parser estimate.` (see `gcode-readiness-architecture.md`).
+
+#### Apply Meimad Planner Format
+
+`POST /api/v1/nc-programs/meimad-format` turns NC text into a canonical protocol-v2 source template. It is a stateless transformation used by the Windows NC viewer: it stores nothing, needs no Edit Mode headers, and never resolves a placeholder. Request (JSON, text limited to 16 MiB of characters):
+
+```json
+{ "text": "%\nO1500\nG90 G54 G0 X0 Y0\n...\nM30\n%\n", "ncDialect": "FANUC_MACRO_B" }
+```
+
+`ncDialect` is `HAAS_NGC` (default), `FANUC_MACRO_B`, `MAZAK_MATRIX_EIA`, or `OKUMA_OSP`. The Server inserts only the missing elements of the canonical block of `nc-postprocessor-and-macro-specification.md` section 1: identity header comments after `%`/`O` (`PART`, `OPERATION`, `RUN`, `PACKAGE`, `MACHINE`, `NC RELEASE`, `OFFSET LOADER`), then before the first executable block `[[MEIMAD:VERIFICATION_HOOK]]`, `POPEN` (FANUC only, when the program has none), `[[MEIMAD:EVENT_CONTEXT]]`, the part-number output line (`DPRNT[[[MEIMAD:PART_NAME]]]`, or `PUT '[[MEIMAD:PART_NAME]]'` and `WRITE C` for Okuma) and `[[MEIMAD:CYCLE_START]]`, and `[[MEIMAD:CYCLE_END]]` (plus `PCLOS` when it added `POPEN`) before the main program's first `M30`/`M02`, else its `M99`, else the end. An existing `POPEN` keeps its place and the print lines follow it; a misplaced hook is moved; legacy `(MEIMAD PACKAGE ... V1)` markers and active `(MEIMAD VERIFY V1)` blocks are converted. Cutting code is never changed, and applying the format to its own output changes nothing. Response `200`:
+
+```json
+{
+  "text": "...formatted program...",
+  "ncDialect": "FANUC_MACRO_B",
+  "changed": true,
+  "changes": ["Added identity header comments: PART, OPERATION, RUN, PACKAGE, MACHINE, NC RELEASE, OFFSET LOADER.", "..."],
+  "warnings": [],
+  "validation": { "isValid": true, "code": null, "message": null }
+}
+```
+
+`validation` is the result of the same `NcPackagePlaceholderSchema.ValidateCanonical` check Production Package creation uses; duplicates the format cannot resolve are reported in `warnings` and in `validation` (for example `production_package_placeholder_duplicate`). A missing `text` or an unknown dialect returns `422 validation_failed` with field `text` or `ncDialect`. Line endings are returned as `\n`; the client restores the document's own line ending when it saves.
+
+#### Check a Meimad template
+
+`POST /api/v1/nc-programs/validate` with `{ "text": "..." }` runs only that canonical-template check and returns `200 { "isValid": true, "code": null, "message": null }` or `{ "isValid": false, "code": "production_package_placeholder_required", "message": "..." }`. It is stateless (no Edit Mode headers, nothing stored). The Windows NC viewer calls it before **Release to Server** and refuses to upload a program that is not a valid template; the release endpoint repeats the check, so the viewer cannot bypass it. A missing `text` or more than 16 MiB returns `422 validation_failed` on field `text`.
 
 The current board response also contains `readAt`, `conflictCalculationStatus`, `conflictCalculationMessage`, `conflicts`, `pool`, and `machines`. The Server runs the same Timeline projection that backs `GET /api/v1/timeline` for the fixed horizon `[readAt, readAt + 30 days)` with the forecast cursor at `readAt`, and returns its structured conflicts as `{ conflictId, code, severity, title, message, operationIds, machineIds }`, ordered `blocking`, `warning`, `attention`, then by code and message. `unassigned_operation` is omitted because the pool already presents that state; every other Timeline conflict code, including calendar/setup defaults, dependency, timing, backward-fallback, and overlap conflicts, is passed through unchanged. On success the status is exactly `current` and the message names the calculation time and horizon. If the calculation throws, the status is `unavailable`, `conflicts` is empty, and consumers must not interpret that empty list as a conflict-free plan. The conflict list is a read-time projection with no durable plan revision. Assignment rejection feedback is client presentation of the assignment command error and is not stored as a calculated conflict.
 
@@ -1237,9 +1274,41 @@ Implemented response shape:
   "conflicts": [],
   "displayTimeZoneId": "Asia/Jerusalem",
   "dayStartsAtLocal": "06:00",
-  "dayEndsAtLocal": "18:00"
+  "dayEndsAtLocal": "18:00",
+  "resources": [
+    {
+      "resourceId": "station-inspection",
+      "resourceClass": "workstation",
+      "name": "Inspection bench",
+      "intervals": [
+        {
+          "workId": "operation-1|requirement-final",
+          "operationId": "operation-1",
+          "requirementId": "requirement-final",
+          "batchId": "batch-1",
+          "batchNumber": "B-1",
+          "partNumber": "PN-1",
+          "operationNumber": 10,
+          "operationName": "Rough milling",
+          "stepNumber": 50,
+          "name": "Final inspection",
+          "direction": "FORWARD",
+          "startsAt": "2026-08-11T12:20:00Z",
+          "endsAt": "2026-08-11T12:35:00Z",
+          "isPinned": false,
+          "explanation": "Earliest feasible slot after the predecessor/anchor.",
+          "workstationId": "station-inspection",
+          "employeeId": null,
+          "externalResourceId": null,
+          "resourceClass": "WORKSTATION"
+        }
+      ]
+    }
+  ]
 }
 ```
+
+Since schema v81 each `batches` item may carry `predictedCompletion`: the latest calculated finish of the Batch's Machine work or of its auxiliary steps. `resources` lists one lane per Workstation (`resourceClass` `workstation`), External Resource (`external`) or Employee (`employee`) that received provisional auxiliary work from the deterministic allocator, ordered Workstations, External Resources, Employees, then by name; lanes without work are omitted, and the field is empty when no scheduled Batch Operation has active requirements. The auxiliary conflicts are `auxiliary_resource_configuration_missing` (warning; no active Workstation of the required type/capability, no Employee with the Skill, or a missing External Resource), `auxiliary_slot_unavailable` (attention; eligible resources exist but no joint slot inside the horizon), `auxiliary_planning_failed` (attention; the allocator rejected its input), and `delivery_at_risk` (attention; a Batch with auxiliary steps is predicted to finish after the end of its Work Finish Date, reported only when every one of its steps has a feasible slot). The placement is a projection: nothing is persisted and Machine calculation is unchanged.
 
 Normalized scheduled work uses `type: "operation"`: all setup/QA/load-unload/production/reservation phase segments for one assignment are summarized into one current operation block spanning their calculated start/end, with the ordered `phases` collection retained. The collection may contain repeated `loadunload` / `PART RELOAD` phases between production groups; this never creates another assignment block or Operation identity. A blocked assignment without calculable work uses one assignment-owned `type: "waiting"`, `timingKind: "blocked"` block starting no earlier than preceding successfully calculated backlog work; an active suspended assignment uses its canonical operation block with `timingKind: "hold"`. Across all Machine lanes, each active assigned Operation ID occurs exactly once. Separate ordinary Machine-capacity `idle`, `waiting`, `downtime`, and moved-history intervals retain times/reasons but have null Operation, Batch, part, assignment, planning-mode, timing, and date metadata. Prior-Machine history is also folded into the canonical block's phases/detail without widening its current calculated bounds. Completed or genuinely unassigned actual work instead retains one identified `type: "actual_history"` block because no current assignment block exists. Every current operation/blocked block carries `machineAssignmentId`, `planningMode`, and the earliest linked `workFinishDate` when present. The additive top-level `displayTimeZoneId`, `dayStartsAtLocal`, and `dayEndsAtLocal` fields are the Server's validated `Timeline` configuration: clients use this local same-day window to color ruler daylight/dark hours only. It does not add a working-calendar window, interval, or scheduling constraint; clients that do not need time-scale context can ignore the trailing fields. Each Machine's additive `nonWorkingWindows` is the clipped, merged complement of the same Working Calendar expansion used for scheduling, including configured workdays, time windows, breaks, dated exceptions, overnight spill, timezone conversion, and enabled cached holidays. It excludes Setup/employee/day-shift-only constraints and Machine downtime. These windows are not entries in `intervals`, have only start/end/detail, carry no planning identity, and let older clients ignore the new field. After normalization, the Server checks identified current work for temporal overlap on each Machine. Actual/hold/history remains authoritative; an overlapping forecast becomes blocked waiting with `actual_backlog_overlap`, while overlapping forecasts keep the earlier stored backlog row and return `machine_operation_overlap`. Two overlapping authoritative actual/hold blocks remain visible as recorded and return blocking `machine_operation_overlap`. A fixed-point pass then blocks every later non-authoritative row in that Machine backlog, every Sequential forecast descendant, and every non-authoritative locked-simultaneous member; an authoritative descendant remains visible with `dependency_unresolved` and propagates unresolved state to its own successors. No case mutates assignment, mode, timestamp, dependency, or backlog data. The Server logs `DUPLICATE_TIMELINE_BLOCK` if producer output contains more than one current block, folds useful facts into the canonical result, and drops the extra block; it does not merely hide duplicates in WPF. The default Windows Timeline renders one tagged composite object per operation with `PRODUCTION` blue (`#1E88E5`), `SETUP` yellow (`#FBC02D`), `QC` green (`#43A047`), every `PART RELOAD` phase purple (`#7B1FA2`), and a `reserved` phase orange; gaps between phases are transparent rather than false continuous work. Generic `idle` and ordinary anonymous `waiting` intervals remain in the response but are deliberately suppressed from the default canvas, where blank row space communicates waiting/idle. That display choice does not suppress their calculation, API data, conflict explanation, diagnostic tooltip data, or optional future debug rendering. Gray `nonWorkingWindows` are drawn first as row backgrounds; grid lines, visible operation/downtime/history blocks, and dependency arrows remain above them. Assignment-owned `BLOCKED`, paused hold, downtime, and actual history remain visible. The client renders blocked waiting in a lower band and deterministically partitions every partial overlap into sublanes without changing time positions. A zero-duration blocked fact exactly at either horizon boundary remains a minimum-width point marker with its exact timestamps; equal-time markers use distinct sublanes. Dependencies include Batch identity, type token, from/to operation identity/number/name, and optional simultaneous-group key; blocked waiting is not an arrow endpoint. Conflicts include code, severity, explanation, and affected operation/Machine IDs. Unassigned operations, `dependency_predecessor_unassigned`, missing/invalid timing, or missing Machine calendars are returned as explained conflicts rather than silently omitted as a conflict-free plan.
 
@@ -1447,6 +1516,7 @@ The FANUC adapter is read-only and uses the FOCAS 2 Ethernet library installed o
 | `POST` | `/api/v1/production-runs/{runId}/offset-loader-releases` | Active editor creates a new release and atomically makes it current for that Run/Machine. Body: `machineId`, approved `ncReleaseId`, exact `toolTableReleaseId`, optional 64-hex `artifactHash`, and optional JSON-object `metadataJson`. |
 | `GET` | `/api/v1/machines/{machineId}/verification-configuration` | Windows planning read. Returns controller mappings and lifecycle configuration. Unconfigured returns `404 verification_settings_not_found`. No Machine credential field exists. |
 | `PUT` | `/api/v1/machines/{machineId}/verification-configuration` | Edit-Mode optimistic create/update. Accepts transport, port, protected program numbers, temporary-variable mappings, evidence-only event-sequence mapping, expected macro version, response width, timeout, enabled, and version. It accepts no credential. |
+| `GET` | `/api/v1/machines/{machineId}/verification-macros` | Read-only. The Machine's protected challenge/verify/finalizer subprograms rendered in its NC dialect from its verification configuration (enabled or not) or, without one, from the dialect defaults (`fromConfiguration: false`, README marked `DIALECT DEFAULTS`). Default response: `application/zip` (`O09001.nc`/`O09002.nc`/`O09003.nc` for Haas NGC, `O9001.NC`.. for FANUC and Mazak, `MEIMAD.SUB` for Okuma OSP, plus `README.txt`); `?format=json` returns `machineTag`, `ncDialect`, `macroVersion`, `files[{fileName,text}]` and `readme`. Unknown Machine returns `404 resource_not_found`. |
 
 Offset Loader creation validates that the Machine is assigned to the Production Run, that the supplied approved NC/tool-table pair belongs to the selected Run program, and that the NC release has schema-v51 hook identity. The Server generates the decimal release token. Releases are immutable; a later release changes only the separate current pointer. Old tokens therefore fail current DPRINT resolution even when their NC program remains approved. No date comparison determines validity.
 
@@ -2189,10 +2259,151 @@ downgrades configured verification.
 Manifest schema v2 records `placeholderProtocolVersion`, authoritative
 `partName` and `operationName`, exact Run/Operation/Machine/NC/Tool Table/Offset
 Loader identities, input hashes, creator and Server timestamp, selected offset
-mode, supersession, and the generation-relevant Machine capability snapshot.
+mode, supersession, and the generation-relevant Machine capability snapshot. It
+also records part counting: `partCountingEnabled` (the cycle markers expanded to
+`CST`/`CEN` events because the Machine's enabled CNC connection reads DPRNT or
+its verification is enabled), `partCountingDprntSource`,
+`partCountingEventSequenceVariable` and `partCountingVariableFromConfiguration`
+(false when the dialect default variable was used because no verification
+configuration exists). The generated Offset Loader prints its own
+`MEIMAD/V/2/CONTEXT/...` line with the Offset Loader release token before the
+challenge call.
 Each non-manifest artifact is listed with its logical path, source release, size,
 and SHA-256; the manifest itself has its separately persisted SHA-256. Canonical
 package creation fails before activation if any required token is unresolved.
+
+Schema v79 adds the Tool Room measurements to a `MEASURED` package. When the
+released Tool Table has tool rows, the build requires the latest tool
+preparation version to hold a length, a diameter and an offset number for every
+required released tool (`422 production_package_tool_measurements_missing`,
+listing the tools; duplicate offset numbers fail with
+`production_package_tool_offset_number_duplicate`). The package then contains a
+`TOOL_OFFSETS` artifact (`tool-offsets/tool-offsets.json`: every measured tool
+with offset number, length, diameter, shape and components, plus the offset
+kind), the manifest records `toolPreparationId`, `toolPreparationVersion`,
+`toolPreparationHash`, `toolDiameterOffsetKind`, `measuredToolCount` and
+`toolOffsetsLoadedByProgram`, and the representation exposes
+`toolPreparationId`. With Server Verification enabled the offsets are written
+by the package-specific Offset Loader before the challenge call; with
+verification disabled a separate `TOOL_OFFSET_PROGRAM` artifact
+(`tool-offsets/O01991.nc` or `tool-offsets/O1991.MIN`) carries them. The
+syntax follows the Machine's `ncDialect` and process: `G10 L10/L11/L12/L13`
+(memory C) for milling on Haas NGC, FANUC and Mazak, `G10 P1xxxx X Z` for FANUC
+turning, `VTOFH/VTOFD` or `VTOFX/VTOFZ` for Okuma OSP; Haas NGC and Mazak
+turning have no input syntax, so `toolOffsetsLoadedByProgram` is `false` and
+the loader comment tells the setupist to enter the sheet. The current-package
+predicate also requires that no newer tool preparation version exists, so a new
+save makes the package stale. `MANUAL_DUMMY` packages carry no measurements and
+do not depend on the preparation. A Tool Table without rows (pre-v36 history)
+keeps the previous behavior.
+
+### 8.12a Tool preparation
+
+```http
+GET /api/v1/batch-operations/{operationId}/tool-preparation
+PUT /api/v1/batch-operations/{operationId}/tool-preparation
+```
+
+The read returns the released Tool Table rows of the Operation's current
+process on its assigned Machine, merged with the latest saved version: Machine
+identity, `processType`, `ncDialect`, `toolDiameterOffsetKind`, the current
+`toolTableReleaseId`/revision/file name, `version` (0 before the first save),
+`toolPreparationId`, `savedAt`, `savedBy`, `comment`, `contentHash`,
+`savedForToolTableReleaseId` (differs from the current release when the table
+was re-released after the last save) and `tools`. Each tool carries the released
+`rowNumber`, `toolIdentifier`, `description`, `isRequired`, `magazinePosition`
+and the saved `offsetNumber`, `measuredLength`, `measuredDiameter` (mm, four
+decimals), `shapeType` (the shared tool type list of §8.12b), `hand` (`RIGHT`,
+`LEFT` or `NEUTRAL` for turning tools, null otherwise), `catalogToolId` (the
+catalog tool the Tool Room picked, or null), `shape` (named dimensions in mm,
+degrees or a flute count), `notes` and `components` (`sequence`,
+`componentType`, `name`, `catalogNumber`, `length`, `diameter`, `notes`). Unassigned Operations return `404`; an Operation whose
+process has no released Tool Table returns `422
+tool_preparation_tool_table_missing`.
+
+The write requires `X-Meimad-Client-Id` and `X-Meimad-User-Id` (no Edit
+Mode; `428` without them) and the body `expectedVersion`,
+`toolTableReleaseId`, optional `comment` and `tools`. Every tool must name a
+released identifier (`tool_preparation_unknown_tool`) at most once; offset
+numbers are 1–9999 and unique; millimetre values are 0–10000; shape types,
+hands, component types and dimension keys are the documented sets; a
+`catalogToolId` must exist (`422 tool_preparation_catalog_tool_unknown`). The Server
+validates, appends version `expectedVersion + 1` as an immutable row set with
+a SHA-256 content hash, and returns the merged read. A stale
+`expectedVersion` fails with `409 tool_preparation_version_conflict`; a
+`toolTableReleaseId` that is no longer current fails with `409
+tool_preparation_tool_table_changed`. Saved versions are never edited or
+deleted; the Production Package build reads the latest one.
+
+Readiness follows the measurements: the `toolOffsets` component of `GET
+/api/v1/batch-operations/{operationId}/readiness`, of the preparation-queue
+`readinessFacts` and of first Start is `READY` when the latest version was
+saved for the current Tool Table release and every required released tool has
+a measured length, diameter and offset number (`All N required tool(s) are
+measured by the Tool Room (tool table version V).`); an incomplete version is
+`MISSING` and says how many required tools still lack a value; a physical
+confirmation recorded through `readiness-inputs` for the exact configuration
+keeps counting on its own. A save writes no `tool_offset_readiness_records`
+row; the state is projected. The Windows NC viewer reads the same
+representation when it opens a release for a known Batch Operation and applies
+the tools to its preview.
+
+### 8.12b Tool catalog
+
+```http
+GET    /api/v1/tool-catalog?query=&type=&includeInactive=
+POST   /api/v1/tool-catalog
+GET    /api/v1/tool-catalog/types
+GET    /api/v1/tool-catalog/{toolId}
+PUT    /api/v1/tool-catalog/{toolId}
+DELETE /api/v1/tool-catalog/{toolId}
+```
+
+The tool catalog is the factory's list of tool definitions: each tool has a
+stable Meimad internal id, its type from the shared tool type list, the holder
+hand of a turning tool, dimensions, ISO codes and other attributes, and its ids
+in other systems. It describes tools; it is not an inventory and holds no
+quantities or locations.
+
+A tool is `catalogToolId` (stable), `internalNumber` and `internalCode`
+(`MT-00001`; assigned as the next number on create and never reused, even after
+a delete), `name`, `toolType`, `family` (`MILLING`, `HOLE_MAKING`, `TURNING`,
+`OTHER`), `hand` (`RIGHT`, `LEFT`, `NEUTRAL` for turning tools, null otherwise;
+a hand sent for another type is dropped), `description`, `shape` (named
+dimensions: the tool preparation keys plus `cuttingWidth`, `maxDepth`,
+`minBoreDiameter`, `shankWidth`, `shankHeight`, `leadAngle`,
+`insertEdgeLength`, `pitch`, `fluteCount`; millimetres, degrees up to 180, or a
+whole flute count), `attributes` (`insertCode`, `holderCode`, `threadProfile`,
+`material`, `coating`, `manufacturer`; at most 200 characters each),
+`externalIds` (`system`, `value`; at most 50, unique per tool ignoring case),
+`isActive`, `version`, `createdAt`, `updatedAt` and `updatedBy`.
+
+The list is ordered by internal number and hides inactive tools unless
+`includeInactive=true`; `query` matches the internal code, name, description
+and external id values (case-insensitive substring); `type` filters by tool
+type. `GET …/types` returns `types` (`code`, `family`, `handed`),
+`dimensionKeys`, `hands` and `attributeKeys`, so a client can offer exactly
+the Server's lists.
+
+Writes need `X-Meimad-Client-Id` and `X-Meimad-User-Id` (no Edit Mode; `428`
+without them), like the Tool Room's measurements. `POST` creates the tool and
+returns `201` with its assigned id and code. `PUT` replaces the whole tool and
+requires `expectedVersion` (the version being replaced; `400
+tool_catalog_expected_version_required` without it, `409
+tool_catalog_version_conflict` when it moved). Validation failures are `422`
+with `tool_catalog_name_invalid`, `tool_catalog_tool_type_invalid`,
+`tool_catalog_hand_invalid`, `tool_catalog_description_too_long`,
+`tool_catalog_shape_dimension_unknown`, `tool_catalog_shape_dimension_invalid`,
+`tool_catalog_attribute_unknown`, `tool_catalog_attribute_too_long`,
+`tool_catalog_external_id_system_invalid`,
+`tool_catalog_external_id_value_invalid`,
+`tool_catalog_external_id_duplicate` or `tool_catalog_too_many_external_ids`.
+`DELETE` returns `204`; a tool a prepared tool refers to answers `409
+tool_catalog_in_use` and is deactivated instead. Unknown tools are `404`.
+
+The Windows Tool Catalog tab edits the catalog, and the Tool Room window picks
+a catalog tool for a released tool row, which copies its type, hand and
+dimensions into the prepared tool and records `catalogToolId`.
 
 ### 8.13 Windows QC Queue and decision contract
 
@@ -2368,9 +2579,39 @@ Resource-master mutations require the normal `X-Meimad-Client-Id` and current `X
 - `GET|POST /api/v1/resources/workstation-types`; `PATCH|DELETE /api/v1/resources/workstation-types/{id}` update or reference-safely delete.
 - `GET|POST /api/v1/resources/workstations`; `PATCH|DELETE /api/v1/resources/workstations/{id}` update or reference-safely delete.
 - `GET|POST /api/v1/resources/external`; `PATCH|DELETE /api/v1/resources/external/{id}` update or reference-safely delete.
-- `GET|POST /api/v1/case-operations/{operationId}/resource-requirements` manages data-driven requirements rather than concrete assignments.
+- `GET|POST /api/v1/case-operations/{operationId}/resource-requirements` manages data-driven requirements rather than concrete assignments. Since schema v81 each requirement also carries `name`, `stepNumber`, `durationPerUnitSeconds` (per planned part, added to `estimatedDurationSeconds`) and read-only `isKitaronManaged`; `PATCH /api/v1/resource-requirements/{requirementId}` replaces the editable fields (`sequencePosition`, `resourceClass`, `workstationTypeId`, `externalResourceId`, `requiredCapability`, `requiredSkillId`, `capacityRequired`, `estimatedDurationSeconds`, `durationPerUnitSeconds`, `direction`, `simultaneousGroupKey`, `predecessorRequirementId`, `name`, `stepNumber`, `isActive`, `expectedVersion`) and `DELETE /api/v1/resource-requirements/{requirementId}?version=` removes one (the requirements that followed the deleted one then follow its predecessor (or the Machine anchor)); both need Edit Mode, and a predecessor must belong to the same Case Operation. Deleting a Kitaron-imported requirement, or a Case Operation with requirements, records a suppression so the next synchronization does not recreate the step; deleting a Case Operation removes its requirements and their pins first. `DELETE /api/v1/cases/{caseId}/operations/{operationId}` re-links the Kitaron-owned `SEQUENTIAL` or `PARALLEL_CAPABLE` operations that followed the deleted one to its predecessor, or makes them `INDEPENDENT` when it had none; any other dependent operation still returns `409 delete_blocked`.
+- `PUT /api/v1/timeline/auxiliary-pins` with `{ batchOperationId, requirementId, workstationId?, employeeId?, plannedStartsAt, plannedEndsAt, pinStart, reason? }` pins one auxiliary work item to a Workstation and/or Employee and, with `pinStart`, to its start (`422 auxiliary_pin_empty` when nothing is pinned, `422 auxiliary_pin_target_missing` for unknown ids); `DELETE /api/v1/timeline/auxiliary-pins/{batchOperationId}/{requirementId}` removes it (`404 auxiliary_pin_not_found`). Both need Edit Mode and never touch Machine assignments or backlog order.
 - `POST /api/v1/resource-plan/preview` returns deterministic assignments, internal load intervals including fixed facts, configuration errors, predicted shift/completion, and delivery risk. Pins are request constraints; it never mutates Machine assignments/backlogs.
 
 Windows Setup exposes these master-data routes in **Resource Types & Skills**, with separate screens for Skills, Workstation types, Workstation instances, Employee Skill assignment, and External Resources. Create, edit, delete, and assignment require active Edit Mode; deletes are rejected while referenced, and all lists remain visible in View Mode.
 
 `POST /api/v1/batch-operations/{operationId}/production-package?toolOffsetMode=MEASURED|MANUAL_DUMMY` selects the immutable offset source mode. Default is `MEASURED`; manual mode returns 422 when the Machine lacks capability. For a CNC operation, Manual/Dummy also returns `422 manual_dummy_verification_required` unless Server Verification is enabled, preventing creation of a package that silently lacks its Offset Loader. The response/manifest include `toolOffsetMode`. A Manual/Dummy package has no measured Tool Table artifact or offset-write commands; it contains the package-bound verification-only `OFFSET_LOADER` artifact and records that the setupist must enter real offsets manually. The `OFFSET_LOADER` artifact `logicalPath` follows the Machine NC dialect (`offset-loader/O01990.nc` for `HAAS_NGC`, `FANUC_MACRO_B`, and `MAZAK_MATRIX_EIA`; `offset-loader/O1990.MIN` for `OKUMA_OSP`), and the manifest records `ncDialect` both at the top level and under `machine`.
+
+### Kitaron batch authority (schema v82)
+
+- `POST /api/v1/cases/{caseId}/operations` returns 409 `kitaron_managed_read_only` when the Case's route is locked by the Kitaron route master (`kitaronRouteLocked` on the Case response).
+- `DELETE /api/v1/cases/{caseId}/operations/{operationId}` and `DELETE /api/v1/resource-requirements/{requirementId}` return 409 `kitaron_managed_read_only` for a Kitaron-linked operation or route step.
+- Case responses add `kitaronRouteLocked`. Production Batch responses add `isKitaronManaged`, `kitaronMaterialState` (`available`, `on_order`, `missing`, `unknown`, or null for a planner batch) and `kitaronMaterialDetail`.
+- The Kitaron synchronization status message also reports batches imported, updated, removed with their work orders, kept because started or planned, work orders waiting for their Case route, and the material verdict counts.
+
+### Kitaron material orders (read-only)
+
+`GET /api/v1/kitaron/material-orders` is readable by every client and returns `{ items: [ { sourceKey, purchaseOrderNumber, lineNumber, materialNumber, description, supplier, orderedQuantity, receivedQuantity, unit, requestedDeliveryDate, approvedDeliveryDate, approvedQuantity, approvalNote, kitaronStatus, closed, deliveryStatus, lastImportedAt } ] }` for every active imported line, open lines first by latest delivery date. `kitaronStatus` is Kitaron's own purchase-line status text as reported. `deliveryStatus` is derived from the Kitaron facts: `received` (received at least the ordered quantity), `closed` (closed in Kitaron short of the ordered quantity), `partially_received`, `late` (open and the supplier or requested date has passed), `supplier_confirmed` (open with a supplier date), or `open`.
+
+### Batch release and Kitaron ownership (schema v83)
+
+- `POST /api/v1/batches/{batchId}/release` and `/unrelease` (Edit Mode headers) set `releaseState`; the batch response adds `releaseState`, `releasedAt`, `releasedBy` and `kitaronMaterialOrders`.
+- `POST /api/v1/batches` returns 409 `kitaron_managed_read_only` while the Kitaron connector is enabled; `PATCH` and `DELETE` of a Kitaron-imported batch return the same.
+- `GET /api/v1/kitaron/material-orders` items add `unitPrice`, `lineTotal`, `customerOrderReference` and `workOrders: [ { workOrderNumber, partNumber, customerOrderNumber, customer, quantity, supplyDate, hasBatch } ]`.
+
+### Network folder (schema v83)
+
+`GET /api/v1/network-folder` returns `{ rootPath, aliases, kitaronCaseFolder, version, updatedAt }` to every client. `PUT /api/v1/network-folder` (Edit Mode headers, body `{ rootPath, aliases, kitaronCaseFolder, expectedVersion }`) saves it, converts the stored Case links, and returns the settings with `convertedLinks`. Case, model file, job package and TV responses carry resolved network paths.
+
+### Work Order material orders (schema v84)
+
+`GET /api/v1/batches/{batchId}/material-orders` returns `{ items: [ { sourceKey, purchaseOrderNumber, lineNumber, materialNumber, description, supplier, orderedQuantity, receivedQuantity, unit, requestedDeliveryDate, approvedDeliveryDate, closed, verified, verifiedBy, verifiedAt } ] }`: the candidate purchase lines of the Work Order's raw material plus every verified line. `PUT .../material-orders/{sourceKey}` verifies a line and `DELETE` removes the verification (Edit Mode headers); both return the list. Batch responses carry `kitaronMaterialOrders` (verified lines only) and `materialOrderCandidates`; Material Orders page work orders carry `verified`.
+
+### Case pool filters (schema v85)
+
+`GET /api/v1/cases` also accepts `workOrders=with|without`, `release=pending|released`, `orders=active|none`, `operations=with|without`, `materialOrders=verified|toVerify`, and `supplyFrom`, `supplyTo`, `startFrom`, `startTo` (`yyyy-MM-dd`, inclusive). All given filters must match; an unknown token returns 400 `invalid_case_filter`.

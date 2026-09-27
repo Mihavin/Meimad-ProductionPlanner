@@ -18,7 +18,9 @@ internal sealed record CreateMachineCommand(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double? MachineTimeFactor = null,
-    string? NcDialect = null);
+    string? NcDialect = null,
+    string? NcViewerMachine = null,
+    string? ToolDiameterOffsetKind = null);
 
 internal readonly record struct MachineField<T>(bool IsSpecified, T Value)
 {
@@ -45,4 +47,6 @@ internal sealed record UpdateMachineCommand(
     MachineField<double?> RapidRateMillimetersPerMinute = default,
     MachineField<double?> ToolChangeTimeSeconds = default,
     MachineField<double?> MachineTimeFactor = default,
-    MachineField<string?> NcDialect = default);
+    MachineField<string?> NcDialect = default,
+    MachineField<string?> NcViewerMachine = default,
+    MachineField<string?> ToolDiameterOffsetKind = default);

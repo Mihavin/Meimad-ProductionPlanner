@@ -20,6 +20,7 @@ internal interface ICaseRepository
         string? customer,
         bool? isActive,
         CaseSortOrder sortOrder,
+        CaseListFilter filter,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<CaseOperationDetails>> ListOperationsAsync(

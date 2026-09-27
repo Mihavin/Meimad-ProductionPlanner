@@ -105,10 +105,10 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT cases.id, cases.version, cases.part_number, cases.name,
-                   cases.revision, cases.customer, cases.working_folder_path,
-                   cases.preview_reference,
+                   cases.revision, cases.customer, {SqliteNetworkFolderSettings.ResolveSql("cases.working_folder_path")},
+                   {SqliteNetworkFolderSettings.ResolveSql("cases.preview_reference")},
                    production_batches.id, production_batches.version,
                    production_batches.batch_number, production_batches.planned_quantity,
                    batch_operations.id, batch_operations.version,

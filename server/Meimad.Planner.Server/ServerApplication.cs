@@ -14,6 +14,7 @@ using Meimad.Planner.Server.Api.GCode;
 using Meimad.Planner.Server.Api.Haas;
 using Meimad.Planner.Server.Api.ClientPortal;
 using Meimad.Planner.Server.Api.Kitaron;
+using Meimad.Planner.Server.Api.NetworkFolder;
 using Meimad.Planner.Server.Api.LegacyImport;
 using Meimad.Planner.Server.Api.MachineAssignments;
 using Meimad.Planner.Server.Api.Materials;
@@ -26,6 +27,8 @@ using Meimad.Planner.Server.Api.ProductionRuns;
 using Meimad.Planner.Server.Api.Qc;
 using Meimad.Planner.Server.Api.Preparation;
 using Meimad.Planner.Server.Api.ProductionPackages;
+using Meimad.Planner.Server.Api.ToolPreparations;
+using Meimad.Planner.Server.Api.ToolCatalog;
 using Meimad.Planner.Server.Api.Tablets;
 using Meimad.Planner.Server.Api.Postprocessors;
 using Meimad.Planner.Server.Api.Reports;
@@ -60,6 +63,8 @@ using Meimad.Planner.Server.Application.ProductionBatches;
 using Meimad.Planner.Server.Application.ProductionRuns;
 using Meimad.Planner.Server.Application.Preparation;
 using Meimad.Planner.Server.Application.ProductionPackages;
+using Meimad.Planner.Server.Application.ToolPreparations;
+using Meimad.Planner.Server.Application.ToolCatalog;
 using Meimad.Planner.Server.Application.Qc;
 using Meimad.Planner.Server.Application.Postprocessors;
 using Meimad.Planner.Server.Application.Reports;
@@ -207,6 +212,10 @@ public static class ServerApplication
         builder.Services.AddSingleton<PreparationQueueService>();
         builder.Services.AddSingleton<IProductionPackageRepository, SqliteProductionPackageRepository>();
         builder.Services.AddSingleton<ProductionPackageService>();
+        builder.Services.AddSingleton<IToolPreparationRepository, SqliteToolPreparationRepository>();
+        builder.Services.AddSingleton<ToolPreparationService>();
+        builder.Services.AddSingleton<IToolCatalogRepository, SqliteToolCatalogRepository>();
+        builder.Services.AddSingleton<ToolCatalogService>();
         builder.Services.AddSingleton<IResourceMasterDataRepository, SqliteResourceMasterDataRepository>();
         builder.Services.AddSingleton<ResourceMasterDataService>();
         builder.Services.AddSingleton<AutomaticResourceScheduler>();
@@ -235,6 +244,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<IProductionReadinessRepository, SqliteProductionReadinessRepository>();
         builder.Services.AddSingleton<ProductionReadinessService>();
         builder.Services.AddSingleton<ITimelineSourceRepository, SqliteTimelineSourceRepository>();
+        builder.Services.AddSingleton<ITimelineAuxiliaryPinRepository, SqliteTimelineAuxiliaryPinRepository>();
         builder.Services.AddSingleton<TimelineCalculationEngine>();
         builder.Services.AddSingleton<TimelineProjectionService>();
         builder.Services.AddSingleton<ITvDashboardRepository, SqliteTvDashboardRepository>();
@@ -255,6 +265,11 @@ public static class ServerApplication
         builder.Services.AddSingleton<IManufacturingProgramRepository, SqliteManufacturingProgramRepository>();
         builder.Services.AddSingleton<ManufacturingProgramService>();
         builder.Services.AddSingleton<INcHeaderParser, NcHeaderParser>();
+        builder.Services.AddSingleton<INcProgramAnalyzer, NcEngineProgramAnalyzer>();
+        builder.Services.AddSingleton<INcAnalysisRepository, SqliteNcAnalysisRepository>();
+        // Installed NC viewer machine definitions; validates Machine.ncViewerMachine.
+        builder.Services.AddSingleton(_ => Meimad.Planner.NcEngine.NcEngineMachineCatalog.Load());
+        builder.Services.AddSingleton<NcTemplateFormatter>();
         builder.Services.AddSingleton<IHaasMdcClientFactory, HaasMdcClientFactory>();
         builder.Services.AddSingleton<IFocasClientFactory, FocasClientFactory>();
         builder.Services.AddHttpClient<IMtConnectClient, MtConnectHttpClient>(client =>
@@ -276,6 +291,7 @@ public static class ServerApplication
         builder.Services.AddHostedService(services => services.GetRequiredService<CncConnectionManager>());
         builder.Services.AddSingleton<CncConnectionService>();
         builder.Services.AddHostedService<GCodeStorageRecoveryService>();
+        builder.Services.AddHostedService<NcAnalysisBackfillService>();
         builder.Services.AddSingleton<OpenXmlLegacyWorkbookReader>();
         builder.Services.AddSingleton<ILegacyImportRepository, SqliteLegacyImportRepository>();
         builder.Services.AddSingleton<LegacyImportService>();
@@ -287,6 +303,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<KitaronConnectionService>();
         builder.Services.AddSingleton<KitaronMappingService>();
         builder.Services.AddSingleton<KitaronSyncService>();
+        builder.Services.AddSingleton<IKitaronStationRepository, SqliteKitaronStationRepository>();
+        builder.Services.AddSingleton<KitaronStationService>();
         builder.Services.AddHostedService<KitaronConnectionMonitorService>();
         builder.Services.AddHostedService<KitaronSyncHostedService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
@@ -388,6 +406,8 @@ public static class ServerApplication
         application.MapQcWorkflowEndpoints();
         application.MapPreparationQueueEndpoints();
         application.MapProductionPackageEndpoints();
+        application.MapToolPreparationEndpoints();
+        application.MapToolCatalogEndpoints();
         application.MapResourcePlanningEndpoints();
         application.MapMaterialReconciliationEndpoints();
         application.MapServerMaintenanceEndpoints();
@@ -413,6 +433,10 @@ public static class ServerApplication
         application.MapManufacturingProgramEndpoints();
         application.MapLegacyImportEndpoints();
         application.MapKitaronConnectionEndpoints();
+        application.MapKitaronStationEndpoints();
+        application.MapKitaronMaterialOrderEndpoints();
+        application.MapNetworkFolderEndpoints();
+        application.MapWorkOrderMaterialOrderEndpoints();
         application.MapClientPortalCustomerEndpoints();
         application.MapWeeklyMaterialReportEndpoints();
         application.MapWeeklyEmployeeEfficiencyReportEndpoints();

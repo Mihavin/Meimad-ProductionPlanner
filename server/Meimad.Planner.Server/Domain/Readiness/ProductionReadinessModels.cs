@@ -44,6 +44,18 @@ internal sealed record ToolOffsetReadinessFact(
     string? Comment,
     DateTimeOffset RecordedAt);
 
+/// <summary>
+/// The latest Tool Room tool preparation of the Operation on its assigned Machine (schema v79):
+/// which Tool Table release it was saved for and how many required released tools still lack a
+/// measured length, diameter or offset number.
+/// </summary>
+internal sealed record ToolPreparationReadinessFact(
+    string ToolTableReleaseId,
+    int Version,
+    int RequiredToolCount,
+    int UnmeasuredRequiredCount,
+    DateTimeOffset SavedAt);
+
 internal sealed record ProductionReadinessContext(
     string BatchOperationId,
     string? MachineAssignmentId,
@@ -58,7 +70,8 @@ internal sealed record ProductionReadinessContext(
     string? SelectedGCodeReleaseId,
     IReadOnlyList<ToolOffsetReadinessFact> ToolOffsetFacts,
     string MaterialStatus,
-    string? MaterialComment);
+    string? MaterialComment,
+    ToolPreparationReadinessFact? ToolPreparation = null);
 
 internal sealed record ReadinessComponent(
     string Key,

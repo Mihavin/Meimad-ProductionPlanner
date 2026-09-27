@@ -23,5 +23,5 @@ internal static class FixedCaseOrderExcelMapping
     internal const string Summary =
         "Cases: Part Number A, Name O, Revision F, Customer D. "
         + "Orders: Order Number B, Quantity L, Work Finish Date E, Active/Production Instruction N. "
-        + "All other fields are left empty. No Batches, Operations, Machines, assignments, or planning data are imported.";
+        + "All other fields are left empty. No Work Orders, Operations, Machines, assignments, or planning data are imported.";
 }

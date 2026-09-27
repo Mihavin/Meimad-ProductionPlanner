@@ -314,8 +314,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     {
         "cases" => "Step 1 — Cases in the Case Pool",
         "orders" => "Step 2 — Find and import related Orders",
-        "batches" => "Step 3 — Create Batches in the Pool",
-        "assignments" => "Step 4 — Assign Batches to Machines",
+        "batches" => "Step 3 — Create Work Orders in the Pool",
+        "assignments" => "Step 4 — Assign Work Orders to Machines",
         _ => "Import stage"
     };
 
@@ -323,8 +323,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
     {
         "cases" => "One Case per Part Number: A=Part Number, O=Name, F=Revision, D=Customer. Other workbook fields are not copied into the Case.",
         "orders" => "One related Order per Part+Order Number: B=Order Number, L=Quantity, E=Work Finish Date, N=active production instruction.",
-        "batches" => "One Batch per Part+פק\"ע (P). Planned Quantity and Order allocations equal the summed positive יתרה לאספקה (H).",
-        "assignments" => "For the Pool Batches you want to dispatch now, choose one compatible route Operation and an existing Machine. Leave the rest in Pool.",
+        "batches" => "One Work Order per Part+פק\"ע (P). Planned Quantity and Order allocations equal the summed positive יתרה לאספקה (H).",
+        "assignments" => "For the Pool Work Orders you want to dispatch now, choose one compatible route Operation and an existing Machine. Leave the rest in Pool.",
         _ => string.Empty
     };
 
@@ -476,8 +476,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             var stock = selected.Where(row => row.Decision is "create_batch_to_pool" or "create_batch_and_assign")
                 .SelectMany(row => row.Allocations)
                 .Count(allocation => allocation.Type == "stock");
-            return $"Automatic draft: {orders} Order(s), {pool} Pool Batch(es), "
-                + $"{assignments} Batch-and-Machine assignment(s), {relatedOrderAllocations} related-Order allocation(s), "
+            return $"Automatic draft: {orders} Order(s), {pool} Pool Work Order(s), "
+                + $"{assignments} Work Order-and-Machine assignment(s), {relatedOrderAllocations} related-Order allocation(s), "
                 + $"and {stock} explicit stock allocation(s). "
                 + $"{AutomaticSkippedRows} row(s) were safely skipped"
                 + (AutomaticSkippedRows > 0
@@ -522,7 +522,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         ? "Select a resolved row, choose a scope, then apply only its explicit choices to matching rows. Nothing is saved until Review and commit."
         : SelectedWizardRow.Decision is "assign_existing_operation" or "create_case"
             ? SelectedWizardRow.Decision == "assign_existing_operation"
-                ? "An existing Batch Operation can be assigned only once. Select a different unassigned Operation for each source row; this action cannot be copied as a pattern."
+                ? "An existing Work Order Operation can be assigned only once. Select a different unassigned Operation for each source row; this action cannot be copied as a pattern."
                 : "New Case identity, folder, and optional Order values are row-specific. Resolve each new Case individually; this action cannot be copied as a pattern."
             : $"Apply the explicit choices from row {SelectedWizardRow.RowNumber} to {PatternScopeDescription}. IDs are copied only when the target preview offers the same reusable candidate; unresolved fields stay unresolved.";
 
@@ -567,8 +567,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
             return $"Detected {Rows.Count} rows: {validRows} without row blockers, {warningRows} warning row(s), "
                 + $"{blockingRows} error row(s), {globalBlockers} global blocker(s), {skippedRows} selected row(s) skipped. "
-                + $"Selected decisions: {caseCreates} Case(s), {orderCreates} Order(s), {batchCreates} Batch(es), "
-                + $"{batchOperations} route Batch Operation(s), {assignments} Machine assignment(s). "
+                + $"Selected decisions: {caseCreates} Case(s), {orderCreates} Order(s), {batchCreates} Work Order(s), "
+                + $"{batchOperations} route Work Order Operation(s), {assignments} Machine assignment(s). "
                 + $"Existing-match indicators: {caseMatches} Case row(s), {orderMatches} Order row(s); "
                 + $"{unknownMachines} unmatched Machine section(s), {duplicateIndicators} duplicate indicator(s).";
         }
@@ -600,7 +600,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
     public string OutcomeSummary => !HasSelectedOutcome
         ? "Choose at least one import outcome before continuing."
-        : $"Selected: {(ImportOrders ? "Orders" : string.Empty)}{(ImportOrders && (ImportPoolBatches || ImportMachineAssignments) ? ", " : string.Empty)}{(ImportPoolBatches ? "unassigned pool Batches" : string.Empty)}{(ImportPoolBatches && ImportMachineAssignments ? ", " : string.Empty)}{(ImportMachineAssignments ? "Machine assignments" : string.Empty)}. Sheets outside these outcomes are omitted from the one atomic commit.";
+        : $"Selected: {(ImportOrders ? "Orders" : string.Empty)}{(ImportOrders && (ImportPoolBatches || ImportMachineAssignments) ? ", " : string.Empty)}{(ImportPoolBatches ? "unassigned pool Work Orders" : string.Empty)}{(ImportPoolBatches && ImportMachineAssignments ? ", " : string.Empty)}{(ImportMachineAssignments ? "Machine assignments" : string.Empty)}. Sheets outside these outcomes are omitted from the one atomic commit.";
 
     public string SelectedFilePath
     {
@@ -1025,7 +1025,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
 
         PatternApplicationSummary = targets.Length == 0
             ? "No unresolved rows matched this pattern. Existing choices were left unchanged."
-            : $"Applied the explicit action from row {source.RowNumber} to {applied} unresolved preview row(s); {needsReview} need row-specific review, and {leftUnchanged} were left unchanged because the exact Server candidate was not offered. Batch template applied to {templateApplied}; {templateCollisions} generated blank or duplicate values. Order numbers, dates and Machine mappings are never copied. Review remaining fields before committing.";
+            : $"Applied the explicit action from row {source.RowNumber} to {applied} unresolved preview row(s); {needsReview} need row-specific review, and {leftUnchanged} were left unchanged because the exact Server candidate was not offered. Work Order template applied to {templateApplied}; {templateCollisions} generated blank or duplicate values. Order numbers, dates and Machine mappings are never copied. Review remaining fields before committing.";
         RowOrMappingChanged();
         return Task.CompletedTask;
     }
@@ -1114,8 +1114,8 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(AutomaticPrepared));
             OnPropertyChanged(nameof(ConfirmAutomaticSkips));
             MachineSuggestionSummary = mappedMachines == 0
-                ? "No unambiguous exact Machine mapping was applied automatically. Safe Batch rows fall back to Pool."
-                : $"Applied {mappedMachines} unambiguous exact Machine mapping(s). Other safe Batch rows fall back to Pool.";
+                ? "No unambiguous exact Machine mapping was applied automatically. Safe Work Order rows fall back to Pool."
+                : $"Applied {mappedMachines} unambiguous exact Machine mapping(s). Other safe Work Order rows fall back to Pool.";
 
             var attention = AutomaticAttentionRows;
             var hasUnresolvedRows = Rows.Where(IsIncludedInSelectedOutcome).Any(row => !row.IsResolved);
@@ -1328,10 +1328,10 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         var selectedSkips = Rows.Count(row => IsIncludedInSelectedOutcome(row) && row.IsSkipped);
         var replay = receipt.Replayed ? " (idempotent replay)" : string.Empty;
         return $"Import {receipt.CommitId}{replay}: created {created.CaseIds.Count} Case(s), "
-            + $"{created.OrderIds.Count} Order(s), {created.BatchIds.Count} Batch(es), "
-            + $"{created.BatchOperationIds?.Count ?? 0} Batch Operation(s), and {created.AssignmentIds.Count} assignment(s); "
+            + $"{created.OrderIds.Count} Order(s), {created.BatchIds.Count} Work Order(s), "
+            + $"{created.BatchOperationIds?.Count ?? 0} Work Order Operation(s), and {created.AssignmentIds.Count} assignment(s); "
             + $"matched/unchanged {unchanged.CaseIds.Count} Case(s), {unchanged.OrderIds.Count} Order(s), "
-            + $"{unchanged.BatchIds.Count} Batch(es), {unchanged.BatchOperationIds?.Count ?? 0} Batch Operation(s), "
+            + $"{unchanged.BatchIds.Count} Work Order(s), {unchanged.BatchOperationIds?.Count ?? 0} Work Order Operation(s), "
             + $"and {unchanged.AssignmentIds.Count} assignment(s). {selectedSkips} selected source row(s) skipped; "
             + $"{receipt.PoolBatchOperationIds?.Count ?? 0} Operation(s) left in Pool; "
             + $"{receipt.MachineBacklogs.Count} Machine backlog(s) affected.";
@@ -1363,7 +1363,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
         return $"{prefix}. Cases created: {casesCreated}; Cases matched existing: {casesMatched}; "
             + $"Orders created: {ordersCreated}; Orders matched existing: {ordersMatched}; "
             + $"Rows skipped: {skipped}; Rows with errors: {errors}. "
-            + "No Batches, Operations, Machines, assignments, backlog, or Timeline data are included.";
+            + "No Work Orders, Operations, Machines, assignments, backlog, or Timeline data are included.";
     }
 
     internal bool IsIncludedInSelectedOutcome(LegacyImportRowViewModel row) => row.Kind switch
@@ -2208,9 +2208,9 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         "skip" => "Skip",
         "create_case" => IncludeOrderWithNewCase ? "Create Case and Order" : "Create Case",
         "create_order" => "Create Order under selected Case",
-        "create_batch_to_pool" => "Create full-route Batch in Pool",
-        "create_batch_and_assign" => "Create Batch and assign selected operation",
-        "assign_existing_operation" => "Assign existing Batch operation",
+        "create_batch_to_pool" => "Create full-route Work Order in Pool",
+        "create_batch_and_assign" => "Create Work Order and assign selected operation",
+        "assign_existing_operation" => "Assign existing Work Order operation",
         _ => "Needs decision"
     };
     public bool IsMutation => HasExplicitDecision && !IsSkipped;
@@ -2219,9 +2219,9 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         ? new LegacyImportChoice[]
             {
                 new LegacyImportChoice("skip", "Skip this source row"),
-                new LegacyImportChoice("create_batch_to_pool", "Create Batch in unassigned pool"),
-                new LegacyImportChoice("create_batch_and_assign", "Create Batch and assign selected operation"),
-                new LegacyImportChoice("assign_existing_operation", "Assign existing Batch operation")
+                new LegacyImportChoice("create_batch_to_pool", "Create Work Order in unassigned pool"),
+                new LegacyImportChoice("create_batch_and_assign", "Create Work Order and assign selected operation"),
+                new LegacyImportChoice("assign_existing_operation", "Assign existing Work Order operation")
             }.Where(choice => owner.IsPlanningActionAvailable(choice.Value)).ToArray()
         : new LegacyImportChoice[]
         {
@@ -2539,7 +2539,7 @@ internal sealed class LegacyImportRowViewModel : INotifyPropertyChanged
         if (BatchCandidates.Any(candidate => string.Equals(
                 candidate.BatchNumber, automaticBatchNumber, StringComparison.OrdinalIgnoreCase)))
         {
-            SkipAutomatically($"Skipped automatically because Batch Number {automaticBatchNumber} already exists for this Case.");
+            SkipAutomatically($"Skipped automatically because Work Order Number {automaticBatchNumber} already exists for this Case.");
             return;
         }
 

@@ -18,7 +18,23 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         route_revision,
         version,
         created_at,
-        updated_at
+        updated_at,
+        (SELECT state FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id) AS kitaron_material_state,
+        (SELECT detail FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id) AS kitaron_material_detail,
+        EXISTS(SELECT 1 FROM kitaron_sync_links
+                WHERE source_entity = 'production_batch'
+                  AND target_id = production_batches.id) AS is_kitaron_managed,
+        release_state,
+        released_at,
+        released_by,
+        (SELECT group_concat(m.purchase_order_number || '/' || m.line_number, ', ')
+           FROM work_order_material_orders v
+           JOIN kitaron_material_orders m ON m.source_key = v.material_order_source_key
+          WHERE v.production_batch_id = production_batches.id) AS kitaron_material_orders,
+        COALESCE((SELECT json_array_length(material_order_keys) FROM kitaron_batch_material_checks
+          WHERE production_batch_id = production_batches.id), 0) AS material_order_candidates
         """;
 
     private const string AllocationProjection = """
@@ -84,6 +100,17 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             throw new ProductionBatchCaseNotFoundException(batch.CaseId);
         }
 
+        // While the Kitaron connector is enabled, Production Batches come only from Kitaron work
+        // orders; a planner cannot create one in Meimad Planner.
+        if (await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM kitaron_connection_settings WHERE enabled = 1 AND $unused IS NOT NULL);",
+                "$unused", batch.CaseId, cancellationToken))
+        {
+            throw new Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException(
+                "Production Batch creation (batches come from Kitaron work orders)", batch.CaseId);
+        }
+
         if (!await CaseHasOperationsAsync(connection, transaction, batch.CaseId, cancellationToken))
         {
             throw new ProductionBatchRouteRequiredException();
@@ -147,6 +174,14 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
                 ("$version", expectedVersion)))
         {
             return null;
+        }
+        if (await ExistsAsync(
+                connection, transaction,
+                "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'production_batch' AND target_id = $id);",
+                "$id", batch.BatchId, cancellationToken))
+        {
+            throw new Meimad.Planner.Server.Application.Kitaron.KitaronManagedResourceException(
+                "Production Batch", batch.BatchNumber);
         }
         var readinessBefore = await ReadReadinessAsync(
             connection, transaction, batch.BatchId, cancellationToken);
@@ -655,6 +690,24 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Snapshot of the current Case route into an imported batch, shared with the Kitaron
+    /// synchronization so imported and planner-created batches instantiate identically.
+    /// </summary>
+    internal static async Task InstantiateOperationsForImportAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string batchId,
+        string caseId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var batch = new ProductionBatch(
+            batchId, caseId, string.Empty, ProductionBatchValidator.WaitingStatus, 1, null,
+            [], [], 1, now, now);
+        await InstantiateOperationsAsync(connection, transaction, batch, cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<BatchOperation>> InstantiateOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -951,7 +1004,62 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         [],
         reader.GetInt32(6),
         ParseInstant(reader.GetString(7)),
-        ParseInstant(reader.GetString(8)));
+        ParseInstant(reader.GetString(8)))
+    {
+        KitaronMaterialState = GetNullableString(reader, 9),
+        KitaronMaterialDetail = GetNullableString(reader, 10),
+        IsKitaronManaged = reader.GetBoolean(11),
+        ReleaseState = reader.GetString(12),
+        ReleasedAt = GetNullableString(reader, 13) is string releasedAt ? ParseInstant(releasedAt) : null,
+        ReleasedBy = GetNullableString(reader, 14),
+        KitaronMaterialOrders = GetNullableString(reader, 15),
+        MaterialOrderCandidates = reader.GetInt32(16)
+    };
+
+    /// <summary>
+    /// Sets the planner release state of a batch: `pending` (imported, not yet released) or
+    /// `released` (the planner released it for production). Needs Single Edit Mode.
+    /// </summary>
+    public async Task<ProductionBatch?> SetReleaseStateAsync(
+        string batchId,
+        bool released,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        await using (var connection = await database.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = connection.BeginTransaction(deferred: false))
+        {
+            var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+            // A Work Order without operations stays pending: nothing could be planned or produced.
+            if (released && await ExistsAsync(
+                    connection, transaction,
+                    "SELECT EXISTS(SELECT 1 FROM production_batches b WHERE b.id = $id AND NOT EXISTS (SELECT 1 FROM batch_operations o WHERE o.production_batch_id = b.id AND lower(trim(COALESCE(o.required_machine_type, ''))) <> 'production note'));",
+                    "$id", batchId, cancellationToken))
+            {
+                throw new ProductionBatchReleaseException(
+                    "work_order_has_no_operations",
+                    "This Work Order has no operations yet; it stays pending until its Kitaron route produces operations.");
+            }
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE production_batches
+                SET release_state = $state,
+                    released_at = CASE WHEN $state = 'released' THEN $now ELSE NULL END,
+                    released_by = CASE WHEN $state = 'released' THEN $actor ELSE NULL END,
+                    version = version + 1, updated_at = $now
+                WHERE id = $id AND release_state <> $state;
+                """;
+            command.Parameters.AddWithValue("$state", released ? "released" : "pending");
+            command.Parameters.AddWithValue("$now", FormatInstant(now));
+            command.Parameters.AddWithValue("$actor", (object?)actor ?? DBNull.Value);
+            command.Parameters.AddWithValue("$id", batchId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        return await GetByIdAsync(batchId, cancellationToken);
+    }
 
     private static BatchAllocation ReadAllocation(SqliteDataReader reader)
     {

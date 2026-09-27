@@ -401,6 +401,7 @@ internal sealed record CaseResponse(
     bool IsParent,
     bool IsChild,
     bool IsKitaronManaged,
+    bool KitaronRouteLocked,
     int Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
@@ -425,6 +426,7 @@ internal sealed record CaseResponse(
         plannerCase.IsParent,
         plannerCase.IsChild,
         plannerCase.IsKitaronManaged,
+        plannerCase.KitaronRouteLocked,
         plannerCase.Version,
         plannerCase.CreatedAt,
         plannerCase.UpdatedAt);

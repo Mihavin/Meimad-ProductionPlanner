@@ -42,6 +42,8 @@ internal static class SqliteProductionReadinessContextReader
             rows.Select(row => row.SourceOperationId).Distinct(StringComparer.Ordinal).ToArray(), token);
         var offsetFacts = await ReadOffsetFactsAsync(
             connection, transaction, rows.Select(row => row.BatchOperationId).ToArray(), token);
+        var preparations = await ReadToolPreparationFactsAsync(
+            connection, transaction, rows.Select(row => row.BatchOperationId).ToArray(), token);
 
         foreach (var row in rows)
         {
@@ -61,7 +63,8 @@ internal static class SqliteProductionReadinessContextReader
                 row.SelectedReleaseId,
                 offsetFacts.GetValueOrDefault(row.BatchOperationId) ?? [],
                 materialStatus,
-                materialComment);
+                materialComment,
+                row.MachineId is null ? null : preparations.GetValueOrDefault((row.BatchOperationId, row.MachineId)));
         }
 
         return result;
@@ -285,6 +288,57 @@ internal static class SqliteProductionReadinessContextReader
                     reader.GetString(1), reader.GetString(2), String(reader, 3),
                     reader.GetString(4), String(reader, 5),
                     DateTimeOffset.Parse(reader.GetString(6), System.Globalization.CultureInfo.InvariantCulture)));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The latest Tool Room tool preparation per Operation and Machine (schema v79) with the number
+    /// of required released tools that still lack a measured length, diameter or offset number
+    /// (an offset number is implied by a numbered tool identifier such as T7).
+    /// </summary>
+    private static async Task<Dictionary<(string BatchOperationId, string MachineId), ToolPreparationReadinessFact>> ReadToolPreparationFactsAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        IReadOnlyList<string> batchOperationIds,
+        CancellationToken token)
+    {
+        var result = new Dictionary<(string, string), ToolPreparationReadinessFact>();
+        foreach (var chunk in batchOperationIds.Chunk(ChunkSize))
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"""
+                SELECT preparation.batch_operation_id, preparation.machine_id, preparation.tool_table_release_id,
+                       preparation.version_number, preparation.saved_at,
+                       (SELECT COUNT(*) FROM tool_table_release_tools released
+                         WHERE released.tool_table_release_id = preparation.tool_table_release_id
+                           AND released.is_active = 1 AND released.is_required = 1),
+                       (SELECT COUNT(*) FROM tool_table_release_tools released
+                         WHERE released.tool_table_release_id = preparation.tool_table_release_id
+                           AND released.is_active = 1 AND released.is_required = 1
+                           AND NOT EXISTS (
+                               SELECT 1 FROM tool_preparation_tools measured
+                               WHERE measured.tool_preparation_id = preparation.id
+                                 AND lower(trim(measured.tool_identifier)) = lower(trim(released.tool_identifier))
+                                 AND measured.measured_length IS NOT NULL
+                                 AND measured.measured_diameter IS NOT NULL
+                                 AND (measured.offset_number IS NOT NULL OR measured.tool_identifier GLOB '*[0-9]*')))
+                FROM tool_preparations preparation
+                WHERE preparation.batch_operation_id IN ({InList(command, chunk)})
+                  AND preparation.version_number = (
+                      SELECT MAX(newer.version_number) FROM tool_preparations newer
+                      WHERE newer.batch_operation_id = preparation.batch_operation_id
+                        AND newer.machine_id = preparation.machine_id);
+                """;
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+            {
+                result[(reader.GetString(0), reader.GetString(1))] = new ToolPreparationReadinessFact(
+                    reader.GetString(2), reader.GetInt32(3), reader.GetInt32(5), reader.GetInt32(6),
+                    DateTimeOffset.Parse(reader.GetString(4), System.Globalization.CultureInfo.InvariantCulture));
             }
         }
 

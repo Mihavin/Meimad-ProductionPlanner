@@ -13,11 +13,14 @@ internal sealed class KitaronSyncService
     private readonly KitaronMappingService mappingService;
     private readonly IKitaronSourceReader sourceReader;
     private readonly IKitaronSyncRepository syncRepository;
+    private readonly IKitaronStationRepository stationRepository;
     private readonly IDataProtector passwordProtector;
     private readonly TimeProvider timeProvider;
     private readonly string workingFolderRoot;
     private readonly ILogger<KitaronSyncService> logger;
     private readonly SemaphoreSlim gate = new(1, 1);
+    private TaskCompletionSource runRequestSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int runRequested;
 
     public KitaronSyncService(
         IKitaronConnectionRepository connectionRepository,
@@ -27,12 +30,14 @@ internal sealed class KitaronSyncService
         IDataProtectionProvider dataProtectionProvider,
         DatabaseOptions databaseOptions,
         TimeProvider timeProvider,
-        ILogger<KitaronSyncService> logger)
+        ILogger<KitaronSyncService> logger,
+        IKitaronStationRepository stationRepository)
     {
         this.connectionRepository = connectionRepository;
         this.mappingService = mappingService;
         this.sourceReader = sourceReader;
         this.syncRepository = syncRepository;
+        this.stationRepository = stationRepository;
         this.timeProvider = timeProvider;
         this.logger = logger;
         passwordProtector = dataProtectionProvider.CreateProtector("Meimad.Planner.Kitaron.SqlPassword.v1");
@@ -43,6 +48,28 @@ internal sealed class KitaronSyncService
 
     internal Task<KitaronSyncStatus> GetStatusAsync(CancellationToken cancellationToken) =>
         syncRepository.GetStatusAsync(cancellationToken);
+
+    /// <summary>
+    /// Asks the periodic synchronization to run now instead of at its next interval, for example
+    /// after a planner changed a Kitaron station decision. Requests that arrive while a run is going
+    /// coalesce into one more run. `wake` false only records the request for the next regular pass.
+    /// </summary>
+    internal void RequestRun(bool wake = true)
+    {
+        Volatile.Write(ref runRequested, 1);
+        if (wake)
+        {
+            Interlocked.Exchange(
+                ref runRequestSignal, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+                .TrySetResult();
+        }
+    }
+
+    /// <summary>Takes a pending run request; true when one was waiting.</summary>
+    internal bool TakeRunRequest() => Interlocked.Exchange(ref runRequested, 0) == 1;
+
+    /// <summary>Completes when a run is requested after this task was read.</summary>
+    internal Task RunRequested => Volatile.Read(ref runRequestSignal).Task;
 
     internal async Task<KitaronSyncStatus> RunAsync(CancellationToken cancellationToken)
     {
@@ -103,7 +130,9 @@ internal sealed class KitaronSyncService
                 var snapshot = await sourceReader.ReadAsync(
                     connection, password, columns, materialColumns, cancellationToken);
                 var existingCasePartNumbers = await syncRepository.GetExistingCasePartNumbersAsync(cancellationToken);
-                var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version);
+                var stations = (await stationRepository.ListAsync(cancellationToken))
+                    .ToDictionary(station => station.KitaronStationId);
+                var plan = BuildPlan(snapshot, active, existingCasePartNumbers, mapping.Version, stations);
                 return await syncRepository.ApplyAsync(plan, timeProvider.GetUtcNow(), cancellationToken);
             }
             catch (KitaronSyncBlockedException exception)
@@ -121,11 +150,12 @@ internal sealed class KitaronSyncService
         finally { gate.Release(); }
     }
 
-    private KitaronSyncPlan BuildPlan(
+    internal KitaronSyncPlan BuildPlan(
         KitaronSourceSnapshot snapshot,
         IReadOnlyList<KitaronMappingField> fields,
         IReadOnlySet<string> existingCasePartNumbers,
-        int mappingVersion)
+        int mappingVersion,
+        IReadOnlyDictionary<int, KitaronStationRecord>? stations = null)
     {
         var byTarget = fields.ToDictionary(
             field => $"{field.TargetEntity}.{field.TargetField}", StringComparer.Ordinal);
@@ -163,6 +193,7 @@ internal sealed class KitaronSyncService
 
         var reachableParts = parsed.Select(row => row.Part)
             .Concat(snapshot.Orders.Select(order => order.PartNumber))
+            .Concat((snapshot.WorkOrders ?? []).Select(workOrder => workOrder.PartNumber))
             .Concat(existingCasePartNumbers)
             .Concat(snapshot.Components.Select(component => component.ParentPartNumber))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -187,6 +218,10 @@ internal sealed class KitaronSyncService
                 row.Part, row.Name, row.Revision, row.Customer))
             .Concat(snapshot.Orders.Select(order => new CaseCandidate(
                 order.PartNumber, order.Name, order.Revision, null)))
+            // Every open work order's part is a synchronized Case, so its batch is never skipped
+            // because the part is outside the planning view and the BOM trees.
+            .Concat((snapshot.WorkOrders ?? []).Select(workOrder => new CaseCandidate(
+                workOrder.PartNumber, workOrder.PartName ?? workOrder.PartNumber, workOrder.PartRevision, null)))
             .Concat(selectedComponents.SelectMany(component => new[]
             {
                 new CaseCandidate(component.ParentPartNumber, component.ParentName, component.ParentRevision, null),
@@ -251,11 +286,16 @@ internal sealed class KitaronSyncService
 
         var parentParts = selectedComponents.Select(component => component.ParentPartNumber)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var parentPart in parsed.Where(row => row.OperationNumber > 0)
-                     .Select(row => row.Part).Where(parentParts.Contains)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
-            AddWarning(warnings, $"{parentPart} is a parent Case; its direct Kitaron Operations were skipped.");
-        var rawOperations = parsed.Where(row => row.OperationNumber > 0 && !parentParts.Contains(row.Part))
+        // The route master (OD-038) is the authoritative route for every synchronized Case that has
+        // one; the planning view's open-work rows remain only a fallback for parts without a route.
+        var routePlan = KitaronRoutePlanner.Plan(
+            snapshot.RouteSteps ?? [],
+            stations ?? new Dictionary<int, KitaronStationRecord>(),
+            cases.Select(item => item.PartNumber).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            parentParts,
+            warnings);
+        var rawOperations = parsed.Where(row => row.OperationNumber > 0
+                && !routePlan.PartsWithRoute.Contains(row.Part))
             .GroupBy(row => $"{row.Part}\u001f{row.OperationNumber}", StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
@@ -268,12 +308,25 @@ internal sealed class KitaronSyncService
                     ChooseInt(group.Select(item => item.SetupSeconds)),
                     ChooseInt(group.Select(item => item.CycleSeconds)));
             }).ToArray();
-        var operations = rawOperations.GroupBy(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase)
-            .SelectMany(group => group.OrderBy(item => item.SourcePosition).ThenBy(item => item.OperationNumber)
-                .Select((item, index) => new KitaronSyncOperation(
+        // Planning-view operations form a sequence in route order like the route master's.
+        var viewOperations = new List<KitaronSyncOperation>();
+        foreach (var group in rawOperations.GroupBy(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase))
+        {
+            string? previousKey = null;
+            var index = 0;
+            foreach (var item in group.OrderBy(item => item.SourcePosition).ThenBy(item => item.OperationNumber))
+            {
+                viewOperations.Add(new KitaronSyncOperation(
                     item.SourceKey, item.CaseSourceKey, item.OperationNumber, index, item.Name,
                     item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds,
-                    Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds))))
+                    Hash(item.SourceKey, index, item.Name, item.RequiredMachineType, item.SetupSeconds, item.CycleSeconds, previousKey),
+                    previousKey));
+                previousKey = item.SourceKey;
+                index++;
+            }
+        }
+        var operations = viewOperations
+            .Concat(routePlan.Operations)
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var materialRows = snapshot.MaterialRows ?? [];
@@ -303,12 +356,18 @@ internal sealed class KitaronSyncService
                     OptionalText(row, byTarget, "material_orders.approval_note"),
                     OptionalText(row, byTarget, "material_orders.status"),
                     OptionalBoolean(row, byTarget, "material_orders.closed"),
-                    "");
+                    "")
+                {
+                    UnitPrice = OptionalNumber(row, byTarget, "material_orders.unit_price"),
+                    LineTotal = OptionalNumber(row, byTarget, "material_orders.line_total"),
+                    CustomerOrderReference = OptionalText(row, byTarget, "material_orders.customer_order_reference")
+                };
                 return item with { SourceHash = Hash(
                     item.SourceKey, item.PurchaseOrderNumber, item.LineNumber, item.MaterialNumber,
                     item.Description, item.Supplier, item.OrderedQuantity, item.ReceivedQuantity,
                     item.Unit, item.RequestedDeliveryDate, item.ApprovedDeliveryDate,
-                    item.ApprovedQuantity, item.ApprovalNote, item.Status, item.Closed) };
+                    item.ApprovedQuantity, item.ApprovalNote, item.Status, item.Closed,
+                    item.UnitPrice, item.LineTotal, item.CustomerOrderReference) };
             })
             .Where(item => item is not null)
             .Cast<KitaronSyncMaterialOrder>()
@@ -317,12 +376,201 @@ internal sealed class KitaronSyncService
             .OrderBy(item => item.SourceKey, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var batches = BuildBatches(
+            snapshot.WorkOrders, snapshot.WorkOrderLinks, snapshot.WorkOrderMaterials,
+            cases.Select(item => item.PartNumber).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            materialOrders, warnings, orders);
+
         return new KitaronSyncPlan(
-            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count,
+            snapshot.WorkRows.Count + snapshot.Orders.Count + snapshot.Components.Count + materialRows.Count
+                + (snapshot.RouteSteps?.Count ?? 0) + (snapshot.WorkOrders?.Count ?? 0),
             cases, orders, operations, components,
             snapshot.Components.Select(item => item.SourceKey).ToHashSet(StringComparer.Ordinal),
-            warnings, mappingVersion, materialOrders);
+            warnings, mappingVersion, materialOrders,
+            routePlan.Requirements, snapshot.Stations, routePlan.StepsSkipped, routePlan.PartsWithRoute,
+            batches,
+            snapshot.WorkOrders?.Select(item => new KitaronSyncWorkOrderSnapshot(
+                item.Number, item.PartNumber, item.RawMaterialId, item.CustomerOrderNumber, item.Customer,
+                Quantity(item.Amount) ?? Quantity(item.ProductionAmount),
+                item.SupplyDate is null ? null : DateOnly.FromDateTime(item.SupplyDate.Value),
+                item.StartDate is null ? null : DateOnly.FromDateTime(item.StartDate.Value))).ToArray());
     }
+
+    /// <summary>
+    /// Builds the Production Batches from the open Kitaron work orders, oldest work order first.
+    /// The net quantity fills the part's open Orders by earliest due date, each up to its open
+    /// demand; the rest is stock, and the launched surplus above the net quantity is the cutting
+    /// reserve and becomes the batch's scrap allowance. The material state mirrors Kitaron's own
+    /// per-work-order material rows; Kitaron stays authoritative for stock.
+    /// </summary>
+    internal static IReadOnlyList<KitaronSyncBatch> BuildBatches(
+        IReadOnlyList<KitaronSourceWorkOrder>? workOrders,
+        IReadOnlyList<KitaronSourceWorkOrderLink>? links,
+        IReadOnlyList<KitaronSourceWorkOrderMaterial>? materials,
+        IReadOnlySet<string> partNumbers,
+        IReadOnlyList<KitaronSyncMaterialOrder> materialOrders,
+        ICollection<string> warnings,
+        IReadOnlyList<KitaronSyncOrder>? orders = null,
+        DateOnly? today = null)
+    {
+        if (workOrders is null || workOrders.Count == 0) return [];
+        // Candidate material orders: every open purchase line of the raw material plus the lines
+        // due or delivered within the last CandidateWindowDays - material bought for a work order
+        // is often already received when the work order is planned.
+        var candidateFrom = (today ?? DateOnly.FromDateTime(DateTime.Today)).AddDays(-CandidateWindowDays);
+        var candidatesByMaterial = materialOrders
+            .Where(item => (!item.Closed && item.OrderedQuantity > (item.ReceivedQuantity ?? 0))
+                || (item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate) >= candidateFrom)
+            .ToLookup(item => item.MaterialNumber, StringComparer.OrdinalIgnoreCase);
+        _ = links; // Kept in the snapshot for diagnostics; see the allocation note below.
+        var activeOrders = (orders ?? [])
+            .Where(item => item.Status == "active" && item.Quantity > 0)
+            .OrderBy(item => item.WorkFinishDate)
+            .ThenBy(item => item.SourceKey.Length)
+            .ThenBy(item => item.SourceKey, StringComparer.Ordinal)
+            .ToArray();
+        var ordersByPart = activeOrders.ToLookup(item => item.CaseSourceKey, StringComparer.OrdinalIgnoreCase);
+        var openDemand = activeOrders
+            .GroupBy(item => item.SourceKey, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Quantity, StringComparer.Ordinal);
+        var materialsByNumber = (materials ?? []).ToLookup(item => item.WorkOrderNumber);
+        var purchasesByMaterial = materialOrders
+            .Where(item => !item.Closed)
+            .ToLookup(item => item.MaterialNumber, StringComparer.OrdinalIgnoreCase);
+        var result = new List<KitaronSyncBatch>();
+        foreach (var workOrder in workOrders.OrderBy(item => item.Number))
+        {
+            if (!partNumbers.Contains(workOrder.PartNumber))
+            {
+                AddWarning(warnings,
+                    $"Kitaron work order {workOrder.Number} was skipped: part {workOrder.PartNumber} is not synchronized.");
+                continue;
+            }
+            var planned = Quantity(workOrder.Amount) ?? Quantity(workOrder.ProductionAmount);
+            if (planned is not > 0)
+            {
+                AddWarning(warnings,
+                    $"Kitaron work order {workOrder.Number} was skipped: its quantity is missing or not a whole number.");
+                continue;
+            }
+            // Kitaron links a work order to one order line even when it produces for several
+            // (TOrderLinkRoot holds the whole quantity on that line). The net quantity is therefore
+            // spread over the part's open Orders, earliest due date first, each up to its open
+            // demand that earlier work orders have not taken; what no Order needs is stock. The
+            // launched quantity above the net quantity is the cutting reserve (scrap allowance).
+            var net = Math.Min(Quantity(workOrder.ProductionAmount) ?? planned.Value, planned.Value);
+            var allocations = new List<KitaronSyncBatchAllocation>();
+            var remaining = net;
+            foreach (var order in ordersByPart[workOrder.PartNumber])
+            {
+                if (remaining == 0) break;
+                var open = openDemand[order.SourceKey];
+                if (open <= 0) continue;
+                var quantity = Math.Min(open, remaining);
+                allocations.Add(new KitaronSyncBatchAllocation(order.SourceKey, quantity));
+                openDemand[order.SourceKey] = open - quantity;
+                remaining -= quantity;
+            }
+            if (remaining > 0)
+                allocations.Add(new KitaronSyncBatchAllocation(null, remaining));
+            if (planned.Value > net)
+                allocations.Add(new KitaronSyncBatchAllocation(null, planned.Value - net, ScrapAllowance: true));
+
+            var (materialState, materialDetail) = MaterialCheck(
+                materialsByNumber[workOrder.Number].ToArray(), purchasesByMaterial);
+            // The work order's raw material ties it to the open Kitaron purchase lines of that
+            // material; they are the batch's material orders. When Kitaron keeps no per-work-order
+            // material calculation, an open purchase line makes the material "on order".
+            var assignedMaterialOrders = workOrder.RawMaterialId is null
+                ? []
+                : candidatesByMaterial[workOrder.RawMaterialId]
+                    // Still-open lines first by due date, then received lines newest first.
+                    .OrderBy(item => item.Closed || item.OrderedQuantity <= (item.ReceivedQuantity ?? 0) ? 1 : 0)
+                    .ThenBy(item => item.Closed || item.OrderedQuantity <= (item.ReceivedQuantity ?? 0)
+                        ? -(item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate ?? DateOnly.MinValue).DayNumber
+                        : (item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate ?? DateOnly.MaxValue).DayNumber)
+                    .ThenBy(item => item.PurchaseOrderNumber, StringComparer.Ordinal)
+                    .ThenBy(item => item.LineNumber, StringComparer.Ordinal)
+                    .Take(MaximumCandidates)
+                    .ToArray();
+            var materialOrdersText = assignedMaterialOrders.Length == 0
+                ? null
+                : string.Join(", ", assignedMaterialOrders.Take(5).Select(item =>
+                    $"{item.PurchaseOrderNumber}/{item.LineNumber}"
+                    + ((item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate) is DateOnly due ? $" due {due:yyyy-MM-dd}" : "")));
+            // Kitaron records no purchase-to-work-order link, so these purchase lines are only
+            // candidates for a planner to verify on the Work Order; they do not set the state.
+            if (materialState == "unknown" && workOrder.RawMaterialId is not null)
+            {
+                materialDetail = assignedMaterialOrders.Length > 0
+                    ? $"{assignedMaterialOrders.Length} open purchase line(s) for raw material {workOrder.RawMaterialId} ({materialOrdersText}); verify the right ones on the Work Order."
+                    : $"No purchase line for raw material {workOrder.RawMaterialId} is open or was due in the last {CandidateWindowDays} days; Kitaron has no stock calculation for this work order.";
+            }
+            var sourceKey = $"wo:{workOrder.Number.ToString(CultureInfo.InvariantCulture)}";
+            var batchNumber = workOrder.Number.ToString(CultureInfo.InvariantCulture);
+            result.Add(new KitaronSyncBatch(
+                sourceKey, workOrder.PartNumber, batchNumber, planned.Value, allocations,
+                materialState, materialDetail,
+                Hash(sourceKey, batchNumber, planned.Value,
+                    allocations.Select(item => $"{item.OrderSourceKey}\u001f{item.Quantity}\u001f{item.ScrapAllowance}").ToArray()))
+            {
+                MaterialOrderKeys = assignedMaterialOrders.Select(item => item.SourceKey).ToArray(),
+                MaterialOrdersText = materialOrdersText
+            });
+        }
+        return result;
+    }
+
+    /// <summary>Received purchase lines stay candidates this many days after their due date.</summary>
+    internal const int CandidateWindowDays = 180;
+
+    private const int MaximumCandidates = 20;
+
+    private static (string State, string? Detail) MaterialCheck(
+        IReadOnlyList<KitaronSourceWorkOrderMaterial> lines,
+        ILookup<string, KitaronSyncMaterialOrder> purchasesByMaterial)
+    {
+        if (lines.Count == 0)
+            return ("unknown", "Kitaron has no material calculation for this work order.");
+        var shortLines = new List<string>();
+        var allShortOnPurchase = true;
+        foreach (var line in lines)
+        {
+            var issued = line.IssuedAmount ?? 0;
+            var covered = issued >= line.RequiredAmount
+                || (line.RunningBalance is double balance
+                    ? balance >= 0
+                    : line.StockAmount is double stock && stock >= line.RequiredAmount);
+            if (covered) continue;
+            var purchases = purchasesByMaterial[line.MaterialPartNumber]
+                .Where(item => item.OrderedQuantity > (item.ReceivedQuantity ?? 0))
+                .ToArray();
+            var onPurchase = (line.OnPurchaseAmount is > 0) || purchases.Length > 0;
+            allShortOnPurchase &= onPurchase;
+            var due = purchases
+                .Select(item => item.ApprovedDeliveryDate ?? item.RequestedDeliveryDate)
+                .Where(item => item is not null)
+                .OrderBy(item => item)
+                .FirstOrDefault();
+            var text = $"{line.MaterialPartNumber}: need {Amount(line.RequiredAmount)}"
+                + (line.StockAmount is double stockAmount ? $", stock {Amount(stockAmount)}" : "")
+                + (onPurchase
+                    ? ", on purchase order" + (due is null ? "" : $" due {due:yyyy-MM-dd}")
+                    : ", no open purchase order");
+            if (shortLines.Count < 3) shortLines.Add(text);
+        }
+        if (shortLines.Count == 0)
+            return ("available", $"Kitaron stock covers {lines.Count.ToString(CultureInfo.InvariantCulture)} material line(s).");
+        return (allShortOnPurchase ? "on_order" : "missing", string.Join("; ", shortLines));
+    }
+
+    private static string Amount(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static int? Quantity(double? value) =>
+        value is > 0 and <= int.MaxValue && double.IsFinite(value.Value)
+            && Math.Truncate(value.Value) == value.Value
+            ? (int)value.Value
+            : null;
 
     private static string? OptionalText(KitaronSourceRow row, IReadOnlyDictionary<string, KitaronMappingField> fields,
         string key, bool manualLookupAsNull = false) =>
@@ -538,19 +786,31 @@ internal sealed class KitaronSyncHostedService(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Read before the checks, so a request that arrives during this pass wakes the next one.
+            var runRequested = syncService.RunRequested;
             try
             {
                 var connection = await connectionRepository.GetAsync(stoppingToken);
                 var mapping = await mappingService.GetAsync(stoppingToken);
                 var status = await syncService.GetStatusAsync(stoppingToken);
+                var ready = connection.Enabled && mapping.Status == "ready_for_implementation";
                 var due = status.LastCompletedAt is null
                     || timeProvider.GetUtcNow() - status.LastCompletedAt >= TimeSpan.FromSeconds(connection.RefreshIntervalSeconds);
-                if (connection.Enabled && mapping.Status == "ready_for_implementation" && due)
+                // A station decision asks for a run now; the request waits while the connector is off.
+                var requested = ready && syncService.TakeRunRequest();
+                if (ready && (due || requested))
                     await syncService.RunAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            catch (KitaronSyncBlockedException)
+            {
+                // A synchronization started from the Server page is running; run again after it.
+                syncService.RequestRun(wake: false);
+            }
             catch (Exception exception) { logger.LogError(exception, "Periodic Kitaron synchronization failed."); }
-            await Task.Delay(TimeSpan.FromSeconds(30), timeProvider, stoppingToken);
+            using var pause = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(30), timeProvider, pause.Token), runRequested);
+            pause.Cancel();
         }
     }
 }

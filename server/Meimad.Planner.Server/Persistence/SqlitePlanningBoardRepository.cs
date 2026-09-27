@@ -43,8 +43,10 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         {
             Backlog = byMachine.GetValueOrDefault(machine.MachineId, [])
         }).ToArray();
+        // ReadOperationsAsync computes Latest Start over each Work Order's full route, so the pool
+        // rule is applied only after it.
         var pool = operations
-            .Where(operation => operation.MachineId is null)
+            .Where(PlanningBoardPool.Admits)
             .OrderBy(operation => operation.PartNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(operation => operation.BatchNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(operation => operation.OperationNumber)
@@ -166,7 +168,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    nc_estimate.confidence,
                    nc_estimate.warnings_json,
                    batch_operations.source_case_operation_id,
-                   machine_assignments.manual_priority AS manual_priority
+                   machine_assignments.manual_priority AS manual_priority,
+                   production_batches.release_state AS release_state
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -190,7 +193,9 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
               ON operation_pause_events.batch_operation_id = batch_operations.id
              AND operation_pause_events.status = 'active'
             WHERE batch_operations.status NOT IN ('completed','cancelled')
-              AND production_batches.status <> 'cancelled';
+              AND production_batches.status <> 'cancelled'
+              -- Production Notes are notes in the chain, not Machine work.
+              AND lower(trim(COALESCE(batch_operations.required_machine_type, ''))) <> 'production note';
             """;
         var operations = new List<PlanningBoardOperation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -298,7 +303,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 SetupEstimateWarnings: occupancy?.Warnings ?? [],
                 UsesSetupOccupancyEstimate: occupancy is not null,
                 CaseOperationId: GetNullableString(reader, 42),
-                ManualPriority: GetNullableInt32(reader, reader.GetOrdinal("manual_priority"))));
+                ManualPriority: GetNullableInt32(reader, reader.GetOrdinal("manual_priority")),
+                IsWorkOrderReleased: reader.GetString(reader.GetOrdinal("release_state")) == "released"));
         }
 
         await reader.DisposeAsync();

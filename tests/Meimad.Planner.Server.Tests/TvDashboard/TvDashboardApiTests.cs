@@ -23,7 +23,7 @@ public sealed class TvDashboardApiTests
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = document.RootElement;
             Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-            Assert.Equal("0.1.35", root.GetProperty("dashboardBuild").GetString());
+            Assert.Equal("0.1.36", root.GetProperty("dashboardBuild").GetString());
             Assert.Equal(15, root.GetProperty("refreshAfterSeconds").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("machineCount").GetInt32());
             Assert.Equal(1, root.GetProperty("summary").GetProperty("urgentBatchCount").GetInt32());
@@ -109,10 +109,16 @@ public sealed class TvDashboardApiTests
             Assert.Contains("machine.connection", javascript, StringComparison.Ordinal);
             Assert.DoesNotContain(">${escapeHtml(connectionState)}</div>", javascript, StringComparison.Ordinal);
             Assert.Contains("machine.machineStatus", javascript, StringComparison.Ordinal);
-            Assert.Contains("DASHBOARD_BUILD = \"0.1.35\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("DASHBOARD_BUILD = \"0.1.36\"", javascript, StringComparison.Ordinal);
             Assert.Contains("data.dashboardBuild !== DASHBOARD_BUILD", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"מצב מכונות\"", javascript, StringComparison.Ordinal);
             Assert.Contains("machineStatus: \"Состояние станков\"", javascript, StringComparison.Ordinal);
+            // Every visible label comes from the language dictionaries.
+            Assert.Contains("average: \"ממוצע\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("average: \"Сред.\"", javascript, StringComparison.Ordinal);
+            Assert.Contains("title=\"${escapeHtml(t.machineStateTitle)}\"", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("`AVG ", javascript, StringComparison.Ordinal);
+            Assert.DoesNotContain("title=\"MTConnect machine state\"", javascript, StringComparison.Ordinal);
             Assert.Contains("language === \"he\" ? \"rtl\" : \"ltr\"", javascript, StringComparison.Ordinal);
             Assert.Contains("html[dir=\"rtl\"]", css, StringComparison.Ordinal);
             Assert.DoesNotContain("urgentBatches", javascript, StringComparison.Ordinal);

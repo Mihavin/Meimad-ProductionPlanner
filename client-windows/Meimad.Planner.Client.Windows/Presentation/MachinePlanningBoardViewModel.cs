@@ -219,6 +219,69 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         private set => SetField(ref statusMessage, value);
     }
 
+    private int selectedBoardTab;
+    private bool auxiliaryLoaded;
+    private string auxiliaryStatus = "Open this tab to load the stations from the Timeline.";
+
+    /// <summary>Internal station (Workstation) columns with the auxiliary steps placed on them.</summary>
+    public ObservableCollection<PlanningResourceLane> InternalStationLanes { get; } = [];
+
+    /// <summary>External Resource columns with the subcontracted steps placed on them.</summary>
+    public ObservableCollection<PlanningResourceLane> ExternalOperationLanes { get; } = [];
+
+    public string AuxiliaryStatus
+    {
+        get => auxiliaryStatus;
+        private set => SetField(ref auxiliaryStatus, value);
+    }
+
+    /// <summary>0 = Machines, 1 = Internal stations, 2 = External operations; the station tabs
+    /// load the Server's provisional auxiliary placement from the Timeline when first opened.</summary>
+    public int SelectedBoardTab
+    {
+        get => selectedBoardTab;
+        set
+        {
+            if (!SetField(ref selectedBoardTab, value)) return;
+            if (value > 0 && !auxiliaryLoaded) _ = LoadAuxiliaryLanesAsync();
+        }
+    }
+
+    /// <summary>
+    /// Loads the Workstation and External Resource lanes of the next weeks' Timeline. The Server
+    /// places these steps automatically around the Machine assignments (rule 34); pins are set on
+    /// the Timeline. The board shows them per station, ordered by predicted start.
+    /// </summary>
+    internal async Task LoadAuxiliaryLanesAsync()
+    {
+        if (apiClient is null) return;
+        AuxiliaryStatus = "Loading the stations from the Timeline...";
+        try
+        {
+            var today = DateTime.UtcNow.Date;
+            var from = new DateTimeOffset(DateTime.SpecifyKind(today.AddDays(-7), DateTimeKind.Utc));
+            var to = new DateTimeOffset(DateTime.SpecifyKind(today.AddDays(90), DateTimeKind.Utc));
+            var snapshot = await apiClient.GetTimelineAsync(from, to);
+            var lanes = snapshot.Resources ?? [];
+            Fill(InternalStationLanes, lanes.Where(lane => lane.ResourceClass == "workstation"));
+            Fill(ExternalOperationLanes, lanes.Where(lane => lane.ResourceClass == "external"));
+            auxiliaryLoaded = true;
+            var steps = InternalStationLanes.Sum(lane => lane.Cards.Count) + ExternalOperationLanes.Sum(lane => lane.Cards.Count);
+            AuxiliaryStatus = $"{InternalStationLanes.Count} internal station(s), {ExternalOperationLanes.Count} External Resource(s), {steps} step(s) placed by the Server; pin a step on the Timeline to keep it. Refresh reloads.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AuxiliaryStatus = FriendlyMessage(exception);
+        }
+
+        static void Fill(ObservableCollection<PlanningResourceLane> target, IEnumerable<TimelineResourceLane> source)
+        {
+            target.Clear();
+            foreach (var lane in source.OrderBy(lane => lane.Name, StringComparer.CurrentCultureIgnoreCase))
+                target.Add(PlanningResourceLane.From(lane));
+        }
+    }
+
     public string ConflictCalculationStatus
     {
         get => conflictCalculationStatus;
@@ -292,6 +355,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             Apply(snapshot);
             await Task.WhenAll(LoadMachinePicturesAsync(), LoadOperationPreviewsAsync());
             hasLoaded = true;
+            auxiliaryLoaded = false;
+            if (selectedBoardTab > 0) await LoadAuxiliaryLanesAsync();
             StatusMessage = $"Board loaded from the Server at {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.";
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -620,7 +685,19 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         await RefreshAsync();
-        RecordPlacementChange(operation.BatchOperationId, before, PlacementFor(operation.BatchOperationId));
+        // The pool lists only operations with a Machine Type whose Work Order is released, so an
+        // unassigned operation may not be listed; it is still unassigned, and Undo restores it.
+        if (FindOperation(operation.BatchOperationId) is null)
+        {
+            AddFeedback(
+                "attention",
+                "Unassigned operation not listed",
+                $"{operation.DisplayTitle} is unassigned but not shown in the pool, because its Work Order is not released or it has no Machine Type.");
+        }
+        RecordPlacementChange(
+            operation.BatchOperationId,
+            before,
+            PlacementFor(operation.BatchOperationId) ?? new ManualOperationPlacement(null, null));
         PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -961,6 +1038,22 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     /// <summary>Session details the detached 3D viewer needs; null until connected.</summary>
     internal ModelViewerContext? CreateModelViewerContext() =>
         apiClient is null ? null : new ModelViewerContext(apiClient, clientId, editGeneration, isEditor);
+
+    /// <summary>The effective NC release of a Machine-assigned operation, for the NC viewer.</summary>
+    internal async Task<NcViewer.NcViewerOpenRequest?> CreateNcViewerRequestAsync(PlanningOperationViewModel operation)
+    {
+        if (apiClient is not { } client
+            || operation is not { CanViewNcFile: true, CaseOperationId: { } operationId, EffectiveGCodeReleaseId: { } releaseId })
+        {
+            return null;
+        }
+        var machine = Machines.FirstOrDefault(value => value.MachineId == operation.MachineId);
+        var machineText = machine is null ? operation.MachineId : $"{machine.Number} {machine.Name}";
+        return await NcViewer.NcViewerRequests.ForReleaseAsync(
+            client, operation.CaseId, operationId, releaseId, operation.MachineId,
+            $"{operation.DisplayTitle} · {operation.OperationName} · {machineText}",
+            operation.BatchOperationId);
+    }
 
     internal async Task UndoAsync() =>
         await ReplayPlacementAsync(undoHistory, redoHistory, undo: true);
@@ -1530,12 +1623,14 @@ internal sealed class PlanningOperationViewModel : INotifyPropertyChanged
     public string PartCaseText => $"{PartNumber} / {CaseName ?? CaseId}";
     public string OperationText => $"OP{OperationNumber} {OperationName}";
     public string BatchOrderText => OrderReferences.Count == 0
-        ? $"Batch {BatchNumber}"
+        ? $"Work Order {BatchNumber}"
         : $"{BatchNumber} / {string.Join(", ", OrderReferences)}";
     public string? ActivePauseReason { get; }
     public string? PausedBy { get; }
     public DateTimeOffset? PauseStartedAt { get; }
     public string DisplayTitle => $"{PartNumber} / {BatchNumber} / OP{OperationNumber}";
+    /// <summary>A Machine-assigned operation with an effective NC release can open it in the NC viewer.</summary>
+    public bool CanViewNcFile => MachineId is not null && CaseOperationId is not null && EffectiveGCodeReleaseId is not null;
     public string RequiredMachineText => RequiredMachineType ?? "Any active Machine";
     public string PlannedQuantityText => $"Qty {PlannedQuantity}";
     public string OrderReferencesText => OrderReferences.Count == 0

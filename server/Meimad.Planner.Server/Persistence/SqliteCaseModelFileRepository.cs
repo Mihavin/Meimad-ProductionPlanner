@@ -20,11 +20,13 @@ internal sealed class SqliteCaseModelFileRepository(SqliteDatabase database) : I
         await using var command = connection.CreateCommand();
         command.CommandText = SelectColumns + " WHERE case_id = $caseId ORDER BY is_primary DESC, sort_order, created_at, id;";
         command.Parameters.AddWithValue("$caseId", caseId);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, null, cancellationToken);
         var items = new List<CaseModelFile>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            items.Add(Read(reader));
+            var item = Read(reader);
+            items.Add(item with { FilePath = paths.ToAbsolute(item.FilePath) ?? item.FilePath });
         }
 
         return items;
@@ -56,7 +58,13 @@ internal sealed class SqliteCaseModelFileRepository(SqliteDatabase database) : I
         }
 
         var sortOrder = await NextSortOrderAsync(connection, transaction, file.CaseId, cancellationToken);
-        var created = file with { IsPrimary = makePrimary, SortOrder = sortOrder };
+        // Model file links are stored relative to the network folder set in Setup.
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
+        var created = file with
+        {
+            IsPrimary = makePrimary, SortOrder = sortOrder,
+            FilePath = paths.ToStored(file.FilePath) ?? file.FilePath
+        };
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = transaction;
@@ -95,7 +103,7 @@ internal sealed class SqliteCaseModelFileRepository(SqliteDatabase database) : I
                 new { created.Kind, created.Format, created.FilePath, created.Label, created.IsPrimary }),
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return created with { Version = 1 };
+        return created with { Version = 1, FilePath = paths.ToAbsolute(created.FilePath) ?? created.FilePath };
     }
 
     public async Task<CaseModelFile> UpdateAsync(
@@ -314,13 +322,16 @@ internal sealed class SqliteCaseModelFileRepository(SqliteDatabase database) : I
         string caseModelFileId,
         CancellationToken cancellationToken)
     {
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = SelectColumns + " WHERE id = $id AND case_id = $caseId;";
         command.Parameters.AddWithValue("$id", caseModelFileId);
         command.Parameters.AddWithValue("$caseId", caseId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var item = Read(reader);
+        return item with { FilePath = paths.ToAbsolute(item.FilePath) ?? item.FilePath };
     }
 
     private static CaseModelFile Read(SqliteDataReader reader) => new(

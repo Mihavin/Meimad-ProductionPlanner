@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Meimad.Planner.Client.Windows.Presentation;
 using Microsoft.Win32;
+using Meimad.Planner.Client.Windows.Localization;
 
 namespace Meimad.Planner.Client.Windows.Views;
 
@@ -145,7 +146,7 @@ public partial class ModelViewerWindow : Window
             Filter = "CAD models|*.stp;*.step;*.stl|STEP models|*.stp;*.step|STL meshes|*.stl|All files|*.*",
             CheckFileExists = true,
             Multiselect = true
-        };
+        }.Localized();
         if (dialog.ShowDialog(this) != true)
         {
             return;
@@ -167,10 +168,10 @@ public partial class ModelViewerWindow : Window
     {
         if (viewModel.SelectedFile is not { } item)
         {
-            MessageBox.Show(this, "Select a model file first.", "Remove link", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show(this, "Select a model file first.", "Remove link", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (MessageBox.Show(this,
+        if (LocalizedMessageBox.Show(this,
                 $"Remove the link to {item.Label}? The file on disk is not deleted.",
                 "Remove model link", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
         {
@@ -238,7 +239,7 @@ public partial class ModelViewerWindow : Window
     {
         if (!Viewer.HasModel)
         {
-            MessageBox.Show(this, "Load a model first.", "Snapshot", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show(this, "Load a model first.", "Snapshot", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         var dialog = new SaveFileDialog
@@ -249,7 +250,7 @@ public partial class ModelViewerWindow : Window
             AddExtension = true,
             FileName = "3d-view.png",
             OverwritePrompt = true
-        };
+        }.Localized();
         if (dialog.ShowDialog(this) != true)
         {
             return;
@@ -260,7 +261,7 @@ public partial class ModelViewerWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            MessageBox.Show(this, exception.Message, "Snapshot", MessageBoxButton.OK, MessageBoxImage.Warning);
+            LocalizedMessageBox.Show(this, exception.Message, "Snapshot", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -322,7 +323,7 @@ public partial class ModelViewerWindow : Window
         }
         catch (InvalidOperationException exception)
         {
-            MessageBox.Show(this, exception.Message, "Reference", MessageBoxButton.OK, MessageBoxImage.Warning);
+            LocalizedMessageBox.Show(this, exception.Message, "Reference", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

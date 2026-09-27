@@ -87,6 +87,9 @@ internal sealed class CaseComponentService(
     IProductionBatchRepository productionBatchRepository,
     TimeProvider timeProvider)
 {
+    // Kept for the DI signature: an assembly may keep its own Work Orders when it gains components.
+    private readonly IProductionBatchRepository productionBatches = productionBatchRepository;
+
     internal Task<IReadOnlyList<CaseComponentDetails>> ListComponentsAsync(
         string caseId, CancellationToken cancellationToken) =>
         repository.ListComponentsAsync(caseId, cancellationToken);
@@ -100,8 +103,6 @@ internal sealed class CaseComponentService(
         int sortOrder, string? notes, EditAuthority editAuthority, CancellationToken cancellationToken)
     {
         Validate(parentCaseId, childCaseId, quantityPerParent, sortOrder, notes);
-        if ((await productionBatchRepository.ListByCaseAsync(parentCaseId, cancellationToken)).Count > 0)
-            throw new CaseParentBatchesMustBeRemovedException();
         return await repository.CreateAsync(
             $"component-{Guid.NewGuid():N}", parentCaseId, childCaseId, quantityPerParent,
             sortOrder, NormalizeNotes(notes), timeProvider.GetUtcNow(), editAuthority, cancellationToken);

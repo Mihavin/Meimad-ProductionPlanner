@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "haas-vf-3ss",
+  "name": "Haas VF-3SS",
+  "manufacturer": "Haas Automation",
+  "model": "VF-3SS",
+  "type": "mill",
+  "control": "haas-ngc-mill",
+  "description": "40-taper 3-axis Super-Speed vertical machining centre with the Haas Next Generation Control.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "Haas VF-3SS published specification: X 40 in (1016 mm), Y 20 in (508 mm), Z 25 in (635 mm) travels, 1400 ipm (35.6 m/min) rapids, 12000 rpm inline direct-drive 40-taper spindle, 30+1 side-mount tool changer, 48 x 18 in table",
+    "Haas Mill Operator's Manual (NGC) chapters 6-8"
+  ],
+  "detection": {
+    "keywords": ["HAAS", "VF-3", "VF3", "VF-2", "VF-4"],
+    "codes": ["G187", "G154", "G103", "G53", "G150", "G12", "G13"]
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -1016, "max": 0, "rapidRate": 35600, "maxFeed": 21200 },
+    "Y": { "type": "linear", "min": -508, "max": 0, "rapidRate": 35600, "maxFeed": 21200 },
+    "Z": { "type": "linear", "min": -635, "max": 0, "rapidRate": 35600, "maxFeed": 21200 }
+  },
+  "mrzp": {
+    "x": -508,
+    "y": -254,
+    "z": -560,
+    "rotaryCenterDistance": 0,
+    "verified": false,
+    "label": "Table centre",
+    "source": "Placeholder at the table centre with the table top 560 mm below Z home; undefined work offsets are placed here. Replace with the machine's actual values if the machine-frame view matters."
+  },
+  "rotaryConvention": { "verified": true, "note": "No rotary axes." },
+  "spindle": { "maxRpm": 12000, "taper": "CAT40" },
+  "toolChanger": { "type": "side-mount", "capacity": 30, "changeSeconds": 2.8 },
+  "defaultToolLength": 100,
+  "workholding": { "tableLength": 1219, "tableWidth": 457 },
+  "workOffsets": {
+    "default": "mrzp",
+    "note": "Work offsets that the program or the initial macro variables do not define (#5221-#5326, #7001+, #14001+) are placed at the table centre."
+  },
+  "controlSettings": {
+    "9": "MM",
+    "22": 1.27,
+    "27": "X+",
+    "28": "ON",
+    "29": "OFF",
+    "33": "FANUC",
+    "34": 100,
+    "40": "DIAMETER",
+    "45": "OFF",
+    "46": "OFF",
+    "47": "OFF",
+    "48": "OFF",
+    "52": 0,
+    "57": "OFF",
+    "71": 1,
+    "72": 0,
+    "73": "OFF",
+    "79": 100,
+    "108": "OFF",
+    "191": "MEDIUM",
+    "247": "OFF",
+    "335": "OFF"
+  },
+  "kinematics": {
+    "type": "vertical-3-axis",
+    "description": "X saddle and Y table under a Z spindle head (drawn on the spindle side); the workpiece sits on the fixed table.",
+    "nodes": [
+      { "id": "base", "label": "Machine base", "geometry": { "shape": "box", "size": [1500, 900, 60], "center": [-508, -254, -640] }, "model": null },
+      { "id": "x-saddle", "parent": "base", "label": "X saddle", "type": "linear", "axis": "X", "direction": [1, 0, 0], "geometry": { "shape": "box", "size": [240, 200, 90], "center": [0, 80, 420] }, "model": null },
+      { "id": "y-ram", "parent": "x-saddle", "label": "Y ram", "type": "linear", "axis": "Y", "direction": [0, 1, 0], "geometry": { "shape": "box", "size": [220, 560, 90], "center": [0, 160, 330] }, "model": null },
+      { "id": "z-head", "parent": "y-ram", "label": "Z spindle head", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": { "shape": "box", "size": [220, 260, 320], "center": [0, 40, 180] }, "model": null },
+      { "id": "spindle", "parent": "z-head", "label": "Spindle (gauge line)", "type": "spindle", "toolMount": true, "geometry": { "shape": "cylinder", "radius": 60, "height": 90, "center": [0, 0, 45], "axis": "z" }, "model": null },
+      { "id": "table", "parent": "base", "label": "Table", "type": "fixed", "workpieceMount": true, "geometry": { "shape": "box", "size": [1219, 457, 50], "center": "mrzp", "offset": [0, 0, -25] }, "model": null }
+    ]
+  }
+}

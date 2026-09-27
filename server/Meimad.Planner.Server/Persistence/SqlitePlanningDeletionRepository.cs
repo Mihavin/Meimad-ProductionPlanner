@@ -40,7 +40,6 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                         WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id));
                     DELETE FROM case_components
                     WHERE is_active=0 AND (parent_case_id=$id OR child_case_id=$id);
-                    DELETE FROM kitaron_suppressed_operations WHERE case_id=$id;
                     DELETE FROM case_model_files WHERE case_id=$id;
                     """;
                 removeComponents.Parameters.AddWithValue("$id", id);
@@ -117,8 +116,19 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
     }
 
     public Task<bool> DeleteBatchAsync(string id, EditAuthority authority, CancellationToken token) =>
-        ExecuteAsync(id, authority, (c, t) =>
-            DeleteBatchGraphAsync(c, t, id, timeProvider.GetUtcNow(), token), token);
+        ExecuteAsync(id, authority, async (c, t) =>
+        {
+            // A batch imported from a Kitaron work order leaves with its work order, not by hand.
+            await using (var link = c.CreateCommand())
+            {
+                link.Transaction = t;
+                link.CommandText = "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'production_batch' AND target_id = $id);";
+                link.Parameters.AddWithValue("$id", id);
+                if (Convert.ToInt32(await link.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1)
+                    throw new KitaronManagedResourceException("Production Batch", id);
+            }
+            return await DeleteBatchGraphAsync(c, t, id, timeProvider.GetUtcNow(), token);
+        }, token);
 
     internal static async Task<bool> DeleteBatchGraphAsync(
         SqliteConnection c,
@@ -245,41 +255,82 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             if (!await reader.ReadAsync(token)) return false;
             var position = reader.GetInt32(0);
             var group = reader.IsDBNull(1) ? null : reader.GetString(1);
-            var operationNumber = reader.GetInt32(2);
-            var operationName = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
             await reader.DisposeAsync();
+            // The operation list of a synchronized Case mirrors Kitaron: an operation Kitaron
+            // produces cannot be deleted in Meimad Planner. Remap its station or change the route
+            // in Kitaron instead; the synchronization then removes it.
+            await using (var kitaronLink = c.CreateCommand())
+            {
+                kitaronLink.Transaction = t;
+                kitaronLink.CommandText = "SELECT EXISTS(SELECT 1 FROM kitaron_sync_links WHERE source_entity = 'case_operation' AND target_id = $id);";
+                kitaronLink.Parameters.AddWithValue("$id", id);
+                if (Convert.ToInt32(await kitaronLink.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1)
+                    throw new KitaronManagedResourceException("Case Operation", id);
+            }
             await BlockIfAnyAsync(c, t, "batch_operations", "source_case_operation_id", id, "The Operation has already been instantiated in a Production Batch.", token);
             await BlockIfAnyAsync(c, t, "process_revisions", "case_operation_id", id, "The Operation has immutable process or G-code release history.", token);
+            // An imported Kitaron route is a sequence. Removing one of its operations re-links the
+            // Kitaron-owned operations that followed it to the operation before it (or lets them start
+            // the route), as the next synchronization would; any other dependent still blocks.
+            await using (var relink = c.CreateCommand())
+            {
+                relink.Transaction = t;
+                relink.CommandText = """
+                    UPDATE case_operations
+                    SET predecessor_case_operation_id = (SELECT removed.predecessor_case_operation_id FROM case_operations removed WHERE removed.id = $id),
+                        dependency_type = CASE
+                            WHEN (SELECT removed.predecessor_case_operation_id FROM case_operations removed WHERE removed.id = $id) IS NULL
+                            THEN 'independent' ELSE dependency_type END,
+                        version = version + 1, updated_at = $now
+                    WHERE predecessor_case_operation_id = $id
+                      AND case_id = $caseId
+                      AND dependency_type IN ('sequential', 'parallel_capable')
+                      AND EXISTS (
+                          SELECT 1 FROM kitaron_sync_links link
+                          WHERE link.source_entity = 'case_operation' AND link.target_id = case_operations.id AND link.owns_target = 1);
+                    """;
+                relink.Parameters.AddWithValue("$id", id);
+                relink.Parameters.AddWithValue("$caseId", caseId);
+                relink.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
+                await relink.ExecuteNonQueryAsync(token);
+            }
             await BlockIfAnyAsync(c, t, "case_operations", "predecessor_case_operation_id", id, "Another Case Operation depends on this Operation.", token);
             if (group is not null)
             {
                 await BlockBySqlAsync(c, t, "SELECT EXISTS(SELECT 1 FROM case_operations WHERE case_id = $caseId AND simultaneous_group_key = $group AND id <> $id);", id, "Remove the locked-simultaneous group relationship before deleting this Operation.", token,
                     ("$caseId", caseId), ("$group", group));
             }
-            // A Kitaron-imported Operation may be removed like any other. The deletion is
-            // deliberate, so its sync link becomes a suppression record: the next synchronization
-            // must not "repair" the missing target by recreating the Operation.
-            await using (var suppress = c.CreateCommand())
+            // Auxiliary requirements belong to the Operation and go with it, with their links.
+            await using (var unlinkRequirements = c.CreateCommand())
             {
-                suppress.Transaction = t;
-                suppress.CommandText = """
-                    INSERT INTO kitaron_suppressed_operations (source_key, case_id, operation_number, name, suppressed_at)
-                    SELECT source_key, $caseId, $number, $name, $now
-                    FROM kitaron_sync_links
-                    WHERE source_entity = 'case_operation' AND target_id = $id
-                    ON CONFLICT (source_key) DO UPDATE SET
-                        case_id = excluded.case_id,
-                        operation_number = excluded.operation_number,
-                        name = excluded.name,
-                        suppressed_at = excluded.suppressed_at;
-                    DELETE FROM kitaron_sync_links WHERE source_entity = 'case_operation' AND target_id = $id;
+                unlinkRequirements.Transaction = t;
+                unlinkRequirements.CommandText = """
+                    DELETE FROM kitaron_sync_links
+                    WHERE source_entity = 'operation_requirement' AND target_id IN (
+                        SELECT id FROM operation_resource_requirements WHERE case_operation_id = $id);
                     """;
-                suppress.Parameters.AddWithValue("$caseId", caseId);
-                suppress.Parameters.AddWithValue("$number", operationNumber);
-                suppress.Parameters.AddWithValue("$name", operationName);
-                suppress.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture));
-                suppress.Parameters.AddWithValue("$id", id);
-                await suppress.ExecuteNonQueryAsync(token);
+                unlinkRequirements.Parameters.AddWithValue("$id", id);
+                await unlinkRequirements.ExecuteNonQueryAsync(token);
+            }
+            await using (var removeRequirements = c.CreateCommand())
+            {
+                removeRequirements.Transaction = t;
+                removeRequirements.CommandText = """
+                    DELETE FROM external_resource_executions WHERE schedule_work_id IN (
+                        SELECT work.id FROM resource_schedule_work work
+                        JOIN operation_resource_requirements requirement ON requirement.id = work.requirement_id
+                        WHERE requirement.case_operation_id = $id);
+                    DELETE FROM resource_schedule_assignments WHERE schedule_work_id IN (
+                        SELECT work.id FROM resource_schedule_work work
+                        JOIN operation_resource_requirements requirement ON requirement.id = work.requirement_id
+                        WHERE requirement.case_operation_id = $id);
+                    DELETE FROM resource_schedule_work WHERE requirement_id IN (
+                        SELECT id FROM operation_resource_requirements WHERE case_operation_id = $id);
+                    UPDATE operation_resource_requirements SET predecessor_requirement_id = NULL WHERE case_operation_id = $id;
+                    DELETE FROM operation_resource_requirements WHERE case_operation_id = $id;
+                    """;
+                removeRequirements.Parameters.AddWithValue("$id", id);
+                await removeRequirements.ExecuteNonQueryAsync(token);
             }
             // Model files attached to the Operation stay with the Case; they just lose the link.
             await using (var detachModels = c.CreateCommand())

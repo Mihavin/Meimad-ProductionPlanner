@@ -11,7 +11,13 @@ internal sealed record ExternalResourceRecord(string Id, string Name, string? Su
     int SafetyBufferMinutes, string LeadTimeSemantics, string? WorkingCalendarId, string PropertiesJson, bool IsActive, int Version);
 internal sealed record OperationResourceRequirementRecord(string Id,string CaseOperationId,int SequencePosition,string ResourceClass,
     string? WorkstationTypeId,string? ExternalResourceId,string? RequiredCapability,string? RequiredSkillId,
-    int CapacityRequired,int EstimatedDurationSeconds,string Direction,string? SimultaneousGroupKey,string? PredecessorRequirementId,bool IsActive,int Version);
+    int CapacityRequired,int EstimatedDurationSeconds,string Direction,string? SimultaneousGroupKey,string? PredecessorRequirementId,bool IsActive,int Version,
+    string? Name=null,int? StepNumber=null,int DurationPerUnitSeconds=0,bool IsKitaronManaged=false);
+
+/// <summary>The editable fields of a requirement; identity, Case Operation and version are fixed.</summary>
+internal sealed record OperationResourceRequirementUpdate(int SequencePosition,string ResourceClass,string? WorkstationTypeId,string? ExternalResourceId,
+    string? RequiredCapability,string? RequiredSkillId,int CapacityRequired,int EstimatedDurationSeconds,int DurationPerUnitSeconds,string Direction,
+    string? SimultaneousGroupKey,string? PredecessorRequirementId,string? Name,int? StepNumber,bool IsActive);
 
 internal interface IResourceMasterDataRepository
 {
@@ -35,6 +41,8 @@ internal interface IResourceMasterDataRepository
     Task DeleteExternalResourceAsync(string id, int expectedVersion, EditAuthority authority, CancellationToken token);
     Task<IReadOnlyList<OperationResourceRequirementRecord>> ListRequirementsAsync(string caseOperationId,CancellationToken token);
     Task<OperationResourceRequirementRecord> CreateRequirementAsync(OperationResourceRequirementRecord value,EditAuthority authority,CancellationToken token);
+    Task<OperationResourceRequirementRecord> UpdateRequirementAsync(string id,OperationResourceRequirementUpdate value,int expectedVersion,EditAuthority authority,CancellationToken token);
+    Task DeleteRequirementAsync(string id,int expectedVersion,EditAuthority authority,CancellationToken token);
 }
 
 internal sealed class ResourceMasterDataService(IResourceMasterDataRepository repository)
@@ -102,19 +110,44 @@ internal sealed class ResourceMasterDataService(IResourceMasterDataRepository re
 
     internal Task<OperationResourceRequirementRecord> CreateRequirementAsync(string operationId,int position,string? resourceClass,
         string? workstationTypeId,string? externalResourceId,string? capability,string? skillId,int capacity,int durationSeconds,
-        string? direction,string? groupKey,string? predecessorId,EditAuthority authority,CancellationToken token=default)
+        string? direction,string? groupKey,string? predecessorId,EditAuthority authority,CancellationToken token=default,
+        string? name=null,int? stepNumber=null,int durationPerUnitSeconds=0)
+    {
+        var fields=ValidateRequirement(position,resourceClass,workstationTypeId,externalResourceId,capability,skillId,capacity,durationSeconds,durationPerUnitSeconds,direction,groupKey,predecessorId,name,stepNumber,true);
+        return repository.CreateRequirementAsync(new(Guid.NewGuid().ToString("N"),Required(operationId,"caseOperationId",200),fields.SequencePosition,fields.ResourceClass,
+            fields.WorkstationTypeId,fields.ExternalResourceId,fields.RequiredCapability,fields.RequiredSkillId,fields.CapacityRequired,fields.EstimatedDurationSeconds,fields.Direction,
+            fields.SimultaneousGroupKey,fields.PredecessorRequirementId,true,1,fields.Name,fields.StepNumber,fields.DurationPerUnitSeconds),authority,token);
+    }
+
+    internal Task<OperationResourceRequirementRecord> UpdateRequirementAsync(string id,int position,string? resourceClass,
+        string? workstationTypeId,string? externalResourceId,string? capability,string? skillId,int capacity,int durationSeconds,int durationPerUnitSeconds,
+        string? direction,string? groupKey,string? predecessorId,string? name,int? stepNumber,bool isActive,int expectedVersion,EditAuthority authority,CancellationToken token=default)
+    {
+        var requirementId=Required(id,"id",200);
+        var fields=ValidateRequirement(position,resourceClass,workstationTypeId,externalResourceId,capability,skillId,capacity,durationSeconds,durationPerUnitSeconds,direction,groupKey,predecessorId,name,stepNumber,isActive);
+        if(string.Equals(fields.PredecessorRequirementId,requirementId,StringComparison.Ordinal))throw Invalid("predecessorRequirementId","A requirement cannot follow itself.");
+        return repository.UpdateRequirementAsync(requirementId,fields,expectedVersion,authority,token);
+    }
+
+    internal Task DeleteRequirementAsync(string id,int expectedVersion,EditAuthority authority,CancellationToken token=default)=>
+        repository.DeleteRequirementAsync(Required(id,"id",200),expectedVersion,authority,token);
+
+    private static OperationResourceRequirementUpdate ValidateRequirement(int position,string? resourceClass,string? workstationTypeId,string? externalResourceId,
+        string? capability,string? skillId,int capacity,int durationSeconds,int durationPerUnitSeconds,string? direction,string? groupKey,string? predecessorId,
+        string? name,int? stepNumber,bool isActive)
     {
         var kind=Required(resourceClass,"resourceClass",40).ToUpperInvariant();
         if(kind is not ("MACHINE" or "EMPLOYEE" or "WORKSTATION" or "EXTERNAL"))throw Invalid("resourceClass","Unknown base resource class.");
         var dir=Required(direction ?? "FORWARD","direction",20).ToUpperInvariant();
         if(dir is not ("BACKWARD" or "FORWARD"))throw Invalid("direction","Use BACKWARD or FORWARD.");
-        if(position<0||capacity<1||durationSeconds<0)throw Invalid("requirement","Position/duration must be non-negative and capacity positive.");
+        if(position<0||capacity<1||durationSeconds<0||durationPerUnitSeconds<0)throw Invalid("requirement","Position/durations must be non-negative and capacity positive.");
+        if(stepNumber is <=0)throw Invalid("stepNumber","The step number must be greater than zero when supplied.");
         if(kind=="WORKSTATION"&&string.IsNullOrWhiteSpace(workstationTypeId))throw Invalid("workstationTypeId","A Workstation requirement needs a type.");
         if(kind=="EMPLOYEE"&&string.IsNullOrWhiteSpace(skillId))throw Invalid("requiredSkillId","An Employee requirement needs a Skill.");
         if(kind=="EXTERNAL"&&string.IsNullOrWhiteSpace(externalResourceId))throw Invalid("externalResourceId","An External requirement needs a service.");
-        return repository.CreateRequirementAsync(new(Guid.NewGuid().ToString("N"),Required(operationId,"caseOperationId",200),position,kind,
-            Optional(workstationTypeId,200),Optional(externalResourceId,200),Optional(capability,120),Optional(skillId,200),capacity,durationSeconds,dir,
-            Optional(groupKey,120),Optional(predecessorId,200),true,1),authority,token);
+        return new(position,kind,kind=="WORKSTATION"?Optional(workstationTypeId,200):null,kind=="EXTERNAL"?Optional(externalResourceId,200):null,
+            Optional(capability,120),Optional(skillId,200),capacity,durationSeconds,durationPerUnitSeconds,dir,Optional(groupKey,120),Optional(predecessorId,200),
+            Optional(name,200),stepNumber,isActive);
     }
 
     private static string Required(string? value, string field, int max)

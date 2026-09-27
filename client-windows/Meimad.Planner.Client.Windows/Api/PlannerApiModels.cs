@@ -61,7 +61,8 @@ internal sealed record PlannerCase(
     DateTimeOffset UpdatedAt,
     bool IsParent = false,
     bool IsChild = false,
-    bool IsKitaronManaged = false);
+    bool IsKitaronManaged = false,
+    bool KitaronRouteLocked = false);
 
 internal sealed record CaseResource(PlannerCase Value, string EntityTag);
 
@@ -95,7 +96,18 @@ internal sealed record CaseModelFileUpdate(
     bool? IsPrimary = null,
     int? SortOrder = null);
 
-internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive, string? Sort = null);
+internal sealed record CaseQuery(string? Search, string? Customer, bool? IsActive, string? Sort = null)
+{
+    public string? WorkOrders { get; init; }
+    public string? Release { get; init; }
+    public string? Orders { get; init; }
+    public string? Operations { get; init; }
+    public string? MaterialOrders { get; init; }
+    public DateOnly? SupplyFrom { get; init; }
+    public DateOnly? SupplyTo { get; init; }
+    public DateOnly? StartFrom { get; init; }
+    public DateOnly? StartTo { get; init; }
+}
 
 internal sealed record CaseUpdate(
     string PartNumber,
@@ -135,7 +147,9 @@ internal sealed record PlannerMachine(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
-    string NcDialect = "HAAS_NGC")
+    string NcDialect = "HAAS_NGC",
+    string? NcViewerMachine = null,
+    string ToolDiameterOffsetKind = "RADIUS")
 {
     public string DisplayName => $"{Number} — {Name}";
 }
@@ -372,7 +386,7 @@ internal sealed record LegacyImportBatchOperationCandidate(
     int? AssignmentVersion)
 {
     public bool IsAlreadyAssigned => !string.IsNullOrWhiteSpace(AssignmentId);
-    public string BatchContext => $"Batch {BatchNumber ?? BatchId}";
+    public string BatchContext => $"Work Order {BatchNumber ?? BatchId}";
     public string PartContext => string.IsNullOrWhiteSpace(PartNumber) ? string.Empty : $" / {PartNumber}";
     public string DisplayName => IsAlreadyAssigned
         ? $"{BatchContext}{PartContext} / OP{OperationNumber} - {Name} ({Status}; already assigned{(string.IsNullOrWhiteSpace(RequiredMachineType) ? string.Empty : $"; requires {RequiredMachineType}")})"
@@ -489,7 +503,9 @@ internal sealed record MachineCreate(
     double? RapidRateMillimetersPerMinute = null,
     double? ToolChangeTimeSeconds = null,
     double MachineTimeFactor = 1.0,
-    string NcDialect = "HAAS_NGC");
+    string NcDialect = "HAAS_NGC",
+    string? NcViewerMachine = null,
+    string ToolDiameterOffsetKind = "RADIUS");
 
 internal sealed record HaasConnectionSettings(
     string MachineId, string Host, string MacAddress, int MdcPort, int MtConnectPort, int DprntPort,
@@ -1431,8 +1447,28 @@ internal sealed record ProductionBatch(
     int? RouteRevision,
     int BatchOperationCount,
     int Version = 1,
-    IReadOnlyList<BatchAllocation>? Allocations = null)
+    IReadOnlyList<BatchAllocation>? Allocations = null,
+    bool IsKitaronManaged = false,
+    string? KitaronMaterialState = null,
+    string? KitaronMaterialDetail = null,
+    string ReleaseState = "pending",
+    DateTimeOffset? ReleasedAt = null,
+    string? ReleasedBy = null,
+    string? KitaronMaterialOrders = null,
+    int MaterialOrderCandidates = 0)
 {
+    /// <summary>Verified material orders, or the number of candidates still to verify.</summary>
+    public string MaterialOrdersDisplay => !string.IsNullOrWhiteSpace(KitaronMaterialOrders)
+        ? "✓ " + KitaronMaterialOrders
+        : MaterialOrderCandidates > 0 ? $"? {MaterialOrderCandidates} to verify" : string.Empty;
+
+    public bool IsReleased => ReleaseState == "released";
+
+    /// <summary>Release state with a symbol, readable without color.</summary>
+    public string ReleaseDisplay => IsReleased
+        ? "▶ Released"
+        : BatchOperationCount == 0 ? "⏸ Pending (no operations)" : "⏸ Pending";
+
     public string StatusDisplay => Status switch
     {
         "waiting" => "Waiting",
@@ -1441,6 +1477,18 @@ internal sealed record ProductionBatch(
         "cancelled" => "Cancelled",
         _ => Status.Replace('_', ' ')
     };
+
+    /// <summary>Kitaron's material verdict for an imported batch, refreshed by every synchronization.</summary>
+    public string MaterialDisplay => KitaronMaterialState switch
+    {
+        "available" => "Available",
+        "on_order" => "On order",
+        "missing" => "Missing",
+        "unknown" => "Unknown",
+        _ => IsKitaronManaged ? "Unknown" : string.Empty
+    };
+
+    public string SourceDisplay => IsKitaronManaged ? "Kitaron" : "Planner";
 }
 
 internal sealed record CancelProductionBatchRequest(string? Reason);
@@ -1720,13 +1768,81 @@ internal sealed record TimelineSnapshot(
     IReadOnlyList<TimelineConflict> Conflicts,
     string? DisplayTimeZoneId = null,
     string? DayStartsAtLocal = null,
-    string? DayEndsAtLocal = null);
+    string? DayEndsAtLocal = null,
+    IReadOnlyList<TimelineResourceLane>? Resources = null);
+
+/// <summary>
+/// One Workstation, External Resource or Employee lane with the provisional auxiliary steps the
+/// Server placed on it around the Machine anchors. Read-only like the rest of the Timeline.
+/// </summary>
+internal sealed record TimelineResourceLane(
+    string ResourceId,
+    string ResourceClass,
+    string Name,
+    IReadOnlyList<TimelineResourceInterval> Intervals)
+{
+    public string ClassLabel => ResourceClass switch
+    {
+        "workstation" => "Workstation",
+        "external" => "External",
+        "employee" => "Employee",
+        _ => ResourceClass
+    };
+}
+
+internal sealed record TimelineResourceInterval(
+    string WorkId,
+    string OperationId,
+    string RequirementId,
+    string BatchId,
+    string BatchNumber,
+    string PartNumber,
+    int OperationNumber,
+    string OperationName,
+    int? StepNumber,
+    string Name,
+    string Direction,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    bool IsPinned,
+    string Explanation,
+    string? WorkstationId,
+    string? EmployeeId,
+    string? ExternalResourceId,
+    string ResourceClass)
+{
+    public string Label => StepNumber is { } step
+        ? $"{BatchNumber} OP{OperationNumber} · {step} {Name}"
+        : $"{BatchNumber} OP{OperationNumber} · {Name}";
+
+    public string DirectionLabel => string.Equals(Direction, "BACKWARD", StringComparison.OrdinalIgnoreCase)
+        ? "before the Machine"
+        : "after the Machine";
+}
+
+internal sealed record TimelineAuxiliaryPinRequest(
+    string BatchOperationId,
+    string RequirementId,
+    string? WorkstationId,
+    string? EmployeeId,
+    DateTimeOffset PlannedStartsAt,
+    DateTimeOffset PlannedEndsAt,
+    bool PinStart,
+    string? Reason);
+
+internal sealed record TimelineAuxiliaryPin(
+    string BatchOperationId,
+    string RequirementId,
+    string? WorkstationId,
+    string? EmployeeId,
+    DateTimeOffset? StartsAt);
 
 internal sealed record TimelineBatch(
     string BatchId,
     string BatchNumber,
     string PartNumber,
-    DateOnly? WorkFinishDate = null)
+    DateOnly? WorkFinishDate = null,
+    DateTimeOffset? PredictedCompletion = null)
 {
     public string DisplayName => WorkFinishDate.HasValue
         ? $"{PartNumber} / {BatchNumber} • due {WorkFinishDate:yyyy-MM-dd}"
@@ -1934,6 +2050,152 @@ internal sealed record QcQueueItem(
 
 internal sealed record QcDecisionRequest(string Decision, string? Reason);
 
+/// <summary>The shared network folder Case links are stored relative to.</summary>
+internal sealed record NetworkFolderSettings(
+    string? RootPath,
+    IReadOnlyList<string> Aliases,
+    string KitaronCaseFolder,
+    int Version,
+    DateTimeOffset UpdatedAt,
+    int? ConvertedLinks = null);
+
+internal sealed record NetworkFolderUpdate(
+    string? RootPath,
+    IReadOnlyList<string> Aliases,
+    string KitaronCaseFolder,
+    int ExpectedVersion);
+
+/// <summary>A Kitaron purchase line offered to, or verified for, a Work Order.</summary>
+internal sealed record WorkOrderMaterialOrder(
+    string SourceKey,
+    string PurchaseOrderNumber,
+    string LineNumber,
+    string MaterialNumber,
+    string? Description,
+    string? Supplier,
+    double OrderedQuantity,
+    double? ReceivedQuantity,
+    string? Unit,
+    DateOnly? RequestedDeliveryDate,
+    DateOnly? ApprovedDeliveryDate,
+    bool Closed,
+    bool Verified,
+    string? VerifiedBy,
+    DateTimeOffset? VerifiedAt)
+{
+    public string PurchaseOrderText => $"{PurchaseOrderNumber}/{LineNumber}";
+
+    public string VerifiedText => Verified ? $"✓ {VerifiedBy}" : "? candidate";
+
+    public string DueText => (ApprovedDeliveryDate ?? RequestedDeliveryDate)?.ToString("yyyy-MM-dd") ?? string.Empty;
+
+    public string QuantityText => $"{OrderedQuantity:0.###} ordered, {ReceivedQuantity ?? 0:0.###} received {Unit}".Trim();
+}
+
+internal sealed record WorkOrderMaterialOrderList(IReadOnlyList<WorkOrderMaterialOrder> Items);
+
+/// <summary>An open Kitaron work order that uses a purchased raw material.</summary>
+internal sealed record KitaronMaterialWorkOrder(
+    string WorkOrderNumber,
+    string PartNumber,
+    string? CustomerOrderNumber,
+    string? Customer,
+    int? Quantity,
+    DateOnly? SupplyDate,
+    bool HasBatch,
+    bool Verified = false)
+{
+    public string CustomerText => string.Join(" ",
+        new[] { CustomerOrderNumber, Customer is null ? null : $"({Customer})" }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    public string DetailText =>
+        $"Work Order {WorkOrderNumber}{(HasBatch ? "" : " (not imported yet)")}: {PartNumber}"
+        + (Quantity is null ? "" : $" × {Quantity}")
+        + (CustomerText.Length == 0 ? "" : $", {CustomerText}")
+        + (SupplyDate is null ? "" : $", due {SupplyDate:yyyy-MM-dd}");
+}
+
+/// <summary>One Kitaron material purchase-order line as the synchronization imported it.</summary>
+internal sealed record KitaronMaterialOrder(
+    string SourceKey,
+    string PurchaseOrderNumber,
+    string LineNumber,
+    string MaterialNumber,
+    string? Description,
+    string? Supplier,
+    double OrderedQuantity,
+    double? ReceivedQuantity,
+    string? Unit,
+    DateOnly? RequestedDeliveryDate,
+    DateOnly? ApprovedDeliveryDate,
+    double? ApprovedQuantity,
+    string? ApprovalNote,
+    string? KitaronStatus,
+    bool Closed,
+    string DeliveryStatus,
+    DateTimeOffset LastImportedAt,
+    double? UnitPrice = null,
+    double? LineTotal = null,
+    string? CustomerOrderReference = null,
+    IReadOnlyList<KitaronMaterialWorkOrder>? WorkOrders = null)
+{
+    public string PurchaseOrderText => $"{PurchaseOrderNumber}/{LineNumber}";
+
+    public string UnitPriceText => UnitPrice is double value && value != 0 ? Money(value) : string.Empty;
+
+    public string LineTotalText => LineTotal is double value && value != 0 ? Money(value) : string.Empty;
+
+    /// <summary>Open Kitaron work orders (Production Batches, same number) that use this material.</summary>
+    public string BatchesText => string.Join(", ", (WorkOrders ?? []).Select(item => item.Verified ? "✓" + item.WorkOrderNumber : item.WorkOrderNumber));
+
+    /// <summary>The customer order the purchase names, else the customer orders of those work orders.</summary>
+    public string CustomerOrdersText
+    {
+        get
+        {
+            var orders = (WorkOrders ?? [])
+                .Select(item => item.CustomerText)
+                .Where(text => text.Length > 0)
+                .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            if (!string.IsNullOrWhiteSpace(CustomerOrderReference)) orders.Insert(0, CustomerOrderReference!);
+            return string.Join(", ", orders);
+        }
+    }
+
+    public string WorkOrdersToolTip => (WorkOrders ?? []).Count == 0
+        ? "No open Kitaron work order uses this material."
+        : string.Join(Environment.NewLine, (WorkOrders ?? []).Select(item => item.DetailText));
+
+    private static string Money(double value) =>
+        value.ToString("#,0.00", System.Globalization.CultureInfo.CurrentCulture);
+
+    public string OrderedText => Quantity(OrderedQuantity);
+
+    public string ReceivedText => ReceivedQuantity is double value ? Quantity(value) : string.Empty;
+
+    public string RequestedText => RequestedDeliveryDate?.ToString("yyyy-MM-dd") ?? string.Empty;
+
+    public string ApprovedText => ApprovedDeliveryDate?.ToString("yyyy-MM-dd") ?? string.Empty;
+
+    /// <summary>Status text with a leading symbol, so the state is readable without color.</summary>
+    public string DeliveryStatusText => DeliveryStatus switch
+    {
+        "received" => "✓ Received",
+        "closed" => "■ Closed",
+        "partially_received" => "◐ Partially received",
+        "late" => "⚠ Late",
+        "supplier_confirmed" => "● Supplier confirmed",
+        "open" => "○ Open",
+        _ => DeliveryStatus
+    };
+
+    public bool IsOpen => DeliveryStatus is not ("received" or "closed");
+
+    private static string Quantity(double value) =>
+        value.ToString("0.###", System.Globalization.CultureInfo.CurrentCulture);
+}
+
 internal sealed record QcDecisionResult(
     string EventId,
     string ProductionRunId,
@@ -2016,7 +2278,133 @@ internal sealed record ProductionPackageInfo(
     IReadOnlyList<ProductionPackageArtifactInfo> Artifacts)
 {
     public string ToolOffsetMode { get; init; } = "MEASURED";
+
+    /// <summary>The tool preparation version a MEASURED package embedded, if the released table had tools.</summary>
+    public string? ToolPreparationId { get; init; }
 }
+
+/// <summary>One assembled part of a prepared tool (holder, extension, collet, shank, cutter, ...).</summary>
+internal sealed record PlannerToolPreparationComponent(
+    int Sequence,
+    string ComponentType,
+    string Name,
+    string? CatalogNumber,
+    double? Length,
+    double? Diameter,
+    string? Notes);
+
+/// <summary>A released Tool Table row merged with its latest Tool Room measurements, if any.</summary>
+/// <param name="Hand">Holder hand of a turning tool (RIGHT, LEFT, NEUTRAL); null for other tools.</param>
+/// <param name="CatalogToolId">The tool catalog entry the Tool Room picked for this tool, if any.</param>
+internal sealed record PlannerToolPreparationTool(
+    int RowNumber,
+    string ToolIdentifier,
+    string Description,
+    bool IsRequired,
+    string? MagazinePosition,
+    int? OffsetNumber,
+    double? MeasuredLength,
+    double? MeasuredDiameter,
+    string ShapeType,
+    IReadOnlyDictionary<string, double> Shape,
+    string? Notes,
+    IReadOnlyList<PlannerToolPreparationComponent> Components,
+    string? Hand = null,
+    string? CatalogToolId = null);
+
+/// <summary>
+/// The Tool Room's tool preparation of one Batch Operation on its assigned Machine: the released
+/// tool rows with the latest saved version's measurements. <c>Version</c> is 0 until the first save.
+/// </summary>
+internal sealed record PlannerToolPreparation(
+    string BatchOperationId,
+    string MachineId,
+    string MachineNumber,
+    string MachineName,
+    string ProcessType,
+    string NcDialect,
+    string ToolDiameterOffsetKind,
+    string ToolTableReleaseId,
+    int ToolTableRevision,
+    string ToolTableFileName,
+    int Version,
+    string? ToolPreparationId,
+    DateTimeOffset? SavedAt,
+    string? SavedBy,
+    string? Comment,
+    string? ContentHash,
+    string? SavedForToolTableReleaseId,
+    IReadOnlyList<PlannerToolPreparationTool> Tools);
+
+internal sealed record ToolPreparationComponentUpdate(
+    int Sequence,
+    string ComponentType,
+    string Name,
+    string? CatalogNumber,
+    double? Length,
+    double? Diameter,
+    string? Notes);
+
+internal sealed record ToolPreparationToolUpdate(
+    string ToolIdentifier,
+    int? OffsetNumber,
+    double? MeasuredLength,
+    double? MeasuredDiameter,
+    string ShapeType,
+    IReadOnlyDictionary<string, double> Shape,
+    string? Notes,
+    IReadOnlyList<ToolPreparationComponentUpdate> Components,
+    string? Hand = null,
+    string? CatalogToolId = null);
+
+/// <summary>Saves the next tool preparation version; the Server rejects a stale version or Tool Table release.</summary>
+internal sealed record ToolPreparationUpdate(
+    int ExpectedVersion,
+    string ToolTableReleaseId,
+    string? Comment,
+    IReadOnlyList<ToolPreparationToolUpdate> Tools);
+
+/// <summary>One id of a catalog tool in another system (supplier, ERP, CAM library, presetter, ...).</summary>
+internal sealed record PlannerCatalogToolExternalId(string System, string Value);
+
+/// <summary>
+/// A tool of the factory's tool catalog: the Meimad internal id (<c>MT-00001</c>), type, hand,
+/// dimensions, attributes, external ids and version. A definition, not an inventory record.
+/// </summary>
+internal sealed record PlannerCatalogTool(
+    string CatalogToolId,
+    int InternalNumber,
+    string InternalCode,
+    string Name,
+    string ToolType,
+    string Family,
+    string? Hand,
+    string? Description,
+    IReadOnlyDictionary<string, double> Shape,
+    IReadOnlyDictionary<string, string> Attributes,
+    IReadOnlyList<PlannerCatalogToolExternalId> ExternalIds,
+    bool IsActive,
+    int Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    string UpdatedBy)
+{
+    public string ExternalIdsText => string.Join(", ", ExternalIds.Select(entry => $"{entry.System}: {entry.Value}"));
+    public string DisplayName => $"{InternalCode}  {Name}";
+    public string ActiveText => IsActive ? "Active" : "Inactive";
+}
+
+/// <summary>Creates a catalog tool, or replaces one at <c>ExpectedVersion</c>.</summary>
+internal sealed record CatalogToolUpdate(
+    string Name,
+    string ToolType,
+    string? Hand,
+    string? Description,
+    IReadOnlyDictionary<string, double> Shape,
+    IReadOnlyDictionary<string, string> Attributes,
+    IReadOnlyList<PlannerCatalogToolExternalId> ExternalIds,
+    bool IsActive,
+    int? ExpectedVersion = null);
 
 internal sealed class PlannerApiException : Exception
 {
@@ -2056,3 +2444,131 @@ internal sealed record ClientInstallerManifest(
     string? Sha256);
 
 internal sealed record ClientInstallerDownload(string LocalPath, long ByteLength, string Sha256);
+
+internal sealed record NcTemplateValidation(bool IsValid, string? Code, string? Message);
+
+internal sealed record NcTemplateFormatResult(
+    string Text,
+    string NcDialect,
+    bool Changed,
+    IReadOnlyList<string> Changes,
+    IReadOnlyList<string> Warnings,
+    NcTemplateValidation Validation);
+
+/// <summary>A Kitaron station and the planner's decision about what its route steps become.</summary>
+internal sealed record PlannerKitaronStation(
+    int KitaronStationId,
+    string StationName,
+    string? StationType,
+    bool Retired,
+    int RouteRows,
+    int PlannedRows,
+    int SupplierRows,
+    string SuggestedRole,
+    string ImportRole,
+    string? MachineType,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    double DefaultMinutesPerPart,
+    double DefaultMinutesPerBatch,
+    int CapacityRequired,
+    string? Notes,
+    DateTimeOffset FirstSeenAt,
+    DateTimeOffset LastSeenAt,
+    DateTimeOffset? DecidedAt,
+    string? DecidedBy,
+    int Version,
+    DateTimeOffset UpdatedAt)
+{
+    public bool IsUndecided => string.Equals(ImportRole, "UNDECIDED", StringComparison.Ordinal);
+
+    public string RoleLabel => KitaronStationRoleLabels.Label(ImportRole);
+
+    public string SuggestedRoleLabel => KitaronStationRoleLabels.Label(SuggestedRole);
+
+    public string StatusLabel => Retired ? "retired" : "active";
+}
+
+internal static class KitaronStationRoleLabels
+{
+    internal static readonly IReadOnlyList<string> Roles = ["UNDECIDED", "MACHINE", "WORKSTATION", "EXTERNAL", "IGNORE"];
+
+    internal static string Label(string role) => role switch
+    {
+        "UNDECIDED" => "Undecided",
+        "MACHINE" => "Machine operation",
+        "WORKSTATION" => "Workstation step",
+        "EXTERNAL" => "External resource step",
+        "IGNORE" => "Ignore",
+        _ => role
+    };
+}
+
+internal sealed record KitaronStationDecision(
+    string ImportRole,
+    string? MachineType,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    double DefaultMinutesPerPart,
+    double DefaultMinutesPerBatch,
+    int CapacityRequired,
+    string? Notes,
+    int ExpectedVersion);
+
+internal sealed record PlannerKitaronStationList(IReadOnlyList<PlannerKitaronStation> Items);
+
+/// <summary>An auxiliary resource requirement of a Case Operation (schema v65, extended in v81).</summary>
+internal sealed record PlannerOperationRequirement(
+    string Id,
+    string CaseOperationId,
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    string Direction,
+    string? SimultaneousGroupKey,
+    string? PredecessorRequirementId,
+    bool IsActive,
+    int Version,
+    string? Name = null,
+    int? StepNumber = null,
+    int DurationPerUnitSeconds = 0,
+    bool IsKitaronManaged = false);
+
+internal sealed record OperationRequirementCreate(
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    string Direction,
+    string? SimultaneousGroupKey,
+    string? PredecessorRequirementId,
+    string? Name,
+    int? StepNumber,
+    int DurationPerUnitSeconds);
+
+internal sealed record OperationRequirementUpdate(
+    int SequencePosition,
+    string ResourceClass,
+    string? WorkstationTypeId,
+    string? ExternalResourceId,
+    string? RequiredCapability,
+    string? RequiredSkillId,
+    int CapacityRequired,
+    int EstimatedDurationSeconds,
+    string Direction,
+    string? SimultaneousGroupKey,
+    string? PredecessorRequirementId,
+    string? Name,
+    int? StepNumber,
+    int DurationPerUnitSeconds,
+    bool IsActive,
+    int ExpectedVersion);

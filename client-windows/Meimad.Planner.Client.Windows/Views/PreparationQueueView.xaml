@@ -55,6 +55,7 @@
               </MenuItem.Style>
             </MenuItem>
             <MenuItem Header="Open Tool Table"
+                      ToolTip="Edit the tool table: measured length and diameter, offset number, cutter shape and the assembled components. Saved versions go into the Production Package."
                       Command="{Binding PlacementTarget.Tag.OpenToolTableCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
               <MenuItem.Style>
                 <Style TargetType="MenuItem">
@@ -63,12 +64,19 @@
                 </Style>
               </MenuItem.Style>
             </MenuItem>
-            <MenuItem Header="View NC File (read-only)"
-                      Command="{Binding PlacementTarget.Tag.ViewNcFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+            <MenuItem Header="View Tool Table File (read-only)"
+                      ToolTip="Show the released Tool Table file exactly as the postprocessor produced it."
+                      Command="{Binding PlacementTarget.Tag.ViewToolTableFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
               <MenuItem.Style>
-                <Style TargetType="MenuItem"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding PlacementTarget.Tag.Stage, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="TOOL_PREPARATION_PENDING"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style>
+                <Style TargetType="MenuItem">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers><DataTrigger Binding="{Binding PlacementTarget.Tag.Stage, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="TOOL_PREPARATION_PENDING"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                </Style>
               </MenuItem.Style>
             </MenuItem>
+            <MenuItem Header="View NC File (read-only)"
+                      ToolTip="Open the operation's released NC program in the NC viewer: 3D toolpath, playback and cycle time. The release cannot be changed."
+                      Command="{Binding PlacementTarget.Tag.ViewNcFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
             <MenuItem Header="Create Production Package"
                       Command="{Binding PlacementTarget.Tag.CreateProductionPackageCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
               <MenuItem.Style>
@@ -92,7 +100,7 @@
         <DataGrid.Columns>
           <DataGridTextColumn Header="Machine" Binding="{Binding MachineText}" Width="180" />
           <DataGridTextColumn Header="Part" Binding="{Binding PartText}" Width="180" />
-          <DataGridTextColumn Header="Batch" Binding="{Binding BatchNumber}" Width="110" />
+          <DataGridTextColumn Header="Work Order" Binding="{Binding BatchNumber}" Width="110" />
           <DataGridTextColumn Header="Operation" Binding="{Binding OperationText}" Width="190" />
           <DataGridTextColumn Header="Workflow" Binding="{Binding WorkflowText}" Width="145" />
           <DataGridTextColumn Header="Production Run" Binding="{Binding ProductionRunText}" Width="170" />

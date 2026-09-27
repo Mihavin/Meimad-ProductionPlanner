@@ -10,6 +10,12 @@ public sealed class GCodeOptions
 
     public long MaximumToolTableFileBytes { get; init; } = 25 * 1024 * 1024;
 
+    /// <summary>Analyze existing releases with the NC engine after startup.</summary>
+    public bool NcEngineBackfillEnabled { get; init; } = true;
+
+    /// <summary>Wait after startup before the backfill begins, so it never slows the start.</summary>
+    public TimeSpan NcEngineBackfillStartDelay { get; init; } = TimeSpan.FromSeconds(30);
+
     internal string ResolvedReleaseRoot { get; private init; } = string.Empty;
 
     public static GCodeOptions FromConfiguration(
@@ -34,6 +40,10 @@ public sealed class GCodeOptions
             ReleaseRoot = configured.ReleaseRoot,
             MaximumGCodeFileBytes = configured.MaximumGCodeFileBytes,
             MaximumToolTableFileBytes = configured.MaximumToolTableFileBytes,
+            NcEngineBackfillEnabled = configured.NcEngineBackfillEnabled,
+            NcEngineBackfillStartDelay = configured.NcEngineBackfillStartDelay < TimeSpan.Zero
+                ? TimeSpan.Zero
+                : configured.NcEngineBackfillStartDelay,
             ResolvedReleaseRoot = ServerStoragePathResolver.Resolve(
                 configured.ReleaseRoot,
                 contentRootPath)

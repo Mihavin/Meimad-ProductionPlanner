@@ -1,6 +1,7 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Kitaron;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.Cases;
 using Microsoft.Data.Sqlite;
@@ -99,10 +100,11 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 $createdAt,
                 $updatedAt);
             """;
-        AddWriteParameters(command, plannerCase);
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
+        AddWriteParameters(command, ToStored(paths, plannerCase));
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return plannerCase;
+        return Resolve(paths, ToStored(paths, plannerCase));
     }
 
     public async Task<PlannerCase?> GetByIdAsync(
@@ -119,6 +121,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         string caseId,
         CancellationToken cancellationToken)
     {
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = $"""
@@ -150,7 +153,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                    EXISTS(SELECT 1 FROM case_components
                           WHERE child_case_id=cases.id AND is_active=1) AS is_child,
                    EXISTS(SELECT 1 FROM kitaron_sync_links
-                          WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed
+                          WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed,
+                   cases.kitaron_route_locked
             FROM cases
             WHERE id = $id;
             """;
@@ -158,7 +162,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? ReadCase(reader, includeActiveProjection: true)
+            ? Resolve(paths, ReadCase(reader, includeActiveProjection: true))
             : null;
     }
 
@@ -167,6 +171,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         string? customer,
         bool? isActive,
         CaseSortOrder sortOrder,
+        CaseListFilter filter,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -200,6 +205,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                               WHERE child_case_id=cases.id AND is_active=1) AS is_child,
                        EXISTS(SELECT 1 FROM kitaron_sync_links
                               WHERE source_entity='case' AND target_id=cases.id) AS is_kitaron_managed,
+                       cases.kitaron_route_locked,
                        (SELECT MIN(orders.work_finish_date)
                          FROM orders
                          WHERE orders.case_id = cases.id
@@ -226,6 +232,53 @@ internal sealed class SqliteCaseRepository : ICaseRepository
               AND ($customer IS NULL
                    OR instr(lower(coalesce(customer, '')), lower($customer)) > 0)
               AND ($isActive IS NULL OR is_active = $isActive)
+              AND ($workOrders IS NULL OR ($workOrders = 'with') = EXISTS (
+                    SELECT 1 FROM production_batches b WHERE b.case_id = case_pool.id AND b.status <> 'cancelled'))
+              AND ($release IS NULL OR EXISTS (
+                    SELECT 1 FROM production_batches b
+                    WHERE b.case_id = case_pool.id AND b.status <> 'cancelled' AND b.release_state = $release))
+              AND ($orders IS NULL OR ($orders = 'active') = EXISTS (
+                    SELECT 1 FROM orders o
+                    WHERE o.case_id = case_pool.id AND o.status IN ('active', 'in_production') AND o.kitaron_history_only = 0))
+              AND ($operations IS NULL OR ($operations = 'with') = EXISTS (
+                    SELECT 1 FROM case_operations op
+                    WHERE op.case_id = case_pool.id
+                      AND lower(trim(COALESCE(op.required_machine_type, ''))) <> 'production note'))
+              AND ($materialOrders IS NULL
+                   OR ($materialOrders = 'verified' AND EXISTS (
+                        SELECT 1 FROM production_batches b JOIN work_order_material_orders v ON v.production_batch_id = b.id
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled'))
+                   OR ($materialOrders = 'toVerify' AND EXISTS (
+                        SELECT 1 FROM production_batches b
+                        JOIN kitaron_batch_material_checks m ON m.production_batch_id = b.id
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled'
+                          AND json_array_length(m.material_order_keys) > 0
+                          AND NOT EXISTS (SELECT 1 FROM work_order_material_orders v WHERE v.production_batch_id = b.id))))
+              AND (($supplyFrom IS NULL AND $supplyTo IS NULL)
+                   OR EXISTS (
+                        SELECT 1 FROM production_batches b
+                        JOIN kitaron_sync_links l ON l.source_entity = 'production_batch' AND l.target_id = b.id
+                        JOIN kitaron_work_orders w ON 'wo:' || w.work_order_number = l.source_key
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled' AND w.supply_date IS NOT NULL
+                          AND ($supplyFrom IS NULL OR w.supply_date >= $supplyFrom)
+                          AND ($supplyTo IS NULL OR w.supply_date <= $supplyTo))
+                   OR EXISTS (
+                        SELECT 1 FROM orders o
+                        WHERE o.case_id = case_pool.id AND o.status IN ('active', 'in_production') AND o.kitaron_history_only = 0
+                          AND ($supplyFrom IS NULL OR o.work_finish_date >= $supplyFrom)
+                          AND ($supplyTo IS NULL OR o.work_finish_date <= $supplyTo)))
+              AND (($startFrom IS NULL AND $startTo IS NULL) OR EXISTS (
+                    SELECT 1 FROM (
+                        SELECT COALESCE(
+                                   (SELECT substr(MIN(op.actual_start), 1, 10) FROM batch_operations op WHERE op.production_batch_id = b.id),
+                                   w.start_date) AS start_date
+                        FROM production_batches b
+                        LEFT JOIN kitaron_sync_links l ON l.source_entity = 'production_batch' AND l.target_id = b.id
+                        LEFT JOIN kitaron_work_orders w ON 'wo:' || w.work_order_number = l.source_key
+                        WHERE b.case_id = case_pool.id AND b.status <> 'cancelled') starts
+                    WHERE starts.start_date IS NOT NULL
+                      AND ($startFrom IS NULL OR starts.start_date >= $startFrom)
+                      AND ($startTo IS NULL OR starts.start_date <= $startTo)))
             ORDER BY
                 CASE WHEN $sort = 'closestOrderDeliveryDate' AND closest_order_delivery_date IS NULL THEN 1 ELSE 0 END,
                 CASE WHEN $sort = 'closestOrderDeliveryDate' THEN closest_order_delivery_date END,
@@ -243,6 +296,18 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         command.Parameters.AddWithValue(
             "$isActive",
             isActive.HasValue ? isActive.Value : DBNull.Value);
+        foreach (var (name, value) in new (string, string?)[]
+                 {
+                     ("$workOrders", filter.WorkOrders), ("$release", filter.Release), ("$orders", filter.Orders),
+                     ("$operations", filter.Operations), ("$materialOrders", filter.MaterialOrders),
+                     ("$supplyFrom", filter.SupplyFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                     ("$supplyTo", filter.SupplyTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                     ("$startFrom", filter.StartFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                     ("$startTo", filter.StartTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+                 })
+        {
+            command.Parameters.AddWithValue(name, (object?)value ?? DBNull.Value);
+        }
         command.Parameters.AddWithValue("$sort", sortOrder switch
         {
             CaseSortOrder.ClosestOrderDeliveryDate => "closestOrderDeliveryDate",
@@ -250,11 +315,12 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             _ => "partNumber"
         });
 
+        var paths = await SqliteNetworkFolderSettings.ReadAsync(connection, null, cancellationToken);
         var items = new List<PlannerCase>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            items.Add(ReadCase(reader, includeActiveProjection: true));
+            items.Add(Resolve(paths, ReadCase(reader, includeActiveProjection: true)));
         }
 
         return items;
@@ -332,8 +398,18 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             return null;
         }
 
-        if (await CaseIsParentAsync(connection, transaction, operation.CaseId, cancellationToken))
-            throw new CaseParentOperationsNotAllowedException();
+        // An assembly (parent Case) carries its own operations like any other Case (2026-09-26).
+
+        // The Kitaron route master owns this Case's operation list: the lists stay identical, so
+        // a planner cannot add an operation here (nor delete one). Operation data stays editable.
+        await using (var locked = connection.CreateCommand())
+        {
+            locked.Transaction = transaction;
+            locked.CommandText = "SELECT kitaron_route_locked FROM cases WHERE id = $id;";
+            locked.Parameters.AddWithValue("$id", operation.CaseId);
+            if (Convert.ToInt32(await locked.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
+                throw new KitaronManagedResourceException("The Case Operation list", operation.CaseId);
+        }
 
         var current = await ReadOperationsAsync(
             connection,
@@ -452,8 +528,6 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             transaction,
             editAuthority,
             cancellationToken);
-        if (await CaseIsParentAsync(connection, transaction, caseId, cancellationToken))
-            throw new CaseParentOperationsNotAllowedException();
 
         var currentOperations = await ReadOperationsAsync(
             connection,
@@ -710,7 +784,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
                 updated_at = $updatedAt
             WHERE id = $id AND version = $expectedVersion;
             """;
-        AddWriteParameters(command, plannerCase);
+        AddWriteParameters(command, ToStored(
+            await SqliteNetworkFolderSettings.ReadAsync(connection, transaction, cancellationToken), plannerCase));
         command.Parameters.AddWithValue("$expectedVersion", expectedVersion);
 
         var affected = await command.ExecuteNonQueryAsync(cancellationToken);
@@ -866,6 +941,20 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         CaseOperationGraph.Create(caseId, domainOperations, dependencies);
     }
 
+    /// <summary>Case links are stored relative to the network folder set in Setup.</summary>
+    private static PlannerCase ToStored(NetworkFolderSettings paths, PlannerCase plannerCase) => plannerCase with
+    {
+        WorkingFolderPath = paths.ToStored(plannerCase.WorkingFolderPath) ?? plannerCase.WorkingFolderPath,
+        PreviewPath = paths.ToStored(plannerCase.PreviewPath)
+    };
+
+    /// <summary>Stored relative links are handed out resolved against the network folder.</summary>
+    private static PlannerCase Resolve(NetworkFolderSettings paths, PlannerCase plannerCase) => plannerCase with
+    {
+        WorkingFolderPath = paths.ToAbsolute(plannerCase.WorkingFolderPath) ?? plannerCase.WorkingFolderPath,
+        PreviewPath = paths.ToAbsolute(plannerCase.PreviewPath)
+    };
+
     private static void AddWriteParameters(SqliteCommand command, PlannerCase plannerCase)
     {
         command.Parameters.AddWithValue("$id", plannerCase.CaseId);
@@ -912,7 +1001,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         ParseInstant(reader.GetString(17)),
         includeActiveProjection && reader.GetBoolean(19),
         includeActiveProjection && reader.GetBoolean(20),
-        includeActiveProjection && reader.GetBoolean(21));
+        includeActiveProjection && reader.GetBoolean(21),
+        includeActiveProjection && reader.GetBoolean(22));
 
     private static void AddNullableText(SqliteCommand command, string name, string? value)
     {

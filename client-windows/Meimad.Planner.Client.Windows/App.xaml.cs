@@ -25,7 +25,7 @@ public partial class App : Application
         catch (Exception exception)
         {
             var logPath = WriteLog("client-startup-error.log", exception, append: false);
-            MessageBox.Show(
+            LocalizedMessageBox.Show(
                 $"Meimad Planner could not start. Diagnostic details were saved to:{Environment.NewLine}{logPath}",
                 "Meimad Planner startup error",
                 MessageBoxButton.OK,
@@ -51,7 +51,7 @@ public partial class App : Application
         }
 
         e.Handled = true;
-        MessageBox.Show(
+        LocalizedMessageBox.Show(
             $"An unexpected error occurred. The last action may not have been applied.{Environment.NewLine}{Environment.NewLine}"
             + $"{e.Exception.Message}{Environment.NewLine}{Environment.NewLine}"
             + (logPath is null ? string.Empty : $"Details were saved to:{Environment.NewLine}{logPath}"),

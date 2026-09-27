@@ -59,8 +59,9 @@ internal sealed class CaseService
         string? customer,
         bool? isActive,
         CaseSortOrder sortOrder,
+        CaseListFilter? filter = null,
         CancellationToken cancellationToken = default) =>
-        repository.ListAsync(search?.Trim(), customer?.Trim(), isActive, sortOrder, cancellationToken);
+        repository.ListAsync(search?.Trim(), customer?.Trim(), isActive, sortOrder, filter ?? CaseListFilter.None, cancellationToken);
 
     internal Task<IReadOnlyList<CaseOperationDetails>> ListOperationsAsync(
         string caseId,

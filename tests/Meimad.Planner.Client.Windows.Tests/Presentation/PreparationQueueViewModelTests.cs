@@ -1,5 +1,7 @@
+using System.Net;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation;
+using Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
 using System.Security.Cryptography;
 
 namespace Meimad.Planner.Client.Windows.Tests.Presentation;
@@ -35,6 +37,7 @@ public sealed class PreparationQueueViewModelTests
         Assert.Contains("OpenOperationCommand", commandProperties);
         Assert.Contains("UploadGCodeCommand", commandProperties);
         Assert.Contains("OpenToolTableCommand", commandProperties);
+        Assert.Contains("ViewToolTableFileCommand", commandProperties);
         Assert.Contains("ViewNcFileCommand", commandProperties);
         Assert.Contains("CreateProductionPackageCommand", commandProperties);
         Assert.Contains("OpenProductionPackageCommand", commandProperties);
@@ -97,13 +100,59 @@ public sealed class PreparationQueueViewModelTests
         }
     }
 
+    [Fact]
+    public async Task Tool_room_open_tool_table_opens_the_editable_preparation_for_the_selected_operation()
+    {
+        var item = Item();
+        var api = new FakeApiClient([item]) { ToolPreparation = ToolPreparationViewModelTests.Preparation() };
+        var viewModel = new PreparationQueueViewModel(
+            "TOOL_PREPARATION_PENDING", "Tool Room", "Tool preparation");
+        viewModel.AttachSession(api, "client-1", "tool-room-1");
+        viewModel.Selected = item;
+        PreparationQueueActionRequest? routed = null;
+        viewModel.ActionRequested += (_, request) => routed = request;
+
+        Assert.True(viewModel.OpenToolTableCommand.CanExecute(null));
+        await viewModel.OpenToolTableAsync();
+
+        Assert.NotNull(routed);
+        Assert.Equal("OPEN_TOOL_PREPARATION", routed.Action);
+        Assert.Equal("operation-1", api.RequestedToolPreparationOperationId);
+        var editor = Assert.IsType<ToolPreparationViewModel>(routed.Payload);
+        Assert.Equal("operation-1", editor.BatchOperationId);
+        Assert.Equal(3, editor.Tools.Count);
+        Assert.Contains("no measurements", viewModel.Status, StringComparison.Ordinal);
+
+        // Without a released Tool Table there is nothing to prepare.
+        viewModel.Selected = item with { ToolTableReleaseId = null };
+        Assert.False(viewModel.OpenToolTableCommand.CanExecute(null));
+        Assert.False(viewModel.ViewToolTableFileCommand.CanExecute(null));
+    }
+
+    [Theory]
+    [InlineData("PROGRAMMING_PENDING")]
+    [InlineData("TOOL_PREPARATION_PENDING")]
+    [InlineData("SETUP_PENDING")]
+    public void Every_queue_can_view_the_nc_release_when_one_exists(string stage)
+    {
+        var withRelease = Item() with { Stage = stage, CaseId = "case-1", CaseOperationId = "case-op-1" };
+        var viewModel = new PreparationQueueViewModel(stage, "Queue", "Queue");
+        viewModel.AttachSession(new FakeApiClient([]));
+
+        viewModel.Selected = withRelease;
+        Assert.True(viewModel.ViewNcFileCommand.CanExecute(null));
+
+        viewModel.Selected = withRelease with { GCodeReleaseId = null };
+        Assert.False(viewModel.ViewNcFileCommand.CanExecute(null));
+    }
+
     private static PreparationQueueItem Item() => new(
         "TOOL_PREPARATION_PENDING", "operation-1", "run-1", "assignment-1",
         "machine-1", "M01", "Mill", "PN-1", "Part", "B1", 10, "Rough",
         "process-1", "gcode-1", "tools-1", "READY_FOR_SETUP",
         [new("toolOffsets", "Tool Offsets", "MISSING", "Offsets missing", false)]);
 
-    private sealed class FakeApiClient(
+    internal sealed class FakeApiClient(
         IReadOnlyList<PreparationQueueItem> items,
         byte[]? artifactBytes = null)
         : IPlannerApiClient
@@ -111,6 +160,134 @@ public sealed class PreparationQueueViewModelTests
         internal string? RequestedStage { get; private set; }
         internal string? RequestedArtifactId { get; private set; }
         internal ProductionPackageInfo? CurrentPackage { get; set; }
+        internal PlannerToolPreparation? ToolPreparation { get; set; }
+        internal string? RequestedToolPreparationOperationId { get; private set; }
+        internal List<ToolPreparationUpdate> SavedUpdates { get; } = [];
+        internal string? SavedClientId { get; private set; }
+        internal string? SavedUserId { get; private set; }
+        internal Exception? SaveError { get; set; }
+
+        public Task<PlannerToolPreparation> GetToolPreparationAsync(
+            string batchOperationId,
+            CancellationToken cancellationToken = default)
+        {
+            RequestedToolPreparationOperationId = batchOperationId;
+            return Task.FromResult(ToolPreparation ?? throw new NotSupportedException());
+        }
+
+        /// <summary>Appends the version the way the Server does: the released rows keep their identity and take the saved values.</summary>
+        public Task<PlannerToolPreparation> SaveToolPreparationAsync(
+            string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
+            CancellationToken cancellationToken = default)
+        {
+            SavedUpdates.Add(update);
+            SavedClientId = clientId;
+            SavedUserId = userId;
+            if (SaveError is not null) throw SaveError;
+            var current = ToolPreparation ?? throw new NotSupportedException();
+            var version = update.ExpectedVersion + 1;
+            var tools = current.Tools.Select(tool =>
+            {
+                var saved = update.Tools.FirstOrDefault(candidate => candidate.ToolIdentifier == tool.ToolIdentifier);
+                return saved is null
+                    ? tool
+                    : tool with
+                    {
+                        OffsetNumber = saved.OffsetNumber,
+                        MeasuredLength = saved.MeasuredLength,
+                        MeasuredDiameter = saved.MeasuredDiameter,
+                        ShapeType = saved.ShapeType,
+                        Shape = saved.Shape,
+                        Notes = saved.Notes,
+                        Components = saved.Components.Select(component => new PlannerToolPreparationComponent(
+                            component.Sequence, component.ComponentType, component.Name, component.CatalogNumber,
+                            component.Length, component.Diameter, component.Notes)).ToArray()
+                    };
+            }).ToArray();
+            ToolPreparation = current with
+            {
+                Version = version,
+                ToolPreparationId = $"prep-{version}",
+                SavedAt = DateTimeOffset.Parse("2026-09-24T09:30:00Z"),
+                SavedBy = userId,
+                Comment = update.Comment,
+                SavedForToolTableReleaseId = update.ToolTableReleaseId,
+                Tools = tools
+            };
+            return Task.FromResult(ToolPreparation);
+        }
+
+        // ----- tool catalog: an in-memory catalog that behaves like the Server -----
+        internal List<PlannerCatalogTool> CatalogTools { get; } = [];
+        internal string? CatalogClientId { get; private set; }
+        internal string? CatalogUserId { get; private set; }
+        internal CatalogToolUpdate? LastCatalogUpdate { get; private set; }
+
+        public Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
+            string? query, string? toolType, bool includeInactive, CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<PlannerCatalogTool> result = CatalogTools
+                .Where(tool => includeInactive || tool.IsActive)
+                .Where(tool => toolType is null || tool.ToolType == toolType)
+                .Where(tool => query is null
+                    || tool.InternalCode.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || tool.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || (tool.Description ?? string.Empty).Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || tool.ExternalIds.Any(entry => entry.Value.Contains(query, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(tool => tool.InternalNumber)
+                .ToArray();
+            return Task.FromResult(result);
+        }
+
+        public Task<PlannerCatalogTool> GetCatalogToolAsync(string catalogToolId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(CatalogTools.FirstOrDefault(tool => tool.CatalogToolId == catalogToolId)
+                ?? throw new PlannerApiException(HttpStatusCode.NotFound, "resource_not_found", "The catalog tool was not found."));
+
+        public Task<PlannerCatalogTool> CreateCatalogToolAsync(
+            CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+        {
+            CatalogClientId = clientId;
+            CatalogUserId = userId;
+            LastCatalogUpdate = update;
+            var number = (CatalogTools.Count == 0 ? 0 : CatalogTools.Max(tool => tool.InternalNumber)) + 1;
+            var now = DateTimeOffset.Parse("2026-09-25T09:00:00Z");
+            var created = new PlannerCatalogTool(
+                $"catalog-{number}", number, $"MT-{number:D5}", update.Name, update.ToolType, "TURNING", update.Hand, update.Description,
+                update.Shape, update.Attributes, update.ExternalIds, update.IsActive, 1, now, now, userId);
+            CatalogTools.Add(created);
+            return Task.FromResult(created);
+        }
+
+        public Task<PlannerCatalogTool> UpdateCatalogToolAsync(
+            string catalogToolId, CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+        {
+            CatalogClientId = clientId;
+            CatalogUserId = userId;
+            LastCatalogUpdate = update;
+            var index = CatalogTools.FindIndex(tool => tool.CatalogToolId == catalogToolId);
+            if (index < 0) throw new PlannerApiException(HttpStatusCode.NotFound, "resource_not_found", "The catalog tool was not found.");
+            var current = CatalogTools[index];
+            if (update.ExpectedVersion != current.Version)
+                throw new PlannerApiException(HttpStatusCode.Conflict, "tool_catalog_version_conflict",
+                    $"Catalog tool {current.InternalCode} was changed by someone else (version {current.Version}); reload it before saving.");
+            var updated = current with
+            {
+                Name = update.Name, ToolType = update.ToolType, Hand = update.Hand, Description = update.Description, Shape = update.Shape,
+                Attributes = update.Attributes, ExternalIds = update.ExternalIds, IsActive = update.IsActive, Version = current.Version + 1,
+                UpdatedAt = DateTimeOffset.Parse("2026-09-25T10:00:00Z"), UpdatedBy = userId
+            };
+            CatalogTools[index] = updated;
+            return Task.FromResult(updated);
+        }
+
+        public Task DeleteCatalogToolAsync(string catalogToolId, string clientId, string userId, CancellationToken cancellationToken = default)
+        {
+            CatalogClientId = clientId;
+            CatalogUserId = userId;
+            if (CatalogTools.RemoveAll(tool => tool.CatalogToolId == catalogToolId) == 0)
+                throw new PlannerApiException(HttpStatusCode.NotFound, "resource_not_found", "The catalog tool was not found.");
+            return Task.CompletedTask;
+        }
 
         public Task<ProductionPackageInfo?> GetCurrentProductionPackageAsync(
             string batchOperationId,

@@ -37,31 +37,13 @@
                     <TextBlock Text="Part masters from the Server" FontSize="17" FontWeight="SemiBold" Margin="0,3,0,9" />
                     <TextBlock Text="Search Part Number, name, or customer" Style="{StaticResource FieldLabel}" />
                     <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
-                    <Grid Margin="0,10,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="10" />
-                            <ColumnDefinition Width="120" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Customer filter" Style="{StaticResource FieldLabel}" />
-                            <TextBox Text="{Binding CustomerFilter, UpdateSourceTrigger=PropertyChanged}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Text="Active state" Style="{StaticResource FieldLabel}" />
-                            <ComboBox ItemsSource="{Binding ActiveFilters}"
-                                      SelectedItem="{Binding ActiveFilter}"
-                                      MinHeight="38"
-                                      Padding="7" />
-                        </StackPanel>
-                    </Grid>
-                    <StackPanel Margin="0,10,0,0">
-                        <TextBlock Text="Sort Cases by" Style="{StaticResource FieldLabel}" />
-                        <ComboBox ItemsSource="{Binding CaseSortOptions}"
-                                  SelectedItem="{Binding CaseSort}"
-                                  MinHeight="38"
-                                  Padding="7" />
-                    </StackPanel>
+                    <!-- The filter chips live in their own window; the pool shows the condition only. -->
+                    <DockPanel Margin="0,10,0,0">
+                        <Button DockPanel.Dock="Left" Content="{Binding PoolFilterButtonText}" Click="OpenPoolFilters_Click"
+                                ToolTip="Open the Case pool filters (all conditions combine with AND)." Margin="0,0,8,0" />
+                        <TextBlock Text="{Binding PoolFilterSummary}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                   Foreground="{StaticResource MutedTextBrush}" ToolTip="All conditions must match (AND)." />
+                    </DockPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,14">
                         <Button Command="{Binding SearchCommand}" Style="{StaticResource TemplateIconButton}"
                                 ToolTip="Search Cases" AutomationProperties.Name="Search Cases">
@@ -374,12 +356,6 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem ToolTip="View and manage the Case route Operations">
-                        <TabItem.Style>
-                            <Style TargetType="TabItem">
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers><DataTrigger Binding="{Binding IsParentCase}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
-                            </Style>
-                        </TabItem.Style>
                         <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource OperationsButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Operations" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                         <ScrollViewer x:Name="OperationsTabScroll" VerticalScrollBarVisibility="Visible"
                                       HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
@@ -389,18 +365,19 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button Content="Delete Selected" Click="DeleteOperation_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Delete Selected" Click="DeleteOperation_Click" IsEnabled="{Binding CanDeleteSelectedOperation}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditOperationCommand}" />
                                     <Button Command="{Binding BeginCreateOperationCommand}" Style="{StaticResource TemplateIconButton}"
                                             ToolTip="Add Operation" AutomationProperties.Name="Add Operation" Margin="0">
                                         <Image Source="{StaticResource OperationsButtonIcon}" Width="24" Height="24" />
                                     </Button>
                                 </StackPanel>
-                                <TextBlock Text="Ordered route template. New operations append to the route."
-                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding OperationListAuthorityText}"
+                                           Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
                             </DockPanel>
                             <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
                                     BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
@@ -500,7 +477,13 @@
                                         </StackPanel>
                                         <StackPanel Style="{StaticResource FormField}">
                                             <TextBlock Text="Released G-code file" Style="{StaticResource FieldLabel}"/>
-                                            <DockPanel><Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseGCode_Click" Margin="6,0,0,0"/><TextBox Text="{Binding GCodeFilePath}" IsReadOnly="True"/></DockPanel>
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Content="NC viewer…" Click="OpenNcViewer_Click" Margin="6,0,0,0"
+                                                        ToolTip="Open the NC viewer in edit mode: the selected file, or a new program that starts with the Meimad canonical block. In the viewer you can open any NC file, edit and save it, apply the Meimad Planner format, and release it to the Server as a new G-code release of this Operation (the canonical format is checked first)."
+                                                        AutomationProperties.Name="Open the NC viewer to write, edit and release a G-code file"/>
+                                                <Button DockPanel.Dock="Right" Content="Browse…" Click="BrowseGCode_Click" Margin="6,0,0,0"/>
+                                                <TextBox Text="{Binding GCodeFilePath}" IsReadOnly="True"/>
+                                            </DockPanel>
                                         </StackPanel>
                                         <StackPanel Style="{StaticResource FormField}" IsEnabled="{Binding IsNewProcessRevisionRelease}">
                                             <TextBlock Text="Tool-table file" Style="{StaticResource FieldLabel}"/>
@@ -548,7 +531,20 @@
                                         </DataGrid.Columns>
                                     </DataGrid>
                                     <TextBlock Text="Local post-revision history" FontWeight="SemiBold" Margin="0,14,0,5"/>
-                                    <DataGrid ItemsSource="{Binding GCodeReleases}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190">
+                                    <DataGrid ItemsSource="{Binding GCodeReleases}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="190"
+                                              ToolTip="Right-click or double-click a release to open it in the NC viewer.">
+                                        <DataGrid.Resources>
+                                            <ContextMenu x:Key="ReleaseRowMenu" x:Shared="False">
+                                                <MenuItem Header="View NC file"
+                                                          ToolTip="Open this immutable release in the NC viewer (read-only): 3D toolpath, playback and cycle time."
+                                                          Click="ViewReleaseNcFile_Click"
+                                                          AutomationProperties.Name="View NC file"/>
+                                            </ContextMenu>
+                                            <Style TargetType="DataGridRow">
+                                                <Setter Property="ContextMenu" Value="{StaticResource ReleaseRowMenu}"/>
+                                                <EventSetter Event="MouseDoubleClick" Handler="ReleaseRow_MouseDoubleClick"/>
+                                            </Style>
+                                        </DataGrid.Resources>
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Process" Binding="{Binding ProcessRevisionNumber}" Width="70"/>
                                             <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="130"/>
@@ -572,6 +568,69 @@
                                     </DataGrid>
                                 </StackPanel>
                             </Border>
+                            <Border Grid.Row="4" Margin="0,14,0,0" Padding="14" Background="#F6F8FA"
+                                    BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4" DataContext="{Binding Requirements}">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Delete step" Command="{Binding DeleteCommand}" />
+                                            <Button Content="Edit step" Command="{Binding BeginEditCommand}" />
+                                            <Button Content="Add step" Command="{Binding BeginAddCommand}" Margin="0" />
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="Auxiliary steps of the selected Operation" FontSize="17" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding Summary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <TextBlock Text="Inspection, deburring, packing, plating and similar steps run on Workstations, External Resources or Employees before or after the Machine. The Server places them automatically around the Machine anchor on the Timeline; the planner can pin a step there. Steps from Kitaron follow the station decisions in Setup."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <DataGrid ItemsSource="{Binding Requirements}" SelectedItem="{Binding SelectedRequirement}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MaxHeight="220">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Step" Binding="{Binding StepText}" Width="55"/>
+                                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                                            <DataGridTextColumn Header="Class" Binding="{Binding ClassLabel}" Width="90"/>
+                                            <DataGridTextColumn Header="Resource" Binding="{Binding ResourceText}" Width="*"/>
+                                            <DataGridTextColumn Header="When" Binding="{Binding DirectionLabel}" Width="70"/>
+                                            <DataGridTextColumn Header="Min / work order" Binding="{Binding PerBatchText}" Width="90"/>
+                                            <DataGridTextColumn Header="Min / part" Binding="{Binding PerPartText}" Width="80"/>
+                                            <DataGridTextColumn Header="After step" Binding="{Binding PredecessorText}" Width="*"/>
+                                            <DataGridTextColumn Header="Origin" Binding="{Binding OriginLabel}" Width="70"/>
+                                            <DataGridTextColumn Header="State" Binding="{Binding ActiveLabel}" Width="70"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Border Padding="12" Margin="0,10,0,0" Background="White" BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4"
+                                            Visibility="{Binding IsEditing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding EditorHeading}" FontWeight="Bold" Margin="0,0,0,8"/>
+                                            <UniformGrid Columns="3">
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Step name" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Name}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Step number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding StepNumber}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Resource class" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding ResourceClassOptions}" SelectedItem="{Binding ResourceClass}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsWorkstationClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Workstation type" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding WorkstationTypes}" SelectedItem="{Binding SelectedWorkstationType}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsWorkstationClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Required capability (optional)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding CapabilityText}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsExternalClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="External Resource" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding ExternalResources}" SelectedItem="{Binding SelectedExternalResource}" DisplayMemberPath="Name"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding IsEmployeeClass, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Required Skill" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding Skills}" SelectedItem="{Binding SelectedSkill}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Before or after the Machine" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding DirectionOptions}" SelectedItem="{Binding Direction}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Capacity required" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Capacity}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding HasDurations, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Minutes per work order" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MinutesPerBatch}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Visibility="{Binding HasDurations, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="Minutes per part" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding MinutesPerPart}"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}"><TextBlock Text="After step (same side of the Machine)" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding PredecessorOptions}" SelectedItem="{Binding SelectedPredecessor}" DisplayMemberPath="DisplayName"/></StackPanel>
+                                                <StackPanel Style="{StaticResource FormField}" Margin="0,20,12,8"><CheckBox Content="Active" IsChecked="{Binding IsActive}"/></StackPanel>
+                                            </UniformGrid>
+                                            <TextBlock Text="An External step takes its duration from the External Resource's promised lead time and safety buffer. FORWARD steps follow the Machine finish, BACKWARD steps precede the Machine start." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                            <DockPanel>
+                                                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                    <Button Content="Cancel" Command="{Binding CancelCommand}" />
+                                                    <Button Content="Save step" Command="{Binding SaveCommand}" Margin="0" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </StackPanel>
+                                    </Border>
+                                    <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0"
+                                               Visibility="{Binding IsEditing, Converter={StaticResource InverseBooleanToVisibilityConverter}}"/>
+                                </StackPanel>
+                            </Border>
                         </Grid>
                         </ScrollViewer>
                     </TabItem>
@@ -579,7 +638,7 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="18">
                                 <TextBlock Text="Components / Sub-Cases" FontSize="20" FontWeight="SemiBold" />
-                                <TextBlock Text="Quantity is required per one parent Case. Imported child Cases do not receive automatic Orders or Batches."
+                                <TextBlock Text="Quantity is required per one parent Case. Imported child Cases do not receive automatic Orders or Work Orders."
                                            Foreground="#667085" Margin="0,4,0,12" TextWrapping="Wrap" />
                                 <DataGrid ItemsSource="{Binding Components}" SelectedItem="{Binding SelectedComponent}"
                                           AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="150">
@@ -681,7 +740,7 @@
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderQuantity}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Work Finish Date (YYYY-MM-DD)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderWorkFinishDate}"/></StackPanel>
                                         <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Status" Style="{StaticResource FieldLabel}"/><ComboBox ItemsSource="{Binding OrderStatuses}" SelectedItem="{Binding NewOrderStatus}" MinHeight="38" Padding="7"/></StackPanel>
-                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Price" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderPrice}"/></StackPanel>
+                                        <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Price (NIS)" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderPrice}"/></StackPanel>
                                     </UniformGrid>
                                     <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewOrderNotes}" AcceptsReturn="True" MinHeight="65" TextWrapping="Wrap"/></StackPanel>
                                     <DockPanel>
@@ -703,13 +762,13 @@
                                     <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="90" />
                                     <DataGridTextColumn Header="Work Finish Date" Binding="{Binding WorkFinishDate}" Width="140" />
                                     <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="110" />
-                                    <DataGridTextColumn Header="Price" Binding="{Binding Price, StringFormat={}{0:N2}}" Width="100" />
+                                    <DataGridTextColumn Header="Price (NIS)" Binding="{Binding Price, StringFormat={}{0:N2}}" Width="100" />
                                     <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="2*" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <StackPanel Grid.Row="3" Margin="0,16,0,0">
                                 <TextBlock Text="Parent-derived Orders (read-only)" FontSize="18" FontWeight="SemiBold" />
-                                <TextBlock Text="These are projections of parent demand through component quantity. Create child Production Batches from the remaining quantity; no duplicate Order is created."
+                                <TextBlock Text="These are projections of parent demand through component quantity. Create child Work Orders from the remaining quantity; no duplicate Order is created."
                                            Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,3,0,8" />
                                 <DataGrid ItemsSource="{Binding DerivedOrders}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="120">
                                     <DataGrid.Columns>
@@ -728,7 +787,7 @@
                         </Grid>
                         </ScrollViewer>
                     </TabItem>
-                    <TabItem Header="Batches">
+                    <TabItem Header="Work Orders">
                         <TabItem.Style>
                             <Style TargetType="TabItem">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -746,15 +805,19 @@
                             </Grid.RowDefinitions>
                             <DockPanel Margin="0,0,0,8">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button Content="Delete Selected" Click="DeleteBatch_Click" IsEnabled="{Binding CanDelete}" />
+                                    <Button Content="Release" Command="{Binding ReleaseBatchCommand}"
+                                            ToolTip="Release the selected pending work order to production." />
+                                    <Button Content="Return to pending" Command="{Binding UnreleaseBatchCommand}"
+                                            ToolTip="Return the selected released work order to pending." />
+                                    <Button Content="Delete Selected" Click="DeleteBatch_Click" IsEnabled="{Binding CanDeleteSelectedBatch}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditBatchCommand}" />
                                     <Button Content="Cancel production" Click="CancelBatchProduction_Click"
                                             IsEnabled="{Binding CanCancelBatchProduction}"
-                                            ToolTip="Cancel this Batch, release active production resources, and reset Done parts to zero." />
-                                    <Button Content="Add Production Batch" Command="{Binding BeginCreateBatchCommand}" Margin="0"
+                                            ToolTip="Cancel this Work Order, release active production resources, and reset Done parts to zero." />
+                                    <Button Content="Add Work Order" Command="{Binding BeginCreateBatchCommand}" Margin="0"
                                             ToolTip="Requires at least one defined Case Operation; the Server never invents a route." />
                                 </StackPanel>
-                                <TextBlock Text="Standalone and child production launches use direct or parent-derived demand, stock, and scrap allocations."
+                                <TextBlock Text="{Binding BatchListAuthorityText}" TextWrapping="Wrap"
                                            Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                             </DockPanel>
                             <Border Grid.Row="1" Padding="12" Margin="0,0,0,10" Background="#F6F8FA"
@@ -773,7 +836,7 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding BatchFormHeading}" FontWeight="Bold" Margin="0,0,0,10" />
                                         <UniformGrid Columns="2">
-                                            <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Batch Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchNumber}"/></StackPanel>
+                                            <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Work Order Number" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchNumber}"/></StackPanel>
                                             <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Planned Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchPlannedQuantity}"/></StackPanel>
                                             <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Stock Quantity" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchStockQuantity}"/></StackPanel>
                                             <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Scrap Allowance" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding NewBatchScrapAllowance}"/></StackPanel>
@@ -787,7 +850,7 @@
                                                 <DataGridTextColumn Header="Allocate" Binding="{Binding AllocatedQuantity, UpdateSourceTrigger=PropertyChanged}" Width="100" />
                                             </DataGrid.Columns>
                                         </DataGrid>
-                                        <TextBlock Text="The Server validates that planned quantity equals all allocations and instantiates Batch Operations from the current Case route."
+                                        <TextBlock Text="The Server validates that planned quantity equals all allocations and instantiates Work Order Operations from the current Case route."
                                                    TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
                                         <DockPanel>
                                             <TextBlock Text="Status and instantiated route remain Server-owned." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
@@ -801,16 +864,51 @@
                             </Border>
                             <DataGrid Grid.Row="2" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" MinHeight="220" MaxHeight="420" ScrollViewer.VerticalScrollBarVisibility="Visible">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Batch" Binding="{Binding BatchNumber}" Width="*" />
+                                    <DataGridTextColumn Header="Work Order" Binding="{Binding BatchNumber}" Width="*" />
                                     <DataGridTextColumn Header="Status" Binding="{Binding StatusDisplay}" Width="120" />
                                     <DataGridTextColumn Header="Planned quantity" Binding="{Binding PlannedQuantity}" Width="130" />
                                     <DataGridTextColumn Header="Operations" Binding="{Binding BatchOperationCount}" Width="100" />
+                                    <DataGridTextColumn Header="Release" Binding="{Binding ReleaseDisplay}" Width="100" />
+                                    <DataGridTextColumn Header="Source" Binding="{Binding SourceDisplay}" Width="90" />
+                                    <DataGridTextColumn Header="Material" Binding="{Binding MaterialDisplay}" Width="110">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="ToolTip" Value="{Binding KitaronMaterialDetail}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Header="Material order" Binding="{Binding MaterialOrdersDisplay}" Width="200" />
                                     <DataGridTextColumn Header="Route revision" Binding="{Binding RouteRevision}" Width="110" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <Border Grid.Row="3" Padding="12" Margin="0,10,0,0" Background="#F6F8FA"
                                     BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="4">
                                 <StackPanel>
+                                    <StackPanel DataContext="{Binding WorkOrderMaterialOrders}" Margin="0,0,0,12">
+                                        <DockPanel>
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                <Button Content="Verify" Command="{Binding VerifyCommand}"
+                                                        ToolTip="Confirm that the selected Kitaron purchase line serves this Work Order." />
+                                                <Button Content="Remove verification" Command="{Binding UnverifyCommand}" Margin="8,0,0,0" />
+                                            </StackPanel>
+                                            <StackPanel>
+                                                <TextBlock Text="Kitaron material orders" FontWeight="Bold"/>
+                                                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                                                  IsReadOnly="True" CanUserAddRows="False" MaxHeight="220" Margin="0,6,0,0">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Verified" Binding="{Binding VerifiedText}" Width="120" />
+                                                <DataGridTextColumn Header="Purchase order" Binding="{Binding PurchaseOrderText}" Width="110" />
+                                                <DataGridTextColumn Header="Material" Binding="{Binding MaterialNumber}" Width="80" />
+                                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" />
+                                                <DataGridTextColumn Header="Supplier" Binding="{Binding Supplier}" Width="150" />
+                                                <DataGridTextColumn Header="Quantity" Binding="{Binding QuantityText}" Width="190" />
+                                                <DataGridTextColumn Header="Due" Binding="{Binding DueText}" Width="95" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </StackPanel>
                                     <DockPanel>
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                             <Button Content="Refresh material" Command="{Binding RefreshBatchMaterialCommand}"/>
@@ -822,7 +920,7 @@
                                         </StackPanel>
                                     </DockPanel>
                                     <TextBlock Text="{Binding BatchMaterialMessage}" TextWrapping="Wrap" Margin="0,7,0,8"/>
-                                    <TextBlock Text="Only locally verified receipts appear here. Historical Kitaron approvals never create trusted availability. Enter exactly how many pieces this Batch reserves from each receipt."
+                                    <TextBlock Text="Only locally verified receipts appear here. Historical Kitaron approvals never create trusted availability. Enter exactly how many pieces this Work Order reserves from each receipt."
                                                Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <DataGrid ItemsSource="{Binding MaterialReceiptReservations}" AutoGenerateColumns="False"
                                               CanUserAddRows="False" MinHeight="90" MaxHeight="170" Margin="0,0,0,10">
@@ -832,7 +930,7 @@
                                             <DataGridTextColumn Header="Verified" Binding="{Binding Quantity}" IsReadOnly="True" Width="80"/>
                                             <DataGridTextColumn Header="Reserved elsewhere" Binding="{Binding ReservedElsewhere}" IsReadOnly="True" Width="115"/>
                                             <DataGridTextColumn Header="Available here" Binding="{Binding AvailableToThisBatch}" IsReadOnly="True" Width="95"/>
-                                            <DataGridTextColumn Header="Reserve for Batch" Binding="{Binding ReserveQuantity, UpdateSourceTrigger=PropertyChanged}" Width="115"/>
+                                            <DataGridTextColumn Header="Reserve for Work Order" Binding="{Binding ReserveQuantity, UpdateSourceTrigger=PropertyChanged}" Width="115"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
                                     <TextBlock Text="Record a new physically verified receipt" Style="{StaticResource FieldLabel}"/>
@@ -844,7 +942,7 @@
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Record verified receipt" Command="{Binding RecordMaterialReceiptCommand}"/>
                                         <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
-                                                   Text="If material is short: edit this Batch and its explicit allocations to reduce quantity; create a second Batch for a ready/waiting split; or keep the full quantity and wait. Quantity edits recalculate the timeline and readiness."/>
+                                                   Text="If material is short: edit this Work Order and its explicit allocations to reduce quantity; create a second Work Order for a ready/waiting split; or keep the full quantity and wait. Quantity edits recalculate the timeline and readiness."/>
                                     </DockPanel>
                                 </StackPanel>
                             </Border>
@@ -867,7 +965,7 @@
                 </Border.Style>
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                     <TextBlock Text="Select a Case" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="Case form, Operations, Orders, and Batches will appear here."
+                    <TextBlock Text="Case form, Operations, Orders, and Work Orders will appear here."
                                Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" />
                 </StackPanel>
             </Border>

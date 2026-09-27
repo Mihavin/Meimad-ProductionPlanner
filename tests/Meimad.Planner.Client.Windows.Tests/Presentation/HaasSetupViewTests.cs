@@ -9,6 +9,7 @@ public sealed class HaasSetupViewTests
 
         Assert.Contains("Header=\"CNC Connection\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding MachineNcDialects}\" SelectedItem=\"{Binding MachineNcDialect}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding NcViewerMachines}\" SelectedItem=\"{Binding SelectedNcViewerMachine}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("VC1–VC200", xaml, StringComparison.Ordinal);
         // One unified picker replaces the old "Adapter Type" + "Machine telemetry source" pair.
         Assert.Contains("ItemsSource=\"{Binding ConnectionTypes}\" SelectedItem=\"{Binding SelectedConnectionType}\"", xaml, StringComparison.Ordinal);

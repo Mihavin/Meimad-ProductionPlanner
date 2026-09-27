@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
 using Meimad.Planner.Client.Windows.Presentation;
+using Meimad.Planner.Client.Windows.Localization;
 
 namespace Meimad.Planner.Client.Windows.Views;
 
@@ -20,7 +21,7 @@ public partial class SetupView : UserControl
             Filter = "Excel workbooks|*.xlsx|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
-        };
+        }.Localized();
 
         if (dialog.ShowDialog() == true && DataContext is SetupViewModel viewModel)
         {
@@ -130,7 +131,7 @@ public partial class SetupView : UserControl
             await vm.DeleteExternalResourceAsync();
     }
 
-    private static bool Confirm(string message, string title) => MessageBox.Show(
+    private static bool Confirm(string message, string title) => LocalizedMessageBox.Show(
         message,
         title,
         MessageBoxButton.YesNo,

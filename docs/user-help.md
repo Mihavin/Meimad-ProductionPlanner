@@ -28,11 +28,17 @@ The downloaded installer and its log (`install-client-update.log`) are kept unde
 
 Cases are part masters. Search by part number, name, customer, or active state. Open a Case to review its engineering preview, route, operations, dependencies, orders, batches, and revisions.
 
+Under **Operations**, the selected Operation also lists its **auxiliary steps**: inspection, deburring, packing, plating and similar work on Workstations, External Resources or Employees before or after the Machine. Add, edit or delete them with Edit Mode; steps imported from Kitaron show the origin **Kitaron**, and a step you delete is not brought back by the next synchronization. Your edit of an imported step stays until Kitaron itself changes that step.
+
+Operations imported from Kitaron follow the Kitaron route in operation-number order: the first is **INDEPENDENT** and each next one is **SEQUENTIAL** after the one before it. You can change a dependency; it stays until Kitaron changes that operation, and a **PARALLEL_CAPABLE** or **LOCKED_SIMULTANEOUS** choice is never replaced. Deleting an imported operation links the next imported operation to the one before it. Times you type on an imported operation are kept; only a real Kitaron time replaces them.
+
 The Case working folder contains the source engineering files. The Planner does not modify original CAD, NC, or customer files. Generated Planner material is kept in the designated `_MeimadPlanner` area.
 
 ### Planning Board
 
 The Planning Board has a pool of unassigned operations and one backlog per machine.
+
+The pool (**UNASSIGNED**) lists only operations that have a Machine Type and belong to a released Work Order. To plan a pending Work Order, release it in the Case first. An operation without a Machine Type, such as a text step from the Kitaron production station ייצור, appears once you set its Machine Type in the Case; set a step that is only a note to **Production Note**. Operations already on a machine stay there.
 
 - Drag an operation from the pool or between machine backlogs to assign or move it.
 - Reordering is manual. The Planner does not optimize or silently repair the plan.
@@ -49,6 +55,8 @@ Timeline is a read-only forecast calculated from the current Server snapshot. It
 
 Change the displayed horizon when needed. The separate Timeline window is also read-only; closing it does not change planning. The timeline is a consequence view, not a second place to schedule work.
 
+Below the Machine rows, **auxiliary steps** (inspection, deburring, packing, plating and other Workstation, External Resource or Employee steps of the Operation) appear on their own resource rows. The Server places them automatically around the Machine block: preparation steps end at the Machine start, following steps start at the Machine finish, chained in route order. A missing Workstation type, Skill or External Resource shows as a conflict instead of a silent gap, and a Batch whose complete route is predicted to finish after its Work Finish Date shows `delivery_at_risk`. Right-click a step to pin it to its resource (and optionally its start) or to unpin it; pins need Edit Mode and never move Machine work.
+
 ### Setup
 
 Setup contains the factory master data:
@@ -60,8 +68,20 @@ Setup contains the factory master data:
 - Employees/resources, roles, machine skills, photos, and availability
 - Material-order report and email settings
 - CNC connection settings and monitoring diagnostics
+- Per Machine: the **NC dialect** (control family of the Server-generated NC blocks) and the **NC viewer machine** (see below)
+- **Kitaron Stations**: what each Kitaron route station becomes when the connector imports the route master. Every station the synchronization has seen is listed with a suggested role; choose **Machine operation** (with the required Machine Type), **Workstation step** (with its Workstation type and default minutes per part/batch), **External resource step** (with the External Resource whose lead time applies) or **Ignore**. Undecided stations import nothing, so decide the machining stations first, then the inspection, deburring and packing stations once their Workstation types exist under Resource Types & Skills. Saving a decision makes the Server synchronize Kitaron at once, and the operation lists follow within about a minute: operations and steps that the decisions no longer produce are removed, and new ones are added. An operation that a Production Batch, a G-code release or a pin still uses stays, and the synchronization result on the Server's Kitaron page names it.
 
 Edit Mode is required for changes. Keep machine IDs stable, because employee skills, operation requirements, and historical records use them.
+
+### NC viewer
+
+Right-click a G-code release in the Case Operation history, a Machine-assigned operation on the Planning Board, or an item in the NC Creator, Tool Room and Setup Queue tabs and choose **View NC file** to open the program in the NC viewer: a 3D toolpath preview with playback, the program text, the tool table the program implies, and the machine data used for the simulation. A Server release opens **read-only** (the badge says so); *Save copy as* writes a local copy and never changes the release, and **Edit copy** continues on an editable local copy that you can save as a local version or release as a new revision. In the Release G-code form (Case → Operation → Released G-code file), **NC viewer…** opens the viewer in edit mode with the selected file, or with a new program that already carries the Meimad canonical block; inside, *New*/*Open* take any NC file, *Save* stores the modified program in the Case Working Folder under `Gcode\<Case name>\<Operation number>\<process revision>\<postprocessor name>\<local revision>` (folders are created when missing; the numbers are those of the release the program becomes), *Save as* opens that folder, **Use for G-code release** selects the saved file in the form, and **Release to Server…** releases it directly: the Server first checks that the Meimad canonical format is present (nothing is uploaded otherwise), the program is saved in the revision folder of the new release (the release is refused while the Case has no Working Folder), and the release dialog asks for the same postprocessor, change scope, comment, tool table and confirmations as the form (Edit Mode is required). **Apply Meimad Planner Format** adds the Meimad header, verification hook, event context, output line and cycle markers for the Machine's NC dialect and shows what changed and whether the result is a valid template.
+
+The preview and the Server's NC cycle-time estimate use the same interpreter and the same **NC viewer machine**, chosen per Machine in Setup: Mazak Variaxis i-500, Okuma Genos L200E-M, Haas ST-25Y, Haas VF-3SS, generic FANUC 0i-MC 3-axis and 4-axis (A along X) mills, or the vendored Haas UMC-500, Doosan DVF 5000 and Chevalier FLC-200MC. *Auto-detect* lets the engine choose from the program and the NC dialect. Okuma OSP programs (LAP cycles, `CALL`, `VC` variables, named labels), Haas one-block lathe cycles and the Variaxis A tilt are translated for the interpreter; the preview reports every translation and every approximation (for example "G86 copy turning is approximated by one G73 pass") in its messages, and rows still refer to your program. Placeholder values in the Meimad machine definitions (rotary centre, reference positions, table height) are marked *(placeholder)* in the machine panel until they are measured on the Machine; toolpath geometry and cycle time do not depend on them, machine-frame positions and travel checks do.
+
+Subprograms a lathe program calls (`M98 P9100`, `G65`, Haas `M97`) are read from the program's folder or the machine's **program memory** folder (viewer Settings, one folder per machine, lathes included; the folder is indexed by each file's `O` number, then its file name). A call that cannot be resolved is shown as a comment and listed in the messages. Viewer settings (default machine, G30 reference, initial macro variables, program-memory folders, home offsets) are per user on this PC and never reach the Server.
+
+**Stock and material removal.** The *Stock* card in the viewer's sidebar defines the raw material: a **box** or **cylinder** relative to a work offset (G54…), or an **STL file** (Browse…, or one of the machined stocks the previous Operation exported into this Operation's `Stock` folder) with an optional shift; *From toolpath* sizes a stock around the cutting moves. *Apply* shows it, *Save with program* stores it as `<program>.stock.json` next to the NC program in the Case Working Folder, so it comes back with the program. Tick **Material removal** in the preview toolbar to cut the stock: while playback runs, the stock follows the tool; while it is idle the finished part is shown; **Resolution** is the cell size in mm (empty = automatic; smaller is finer and slower). The progress bar at the bottom of the 3D view shows the cutting computation and the playback. Milling follows the tool axis the machine's rotary axes give it in the part's frame, so 3+2 positions, simultaneous rotary moves and cuts from below remove material too (the stock note counts the tilted-axis moves; the tool body a tilted tool sweeps is the tool table's length, else the program's tool length offset); turning uses the insert's nose and body side. **From selected row** makes *Run* start at the NC row selected in the editor, and with a single tool chosen in the *Tool* filter the playback and the cutting skip the other tools' moves. *Export machined stock to OPnn* writes the cut stock as binary STL into the next Operation's `Stock` folder; *Save STL as…* writes it anywhere.
 
 ## 3. Normal planning workflow
 
@@ -90,6 +110,20 @@ For a released G-code revision:
 6. Release the G-code and review the recorded verification identity in revision history.
 
 Releasing a new manufacturing-process revision makes other postprocessor releases non-current for that revision until they are regenerated. Meimad validates the insertion placeholder and stores the Server-assigned hook identity but never overwrites original NC files. Historical releases created before schema v51 remain downloadable, show the hook as unavailable, and cannot support protected NC verification until intentionally re-released with a valid placeholder.
+
+### Tool Room: measuring the tools
+
+In the **Tool Room** tab, right-click an operation and choose **Open Tool Table**. The window lists the released tool table rows (tool, description, required/optional, pocket) and lets you enter, per tool, the **offset number** (the tool number is proposed), the **measured length** and **measured diameter** in millimetres, the **tool type** (milling, hole-making and ISO turning types: external and internal turning, grooving, parting and threading tools, thread mills and more) with the dimensions that belong to the type, the **hand** of a turning holder (right, left, neutral), optionally the **catalog tool** it is (*Pick from catalog…* fills type, hand and dimensions and keeps the link; *Clear* removes the link and keeps the values) and the **components** from the holder to the cutting edge (holder, extension, collet, arbor, shank, cutter, insert) with name, catalog number, length and diameter. The preview on the right draws the assembled tool from these values; dashed outlines mark dimensions that are still unspecified. Decimal comma and decimal point are both accepted. **Save** stores a new version on the Server (no Edit Mode is needed; the version, time and user are shown at the top) and **Reload** discards unsaved entries. If somebody saved a newer version meanwhile, the save is refused and your entries are kept until you reload. **View Tool Table File** shows the released file itself, read-only.
+
+Once every *required* tool has its length, diameter and offset number, the operation's **Tool Offsets** readiness shows READY by itself: no separate confirmation in Production Readiness is needed (a confirmation you record there still counts). The preview draws only the cutter below the gauge line until you describe components; nothing is invented.
+
+**View NC file** opens the program with the operation's released tool table instead of the tool comments in the program: the descriptions come from the released rows, and from the Tool Room or Setup queue, or from a Machine-assigned operation on the Planning Board, the viewer's tool table and the 3D simulation also use the measured diameters and lengths and the cutter shapes you entered here. The status bar names the tool table revision and the Tool Room version (for example `Tool table r2 (tools.mht) + Tool Room v3`). A tool you have not described is read from its released description (type, diameter, nose radius); only a tool the program uses but the table does not list keeps the values read from the program, and the warnings say which.
+
+**Create Production Package** (measured offsets) needs a length, a diameter and an offset number for every *required* tool; the state column shows what is still **Missing**. The package then contains `tool-offsets/tool-offsets.json` and writes the offsets into the Offset Loader (or into a separate `tool-offsets` program when Server Verification is disabled for the Machine). Whether the control expects cutter offsets as radius or diameter values is a Machine setting in **Setup → Machines → Cutter offsets on the control (D values)**; the tool table window states which one applies. Saving a newer version after the package was created makes the package stale: create it again. A **Manual / Dummy Tool Offsets** package ignores the measurements; the setupist enters the offsets on the control.
+
+### Tool catalog
+
+The **Tool Catalog** tab lists the factory's tool definitions. Each tool has a Meimad **internal id** (`MT-00001`, given by the Server when you save a new tool and never reused), a name, a **type** from the same list the Tool Room uses (milling, hole making, ISO turning: external and internal turning, external, internal and face grooving, parting, external and internal threading), the **hand** of a turning holder, the type's **dimensions** with a preview, the ISO **insert and holder codes**, thread profile, material, coating and manufacturer, and any number of **external ids** with the system they belong to (supplier catalog number, ERP item, CAM tool, presetter id). Search by internal id, name, description or an external id; filter by type; tick *Include inactive* to see retired tools. **Save tool** needs no Edit Mode; if somebody saved the same tool meanwhile, the save is refused and your entries are kept until you refresh. A tool that a Tool Room preparation refers to cannot be deleted: untick *Active* instead. The catalog describes tools only; it does not count stock.
 
 ## 5. CNC connection: type, telemetry, and part identity
 
@@ -122,6 +156,8 @@ The file is only emptied after a read that ended on a complete line and only whi
 Bench auto-start and program-mismatch events still need an active program number from MDC, MTConnect, or FOCAS; with connection type **DPRNT only** the PartName is shown in monitoring and `MEIMAD/` workflow events are ingested, but no Bench is started automatically, and **Test Connection** runs the DPRNT probe.
 
 Selecting **FANUC FOCAS** as the connection type extends the DPRNT source list with **NONE**, which disables DPRNT entirely (no Part identity or workflow events); Haas connection types never offer NONE, since DPRNT is their only source of Part identity below the NC header.
+
+Part counting needs only the connection: as soon as a Machine's connection is enabled with a DPRNT source (TCP, FILE or FTP), every Production Package built for it carries the cycle start/end events, whether or not Server Verification is enabled. The protected verification programs for a Machine (challenge, verify, finalizer in its control's language) are generated by the Server from the Machine's verification configuration - `GET /api/v1/machines/{machineId}/verification-macros` downloads them as a zip with a README - and are loaded into the control's protected program area by the technician; only the Haas programs are commissioned so far.
 
 ### FANUC FOCAS connection
 
@@ -185,7 +221,7 @@ declared quantity per cycle.
 
 ## 7. Languages and responsiveness
 
-Use the language selector in the Windows client to switch between English, Hebrew, and Russian. If a screen appears stuck, wait for the current request to finish before switching again, then refresh. Avoid opening many Timeline windows or repeatedly refreshing a large horizon; each read-only calculation uses the Server snapshot.
+Use the language selector in the Windows client to switch between English, Hebrew, and Russian. Every window, tab, context menu, message box, file dialog, and the NC viewer follow the choice. Message box buttons follow the Windows display language. Names, Part Numbers, NC programs, paths, and other data stay as entered. Technical codes that help text quotes, such as NC dialects and DPRNT settings, also stay as written. If a screen appears stuck, wait for the current request to finish before switching again, then refresh. Avoid opening many Timeline windows or repeatedly refreshing a large horizon; each read-only calculation uses the Server snapshot.
 
 ## 8. Troubleshooting
 
@@ -273,3 +309,31 @@ The Server can push each customer's Order status to the cloud customer portal so
 The Server APIs and execution model support Production Runs, including multi-output planning data. Some Windows Timeline/Planning Board and TV/E-Ink cards do not yet render every Production Run field; where a Run-specific field is absent, use the operation card and Server projection as the authoritative view. The application does not yet provide automatic scheduling, ERP inventory authority, public Internet access, or native mobile editing. `SEND_TO_QC` is implemented in the Server, Windows QC flow, browser simulator, and compiled firmware; its physical tablet gesture/display behavior remains uncommissioned. Every other E-Ink write-back remains excluded.
 
 For deployment and engineering details, see the repository [README](../README.md), [functional specification](functional-spec.md), and [performance/stability audit](performance-stability-audit-2026-08-23.md).
+
+### Kitaron operations and batches
+
+For a part whose route comes from Kitaron, the operation list always equals the Kitaron route. You can change an operation's times, Machine Type and dependencies, but you cannot add or delete operations there: remap the station on the Kitaron stations page or change the route in Kitaron, and the list follows within about a minute.
+
+Production Batches come from the open Kitaron work orders. The batch number is the work-order number, and the batch list shows the source and Kitaron's material check: Available, On order (hover to see the due date), Missing, or Unknown when Kitaron has no material lines for the part. When a work order closes in Kitaron, its batch disappears unless production on it has started. The upgrade to this version removes all earlier batches, Machine backlogs and assignments, so plan the imported batches from scratch.
+
+### Material Orders
+
+The Material Orders tab lists the material purchase-order lines from Kitaron. It opens on the lines not yet received; choose another status or All statuses in the Status list, and type in Search to find a purchase order, material, description or supplier. The Status column says whether the line is received, closed, partially received, late, confirmed by the supplier or open; the Kitaron status column shows Kitaron's own status text. Press Refresh after a Kitaron synchronization to reload the list.
+
+### Releasing Kitaron batches
+
+Production Batches come only from Kitaron. A new batch is Pending; select it on the Case's Batches tab and press Release when it may go to production, or Return to pending to take it back. The Material order column names the open Kitaron purchase lines for the batch's raw material. The Material Orders tab shows each purchase line's price and the batches and customer orders that use its material.
+
+### Work Orders, assemblies, station tabs, network folder
+
+A Work Order is the Kitaron work order (formerly called a Production Batch). Assemblies can have their own operations and Work Orders. The Planning Board has Internal stations and External operations tabs that show, per station, the steps the Server scheduled around the Machine work; pin a step on the Timeline to keep it. In Setup > Network Folder, enter the shared folder as a UNC path and the drive letters people map to it, then press Save network folder: every PC then opens the same Case folders, pictures, models and G-code.
+
+A Work Order shown as "Pending (no operations)" exists in Kitaron but its Case has no operations yet, usually because a route station is undecided or set to Ignore on the Kitaron stations page. Decide the station; the next synchronization adds the operations, and the Work Order can then be released.
+
+Example: when drive J: is mapped to \\192.168.0.240\data, enter \\192.168.0.240\data as the network folder and J:\ as the alias. The preview J:\customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png is then stored as customers files\DPD\F-16\16W121-22\16W121-22-step-preview.png and every PC opens it as \\192.168.0.240\data\customers files\.... The Case browse buttons (working folder, picture, model files) open at the Case's working folder, or at the network folder when the Case has none; G-code and tool-table files may be selected from any folder.
+
+Kitaron does not record which purchase order is for which work order. On a Work Order, "Kitaron material orders" lists the open purchase lines of its raw material; select the right one and press Verify (Edit Mode). Only verified lines show in the Material order column. An operation with Machine Type "Production Note" is a note that travels with the Work Order; it is not planned on a Machine.
+
+### Filtering the Case pool
+
+Press Filters above the Case pool to open the Case pool filters window. It works like Jira: pick a value in any chip (Work Orders, Release, Supply date, Production start, Orders, Operations, Material order) and the list updates at once. All chosen chips must match together. The line under the row shows the condition, for example "12 Cases · Work Orders = With Work Orders AND Release = Pending". Clear resets every chip.

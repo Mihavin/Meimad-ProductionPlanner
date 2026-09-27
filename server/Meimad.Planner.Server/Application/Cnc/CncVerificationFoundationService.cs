@@ -69,6 +69,8 @@ internal interface ICncVerificationFoundationRepository
     Task<StoredCncVerificationSettings?> GetSettingsAsync(string machineId, CancellationToken token);
     /// <summary>The Machine's NC dialect, or null when the Machine does not exist.</summary>
     Task<string?> GetMachineNcDialectAsync(string machineId, CancellationToken token);
+    /// <summary>The Machine's number and name for generated artifacts.</summary>
+    Task<(string Number, string Name)> GetMachineIdentityAsync(string machineId, CancellationToken token);
     Task<StoredCncVerificationSettings> UpsertSettingsAsync(
         StoredCncVerificationSettings settings, int expectedVersion,
         EditAuthority authority, CancellationToken token);
@@ -128,6 +130,33 @@ internal sealed class CncVerificationFoundationService
         Required(machineId, "machineId");
         var value = await repository.GetSettingsAsync(machineId.Trim(), token);
         return value is null ? null : Public(value);
+    }
+
+    /// <summary>
+    /// The Machine's protected verification subprograms in its dialect: from its configuration
+    /// when one exists (enabled or not), else from the dialect's documented defaults. Null when
+    /// the Machine does not exist.
+    /// </summary>
+    internal async Task<NcVerificationMacroPackage?> GenerateMacrosAsync(
+        string machineId, CancellationToken token = default)
+    {
+        Required(machineId, "machineId");
+        var dialectId = await repository.GetMachineNcDialectAsync(machineId.Trim(), token);
+        if (dialectId is null) return null;
+        var dialect = NcDialects.Profile(dialectId);
+        var stored = await repository.GetSettingsAsync(machineId.Trim(), token);
+        var settings = stored is null
+            ? NcVerificationMacroGenerator.DefaultSettings(dialect)
+            : new NcVerificationMacroSettings(
+                stored.ChallengeProgramNumber, stored.VerifyProgramNumber,
+                stored.FinalizeProgramNumber ?? NcVerificationMacroGenerator.DefaultSettings(dialect).FinalizeProgramNumber,
+                stored.NonceVariable, stored.ResponseVariable, stored.VerificationStateVariable,
+                stored.ReleaseTokenVariable,
+                stored.EventSequenceVariable ?? dialect.DefaultEventSequenceVariable,
+                stored.ExpectedMacroVersion, stored.ResponseCodeDigits, stored.VerificationTimeoutSeconds,
+                FromConfiguration: true);
+        var identity = await repository.GetMachineIdentityAsync(machineId.Trim(), token);
+        return NcVerificationMacroGenerator.Generate(dialect, settings, identity.Number, identity.Name);
     }
 
     internal async Task<CncVerificationSettings> UpdateSettingsAsync(

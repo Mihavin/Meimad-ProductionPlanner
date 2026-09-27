@@ -21,16 +21,20 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         Stage = stage;
         Title = title;
         Description = description;
-        status = $"Connect to view {title.ToLowerInvariant()}.";
+        // The title stays as written so the status translates through the catalog.
+        status = $"Connect to view {title}.";
         RefreshCommand = new AsyncCommand(RefreshAsync, () => api is not null && !isBusy);
         OpenCaseCommand = new AsyncCommand(() => RequestActionAsync("OPEN_CASE"), CanUseSelected);
         OpenOperationCommand = new AsyncCommand(() => RequestActionAsync("OPEN_OPERATION"), CanUseSelected);
         UploadGCodeCommand = new AsyncCommand(() => RequestActionAsync("UPLOAD_GCODE"),
             () => CanUseSelected() && Stage == "PROGRAMMING_PENDING");
         OpenToolTableCommand = new AsyncCommand(OpenToolTableAsync,
-            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
+            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING" && Selected?.ToolTableReleaseId is not null);
+        ViewToolTableFileCommand = new AsyncCommand(ViewToolTableFileAsync,
+            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING" && Selected?.ToolTableReleaseId is not null);
+        // Every queue (NC Creator, Tool Room, Setup) can open the operation's NC release in the viewer.
         ViewNcFileCommand = new AsyncCommand(ViewNcFileAsync,
-            () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
+            () => CanUseSelected() && Selected?.GCodeReleaseId is not null);
         CreateProductionPackageCommand = new AsyncCommand(CreateProductionPackageAsync,
             () => CanUseSelected() && Stage == "TOOL_PREPARATION_PENDING");
         CreateManualOffsetProductionPackageCommand = new AsyncCommand(CreateManualOffsetProductionPackageAsync,
@@ -50,6 +54,7 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
     public AsyncCommand OpenOperationCommand { get; }
     public AsyncCommand UploadGCodeCommand { get; }
     public AsyncCommand OpenToolTableCommand { get; }
+    public AsyncCommand ViewToolTableFileCommand { get; }
     public AsyncCommand ViewNcFileCommand { get; }
     public AsyncCommand CreateProductionPackageCommand { get; }
     public AsyncCommand CreateManualOffsetProductionPackageCommand { get; }
@@ -89,7 +94,27 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
-    private async Task OpenToolTableAsync()
+    /// <summary>
+    /// Opens the editable tool table: the released tool rows merged with the latest Tool Room
+    /// measurements, shapes and components. Saving appends a version on the Server; the
+    /// Production Package (Offset Loader) uses the latest version.
+    /// </summary>
+    internal async Task OpenToolTableAsync()
+    {
+        if (api is not { } client || Selected is not { } item) return;
+        await RunActionAsync(async () =>
+        {
+            var preparation = await client.GetToolPreparationAsync(item.BatchOperationId);
+            var editor = new ToolPreparation.ToolPreparationViewModel(client, clientId, userId, preparation);
+            ActionRequested?.Invoke(this, new("OPEN_TOOL_PREPARATION", item, editor));
+            Status = preparation.Version == 0
+                ? "Tool table opened; no measurements were saved yet."
+                : "Tool table opened with the latest saved measurements.";
+        });
+    }
+
+    /// <summary>Shows the released Tool Table file itself, read-only, as the postprocessor produced it.</summary>
+    private async Task ViewToolTableFileAsync()
     {
         if (api is null || Selected?.CaseId is null || Selected.CaseOperationId is null
             || Selected.ToolTableReleaseId is null) return;
@@ -104,14 +129,19 @@ internal sealed class PreparationQueueViewModel : INotifyPropertyChanged
 
     private async Task ViewNcFileAsync()
     {
-        if (api is null || Selected?.CaseId is null || Selected.CaseOperationId is null
-            || Selected.GCodeReleaseId is null) return;
+        if (api is not { } client
+            || Selected is not { CaseId: { } caseId, CaseOperationId: { } operationId, GCodeReleaseId: { } releaseId } item)
+        {
+            return;
+        }
         await RunActionAsync(async () =>
         {
-            var text = await api.ReadGCodeFileTextAsync(
-                Selected.CaseId, Selected.CaseOperationId, Selected.GCodeReleaseId);
-            ActionRequested?.Invoke(this, new("VIEW_NC_READ_ONLY", Selected, text));
-            Status = "Current NC release opened read-only.";
+            var request = await NcViewer.NcViewerRequests.ForReleaseAsync(
+                client, caseId, operationId, releaseId, item.MachineId,
+                $"{item.PartText} · {item.OperationText} · {item.MachineText}",
+                item.BatchOperationId);
+            ActionRequested?.Invoke(this, new("VIEW_NC_READ_ONLY", item, request));
+            Status = "NC release opened read-only in the NC viewer.";
         });
     }
 

@@ -80,7 +80,7 @@ internal sealed class ClientPortalPushService(
         // The repository filter is a substring match (same as GET /api/v1/cases?customer=);
         // keep only an exact, case-insensitive match so a same-substring different
         // customer is never pushed under this customer id.
-        var matchingCases = (await cases.ListAsync(null, needle, null, CaseSortOrder.PartNumber, cancellationToken))
+        var matchingCases = (await cases.ListAsync(null, needle, null, CaseSortOrder.PartNumber, CaseListFilter.None, cancellationToken))
             .Where(c => string.Equals((c.Customer ?? string.Empty).Trim(), needle, StringComparison.OrdinalIgnoreCase))
             .ToList();
 

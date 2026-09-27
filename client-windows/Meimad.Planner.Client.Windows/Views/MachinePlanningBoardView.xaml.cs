@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using Meimad.Planner.Client.Windows.Presentation;
 using Microsoft.Win32;
+using Meimad.Planner.Client.Windows.Localization;
 
 namespace Meimad.Planner.Client.Windows.Views;
 
@@ -34,7 +35,7 @@ public partial class MachinePlanningBoardView : UserControl
         var operations = OperationPool.SelectedItems.Cast<PlanningOperationViewModel>().ToArray();
         if (operations.Length == 0)
         {
-            MessageBox.Show("Select one or more unallocated operations first.", "Create Production Run", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show("Select one or more unallocated operations first.", "Create Production Run", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         var dialog = new ProductionRunDialog(new ProductionRunDialogViewModel(operations)) { Owner = Window.GetWindow(this) };
@@ -55,7 +56,7 @@ public partial class MachinePlanningBoardView : UserControl
             Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
             CheckFileExists = true,
             Multiselect = false
-        };
+        }.Localized();
         if (dialog.ShowDialog() == true)
         {
             viewModel.SetMachinePictureSelection(dialog.FileName);
@@ -73,7 +74,7 @@ public partial class MachinePlanningBoardView : UserControl
     {
         if (sender is Button { DataContext: PlanningMachineColumnViewModel machine }
             && DataContext is MachinePlanningBoardViewModel viewModel
-            && MessageBox.Show(
+            && LocalizedMessageBox.Show(
                 $"Delete Machine {machine.DisplayName}? Its backlog, downtime, device binding, and official package references must be empty.",
                 "Delete Machine", MessageBoxButton.YesNo, MessageBoxImage.Warning,
                 MessageBoxResult.No) == MessageBoxResult.Yes)
@@ -141,7 +142,7 @@ public partial class MachinePlanningBoardView : UserControl
         if (!int.TryParse(value.Trim(), System.Globalization.NumberStyles.Integer,
                 System.Globalization.CultureInfo.InvariantCulture, out var priority) || priority < 0)
         {
-            MessageBox.Show("Setup priority must be a whole number of 0 or higher.",
+            LocalizedMessageBox.Show("Setup priority must be a whole number of 0 or higher.",
                 "Setup priority", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -160,11 +161,32 @@ public partial class MachinePlanningBoardView : UserControl
         var context = viewModel.CreateModelViewerContext();
         if (context is null)
         {
-            MessageBox.Show("Connect to the Server before opening the 3D viewer.", "View in 3D",
+            LocalizedMessageBox.Show("Connect to the Server before opening the 3D viewer.", "View in 3D",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         ModelViewerWindow.Open(Window.GetWindow(this), context, operation.CaseId, operation.DisplayTitle);
+    }
+
+    private async void ViewNcFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryResolveContextOperation(sender, out var operation, out var viewModel)) return;
+        try
+        {
+            var request = await viewModel.CreateNcViewerRequestAsync(operation);
+            if (request is null)
+            {
+                LocalizedMessageBox.Show("This operation has no effective NC release on its Machine yet, or the Server is not connected.",
+                    "View NC file", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            NcViewerWindow.Open(request);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // An async void handler must not let a Server or file error reach the Dispatcher.
+            LocalizedMessageBox.Show(exception.Message, "View NC file", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private bool TryResolveContextOperation(
@@ -247,7 +269,7 @@ public partial class MachinePlanningBoardView : UserControl
             && DataContext is MachinePlanningBoardViewModel viewModel)
         {
             if (action == "finish"
-                && MessageBox.Show(
+                && LocalizedMessageBox.Show(
                     $"Finish {operation.DisplayTitle}? This removes it from the active Machine backlog.",
                     "Finish operation",
                     MessageBoxButton.YesNo,
@@ -258,7 +280,7 @@ public partial class MachinePlanningBoardView : UserControl
             }
 
             if (action == "reset"
-                && MessageBox.Show(
+                && LocalizedMessageBox.Show(
                     $"Reset {operation.DisplayTitle} to Not started? Its machine assignment and backlog position will be kept.",
                     "Reset operation",
                     MessageBoxButton.YesNo,

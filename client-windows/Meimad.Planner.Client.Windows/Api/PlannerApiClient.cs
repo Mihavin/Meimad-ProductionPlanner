@@ -168,6 +168,13 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ProductionBatch> SetBatchReleaseStateAsync(
+        string batchId,
+        bool released,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<ProductionBatch> CancelBatchProductionAsync(
         string batchId,
         CancelProductionBatchRequest request,
@@ -228,6 +235,25 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<QcQueueItem>>([]);
 
+    Task<IReadOnlyList<KitaronMaterialOrder>> ListKitaronMaterialOrdersAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<KitaronMaterialOrder>>([]);
+
+    Task<IReadOnlyList<WorkOrderMaterialOrder>> ListWorkOrderMaterialOrdersAsync(
+        string batchId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<WorkOrderMaterialOrder>>([]);
+
+    Task<IReadOnlyList<WorkOrderMaterialOrder>> SetWorkOrderMaterialOrderVerifiedAsync(
+        string batchId, string sourceKey, bool verified, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<NetworkFolderSettings> GetNetworkFolderAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new NetworkFolderSettings(null, [], "Meimad Cases", 1, DateTimeOffset.UnixEpoch));
+
+    Task<NetworkFolderSettings> UpdateNetworkFolderAsync(
+        NetworkFolderUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
         string stage,
         CancellationToken cancellationToken = default) =>
@@ -252,6 +278,54 @@ internal interface IPlannerApiClient : IDisposable
 
     Task<byte[]> ReadToolTableFileAsync(
         string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>The released tool rows of the operation on its assigned Machine with the latest saved measurements.</summary>
+    Task<PlannerToolPreparation> GetToolPreparationAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Saves the next immutable tool preparation version (no Edit Mode; identified like package creation).</summary>
+    Task<PlannerToolPreparation> SaveToolPreparationAsync(
+        string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>The tool catalog; `query` matches internal codes, names, descriptions and external ids.</summary>
+    Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
+        string? query, string? toolType, bool includeInactive,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<PlannerCatalogTool> GetCatalogToolAsync(
+        string catalogToolId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Creates a catalog tool; the Server assigns the internal id (no Edit Mode; identified like the Tool Room).</summary>
+    Task<PlannerCatalogTool> CreateCatalogToolAsync(
+        CatalogToolUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Replaces a catalog tool at the update's expected version.</summary>
+    Task<PlannerCatalogTool> UpdateCatalogToolAsync(
+        string catalogToolId, CatalogToolUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Deletes an unreferenced catalog tool; a referenced one fails with `tool_catalog_in_use`.</summary>
+    Task DeleteCatalogToolAsync(
+        string catalogToolId, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>The immutable released NC file exactly as stored (encoding and line endings kept).</summary>
+    Task<byte[]> ReadGCodeFileBytesAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Server-side "Apply Meimad Planner Format"; stateless, needs no Edit Mode.</summary>
+    Task<NcTemplateFormatResult> FormatNcTemplateAsync(
+        string text, string ncDialect,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>The Server's canonical-template check a release must pass; stateless.</summary>
+    Task<NcTemplateValidation> ValidateNcTemplateAsync(
+        string text,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     Task<QcDecisionResult> DecideQcAsync(
@@ -529,6 +603,16 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<PlannerExternalResource> UpdateExternalResourceAsync(string id,ExternalResourceUpdate update,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
     Task DeleteExternalResourceAsync(string id,int version,string clientId,long editGeneration,CancellationToken cancellationToken=default)=>throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerOperationRequirement>> ListOperationRequirementsAsync(string caseOperationId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerOperationRequirement>>([]);
+    Task<PlannerOperationRequirement> CreateOperationRequirementAsync(string caseOperationId, OperationRequirementCreate create, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<PlannerOperationRequirement> UpdateOperationRequirementAsync(string requirementId, OperationRequirementUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task DeleteOperationRequirementAsync(string requirementId, int version, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<IReadOnlyList<PlannerKitaronStation>> ListKitaronStationsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<PlannerKitaronStation>>([]);
+    Task<PlannerKitaronStation> DecideKitaronStationAsync(int kitaronStationId, KitaronStationDecision decision, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<TimelineAuxiliaryPin> SetTimelineAuxiliaryPinAsync(TimelineAuxiliaryPinRequest request, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(new PlannerEmployeeSkills(employeeId, []));
@@ -989,6 +1073,15 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             parameters.Add($"isActive={query.IsActive.Value.ToString().ToLowerInvariant()}");
         }
         AddQueryParameter(parameters, "sort", query.Sort);
+        AddQueryParameter(parameters, "workOrders", query.WorkOrders);
+        AddQueryParameter(parameters, "release", query.Release);
+        AddQueryParameter(parameters, "orders", query.Orders);
+        AddQueryParameter(parameters, "operations", query.Operations);
+        AddQueryParameter(parameters, "materialOrders", query.MaterialOrders);
+        AddQueryParameter(parameters, "supplyFrom", query.SupplyFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        AddQueryParameter(parameters, "supplyTo", query.SupplyTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        AddQueryParameter(parameters, "startFrom", query.StartFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        AddQueryParameter(parameters, "startTo", query.StartTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
 
         var path = "api/v1/cases" + (parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters));
         using var response = await httpClient.GetAsync(path, cancellationToken);
@@ -1425,6 +1518,24 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
     }
 
+    public async Task<ProductionBatch> SetBatchReleaseStateAsync(
+        string batchId,
+        bool released,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/{(released ? "release" : "unrelease")}",
+            clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
+    }
+
     public async Task<BatchMaterialReconciliation> GetBatchMaterialAsync(
         string batchId,
         CancellationToken cancellationToken = default)
@@ -1636,6 +1747,45 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<QcQueueItem>("api/v1/qc-queue", cancellationToken);
 
+    public async Task<IReadOnlyList<WorkOrderMaterialOrder>> ListWorkOrderMaterialOrdersAsync(
+        string batchId, CancellationToken cancellationToken = default) =>
+        await ReadListAsync<WorkOrderMaterialOrder>(
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/material-orders", cancellationToken);
+
+    public async Task<IReadOnlyList<WorkOrderMaterialOrder>> SetWorkOrderMaterialOrderVerifiedAsync(
+        string batchId, string sourceKey, bool verified, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            verified ? HttpMethod.Put : HttpMethod.Delete,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/material-orders/{Uri.EscapeDataString(sourceKey)}",
+            clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return (await ReadSuccessAsync<WorkOrderMaterialOrderList>(response, cancellationToken)).Items;
+    }
+
+    public async Task<NetworkFolderSettings> GetNetworkFolderAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/network-folder", cancellationToken);
+        return await ReadSuccessAsync<NetworkFolderSettings>(response, cancellationToken);
+    }
+
+    public async Task<NetworkFolderSettings> UpdateNetworkFolderAsync(
+        NetworkFolderUpdate update, string clientId, long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/network-folder", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(update);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<NetworkFolderSettings>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<KitaronMaterialOrder>> ListKitaronMaterialOrdersAsync(
+        CancellationToken cancellationToken = default) =>
+        await ReadListAsync<KitaronMaterialOrder>("api/v1/kitaron/material-orders", cancellationToken);
+
     public async Task<IReadOnlyList<PreparationQueueItem>> ListPreparationQueueAsync(
         string stage,
         CancellationToken cancellationToken = default) =>
@@ -1689,6 +1839,34 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         return Encoding.UTF8.GetString(bytes);
     }
 
+    public async Task<byte[]> ReadGCodeFileBytesAsync(
+        string caseId, string caseOperationId, string releaseId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/gcode-releases/{Uri.EscapeDataString(releaseId)}/file",
+            cancellationToken);
+        return await ReadBytesSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<NcTemplateFormatResult> FormatNcTemplateAsync(
+        string text, string ncDialect,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/nc-programs/meimad-format", new { text, ncDialect }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<NcTemplateFormatResult>(response, cancellationToken);
+    }
+
+    public async Task<NcTemplateValidation> ValidateNcTemplateAsync(
+        string text,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/nc-programs/validate", new { text }, JsonOptions, cancellationToken);
+        return await ReadSuccessAsync<NcTemplateValidation>(response, cancellationToken);
+    }
+
     public async Task<byte[]> ReadToolTableFileAsync(
         string caseId, string caseOperationId, string releaseId,
         CancellationToken cancellationToken = default)
@@ -1697,6 +1875,76 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/tool-table-releases/{Uri.EscapeDataString(releaseId)}/file",
             cancellationToken);
         return await ReadBytesSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task<PlannerToolPreparation> GetToolPreparationAsync(
+        string batchOperationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation",
+            cancellationToken);
+        return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
+    }
+
+    public async Task<PlannerToolPreparation> SaveToolPreparationAsync(
+        string batchOperationId, ToolPreparationUpdate update, string clientId, string userId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/tool-preparation",
+            clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerToolPreparation>(response, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PlannerCatalogTool>> ListCatalogToolsAsync(
+        string? query, string? toolType, bool includeInactive,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new List<string>();
+        if (!string.IsNullOrWhiteSpace(query)) parameters.Add($"query={Uri.EscapeDataString(query.Trim())}");
+        if (!string.IsNullOrWhiteSpace(toolType)) parameters.Add($"type={Uri.EscapeDataString(toolType.Trim())}");
+        if (includeInactive) parameters.Add("includeInactive=true");
+        var url = "api/v1/tool-catalog" + (parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters));
+        return await ReadListAsync<PlannerCatalogTool>(url, cancellationToken);
+    }
+
+    public async Task<PlannerCatalogTool> GetCatalogToolAsync(string catalogToolId, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/tool-catalog/{Uri.EscapeDataString(catalogToolId)}", cancellationToken);
+        return await ReadSuccessAsync<PlannerCatalogTool>(response, cancellationToken);
+    }
+
+    public async Task<PlannerCatalogTool> CreateCatalogToolAsync(
+        CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/tool-catalog", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerCatalogTool>(response, cancellationToken);
+    }
+
+    public async Task<PlannerCatalogTool> UpdateCatalogToolAsync(
+        string catalogToolId, CatalogToolUpdate update, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, $"api/v1/tool-catalog/{Uri.EscapeDataString(catalogToolId)}", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        request.Content = JsonContent.Create(update, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerCatalogTool>(response, cancellationToken);
+    }
+
+    public async Task DeleteCatalogToolAsync(
+        string catalogToolId, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Delete, $"api/v1/tool-catalog/{Uri.EscapeDataString(catalogToolId)}", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
 
     public async Task<QcDecisionResult> DecideQcAsync(
@@ -2385,6 +2633,45 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         PostResourceAsync<PlannerExternalResource>("api/v1/resources/external", create, clientId, editGeneration, cancellationToken);
     public Task<PlannerExternalResource> UpdateExternalResourceAsync(string id,ExternalResourceUpdate value,string clientId,long generation,CancellationToken token=default)=>PatchResourceAsync<PlannerExternalResource>($"api/v1/resources/external/{Uri.EscapeDataString(id)}",value,clientId,generation,token);
     public Task DeleteExternalResourceAsync(string id,int version,string clientId,long generation,CancellationToken token=default)=>DeleteAsync($"api/v1/resources/external/{Uri.EscapeDataString(id)}?version={version}",clientId,generation,token);
+
+    public async Task<IReadOnlyList<PlannerOperationRequirement>> ListOperationRequirementsAsync(string caseOperationId, CancellationToken cancellationToken = default) =>
+        await ReadArrayAsync<PlannerOperationRequirement>($"api/v1/case-operations/{Uri.EscapeDataString(caseOperationId)}/resource-requirements", cancellationToken);
+
+    public Task<PlannerOperationRequirement> CreateOperationRequirementAsync(string caseOperationId, OperationRequirementCreate create, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        PostResourceAsync<PlannerOperationRequirement>($"api/v1/case-operations/{Uri.EscapeDataString(caseOperationId)}/resource-requirements", create, clientId, editGeneration, cancellationToken);
+
+    public Task<PlannerOperationRequirement> UpdateOperationRequirementAsync(string requirementId, OperationRequirementUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        PatchResourceAsync<PlannerOperationRequirement>($"api/v1/resource-requirements/{Uri.EscapeDataString(requirementId)}", update, clientId, editGeneration, cancellationToken);
+
+    public Task DeleteOperationRequirementAsync(string requirementId, int version, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/resource-requirements/{Uri.EscapeDataString(requirementId)}?version={version}", clientId, editGeneration, cancellationToken);
+
+    public async Task<IReadOnlyList<PlannerKitaronStation>> ListKitaronStationsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/kitaron/stations", cancellationToken);
+        return (await ReadSuccessAsync<PlannerKitaronStationList>(response, cancellationToken)).Items;
+    }
+
+    public async Task<PlannerKitaronStation> DecideKitaronStationAsync(int kitaronStationId, KitaronStationDecision decision, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, $"api/v1/kitaron/stations/{kitaronStationId.ToString(CultureInfo.InvariantCulture)}", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(decision, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerKitaronStation>(response, cancellationToken);
+    }
+
+    public async Task<TimelineAuxiliaryPin> SetTimelineAuxiliaryPinAsync(TimelineAuxiliaryPinRequest pin, string clientId, long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, "api/v1/timeline/auxiliary-pins", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(pin, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<TimelineAuxiliaryPin>(response, cancellationToken);
+    }
+
+    public Task ClearTimelineAuxiliaryPinAsync(string batchOperationId, string requirementId, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+        DeleteAsync($"api/v1/timeline/auxiliary-pins/{Uri.EscapeDataString(batchOperationId)}/{Uri.EscapeDataString(requirementId)}", clientId, editGeneration, cancellationToken);
 
     public async Task<PlannerEmployeeSkills> GetEmployeeSkillsAsync(string employeeId,
         CancellationToken cancellationToken = default)

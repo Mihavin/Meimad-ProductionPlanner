@@ -139,7 +139,13 @@ internal sealed class SqlitePreparationQueueRepository(SqliteDatabase database)
                   AND ((package.verification_enabled=0 AND COALESCE(settings.enabled,0)=0)
                        OR (package.verification_enabled=1 AND settings.enabled=1
                            AND settings.version=package.verification_configuration_version
-                           AND settings.expected_macro_version=package.verification_macro_version)));
+                           AND settings.expected_macro_version=package.verification_macro_version))
+                  AND (package.tool_offset_mode<>'MEASURED'
+                       OR package.tool_preparation_id IS (
+                           SELECT preparation.id FROM tool_preparations preparation
+                           WHERE preparation.batch_operation_id=package.batch_operation_id
+                             AND preparation.machine_id=package.machine_id
+                           ORDER BY preparation.version_number DESC LIMIT 1)));
             """;
         command.Parameters.AddWithValue("$operationId", operationId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;

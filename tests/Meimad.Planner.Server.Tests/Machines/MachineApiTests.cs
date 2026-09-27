@@ -693,6 +693,99 @@ public sealed class MachineApiTests
         });
     }
 
+    [Fact]
+    public async Task Machine_NC_viewer_machine_round_trips_and_must_be_an_installed_engine_definition()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            var id = await CreateMachineAsync(client, "M-VF3", "mill", []);
+            using var created = await client.GetAsync($"/api/v1/machines/{id}");
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, createdJson.RootElement.GetProperty("ncViewerMachine").ValueKind);
+
+            using var malformed = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncViewerMachine = "Haas VF-3SS" }) };
+            malformed.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var rejectedGrammar = await client.SendAsync(malformed);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejectedGrammar.StatusCode);
+            Assert.Contains("invalid_nc_viewer_machine", await rejectedGrammar.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            // A well-formed id must exist in the NC engine catalog installed with the Server.
+            using var unknown = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncViewerMachine = "no-such-machine" }) };
+            unknown.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var rejectedUnknown = await client.SendAsync(unknown);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejectedUnknown.StatusCode);
+            var unknownBody = await rejectedUnknown.Content.ReadAsStringAsync();
+            Assert.Contains("unknown_nc_viewer_machine", unknownBody, StringComparison.Ordinal);
+            Assert.Contains("mazak-variaxis-i-500", unknownBody, StringComparison.Ordinal);
+
+            using var change = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncViewerMachine = "haas-vf-3ss" }) };
+            change.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var changed = await client.SendAsync(change);
+            Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+            using var changedJson = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
+            Assert.Equal("haas-vf-3ss", changedJson.RootElement.GetProperty("ncViewerMachine").GetString());
+
+            using var listed = await client.GetAsync("/api/v1/machines");
+            using var listedJson = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
+            var item = listedJson.RootElement.GetProperty("items").EnumerateArray()
+                .Single(machine => machine.GetProperty("machineId").GetString() == id);
+            Assert.Equal("haas-vf-3ss", item.GetProperty("ncViewerMachine").GetString());
+
+            // "auto" and null both mean automatic detection.
+            using var clear = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { ncViewerMachine = "auto" }) };
+            clear.Headers.IfMatch.Add(new EntityTagHeaderValue(changed.Headers.ETag!.Tag));
+            using var cleared = await client.SendAsync(clear);
+            Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+            using var clearedJson = JsonDocument.Parse(await cleared.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, clearedJson.RootElement.GetProperty("ncViewerMachine").ValueKind);
+        });
+    }
+
+    [Fact]
+    public async Task Machine_tool_diameter_offset_kind_defaults_to_radius_and_accepts_only_radius_or_diameter()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+
+            var id = await CreateMachineAsync(client, "M-D40", "mill", []);
+            using var created = await client.GetAsync($"/api/v1/machines/{id}");
+            using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            Assert.Equal("RADIUS", createdJson.RootElement.GetProperty("toolDiameterOffsetKind").GetString());
+
+            using var invalid = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { toolDiameterOffsetKind = "INCHES" }) };
+            invalid.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var rejected = await client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+            Assert.Contains("invalid_tool_diameter_offset_kind", await rejected.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            using var change = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
+            { Content = JsonContent.Create(new { toolDiameterOffsetKind = "diameter" }) };
+            change.Headers.IfMatch.Add(new EntityTagHeaderValue(created.Headers.ETag!.Tag));
+            using var changed = await client.SendAsync(change);
+            Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+            using var changedJson = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
+            Assert.Equal("DIAMETER", changedJson.RootElement.GetProperty("toolDiameterOffsetKind").GetString());
+
+            using var listed = await client.GetAsync("/api/v1/machines");
+            using var listedJson = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
+            var item = listedJson.RootElement.GetProperty("items").EnumerateArray()
+                .Single(machine => machine.GetProperty("machineId").GetString() == id);
+            Assert.Equal("DIAMETER", item.GetProperty("toolDiameterOffsetKind").GetString());
+        });
+    }
+
     private static async Task<string> CreateMachineAsync(
         HttpClient client,
         string number,
@@ -865,8 +958,8 @@ public sealed class MachineApiTests
             VALUES ('case-1', 'PN-API-M', 'Machine API', 'C:\Cases\PN-API-M');
 
             INSERT INTO production_batches (
-                id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-API-M', 'waiting', 1);
+                id, case_id, batch_number, status, planned_quantity, release_state)
+            VALUES ('batch-1', 'case-1', 'B-API-M', 'waiting', 1, 'released');
 
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name, required_machine_type)

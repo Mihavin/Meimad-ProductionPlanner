@@ -28,6 +28,13 @@ internal interface IProductionBatchRepository
         string batchId,
         CancellationToken cancellationToken);
 
+    Task<ProductionBatch?> SetReleaseStateAsync(
+        string batchId,
+        bool released,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ProductionBatch>> ListByCaseAsync(
         string caseId,
         CancellationToken cancellationToken);

@@ -1,10 +1,11 @@
 using System.Collections.Specialized;
-using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Markup;
 using System.Windows.Media;
@@ -12,18 +13,70 @@ using System.Windows.Threading;
 
 namespace Meimad.Planner.Client.Windows.Localization;
 
+// Applies the current language to the interface text of every WPF window.
+//
+// WPF raises Loaded only inside subtrees that declare a Loaded handler, so a plain TextBlock
+// realized later (a tab page shown for the first time, an item template, a timeline block built
+// in code, a context menu) never receives it. Text is therefore localized:
+//   - in every open window after it loads and after each language change;
+//   - for each element the first time layout gives it a size, because SizeChanged reaches every
+//     element that layout sizes;
+//   - in a tab page after it is shown, once layout has put the page into the visual tree, so a
+//     page that was hidden during a language change catches up;
+//   - in a context menu whenever it opens.
+// A localized value is observed through a binding that the element itself holds, so observing
+// it never keeps a closed window or a discarded item template alive.
 internal static class LocalizationBehavior
 {
     private static readonly ConditionalWeakTable<DependencyObject, Dictionary<DependencyProperty, LocalizedValue>> Values = new();
     private static readonly ConditionalWeakTable<object, object> ObservedColumnCollections = new();
     private static readonly ConditionalWeakTable<DependencyObject, DeferredLocalization> DeferredLocalizations = new();
     private static readonly ConditionalWeakTable<Window, object> InitializedWindows = new();
+    private static readonly ConditionalWeakTable<FrameworkElement, object> RealizedElements = new();
+    private static readonly object Marker = new();
+    private static readonly Dictionary<DependencyProperty, DependencyProperty> ObserverByProperty = new();
+    private static readonly Dictionary<DependencyProperty, DependencyProperty> PropertyByObserver = new();
     private static DispatcherOperation? pendingRelocalization;
     private static long applyCount;
     private static long fullTreePassCount;
     private static long visitedObjectCount;
     private static long languageChangeCount;
     private static bool initialized;
+
+    static LocalizationBehavior()
+    {
+        DependencyProperty[] watched =
+        [
+            FrameworkElement.ToolTipProperty,
+            AutomationProperties.NameProperty,
+            AutomationProperties.HelpTextProperty,
+            TextBlock.TextProperty,
+            ContentControl.ContentProperty,
+            ContentPresenter.ContentProperty,
+            HeaderedContentControl.HeaderProperty,
+            HeaderedItemsControl.HeaderProperty,
+            Window.TitleProperty,
+            DataGridColumn.HeaderProperty,
+            GridViewColumn.HeaderProperty,
+            Run.TextProperty
+        ];
+        foreach (var property in watched)
+        {
+            // Owners that share one property through AddOwner share its observer.
+            if (ObserverByProperty.ContainsKey(property))
+            {
+                continue;
+            }
+
+            var observer = DependencyProperty.RegisterAttached(
+                "ObservedText" + ObserverByProperty.Count.ToString(CultureInfo.InvariantCulture),
+                typeof(object),
+                typeof(LocalizationBehavior),
+                new PropertyMetadata(null, OnObservedValueChanged));
+            ObserverByProperty.Add(property, observer);
+            PropertyByObserver.Add(observer, property);
+        }
+    }
 
     internal static LocalizationDiagnostics Diagnostics => new(
         Interlocked.Read(ref applyCount),
@@ -51,6 +104,11 @@ internal static class LocalizationBehavior
             new RoutedEventHandler(OnElementLoaded),
             handledEventsToo: true);
         EventManager.RegisterClassHandler(
+            typeof(FrameworkElement),
+            FrameworkElement.SizeChangedEvent,
+            new SizeChangedEventHandler(OnElementSizeChanged),
+            handledEventsToo: true);
+        EventManager.RegisterClassHandler(
             typeof(Window),
             FrameworkElement.LoadedEvent,
             new RoutedEventHandler(OnWindowLoaded),
@@ -59,6 +117,11 @@ internal static class LocalizationBehavior
             typeof(TabControl),
             Selector.SelectionChangedEvent,
             new SelectionChangedEventHandler(OnTabSelectionChanged),
+            handledEventsToo: true);
+        EventManager.RegisterClassHandler(
+            typeof(ContextMenu),
+            ContextMenu.OpenedEvent,
+            new RoutedEventHandler(OnContextMenuOpened),
             handledEventsToo: true);
         LocalizationService.Current.LanguageChanged += static (_, _) => QueueRelocalization();
     }
@@ -83,6 +146,28 @@ internal static class LocalizationBehavior
         }
     }
 
+    // Layout raises SizeChanged for every element it sizes, including the plain text that never
+    // receives Loaded. The first one localizes an element realized after the last tree pass.
+    private static void OnElementSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not FrameworkElement element
+            || !ReferenceEquals(e.OriginalSource, element)
+            || RealizedElements.TryGetValue(element, out _))
+        {
+            return;
+        }
+
+        // English text is its own source. An element is watched once another language is
+        // chosen, unless it still shows a translation that must return to English.
+        if (LocalizationService.Current.IsSourceLanguage && !Values.TryGetValue(element, out _))
+        {
+            return;
+        }
+
+        RealizedElements.AddOrUpdate(element, Marker);
+        LocalizeElement(element);
+    }
+
     private static void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is Window window
@@ -90,7 +175,7 @@ internal static class LocalizationBehavior
             && !InitializedWindows.TryGetValue(window, out _))
         {
             InitializedWindows.Add(window, new object());
-            QueueTreeLocalization(window, isWholeWindow: true);
+            QueueTreeLocalization(window, DispatcherPriority.DataBind);
         }
     }
 
@@ -100,39 +185,59 @@ internal static class LocalizationBehavior
             && ReferenceEquals(e.OriginalSource, tabs)
             && tabs.IsLoaded)
         {
-            QueueTreeLocalization(tabs, isWholeWindow: false);
+            // The selected page joins the visual tree during the next layout pass, so it is
+            // localized after layout (Loaded priority) rather than before it.
+            QueueTreeLocalization(tabs, DispatcherPriority.Loaded);
         }
     }
 
-    private static void QueueTreeLocalization(DependencyObject root, bool isWholeWindow)
+    private static void OnContextMenuOpened(object sender, RoutedEventArgs e)
     {
-        var dispatcher = root.Dispatcher;
+        if (sender is ContextMenu menu && ReferenceEquals(e.OriginalSource, menu))
+        {
+            LocalizeMenuItems(menu);
+            LocalizeTree(menu);
+        }
+    }
+
+    // Submenu items live in their own popups, outside the menu's visual tree.
+    private static void LocalizeMenuItems(ItemsControl menu)
+    {
+        foreach (var item in menu.Items)
+        {
+            if (item is FrameworkElement element)
+            {
+                LocalizeElement(element);
+            }
+            if (item is ItemsControl submenu)
+            {
+                LocalizeMenuItems(submenu);
+            }
+        }
+    }
+
+    private static void QueueTreeLocalization(DependencyObject root, DispatcherPriority priority)
+    {
         var state = DeferredLocalizations.GetOrCreateValue(root);
         if (state.Operation is { Status: DispatcherOperationStatus.Pending })
         {
             return;
         }
 
-        state.Operation = dispatcher.BeginInvoke(
+        state.Operation = root.Dispatcher.BeginInvoke(
             () =>
             {
                 state.Operation = null;
-                if (!isWholeWindow
-                    && pendingRelocalization is { Status: DispatcherOperationStatus.Pending })
-                {
-                    return;
-                }
-
                 if (root is Window window)
                 {
                     LocalizeWindow(window);
                 }
-                else
+                else if (pendingRelocalization is not { Status: DispatcherOperationStatus.Pending })
                 {
                     LocalizeTree(root);
                 }
             },
-            DispatcherPriority.DataBind);
+            priority);
     }
 
     private static void LocalizeElement(FrameworkElement element)
@@ -143,7 +248,14 @@ internal static class LocalizationBehavior
 
         if (element is TextBlock textBlock)
         {
-            Watch(textBlock, TextBlock.TextProperty);
+            if (ComposedInlines(textBlock) is { } inlines)
+            {
+                LocalizeInlines(inlines);
+            }
+            else
+            {
+                Watch(textBlock, TextBlock.TextProperty);
+            }
         }
         if (element is ContentControl contentControl)
         {
@@ -184,6 +296,46 @@ internal static class LocalizationBehavior
         }
     }
 
+    // A TextBlock composed of several inlines, or of one bound run, keeps its runs and their
+    // bindings: each run is localized on its own instead of replacing the whole text. Reading the
+    // logical children leaves a plain TextBlock's simple text content intact.
+    private static List<Inline>? ComposedInlines(TextBlock textBlock)
+    {
+        List<Inline>? inlines = null;
+        foreach (var child in LogicalTreeHelper.GetChildren(textBlock))
+        {
+            if (child is Inline inline)
+            {
+                (inlines ??= []).Add(inline);
+            }
+        }
+
+        if (inlines is null
+            || (inlines.Count == 1
+                && inlines[0] is Run run
+                && !BindingOperations.IsDataBound(run, Run.TextProperty)))
+        {
+            return null;
+        }
+
+        return inlines;
+    }
+
+    private static void LocalizeInlines(IEnumerable<Inline> inlines)
+    {
+        foreach (var inline in inlines)
+        {
+            if (inline is Run run)
+            {
+                Watch(run, Run.TextProperty);
+            }
+            else if (inline is Span span)
+            {
+                LocalizeInlines(span.Inlines);
+            }
+        }
+    }
+
     private static void ObserveColumns(object columns)
     {
         if (columns is not INotifyCollectionChanged observable
@@ -218,32 +370,48 @@ internal static class LocalizationBehavior
 
     private static void Watch(DependencyObject target, DependencyProperty property)
     {
-        var current = target.GetValue(property) as string;
-        if (current is null)
+        if (target.GetValue(property) is not string current)
         {
             return;
         }
 
-        var values = Values.GetOrCreateValue(target);
-        if (!values.TryGetValue(property, out var localizedValue))
+        var hasValues = Values.TryGetValue(target, out var values);
+        if (hasValues && values!.TryGetValue(property, out var existing))
         {
-            localizedValue = new LocalizedValue(LocalizationService.Current.ResolveSource(current));
-            values[property] = localizedValue;
-            var descriptor = DependencyPropertyDescriptor.FromProperty(property, target.GetType());
-            if (descriptor is not null)
-            {
-                var weakTarget = new WeakReference<DependencyObject>(target);
-                descriptor.AddValueChanged(target, (_, _) =>
-                {
-                    if (weakTarget.TryGetTarget(out var liveTarget))
-                    {
-                        OnValueChanged(liveTarget, property, localizedValue);
-                    }
-                });
-            }
+            Apply(target, property, existing);
+            return;
         }
 
+        // English text is its own source; it is watched once another language is chosen.
+        if (LocalizationService.Current.IsSourceLanguage)
+        {
+            return;
+        }
+
+        values ??= Values.GetOrCreateValue(target);
+        var localizedValue = new LocalizedValue(LocalizationService.Current.ResolveSource(current));
+        values[property] = localizedValue;
         Apply(target, property, localizedValue);
+        if (ObserverByProperty.TryGetValue(property, out var observer))
+        {
+            // The binding lives on the element, so the observation ends with the element.
+            BindingOperations.SetBinding(target, observer, new Binding
+            {
+                Source = target,
+                Path = new PropertyPath(property),
+                Mode = BindingMode.OneWay
+            });
+        }
+    }
+
+    private static void OnObservedValueChanged(DependencyObject target, DependencyPropertyChangedEventArgs e)
+    {
+        if (PropertyByObserver.TryGetValue(e.Property, out var property)
+            && Values.TryGetValue(target, out var values)
+            && values.TryGetValue(property, out var localizedValue))
+        {
+            OnValueChanged(target, property, localizedValue);
+        }
     }
 
     private static void OnValueChanged(
@@ -270,6 +438,25 @@ internal static class LocalizationBehavior
         localizedValue.Applied = translated;
         if (string.Equals(target.GetValue(property) as string, translated, StringComparison.Ordinal))
         {
+            return;
+        }
+
+        // Setting the text of a TextBlock that has since been composed from runs would discard
+        // the runs and their bindings; its runs are localized instead.
+        if (target is TextBlock textBlock
+            && property == TextBlock.TextProperty
+            && ComposedInlines(textBlock) is { } inlines)
+        {
+            localizedValue.IsApplying = true;
+            try
+            {
+                LocalizeInlines(inlines);
+            }
+            finally
+            {
+                localizedValue.IsApplying = false;
+            }
+            localizedValue.Applied = textBlock.Text;
             return;
         }
 
@@ -334,7 +521,7 @@ internal static class LocalizationBehavior
         LocalizeTree(window);
     }
 
-    private static void LocalizeTree(DependencyObject root)
+    internal static void LocalizeTree(DependencyObject root)
     {
         var pending = new Queue<DependencyObject>();
         var visited = new HashSet<DependencyObject>();
@@ -350,17 +537,6 @@ internal static class LocalizationBehavior
             if (current is FrameworkElement element)
             {
                 LocalizeElement(element);
-            }
-            if (current is Run run)
-            {
-                Watch(run, Run.TextProperty);
-            }
-            if (current is TextBlock textBlock)
-            {
-                foreach (var inline in textBlock.Inlines)
-                {
-                    pending.Enqueue(inline);
-                }
             }
 
             if (current is not Visual

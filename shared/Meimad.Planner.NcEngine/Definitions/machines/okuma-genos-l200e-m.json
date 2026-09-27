@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "okuma-genos-l200e-m",
+  "name": "Okuma GENOS L200E-M",
+  "manufacturer": "Okuma",
+  "model": "GENOS L200E-M (OSP-P200L-R)",
+  "type": "lathe",
+  "control": "okuma-osp-p200l-lathe",
+  "description": "Slant-bed CNC lathe with a 12-station turret with driven (M) tools and a C axis on the main spindle, OSP-P200L-R control. Diameter-programmed X. The 2D preview draws the X-Z turning path; C-axis / live-tool milling is listed but not drawn.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "sources": [
+    "Okuma GENOS L200E-M published specification: X 165 mm / Z 400 mm travels, max turning diameter 200 mm and length 380 mm, 4500 rpm main spindle (bar capacity 50 mm), 6000 rpm M-tool spindle, 12-station turret, rapids 20 (X) / 25 (Z) m/min",
+    "Okuma OSP-P200L Programming Manual (lathe): G/M code tables, LAP cycles, compound fixed cycles, User Task 2"
+  ],
+  "detection": {
+    "keywords": ["OKUMA", "GENOS", "OSP", "LAP"],
+    "codes": ["G85", "G86", "G87", "G180", "G181", "G31", "G95"]
+  },
+  "axes": {
+    "X": { "type": "linear", "min": -330, "max": 0, "rapidRate": 20000, "diameter": true },
+    "Z": { "type": "linear", "min": -400, "max": 0, "rapidRate": 25000 },
+    "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 36000, "wrap": true }
+  },
+  "spindle": { "maxRpm": 4500, "mToolMaxRpm": 6000 },
+  "toolChanger": { "type": "turret", "stations": 12, "changeSeconds": 1.0 },
+  "controlSettings": {},
+  "kinematics": {
+    "type": "lathe",
+    "description": "Z carriage along the spindle axis, X cross-slide (radial), turret on the cross-slide; the C axis turns the chuck and workpiece. Preview coordinates are X radius and Z along the spindle.",
+    "nodes": [
+      { "id": "bed", "label": "Bed", "geometry": null, "model": null },
+      { "id": "z-carriage", "parent": "bed", "label": "Z carriage", "type": "linear", "axis": "Z", "direction": [0, 0, 1], "geometry": null, "model": null },
+      { "id": "x-slide", "parent": "z-carriage", "label": "X cross-slide", "type": "linear", "axis": "X", "direction": [1, 0, 0], "scale": 0.5, "geometry": null, "model": null },
+      { "id": "turret", "parent": "x-slide", "label": "Turret tool point", "type": "spindle", "toolMount": true, "geometry": null, "model": null },
+      { "id": "c-spindle", "parent": "bed", "label": "Main spindle (C)", "type": "rotary", "axis": "C", "direction": [0, 0, 1], "workpieceMount": true, "geometry": { "shape": "cylinder", "radius": 100, "height": 80, "center": [0, 0, -80], "axis": "z" }, "model": null }
+    ]
+  }
+}

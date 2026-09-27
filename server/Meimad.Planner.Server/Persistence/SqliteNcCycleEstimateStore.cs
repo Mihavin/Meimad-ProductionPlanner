@@ -8,10 +8,22 @@ namespace Meimad.Planner.Server.Persistence;
 
 internal static class SqliteNcCycleEstimateStore
 {
-    internal static async Task<IReadOnlyList<NcMachineCycleEstimate>> InsertAnalysisAndEstimatesAsync(
+    internal static Task<IReadOnlyList<NcMachineCycleEstimate>> InsertAnalysisAndEstimatesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         GCodeRelease release,
+        NcProgramAnalysis analysis,
+        string actor,
+        string reason,
+        CancellationToken token) =>
+        InsertAnalysisAndEstimatesAsync(connection, transaction, release.GCodeReleaseId,
+            release.PostprocessorId, analysis, actor, reason, token);
+
+    internal static async Task<IReadOnlyList<NcMachineCycleEstimate>> InsertAnalysisAndEstimatesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string gcodeReleaseId,
+        string postprocessorId,
         NcProgramAnalysis analysis,
         string actor,
         string reason,
@@ -30,7 +42,7 @@ internal static class SqliteNcCycleEstimateStore
                         $toolChanges, $dwell, $units, $warnings, $unsupported,
                         $confidence, $at);
                 """;
-            command.Parameters.AddWithValue("$releaseId", release.GCodeReleaseId);
+            command.Parameters.AddWithValue("$releaseId", gcodeReleaseId);
             command.Parameters.AddWithValue("$parserVersion", analysis.ParserVersion);
             command.Parameters.AddWithValue("$status", analysis.Status);
             command.Parameters.AddWithValue("$feed", analysis.FeedMotionSeconds);
@@ -56,7 +68,7 @@ internal static class SqliteNcCycleEstimateStore
             WHERE compatibility.postprocessor_id = $postprocessorId
             ORDER BY machines.id;
             """;
-        machines.Parameters.AddWithValue("$postprocessorId", release.PostprocessorId);
+        machines.Parameters.AddWithValue("$postprocessorId", postprocessorId);
         var timings = new List<NcMachineTiming>();
         await using (var reader = await machines.ExecuteReaderAsync(token))
         {
@@ -72,7 +84,7 @@ internal static class SqliteNcCycleEstimateStore
         foreach (var timing in timings)
         {
             var estimate = NcCycleTimeEstimator.Evaluate(
-                release.GCodeReleaseId, analysis, timing, analysis.AnalyzedAt);
+                gcodeReleaseId, analysis, timing, analysis.AnalyzedAt);
             await InsertEstimateAsync(connection, transaction, estimate, actor, reason, token);
             estimates.Add(estimate);
         }
@@ -160,10 +172,15 @@ internal static class SqliteNcCycleEstimateStore
                 FROM gcode_release_analyses analysis
                 JOIN gcode_releases release ON release.id = analysis.gcode_release_id
                 WHERE release.case_operation_id = $operationId
-                  AND analysis.parser_version = $parserVersion;
+                  -- The newest analysis of a release is its current one (the NC engine
+                  -- analysis supersedes the former basic parser), as in
+                  -- effective_batch_operation_nc_estimates.
+                  AND NOT EXISTS (
+                      SELECT 1 FROM gcode_release_analyses newer
+                      WHERE newer.gcode_release_id = analysis.gcode_release_id
+                        AND julianday(newer.analyzed_at) > julianday(analysis.analyzed_at));
                 """;
             command.Parameters.AddWithValue("$operationId", operationId);
-            command.Parameters.AddWithValue("$parserVersion", NcProgramParser.CurrentVersion);
             await using var reader = await command.ExecuteReaderAsync(token);
             while (await reader.ReadAsync(token))
             {
@@ -195,7 +212,12 @@ internal static class SqliteNcCycleEstimateStore
             while (await reader.ReadAsync(token))
             {
                 var releaseId = reader.GetString(0);
-                var key = $"{releaseId}\0{reader.GetString(1)}\0{reader.GetString(2)}";
+                if (!analyses.TryGetValue(releaseId, out var current)
+                    || !string.Equals(current.ParserVersion, reader.GetString(2), StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                var key =$"{releaseId}\0{reader.GetString(1)}\0{reader.GetString(2)}";
                 if (!seen.Add(key)) continue;
                 if (!estimates.TryGetValue(releaseId, out var values))
                 {

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json;
+using Meimad.Planner.Server.Domain.ResourcePlanning;
 using Meimad.Planner.Server.Domain.Timeline;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Application.EventLogging;
@@ -22,6 +23,7 @@ internal sealed class TimelineProjectionService
     private readonly IProductionReadinessRepository? readinessRepository;
     private readonly ILogger<TimelineProjectionService> logger;
     private readonly IProductionRunPlanningProjectionRepository? productionRuns;
+    private readonly AutomaticResourceScheduler auxiliaryScheduler;
 
     public TimelineProjectionService(
         ITimelineSourceRepository repository,
@@ -30,7 +32,8 @@ internal sealed class TimelineProjectionService
         IStructuredEventLogRepository eventLog,
         ILogger<TimelineProjectionService> logger,
         IProductionReadinessRepository? readinessRepository = null,
-        IProductionRunPlanningProjectionRepository? productionRuns = null)
+        IProductionRunPlanningProjectionRepository? productionRuns = null,
+        AutomaticResourceScheduler? auxiliaryScheduler = null)
     {
         this.repository = repository;
         this.engine = engine;
@@ -39,6 +42,7 @@ internal sealed class TimelineProjectionService
         this.readinessRepository = readinessRepository;
         this.logger = logger;
         this.productionRuns = productionRuns;
+        this.auxiliaryScheduler = auxiliaryScheduler ?? new AutomaticResourceScheduler();
     }
 
     internal async Task<TimelineProjection> CalculateAsync(
@@ -665,6 +669,40 @@ internal sealed class TimelineProjectionService
                     }
                     : interval).ToArray()
         }).ToArray();
+        // Auxiliary steps (Workstations, Employees by Skill, External Resources) are placed around
+        // the calculated Machine anchors by the deterministic allocator; the placement is a
+        // projection and never changes assignments or backlog order.
+        var auxiliaryStopwatch = Stopwatch.StartNew();
+        var auxiliary = TimelineAuxiliaryProjector.Project(new TimelineAuxiliaryProjector.Input(
+            horizonStart,
+            horizonEnd,
+            source.Operations,
+            resultsByOperation,
+            source.Requirements ?? [],
+            source.Workstations ?? [],
+            source.ExternalResources ?? [],
+            source.Resources,
+            resourceCalendars,
+            source.AuxiliaryPins ?? [],
+            (json, timeZoneId, label) =>
+            {
+                var windows = ReadAvailability(json, timeZoneId, horizonStart, horizonEnd, label, allConflicts, [], source.Holidays);
+                return masterAvailability is null ? windows : IntersectAvailability(windows, masterAvailability);
+            },
+            options.TimeZoneId), auxiliaryScheduler);
+        auxiliaryStopwatch.Stop();
+        foreach (var conflict in auxiliary.Conflicts)
+        {
+            if (allConflicts.All(existing => !string.Equals(existing.ConflictId, conflict.ConflictId, StringComparison.Ordinal)))
+                allConflicts.Add(conflict);
+        }
+        if (auxiliary.Lanes.Count > 0 || auxiliary.Conflicts.Count > 0)
+        {
+            logger.LogInformation(
+                "Timeline auxiliary resource planning: {LaneCount} resource lanes, {IntervalCount} placed steps, {ConflictCount} conflicts in {Milliseconds} ms.",
+                auxiliary.Lanes.Count, auxiliary.Lanes.Sum(lane => lane.Intervals.Count), auxiliary.Conflicts.Count,
+                auxiliaryStopwatch.ElapsedMilliseconds);
+        }
         var batches = source.Operations
             .GroupBy(operation => operation.BatchId, StringComparer.Ordinal)
             .Select(group => new TimelineProjectionBatch(
@@ -673,7 +711,10 @@ internal sealed class TimelineProjectionService
                 group.First().PartNumber,
                 group.Where(operation => operation.PriorityWorkFinishDate.HasValue)
                     .Select(operation => operation.PriorityWorkFinishDate)
-                    .Min()))
+                    .Min(),
+                auxiliary.PredictedCompletionByBatch.TryGetValue(group.Key, out var predictedCompletion)
+                    ? predictedCompletion
+                    : null))
             .OrderBy(batch => batch.PartNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(batch => batch.BatchNumber, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -705,7 +746,8 @@ internal sealed class TimelineProjectionService
             options.TimeZoneId,
             options.DayShiftStartsAtLocal,
             options.DayShiftEndsAtLocal,
-            runIntervals);
+            runIntervals,
+            auxiliary.Lanes);
         total.Stop();
         logger.LogInformation(
             "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; backward fallbacks {BackwardFallbackCount}; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",

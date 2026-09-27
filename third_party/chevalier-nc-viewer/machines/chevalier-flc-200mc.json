@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "chevalier-flc-200mc",
+  "name": "Chevalier FLC-200MC",
+  "manufacturer": "Chevalier",
+  "model": "FLC-200MC",
+  "type": "lathe",
+  "control": "fanuc-0i-tf-lathe",
+  "description": "Slant-bed CNC lathe with turret, diameter-programmed X, and a C axis on the main spindle.",
+  "units": "mm",
+  "defaultProgramUnits": "mm",
+  "parameterFile": "CNC-PARA.TXT",
+  "sources": [
+    "CNC-PARA.TXT exported from the control: parameter 1020 (X/Z/C), 1006 (diameter X), 1320/1321 (stored stroke limits), 1420 (rapid rates)"
+  ],
+  "axes": {
+    "X": { "type": "linear", "min": -352, "max": 0, "rapidRate": 30000, "diameter": true },
+    "Z": { "type": "linear", "min": -520, "max": 5, "rapidRate": 30000 },
+    "C": { "type": "rotary", "min": null, "max": null, "rapidRate": 36000, "wrap": true }
+  },
+  "spindle": { "maxRpm": 4500 },
+  "toolChanger": { "type": "turret", "changeSeconds": 1.2 },
+  "controlSettings": {},
+  "kinematics": {
+    "type": "lathe",
+    "description": "Z carriage along the spindle axis, X cross-slide (radial), turret on the cross-slide; the C axis turns the chuck and workpiece. Preview coordinates are X radius and Z along the spindle.",
+    "nodes": [
+      {
+        "id": "bed",
+        "label": "Bed",
+        "geometry": null,
+        "model": null
+      },
+      {
+        "id": "z-carriage",
+        "parent": "bed",
+        "label": "Z carriage",
+        "type": "linear",
+        "axis": "Z",
+        "direction": [0, 0, 1],
+        "geometry": null,
+        "model": null
+      },
+      {
+        "id": "x-slide",
+        "parent": "z-carriage",
+        "label": "X cross-slide",
+        "type": "linear",
+        "axis": "X",
+        "direction": [1, 0, 0],
+        "scale": 0.5,
+        "geometry": null,
+        "model": null
+      },
+      {
+        "id": "turret",
+        "parent": "x-slide",
+        "label": "Turret tool point",
+        "type": "spindle",
+        "toolMount": true,
+        "geometry": null,
+        "model": null
+      },
+      {
+        "id": "c-spindle",
+        "parent": "bed",
+        "label": "Main spindle (C)",
+        "type": "rotary",
+        "axis": "C",
+        "direction": [0, 0, 1],
+        "workpieceMount": true,
+        "geometry": { "shape": "cylinder", "radius": 105, "height": 80, "center": [0, 0, -80], "axis": "z" },
+        "model": null
+      }
+    ]
+  }
+}

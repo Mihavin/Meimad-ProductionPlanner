@@ -13,6 +13,57 @@ internal static class GCodeEndpoints
         operations.MapPost("/gcode-releases", ReleaseAsync).DisableAntiforgery();
         operations.MapGet("/gcode-releases/{releaseId}/file", DownloadReleaseAsync);
         operations.MapGet("/tool-table-releases/{toolTableReleaseId}/file", DownloadToolTableAsync);
+        // Stateless text transformation and check for the NC viewer; they store nothing, so they
+        // need no Edit Mode.
+        endpoints.MapPost("/api/v1/nc-programs/meimad-format", FormatTemplate);
+        endpoints.MapPost("/api/v1/nc-programs/validate", ValidateTemplate);
+    }
+
+    /// <summary>
+    /// The canonical-template check a release must pass (the same
+    /// <c>NcPackagePlaceholderSchema.ValidateCanonical</c> Package Creator uses), so the NC viewer
+    /// can refuse "Release to Server" before uploading anything.
+    /// </summary>
+    private static IResult ValidateTemplate(NcTemplateValidateRequest? request, HttpContext context)
+    {
+        try
+        {
+            if (request?.Text is null)
+            {
+                throw new GCodeValidationException("text", "required", "The NC program text is required.");
+            }
+            if (request.Text.Length > NcTemplateFormatter.MaximumTextCharacters)
+            {
+                throw new GCodeValidationException("text", "too_large",
+                    $"The NC program is larger than {NcTemplateFormatter.MaximumTextCharacters / (1024 * 1024)} MB of text.");
+            }
+            var lines = request.Text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+            var validation = NcTemplateFormatter.Validate(lines);
+            return Results.Ok(new NcTemplateValidationResponse(validation.IsValid, validation.Code, validation.Message));
+        }
+        catch (Exception exception) when (TryMap(exception, context, out var mapped))
+        {
+            return mapped!;
+        }
+    }
+
+    private static IResult FormatTemplate(
+        NcTemplateFormatRequest? request,
+        HttpContext context,
+        NcTemplateFormatter formatter)
+    {
+        try
+        {
+            if (request?.Text is null)
+            {
+                throw new GCodeValidationException("text", "required", "The NC program text is required.");
+            }
+            return Results.Ok(NcTemplateFormatResponse.FromDomain(formatter.Apply(request.Text, request.NcDialect)));
+        }
+        catch (Exception exception) when (TryMap(exception, context, out var mapped))
+        {
+            return mapped!;
+        }
     }
 
     private static async Task<IResult> ReadCatalogAsync(
@@ -327,4 +378,27 @@ internal sealed record GCodeCatalogResponse(
         value.ProcessRevisions.Select(ProcessRevisionResponse.FromDomain).ToArray(),
         value.Postprocessors.Select(PostprocessorReleaseStatusResponse.FromDomain).ToArray(),
         value.Releases.Select(GCodeReleaseResponse.FromDomain).ToArray());
+}
+
+internal sealed record NcTemplateFormatRequest(string? Text, string? NcDialect);
+
+internal sealed record NcTemplateValidateRequest(string? Text);
+
+internal sealed record NcTemplateValidationResponse(bool IsValid, string? Code, string? Message);
+
+internal sealed record NcTemplateFormatResponse(
+    string Text,
+    string NcDialect,
+    bool Changed,
+    IReadOnlyList<string> Changes,
+    IReadOnlyList<string> Warnings,
+    NcTemplateValidationResponse Validation)
+{
+    internal static NcTemplateFormatResponse FromDomain(NcTemplateFormatResult value) => new(
+        value.Text,
+        value.NcDialect,
+        value.Changed,
+        value.Changes,
+        value.Warnings,
+        new NcTemplateValidationResponse(value.Validation.IsValid, value.Validation.Code, value.Validation.Message));
 }

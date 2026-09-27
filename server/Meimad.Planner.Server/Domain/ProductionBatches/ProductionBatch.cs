@@ -11,7 +11,30 @@ internal sealed record ProductionBatch(
     IReadOnlyList<BatchOperation> Operations,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>Kitaron's material verdict for the imported batch: available, on_order, missing
+    /// or unknown; null for a batch Kitaron does not own. Advisory - the ERP owns stock.</summary>
+    internal string? KitaronMaterialState { get; init; }
+
+    internal string? KitaronMaterialDetail { get; init; }
+
+    /// <summary>True when the batch is linked to a Kitaron work order.</summary>
+    internal bool IsKitaronManaged { get; init; }
+
+    /// <summary>Planner release state: `pending` until the planner releases the batch, then `released`.</summary>
+    internal string ReleaseState { get; init; } = "pending";
+
+    internal DateTimeOffset? ReleasedAt { get; init; }
+
+    internal string? ReleasedBy { get; init; }
+
+    /// <summary>The Kitaron purchase lines a planner verified for this Work Order, e.g. "76423/1, 76500/2".</summary>
+    internal string? KitaronMaterialOrders { get; init; }
+
+    /// <summary>Open purchase lines of the Work Order's raw material, offered for manual verification.</summary>
+    internal int MaterialOrderCandidates { get; init; }
+}
 
 internal sealed record BatchAllocation(
     string AllocationId,

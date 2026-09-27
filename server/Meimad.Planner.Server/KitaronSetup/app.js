@@ -258,6 +258,8 @@ function showSync(value) {
   document.getElementById("syncCases").textContent = `${value.casesCreated} created / ${value.casesUpdated} updated / ${value.casesMatched} matched`;
   document.getElementById("syncOrders").textContent = `${value.ordersCreated} created / ${value.ordersUpdated} updated / ${value.ordersMatched} matched`;
   document.getElementById("syncOperations").textContent = `${value.operationsCreated} created / ${value.operationsUpdated} updated / ${value.operationsMatched} matched`;
+  document.getElementById("syncRequirements").textContent = `${value.requirementsCreated ?? 0} created / ${value.requirementsUpdated ?? 0} updated / ${value.requirementsMatched ?? 0} matched`;
+  document.getElementById("syncRouteStepsSkipped").textContent = value.routeStepsSkipped ?? 0;
   document.getElementById("syncComponents").textContent = `${value.componentsCreated} created / ${value.componentsUpdated} updated / ${value.componentsMatched} matched`;
   document.getElementById("syncWarnings").textContent = value.warningCount;
   document.getElementById("syncTime").textContent = value.lastCompletedAt

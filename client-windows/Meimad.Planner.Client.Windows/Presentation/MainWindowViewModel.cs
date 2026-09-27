@@ -40,6 +40,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             () => !IsBusy && apiClient is not null);
         UserTerminals = new UserTerminalsViewModel();
         QcQueue = new QcQueueViewModel();
+        MaterialOrders = new MaterialOrdersViewModel();
         NcCreatorQueue = new PreparationQueueViewModel(
             "PROGRAMMING_PENDING", "NC Creator — Programming Pending",
             "Assigned operations that do not yet have one current Machine-compatible NC release selection.");
@@ -49,6 +50,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         SetupQueue = new PreparationQueueViewModel(
             "SETUP_PENDING", "Setup — Setup Pending",
             "Operations whose NC and Tool Room gates are complete and remain in the setup workflow.");
+        ToolCatalog = new ToolCatalog.ToolCatalogViewModel();
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
@@ -124,11 +126,15 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public QcQueueViewModel QcQueue { get; }
 
+    public MaterialOrdersViewModel MaterialOrders { get; }
+
     public PreparationQueueViewModel NcCreatorQueue { get; }
 
     public PreparationQueueViewModel ToolRoomQueue { get; }
 
     public PreparationQueueViewModel SetupQueue { get; }
+
+    public ToolCatalog.ToolCatalogViewModel ToolCatalog { get; }
 
     public string ClientId
     {
@@ -451,11 +457,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         RaiseCommandStates();
         CaseWorkspace.AttachSession(apiClient, ClientId, status);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, status);
-        Timeline.AttachSession(apiClient);
+        Timeline.AttachSession(apiClient, ClientId, status);
         Setup.AttachSession(apiClient, ClientId, status);
         UserTerminals.AttachSession(apiClient, ClientId, status);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, status);
+        MaterialOrders.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
     }
 
@@ -473,11 +480,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Setup.ApplyConnectionStatus(headline, detail);
         CaseWorkspace.AttachSession(apiClient, ClientId, null);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
-        Timeline.AttachSession(apiClient);
+        Timeline.AttachSession(apiClient, ClientId, null);
         Setup.AttachSession(apiClient, ClientId, null);
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
+        MaterialOrders.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }
@@ -493,11 +501,12 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         apiClient = apiClientFactory.Create(serverBaseUri);
         CaseWorkspace.AttachSession(apiClient, ClientId, null);
         MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
-        Timeline.AttachSession(apiClient);
+        Timeline.AttachSession(apiClient, ClientId, null);
         Setup.AttachSession(apiClient, ClientId, null);
         UserTerminals.AttachSession(apiClient, ClientId, null);
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
+        MaterialOrders.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }
@@ -508,6 +517,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         NcCreatorQueue.AttachSession(client, ClientId, userId);
         ToolRoomQueue.AttachSession(client, ClientId, userId);
         SetupQueue.AttachSession(client, ClientId, userId);
+        ToolCatalog.AttachSession(client, ClientId, userId);
     }
 
     private bool CanDecideTransfer() => !IsBusy

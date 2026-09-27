@@ -139,6 +139,16 @@ internal sealed class SqliteCncVerificationFoundationRepository(SqliteDatabase d
         return await command.ExecuteScalarAsync(token) as string;
     }
 
+    public async Task<(string Number, string Name)> GetMachineIdentityAsync(string machineId, CancellationToken token)
+    {
+        await using var connection = await database.OpenConnectionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT number, name FROM machines WHERE id=$machineId;";
+        command.Parameters.AddWithValue("$machineId", machineId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        return await reader.ReadAsync(token) ? (reader.GetString(0), reader.GetString(1)) : (machineId, machineId);
+    }
+
     public async Task<StoredCncVerificationSettings> UpsertSettingsAsync(
         StoredCncVerificationSettings value, int expectedVersion,
         EditAuthority authority, CancellationToken token)

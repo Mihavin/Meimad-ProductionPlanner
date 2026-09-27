@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Formatting;
+using Meimad.Planner.NcEngine;
 
 namespace Meimad.Planner.Client.Windows.Presentation;
 
@@ -102,6 +103,40 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     private bool isParentCase;
     private bool isChildCase;
     private bool isKitaronManagedCase;
+    private bool isRouteLockedCase;
+    private string? networkRootPath;
+
+    /// <summary>The shared network folder from Setup; Case browse dialogs open there.</summary>
+    public string? NetworkRootPath => networkRootPath;
+
+    /// <summary>Where a Case file or folder dialog opens: the Case working folder when it exists,
+    /// otherwise the network folder defined in Setup.</summary>
+    internal string? CaseBrowseStartFolder()
+    {
+        foreach (var candidate in new[] { WorkingFolderPath, networkRootPath })
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(candidate) && Directory.Exists(candidate)) return candidate;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return null;
+    }
+
+    private async Task LoadNetworkRootAsync(IPlannerApiClient client)
+    {
+        try
+        {
+            var settings = await client.GetNetworkFolderAsync();
+            networkRootPath = string.IsNullOrWhiteSpace(settings.RootPath) ? string.Empty : settings.RootPath;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            networkRootPath = null;
+        }
+    }
     private PlannerPostprocessorReleaseStatus? selectedReleasePostprocessor;
     private string gcodeFilePath = string.Empty;
     private string toolTableFilePath = string.Empty;
@@ -118,12 +153,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         this.folderLauncher = folderLauncher;
         SearchCommand = new AsyncCommand(LoadCasesAsync, () => apiClient is not null && !IsBusy);
         ClearFiltersCommand = new AsyncCommand(ClearFiltersAsync, () => apiClient is not null && !IsBusy);
+        PoolFilters.FiltersChanged += (_, _) => _ = ReloadPoolForFiltersAsync();
         SaveCommand = new AsyncCommand(SaveAsync, () => CanSave);
         BeginCreateCommand = new AsyncCommand(BeginCreateAsync, () => CanBeginCreate);
         CancelCreateCommand = new AsyncCommand(CancelCreateAsync, () => IsCreating && !IsBusy);
         RefreshDetailsCommand = new AsyncCommand(LoadSelectedCaseSafeAsync, () => SelectedCase is not null && !IsBusy);
         OpenWorkingFolderCommand = new AsyncCommand(OpenWorkingFolderAsync, () => CanOpenWorkingFolder);
-        BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanManageOperations);
+        BeginCreateOperationCommand = new AsyncCommand(BeginCreateOperationAsync, () => CanAddOperations);
         BeginEditOperationCommand = new AsyncCommand(BeginEditOperationAsync, () => CanBeginEditOperation);
         CancelCreateOperationCommand = new AsyncCommand(CancelCreateOperationAsync, () => IsCreatingOperation && !IsBusy);
         CreateOperationCommand = new AsyncCommand(CreateOperationAsync, () => CanCreateOperation);
@@ -131,8 +167,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditOrderCommand = new AsyncCommand(BeginEditOrderAsync, () => CanBeginEditOrder);
         CancelCreateOrderCommand = new AsyncCommand(CancelCreateOrderAsync, () => IsOrderFormOpen && !IsBusy);
         CreateOrderCommand = new AsyncCommand(CreateOrderAsync, () => CanCreateOrder);
-        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanManageBatches && Operations.Count > 0);
+        BeginCreateBatchCommand = new AsyncCommand(BeginCreateBatchAsync, () => CanAddBatches && Operations.Count > 0);
         BeginEditBatchCommand = new AsyncCommand(BeginEditBatchAsync, () => CanBeginEditBatch);
+        ReleaseBatchCommand = new AsyncCommand(() => SetSelectedBatchReleaseAsync(true), () => CanReleaseBatch);
+        UnreleaseBatchCommand = new AsyncCommand(() => SetSelectedBatchReleaseAsync(false), () => CanUnreleaseBatch);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
         RefreshBatchMaterialCommand = new AsyncCommand(LoadSelectedBatchMaterialSafeAsync,
@@ -166,9 +204,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public ObservableCollection<CaseOperation> Operations { get; } = [];
 
+    /// <summary>Auxiliary steps (Workstation, External Resource, Employee Skill) of the selected Operation.</summary>
+    public OperationRequirementsViewModel Requirements { get; } = new();
+
     public ObservableCollection<CaseOperation> OperationReferenceOptions { get; } = [];
 
-    public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty];
+    public ObservableCollection<string> OperationMachineTypeOptions { get; } = [string.Empty, ProductionNoteMachineType];
+
+    /// <summary>Machine Type of an operation that is only a note in the production chain.</summary>
+    internal const string ProductionNoteMachineType = "Production Note";
 
     public ObservableCollection<PlannerOrder> Orders { get; } = [];
 
@@ -197,6 +241,52 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<PlannerGCodeRelease> GCodeReleases { get; } = [];
 
     public IReadOnlyList<string> ActiveFilters { get; } = ["All", "Active", "Inactive"];
+
+    /// <summary>Jira-style chip filters of the Case pool; every chip change reloads the pool.</summary>
+    public CasePoolFilterSet PoolFilters { get; } = new();
+
+    private bool suppressPoolReload;
+    private bool poolReloadPending;
+    private string poolFilterSummary = "No filters";
+
+    /// <summary>The current pool condition, e.g. "12 Cases · Work Orders = With AND Release = Pending".</summary>
+    public string PoolFilterSummary
+    {
+        get => poolFilterSummary;
+        private set => SetField(ref poolFilterSummary, value);
+    }
+
+    private string poolFilterButtonText = "Filters";
+
+    /// <summary>"Filters" or "Filters (n)" with the number of set conditions.</summary>
+    public string PoolFilterButtonText
+    {
+        get => poolFilterButtonText;
+        private set => SetField(ref poolFilterButtonText, value);
+    }
+
+    private async Task ReloadPoolForFiltersAsync()
+    {
+        if (suppressPoolReload || !hasLoaded || apiClient is null) return;
+        if (IsBusy)
+        {
+            poolReloadPending = true;
+            return;
+        }
+        await LoadCasesAsync();
+    }
+
+    /// <summary>Clears every pool filter without one reload per cleared chip.</summary>
+    private void ResetPoolFilters()
+    {
+        suppressPoolReload = true;
+        SearchText = string.Empty;
+        CustomerFilter = string.Empty;
+        ActiveFilter = "All";
+        CaseSort = "Part Number";
+        PoolFilters.Reset();
+        suppressPoolReload = false;
+    }
 
     public IReadOnlyList<string> CaseSortOptions { get; } = ["Part Number", "Closest Order delivery date", "Customer name"];
 
@@ -239,6 +329,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public AsyncCommand BeginCreateBatchCommand { get; }
 
+    public AsyncCommand ReleaseBatchCommand { get; }
+
+    /// <summary>Candidate and verified Kitaron material orders of the selected Work Order.</summary>
+    public WorkOrderMaterialOrdersViewModel WorkOrderMaterialOrders { get; } = new();
+
+    public AsyncCommand UnreleaseBatchCommand { get; }
+
     public AsyncCommand BeginEditBatchCommand { get; }
 
     public AsyncCommand CancelCreateBatchCommand { get; }
@@ -278,7 +375,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string ActiveFilter
     {
         get => activeFilter;
-        set => SetField(ref activeFilter, value);
+        set { if (SetField(ref activeFilter, value)) _ = ReloadPoolForFiltersAsync(); }
     }
 
     public CasePoolItemViewModel? SelectedCase
@@ -369,6 +466,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 ClearGCodeCatalog();
                 RefreshGCodeCommand.RaiseCanExecuteChanged();
                 ReleaseGCodeCommand.RaiseCanExecuteChanged();
+                _ = Requirements.LoadAsync(value?.CaseOperationId);
                 if (value is not null && apiClient is not null && !IsBusy)
                 {
                     RefreshGCodeCommand.Execute(null);
@@ -484,7 +582,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public string CaseSort
     {
         get => caseSort;
-        set => SetField(ref caseSort, value);
+        set { if (SetField(ref caseSort, value)) _ = ReloadPoolForFiltersAsync(); }
     }
     public ProductionBatch? SelectedBatch
     {
@@ -495,7 +593,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanBeginEditBatch));
                 OnPropertyChanged(nameof(CanCancelBatchProduction));
+                OnPropertyChanged(nameof(CanDeleteSelectedBatch));
+                _ = WorkOrderMaterialOrders.LoadAsync(value);
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
+                ReleaseBatchCommand.RaiseCanExecuteChanged();
+                UnreleaseBatchCommand.RaiseCanExecuteChanged();
                 BatchMaterial = null;
                 MaterialReceiptReservations.Clear();
                 RaiseCommandStates();
@@ -519,9 +621,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     }
 
     public bool HasBatchMaterial => BatchMaterial is not null;
-    public string BatchMaterialState => BatchMaterial?.State ?? "Select a Batch";
+    public string BatchMaterialState => BatchMaterial?.State ?? "Select a Work Order";
     public string BatchMaterialMessage => BatchMaterial?.Message
-        ?? "Select a Production Batch to reconcile its raw-material pieces.";
+        ?? "Select a Work Order to reconcile its raw-material pieces.";
     public string MaterialReceiptQuantity { get => materialReceiptQuantity; set => SetField(ref materialReceiptQuantity, value); }
     public string MaterialReceiptReference { get => materialReceiptReference; set => SetField(ref materialReceiptReference, value); }
     public string MaterialReceiptComment { get => materialReceiptComment; set => SetField(ref materialReceiptComment, value); }
@@ -609,7 +711,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public string BatchFormHeading => isEditingBatch ? "EDIT PRODUCTION BATCH" : "NEW PRODUCTION BATCH";
 
-    public string BatchSaveButtonText => isEditingBatch ? "Save Batch" : "Create Batch";
+    public string BatchSaveButtonText => isEditingBatch ? "Save Work Order" : "Create Work Order";
 
     public bool IsCreatingOperation => isCreatingOperation || isEditingOperation;
 
@@ -630,13 +732,25 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool IsChildCase => isChildCase;
 
-    public bool CanShowBatches => !IsParentCase;
+    public bool CanShowBatches => true;
 
-    public bool CanManageOperations => CanBeginChildCreate && !IsParentCase;
+    public bool CanManageOperations => CanBeginChildCreate;
+
+    /// <summary>The Kitaron route master owns a locked Case's operation list: the list mirrors
+    /// Kitaron, so operations cannot be added or deleted here. Operation data stays editable.</summary>
+    public bool IsRouteLockedCase => isRouteLockedCase;
+
+    public bool CanAddOperations => CanManageOperations && !isRouteLockedCase;
+
+    public bool CanDeleteSelectedOperation => CanDelete && !isRouteLockedCase;
+
+    public string OperationListAuthorityText => isRouteLockedCase
+        ? "The Kitaron route owns this operation list. Remap stations or change the route in Kitaron to add or remove operations; times, Machine Type and dependencies stay editable here."
+        : "Ordered route template. New operations append to the route.";
 
     public bool CanManageDirectOrders => CanBeginChildCreate && !isKitaronManagedCase && (!IsChildCase || IsParentCase);
 
-    public bool CanManageBatches => CanBeginChildCreate && !IsParentCase;
+    public bool CanManageBatches => CanBeginChildCreate;
 
     public bool CanCreateOrder => IsCreatingOrder && CanManageDirectOrders;
 
@@ -645,8 +759,22 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     public bool CanCreateBatch => IsCreatingBatch && CanManageBatches;
 
+    /// <summary>Production Batches of a Kitaron Case come only from Kitaron work orders.</summary>
+    public bool CanAddBatches => CanManageBatches && !isKitaronManagedCase;
+
+    public bool CanDeleteSelectedBatch => CanDelete && SelectedBatch is { IsKitaronManaged: false };
+
+    public bool CanReleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: false, BatchOperationCount: > 0 }
+        && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
+
+    public bool CanUnreleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: true };
+
+    public string BatchListAuthorityText => isKitaronManagedCase
+        ? "Work Orders come from Kitaron. Release a pending Work Order to production; allocations follow Kitaron."
+        : "Standalone and child production launches use direct or parent-derived demand, stock, and scrap allocations.";
+
     public bool CanBeginEditBatch => CanManageBatches
-        && SelectedBatch is not null
+        && SelectedBatch is { IsKitaronManaged: false }
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
         && !IsCreatingBatch;
 
@@ -655,7 +783,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
         && !IsCreatingBatch;
 
-    public bool CanCreateOperation => IsCreatingOperation && CanManageOperations;
+    /// <summary>Saves the open operation form. A locked Kitaron route closes only adding an
+    /// operation; an edit (Machine Type, Production Note, times, dependency) stays savable.</summary>
+    public bool CanCreateOperation => isEditingOperation
+        ? CanManageOperations
+        : isCreatingOperation && CanAddOperations;
 
     public bool CanBeginEditOperation =>
         CanManageOperations && SelectedOperation is not null && !IsCreatingOperation;
@@ -756,6 +888,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var apiChanged = !ReferenceEquals(apiClient, newApiClient);
         var nextIsEditor = editStatus?.State == ClientEditState.Editor;
         var nextGeneration = editStatus?.Generation ?? 0;
+        Requirements.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        WorkOrderMaterialOrders.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        if (newApiClient is not null && (apiChanged || networkRootPath is null)) _ = LoadNetworkRootAsync(newApiClient);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
             && isEditor == nextIsEditor
@@ -772,6 +907,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ClearDetails();
             OperationMachineTypeOptions.Clear();
             OperationMachineTypeOptions.Add(string.Empty);
+            OperationMachineTypeOptions.Add(ProductionNoteMachineType);
         }
 
         clientId = newClientId;
@@ -816,7 +952,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 "Customer name" => "customerName",
                 _ => "partNumber"
             };
-            var cases = await apiClient.ListCasesAsync(new CaseQuery(SearchText, CustomerFilter, active, sort));
+            var cases = await apiClient.ListCasesAsync(PoolFilters.ApplyTo(
+                new CaseQuery(SearchText, CustomerFilter, active, sort), DateOnly.FromDateTime(DateTime.Today)));
             var selectedId = SelectedCase?.CaseId;
             Cases.Clear();
             foreach (var plannerCase in cases)
@@ -829,6 +966,14 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
             hasLoaded = true;
             StatusMessage = $"{Cases.Count} Case{(Cases.Count == 1 ? string.Empty : "s")} loaded from the Server.";
+            var extra = new List<string>();
+            if (!string.IsNullOrWhiteSpace(SearchText)) extra.Add($"Text ~ \"{SearchText.Trim()}\"");
+            if (!string.IsNullOrWhiteSpace(CustomerFilter) && CustomerFilter != "All") extra.Add($"Customer ~ \"{CustomerFilter.Trim()}\"");
+            if (ActiveFilter != "All") extra.Add($"Case = {ActiveFilter}");
+            var condition = PoolFilters.Describe(extra);
+            PoolFilterSummary = $"{Cases.Count} Case{(Cases.Count == 1 ? string.Empty : "s")} · {condition}";
+            var setCount = condition == "No filters" ? 0 : condition.Split(" AND ").Length;
+            PoolFilterButtonText = setCount == 0 ? "Filters" : $"Filters ({setCount})";
             SelectedCase = Cases.FirstOrDefault(item => item.CaseId == selectedId) ?? Cases.FirstOrDefault();
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -843,6 +988,12 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         if (SelectedCase is not null)
         {
             await LoadSelectedCaseSafeAsync();
+        }
+
+        if (poolReloadPending)
+        {
+            poolReloadPending = false;
+            await LoadCasesAsync();
         }
     }
 
@@ -942,7 +1093,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         NewOperationPredecessor = OperationReferenceOptions.FirstOrDefault(value =>
             value.CaseOperationId == operation.PredecessorCaseOperationId);
         NewOperationSimultaneousGroupKey = operation.SimultaneousGroupKey ?? string.Empty;
-        StatusMessage = $"Editing Case Operation {operation.OperationNumber}. Existing Production Batch snapshots will not be changed.";
+        StatusMessage = $"Editing Case Operation {operation.OperationNumber}. Existing Work Order snapshots will not be changed.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1042,7 +1193,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     Operations[index] = saved;
                 }
                 SelectedOperation = saved;
-                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Not-started Production Batch operations received the revised times.";
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) updated. Not-started Work Order operations received the revised times.";
             }
             else
             {
@@ -1071,7 +1222,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 Operations.Add(saved);
                 Replace(Batches, await apiClient.ListBatchesAsync(SelectedCase.CaseId));
                 SelectedOperation = saved;
-                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. It was appended as a not-started operation to every open Production Batch of this Case.";
+                StatusMessage = $"Case Operation {saved.OperationNumber} ({saved.Name}) created at route position {saved.RoutePosition + 1}. It was appended as a not-started operation to every open Work Order of this Case.";
             }
 
             isCreatingOperation = false;
@@ -1118,9 +1269,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         var target = Cases.FirstOrDefault(value => value.CaseId == caseId);
         if (target is null)
         {
-            SearchText = string.Empty;
-            CustomerFilter = "All";
-            ActiveFilter = "All";
+            ResetPoolFilters();
             await LoadCasesAsync();
             target = Cases.FirstOrDefault(value => value.CaseId == caseId);
         }
@@ -1168,7 +1317,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         editingOrderId = order.OrderId;
         editingOrderEntityTag = $"\"order:{order.OrderId}:v{order.Version}\"";
         NewOrderNotes = order.Notes ?? string.Empty;
-        StatusMessage = $"Editing Order {order.OrderNumber}. The Server protects existing Batch allocations and production-derived status.";
+        StatusMessage = $"Editing Order {order.OrderNumber}. The Server protects existing Work Order allocations and production-derived status.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1299,7 +1448,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         if (CanManageBatches && Operations.Count == 0)
         {
-            StatusMessage = "Cannot generate Production Batch because this Case has no defined operations. Create operations first.";
+            StatusMessage = "Cannot generate Work Order because this Case has no defined operations. Create operations first.";
             return Task.CompletedTask;
         }
         if (!CanManageBatches)
@@ -1324,7 +1473,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         if (IsChildCase)
             foreach (var order in DerivedOrders.Where(order => order.Status != "cancelled" && order.RemainingQuantity > 0))
                 BatchOrderAllocations.Add(new BatchOrderAllocationViewModel(order));
-        StatusMessage = "Allocate the Batch to this Case's own Orders, any parent-derived demand, stock, and optional scrap allowance.";
+        StatusMessage = "Allocate the Work Order to this Case's own Orders, any parent-derived demand, stock, and optional scrap allowance.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1367,7 +1516,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 BatchOrderAllocations.Add(row);
             }
         }
-        StatusMessage = $"Editing Production Batch {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
+        StatusMessage = $"Editing Work Order {SelectedBatch.BatchNumber}. Its instantiated route and execution records are preserved.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1377,7 +1526,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isCreatingBatch = false;
         isEditingBatch = false;
         ResetBatchForm();
-        StatusMessage = "Production Batch edit cancelled.";
+        StatusMessage = "Work Order edit cancelled.";
         RaiseStateProperties();
         return Task.CompletedTask;
     }
@@ -1463,8 +1612,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ResetBatchForm();
             await RefreshSelectedCaseSummaryAsync();
             StatusMessage = editing
-                ? $"Production Batch {saved.BatchNumber} saved; its {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")} remain unchanged."
-                : $"Production Batch {saved.BatchNumber} created with {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")}.";
+                ? $"Work Order {saved.BatchNumber} saved; its {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")} remain unchanged."
+                : $"Work Order {saved.BatchNumber} created with {saved.BatchOperationCount} route operation{(saved.BatchOperationCount == 1 ? string.Empty : "s")}.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -1541,7 +1690,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 SelectedBatch.BatchId, new(reservations), clientId, editGeneration);
             ApplyBatchMaterial(value);
             StatusMessage = value.State == "READY"
-                ? $"Material reconciled for Production Batch {value.BatchNumber}."
+                ? $"Material reconciled for Work Order {value.BatchNumber}."
                 : value.Message;
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -1586,6 +1735,221 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     internal void SetWorkingFolderSelection(string path) => WorkingFolderPath = path;
 
     internal void SetGCodeFileSelection(string path) => GCodeFilePath = path;
+
+    /// <summary>
+    /// A release from the history grid, read-only in the NC viewer. "Edit copy" continues on a
+    /// local copy that can be saved (a local version) or released as a new revision.
+    /// </summary>
+    internal async Task<NcViewer.NcViewerOpenRequest?> CreateReleaseViewerRequestAsync(PlannerGCodeRelease release)
+    {
+        if (apiClient is not { } client || SelectedCase is not { } selectedCase || SelectedOperation is not { } operation)
+        {
+            return null;
+        }
+        var caseId = selectedCase.CaseId;
+        var operationId = operation.CaseOperationId;
+        var context = $"{selectedCase.PartNumber} · OP{operation.OperationNumber:00} {operation.Name}";
+        var request = await NcViewer.NcViewerRequests.ForReleaseAsync(
+            client, caseId, operationId, release.GCodeReleaseId, null, context);
+        return request with
+        {
+            ValidateService = (text, token) => client.ValidateNcTemplateAsync(text, token),
+            ReleaseContext = ViewerReleaseContext(context, release.PostprocessorId),
+            ReleaseToServer = (command, _) => ReleaseFromViewerAsync(caseId, operationId, command)
+        };
+    }
+
+    /// <summary>The Release G-code form's choices, as the NC viewer's "Release to Server" dialog offers them.</summary>
+    private NcViewer.NcViewerReleaseContext ViewerReleaseContext(string operationTitle, string? preferredPostprocessorId = null) => new(
+        operationTitle,
+        GCodePostprocessors
+            .Select(value => new NcViewer.NcViewerReleaseTarget(value.PostprocessorId, value.PostprocessorName, value.StatusText))
+            .ToArray(),
+        preferredPostprocessorId ?? SelectedReleasePostprocessor?.PostprocessorId,
+        ActiveProcessRevision is not null,
+        string.IsNullOrWhiteSpace(ToolTableFilePath) ? null : ToolTableFilePath);
+
+    /// <summary>
+    /// "Release to Server" from the NC viewer: the same command, checks and Edit Mode rule as
+    /// <see cref="ReleaseGCodeAsync"/>, for the saved file the viewer hands over. The Server
+    /// validates the canonical template again and rejects an invalid one.
+    /// </summary>
+    internal async Task<NcViewer.NcViewerReleaseOutcome> ReleaseFromViewerAsync(
+        string caseId, string caseOperationId, NcViewer.NcViewerReleaseCommand command)
+    {
+        if (apiClient is null) return new(false, "Connect to the Meimad Server first.");
+        if (!isEditor) return new(false, "Edit Mode is required: acquire it in the Planner window, then release again.");
+        if (string.IsNullOrWhiteSpace(command.PostprocessorId)) return new(false, "Choose the postprocessor.");
+        if (string.IsNullOrWhiteSpace(command.ReleaseComment)) return new(false, "A release comment is required.");
+        if (!File.Exists(command.FilePath)) return new(false, $"The saved program was not found: {command.FilePath}");
+        if (!command.ConfirmToolTable) return new(false, "Confirm the exact physical tool table used for this release.");
+        var newRevision = command.ChangeScope == "NEW_PROCESS_REVISION";
+        if (!newRevision && command.ChangeScope != "LOCAL_POST_REVISION") return new(false, "Choose the change scope.");
+        if (newRevision && (!command.ConfirmNewProcessRevision || string.IsNullOrWhiteSpace(command.ProcessChangeDescription)))
+        {
+            return new(false, "A new process revision requires confirmation and a process change description.");
+        }
+        var requiresToolUpload = !command.HasActiveProcessRevision || (newRevision && !command.ReuseActiveToolTable);
+        if (requiresToolUpload && !File.Exists(command.ToolTableFilePath ?? string.Empty))
+        {
+            return new(false, "Upload the exact tool table, or explicitly reuse the active tool table for a new process revision.");
+        }
+
+        NcViewer.NcViewerReleaseOutcome outcome;
+        IsBusy = true;
+        try
+        {
+            var released = await apiClient.ReleaseGCodeAsync(
+                caseId,
+                caseOperationId,
+                new GCodeReleaseCreate(
+                    command.PostprocessorId,
+                    command.ChangeScope,
+                    command.ReleaseComment.Trim(),
+                    string.IsNullOrWhiteSpace(command.ProcessChangeDescription) ? null : command.ProcessChangeDescription.Trim(),
+                    command.ConfirmNewProcessRevision,
+                    command.ReuseActiveToolTable,
+                    command.ConfirmToolTable,
+                    command.FilePath,
+                    !newRevision || string.IsNullOrWhiteSpace(command.ToolTableFilePath) ? null : command.ToolTableFilePath),
+                clientId,
+                editGeneration);
+            var placed = await PlaceReleasedProgramAsync(caseId, caseOperationId, command.FilePath, released);
+            outcome = new(
+                true,
+                $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{placed.Note}",
+                released.GCodeReleaseId,
+                released.ProcessRevisionNumber,
+                released.PostSpecificRevision,
+                placed.Path);
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            outcome = new(false, FriendlyMessage(exception));
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (SelectedCase?.CaseId == caseId && SelectedOperation?.CaseOperationId == caseOperationId)
+        {
+            // The history grid shows the new release; the status keeps the release message.
+            await RefreshGCodeAsync();
+        }
+        if (outcome.Succeeded) StatusMessage = outcome.Message;
+        return outcome;
+    }
+
+    /// <summary>
+    /// The NC editor for a manually written program of the selected Operation: a new program that
+    /// already carries the Meimad canonical block, or the local file chosen for release. Inside
+    /// the editor any NC file can be opened, edited and saved; "Use for G-code release" saves it
+    /// and puts it in <see cref="GCodeFilePath"/>, and "Release to Server" releases the saved file
+    /// through <see cref="ReleaseFromViewerAsync"/> with the form's comment and confirmations.
+    /// </summary>
+    internal async Task<NcViewer.NcViewerOpenRequest?> CreateNcEditorRequestAsync(bool editSelectedFile)
+    {
+        if (SelectedCase is not { } selectedCase || SelectedOperation is not { } operation) return null;
+        var client = apiClient;
+        var caseId = selectedCase.CaseId;
+        var operationId = operation.CaseOperationId;
+        var context = $"{selectedCase.PartNumber} · OP{operation.OperationNumber:00} {operation.Name}";
+        var machines = client is null
+            ? []
+            : await NcViewer.NcViewerRequests.MachinesAsync(client, CancellationToken.None);
+        var dialect = NcViewer.NcViewerDialects.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
+        var viewerMachine = NcViewer.NcViewerMachines.Resolve(machines, null, SelectedReleasePostprocessor?.PostprocessorId);
+
+        NcTextDocument document;
+        string name;
+        string? path = null;
+        if (editSelectedFile && File.Exists(GCodeFilePath))
+        {
+            path = GCodeFilePath;
+            name = Path.GetFileName(path);
+            document = NcTextFile.Decode(await File.ReadAllBytesAsync(path));
+        }
+        else
+        {
+            name = NcProgramFileName(selectedCase.PartNumber, operation.OperationNumber);
+            var skeleton = NcViewer.NcViewerOpenRequest.BlankProgram;
+            if (client is not null)
+            {
+                try
+                {
+                    skeleton = (await client.FormatNcTemplateAsync(skeleton, dialect ?? NcViewer.NcViewerDialects.Default)).Text;
+                }
+                catch (Exception exception) when (IsExpected(exception) || exception is NotSupportedException)
+                {
+                    // Offline: start from the plain blank program; the format can be applied later.
+                }
+            }
+            document = NcViewer.NcViewerOpenRequest.NewDocument(skeleton);
+        }
+
+        return new NcViewer.NcViewerOpenRequest(
+            context,
+            name,
+            document,
+            ReadOnly: false,
+            SourceDescription: $"Manual NC program for {context}",
+            FilePath: path,
+            NcDialect: dialect,
+            FormatService: client is null ? null : NcViewer.NcViewerRequests.FormatService(client),
+            UseForRelease: savedPath => Task.FromResult(UseEditorFileForRelease(caseId, operationId, savedPath)),
+            MachineSelection: viewerMachine,
+            ValidateService: client is null ? null : (text, token) => client.ValidateNcTemplateAsync(text, token),
+            ReleaseContext: client is null ? null : ViewerReleaseContext(context),
+            ReleaseToServer: client is null ? null : (command, _) => ReleaseFromViewerAsync(caseId, operationId, command),
+            ProgramFolders: client is null
+                ? null
+                : NcViewer.NcProgramFolders.ForOperation(
+                    client, caseId, operationId, SelectedReleasePostprocessor?.PostprocessorId, GCodeChangeScope));
+    }
+
+    /// <summary>
+    /// After a release, a program saved under the Operation's G-code folder in the Case Working
+    /// Folder moves to the folder of the numbers the Server assigned; a file from anywhere else
+    /// stays where it is. A placement problem never undoes the release: the note reports it.
+    /// </summary>
+    private async Task<(string? Path, string Note)> PlaceReleasedProgramAsync(
+        string caseId, string caseOperationId, string filePath, PlannerGCodeRelease released)
+    {
+        if (apiClient is null || string.IsNullOrWhiteSpace(filePath)) return (null, string.Empty);
+        try
+        {
+            var folders = NcViewer.NcProgramFolders.ForOperation(apiClient, caseId, caseOperationId, released.PostprocessorId);
+            var placement = await folders.PlaceReleasedProgramAsync(filePath, new NcViewer.NcProgramRevision(
+                released.ProcessRevisionNumber, released.PostprocessorId, released.PostprocessorName, released.PostSpecificRevision));
+            return placement.InOperationFolder
+                ? (placement.Path, $" The program is saved in {Path.GetDirectoryName(placement.Path)}.")
+                : (placement.Path, string.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception) || exception is InvalidOperationException)
+        {
+            return (null, $" The program file was not moved to its revision folder: {exception.Message}");
+        }
+    }
+
+    internal string UseEditorFileForRelease(string caseId, string caseOperationId, string path)
+    {
+        if (SelectedCase?.CaseId != caseId || SelectedOperation?.CaseOperationId != caseOperationId)
+        {
+            return $"Saved {path}. The Cases tab now shows another Operation: select that Case and Operation again and choose this file with Browse… under Release G-code.";
+        }
+        GCodeFilePath = path;
+        StatusMessage = $"{Path.GetFileName(path)} is selected for Release G-code. Add the release comment and confirmations, then release it.";
+        return $"Saved {Path.GetFileName(path)} and selected it in the Release G-code form of {SelectedCase.PartNumber}. Finish the release there.";
+    }
+
+    private static string NcProgramFileName(string partNumber, int operationNumber)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string(partNumber.Select(character => invalid.Contains(character) ? '_' : character).ToArray()).Trim();
+        return $"{(safe.Length == 0 ? "program" : safe)}-OP{operationNumber:00}.nc";
+    }
 
     internal void SetToolTableFileSelection(string path) => ToolTableFilePath = path;
 
@@ -1678,6 +2042,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             return;
         }
 
+        string? releasedMessage = null;
         IsBusy = true;
         try
         {
@@ -1700,7 +2065,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                         : ToolTableFilePath),
                 clientId,
                 editGeneration);
-            StatusMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.";
+            var placed = await PlaceReleasedProgramAsync(
+                SelectedCase.CaseId, SelectedOperation.CaseOperationId, GCodeFilePath, released);
+            releasedMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{placed.Note}";
+            StatusMessage = releasedMessage;
             GCodeFilePath = string.Empty;
             ToolTableFilePath = string.Empty;
             GCodeReleaseComment = string.Empty;
@@ -1718,6 +2086,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
 
         await RefreshGCodeAsync();
+        // The history grid shows the new release; the status keeps the release message.
+        if (releasedMessage is not null) StatusMessage = releasedMessage;
     }
 
     internal Task SelectCaseAsync(CasePoolItemViewModel item)
@@ -1728,10 +2098,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     private async Task ClearFiltersAsync()
     {
-        SearchText = string.Empty;
-        CustomerFilter = string.Empty;
-        ActiveFilter = "All";
-        CaseSort = "Part Number";
+        ResetPoolFilters();
         await LoadCasesAsync();
     }
 
@@ -1763,23 +2130,6 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (SelectedComponent is null)
             {
                 if (SelectedComponentCase is null) return;
-                if (!IsParentCase && Batches.Count > 0)
-                {
-                    if (Operations.Count > 0)
-                    {
-                        StatusMessage = "Remove this Case's direct Operations before adding a component. Parent Cases cannot have direct Operations.";
-                        return;
-                    }
-                    if (!ConfirmBatchRemoval(Batches.Count))
-                    {
-                        StatusMessage = "Adding the component was cancelled; existing Production Batches were kept.";
-                        return;
-                    }
-                    foreach (var batch in Batches.ToArray())
-                        await apiClient.DeleteBatchAsync(batch.BatchId, clientId, editGeneration);
-                    Batches.Clear();
-                    SelectedBatch = null;
-                }
                 saved = await apiClient.CreateCaseComponentAsync(
                     SelectedCase.CaseId,
                     new CaseComponentCreate(SelectedComponentCase.CaseId, quantity, Components.Count, NullIfBlank(ComponentNotes)),
@@ -1798,7 +2148,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             SelectedComponent = saved;
             Replace(WhereUsed, await apiClient.ListCaseWhereUsedAsync(SelectedCase.CaseId));
             await RefreshSelectedCaseSummaryAsync();
-            StatusMessage = $"Component {saved.ChildPartNumber} saved. This Case is now a parent, so direct Production Batches are unavailable.";
+            StatusMessage = $"Component {saved.ChildPartNumber} saved. This Case is now a parent, so direct Work Orders are unavailable.";
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
         finally { IsBusy = false; }
@@ -2044,6 +2394,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         var selectedCaseValue = SelectedCase;
         var operation = SelectedOperation;
+        if (isRouteLockedCase)
+        {
+            StatusMessage = "The Kitaron route owns this operation list; remap its station or change the route in Kitaron instead.";
+            return Task.CompletedTask;
+        }
         return selectedCaseValue is null || operation is null || apiClient is null
             ? Task.CompletedTask
             : DeleteAsync(
@@ -2077,13 +2432,40 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             ? Task.CompletedTask
             : DeleteAsync(
                 () => apiClient.DeleteBatchAsync(batch.BatchId, clientId, editGeneration),
-                $"Production Batch {batch.BatchNumber} deleted.",
+                $"Work Order {batch.BatchNumber} deleted.",
                 () =>
                 {
                     Batches.Remove(batch);
                     SelectedBatch = null;
                     PlanChanged?.Invoke(this, EventArgs.Empty);
                 });
+    }
+
+    internal async Task SetSelectedBatchReleaseAsync(bool released)
+    {
+        var batch = SelectedBatch;
+        if (batch is null || apiClient is null || (released ? !CanReleaseBatch : !CanUnreleaseBatch)) return;
+        IsBusy = true;
+        try
+        {
+            var saved = await apiClient.SetBatchReleaseStateAsync(batch.BatchId, released, clientId, editGeneration);
+            var index = Batches.IndexOf(batch);
+            if (index >= 0) Batches[index] = saved;
+            SelectedBatch = saved;
+            StatusMessage = released
+                ? $"Work Order {saved.BatchNumber} released to production."
+                : $"Work Order {saved.BatchNumber} returned to pending.";
+            PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
     }
 
     internal async Task CancelSelectedBatchProductionAsync()
@@ -2096,7 +2478,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         {
             var cancelled = await apiClient.CancelBatchProductionAsync(
                 batch.BatchId,
-                new CancelProductionBatchRequest("Cancelled from the Case Batch workspace."),
+                new CancelProductionBatchRequest("Cancelled from the Case Work Order workspace."),
                 $"\"batch:{batch.BatchId}:v{batch.Version}\"",
                 clientId,
                 editGeneration);
@@ -2105,7 +2487,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             SelectedBatch = cancelled;
             Replace(Orders, await apiClient.ListOrdersAsync(cancelled.CaseId));
             Replace(DerivedOrders, await apiClient.ListDerivedCaseOrdersAsync(cancelled.CaseId));
-            StatusMessage = $"Production Batch {cancelled.BatchNumber} cancelled. Done parts were reset to 0 and active production resources were released.";
+            StatusMessage = $"Work Order {cancelled.BatchNumber} cancelled. Done parts were reset to 0 and active production resources were released.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -2311,6 +2693,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         isParentCase = plannerCase.IsParent;
         isChildCase = plannerCase.IsChild;
         isKitaronManagedCase = plannerCase.IsKitaronManaged;
+        isRouteLockedCase = plannerCase.KitaronRouteLocked;
         RaiseStateProperties();
     }
 
@@ -2375,6 +2758,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             .Concat(machineTypes.SelectMany(machineType =>
                 new[] { machineType.Name }.Concat(machineType.Capabilities)))
             .Concat(Operations.Select(operation => operation.RequiredMachineType))
+            // A note-only operation in the production chain: no Machine, no time.
+            .Append(ProductionNoteMachineType)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2623,6 +3008,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsChildCase));
         OnPropertyChanged(nameof(CanShowBatches));
         OnPropertyChanged(nameof(CanManageOperations));
+        OnPropertyChanged(nameof(IsRouteLockedCase));
+        OnPropertyChanged(nameof(CanAddOperations));
+        OnPropertyChanged(nameof(CanDeleteSelectedOperation));
+        OnPropertyChanged(nameof(OperationListAuthorityText));
         OnPropertyChanged(nameof(CanManageDirectOrders));
         OnPropertyChanged(nameof(CanManageBatches));
         OnPropertyChanged(nameof(CanCreateOrder));
@@ -2630,6 +3019,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanCreateBatch));
         OnPropertyChanged(nameof(CanBeginEditBatch));
         OnPropertyChanged(nameof(CanCancelBatchProduction));
+        OnPropertyChanged(nameof(CanAddBatches));
+        OnPropertyChanged(nameof(CanDeleteSelectedBatch));
+        OnPropertyChanged(nameof(CanReleaseBatch));
+        OnPropertyChanged(nameof(CanUnreleaseBatch));
+        OnPropertyChanged(nameof(BatchListAuthorityText));
         OnPropertyChanged(nameof(CanCreateOperation));
         OnPropertyChanged(nameof(CanBeginEditOperation));
         OnPropertyChanged(nameof(CanReleaseGCode));
@@ -2654,6 +3048,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         CancelCreateOrderCommand.RaiseCanExecuteChanged();
         CreateOrderCommand.RaiseCanExecuteChanged();
         BeginCreateBatchCommand.RaiseCanExecuteChanged();
+        ReleaseBatchCommand.RaiseCanExecuteChanged();
+        UnreleaseBatchCommand.RaiseCanExecuteChanged();
         BeginEditBatchCommand.RaiseCanExecuteChanged();
         CancelCreateBatchCommand.RaiseCanExecuteChanged();
         CreateBatchCommand.RaiseCanExecuteChanged();

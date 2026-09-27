@@ -57,7 +57,15 @@ internal sealed record ProductionBatchResponse(
     int BatchOperationCount,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    bool IsKitaronManaged = false,
+    string? KitaronMaterialState = null,
+    string? KitaronMaterialDetail = null,
+    string ReleaseState = "pending",
+    DateTimeOffset? ReleasedAt = null,
+    string? ReleasedBy = null,
+    string? KitaronMaterialOrders = null,
+    int MaterialOrderCandidates = 0)
 {
     internal static ProductionBatchResponse FromDomain(ProductionBatch batch) => new(
         batch.BatchId,
@@ -70,7 +78,15 @@ internal sealed record ProductionBatchResponse(
         batch.Operations.Count,
         batch.Version,
         batch.CreatedAt,
-        batch.UpdatedAt);
+        batch.UpdatedAt,
+        batch.IsKitaronManaged,
+        batch.KitaronMaterialState,
+        batch.KitaronMaterialDetail,
+        batch.ReleaseState,
+        batch.ReleasedAt,
+        batch.ReleasedBy,
+        batch.KitaronMaterialOrders,
+        batch.MaterialOrderCandidates);
 }
 
 internal sealed record ProductionBatchListResponse(

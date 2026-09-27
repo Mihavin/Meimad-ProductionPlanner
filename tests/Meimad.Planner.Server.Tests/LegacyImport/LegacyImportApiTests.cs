@@ -999,6 +999,13 @@ public sealed class LegacyImportApiTests
                         SELECT id FROM production_batches WHERE batch_number = 'B-POOL'));
                 """));
 
+            // The board pool lists only operations of released Work Orders.
+            var poolBatchId = Assert.Single(document.RootElement.GetProperty("created")
+                .GetProperty("batchIds").EnumerateArray()).GetString();
+            using (var release = await client.PostAsync($"/api/v1/batches/{poolBatchId}/release", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, release.StatusCode);
+            }
             using var boardResponse = await client.GetAsync("/api/v1/planning-board");
             Assert.Equal(HttpStatusCode.OK, boardResponse.StatusCode);
             using var board = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());

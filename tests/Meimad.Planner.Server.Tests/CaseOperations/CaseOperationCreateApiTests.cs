@@ -95,6 +95,12 @@ public sealed class CaseOperationCreateApiTests
             Assert.Equal("days", item.GetProperty("externalDelayDurationUnit").GetString());
             Assert.False(item.GetProperty("respectMasterCalendar").GetBoolean());
 
+            // The board pool lists only operations of released Work Orders.
+            using (var release = await client.PostAsync(
+                       $"/api/v1/batches/{batch.RootElement.GetProperty("batchId").GetString()}/release", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, release.StatusCode);
+            }
             using var boardResponse = await client.GetAsync("/api/v1/planning-board");
             var board = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());
             var card = Assert.Single(board.RootElement.GetProperty("pool").EnumerateArray());

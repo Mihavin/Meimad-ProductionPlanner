@@ -10,9 +10,10 @@ public sealed class CaseWorkspaceViewTests
             "client-windows",
             "Meimad.Planner.Client.Windows",
             "Views",
-            "CaseWorkspaceView.xaml"));
+            "CasePoolFilterWindow.xaml"));
 
-        Assert.Contains("Sort Cases by", caseView, StringComparison.Ordinal);
+        // The pool filters, sort included, live in their own window.
+        Assert.Contains("Text=\"Sort:\"", caseView, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{Binding CaseSortOptions}\"", caseView, StringComparison.Ordinal);
         Assert.Contains("SelectedItem=\"{Binding CaseSort}\"", caseView, StringComparison.Ordinal);
     }

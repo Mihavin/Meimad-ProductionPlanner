@@ -174,6 +174,14 @@ before `M30`/`M99`/any successful return, never on an alarm/reset/optional-stop/
 failure path. Every template contains exactly one pair; a template without it fails
 package creation with `production_package_cycle_marker_required`.
 
+Package Creator expands the pair into the wire-format `CST`/`CEN` events for every Machine
+whose enabled CNC connection reads DPRNT (source TCP, FILE or FTP) and for every
+verification-enabled Machine; the sequence variable comes from the Machine's verification
+configuration when one exists (enabled or not), else from the dialect default. A Machine
+without a DPRNT connection gets the markers removed. The manifest records
+`partCountingEnabled`, `partCountingDprntSource`, `partCountingEventSequenceVariable` and
+`partCountingVariableFromConfiguration`.
+
 ### Verification insertion point
 
 ```text
@@ -198,6 +206,8 @@ The post does not decide whether Server Verification is enabled. Package Creator
 11. Write the immutable manifest including creator/user identity, server timestamp, exact bound releases/configuration/source modes, generated artifact identities, and hashes/checksums.
 12. Validate every generated artifact, write them to server-managed package storage, and activate the package atomically. A partial or failed build must never become current or produce `Ready for Setup`.
 
+**Measured tool offsets (schema v79).** When the released Tool Table has tool rows and the package mode is `MEASURED`, the build reads the latest Tool Room tool preparation of the Operation on the assigned Machine and requires a measured length, a measured diameter and an offset number for every required released tool (`production_package_tool_measurements_missing`; duplicate offset numbers fail with `production_package_tool_offset_number_duplicate`). The measurements are written as the `TOOL_OFFSETS` artifact `tool-offsets/tool-offsets.json` and, in the Machine's `ncDialect`, as NC offset-input lines: `G10 L10 P<n> R<length>` / `L11 R0.` / `L12 R<radius or diameter>` / `L13 R0.` (memory C) for milling on Haas NGC, FANUC macro B and Mazak Matrix, `G10 P1<nnnn> X<diameter> Z<length>` for FANUC turning, `VTOFH[n]`/`VTOFD[n]` or `VTOFX[n]`/`VTOFZ[n]` for Okuma OSP. The Machine's `toolDiameterOffsetKind` decides whether the D value is half of the measured diameter (`RADIUS`, default) or the whole diameter. With Server Verification enabled the lines precede the challenge call inside the package-specific Offset Loader; with verification disabled they form the separate `TOOL_OFFSET_PROGRAM` artifact (`tool-offsets/O01991.nc` or `tool-offsets/O1991.MIN`). Haas NGC and Mazak turning have no supported input syntax: the JSON artifact is still produced, the manifest says `toolOffsetsLoadedByProgram: false`, and the loader comment tells the setupist to enter the sheet. `Manual / Dummy Tool Offsets` packages omit all of this. A newer saved preparation version makes the package stale exactly like a newer Tool Table release.
+
 ## 6. Machine-dependent composition
 
 ### CNC + Server Verification Enabled
@@ -206,7 +216,8 @@ At minimum:
 
 1. package-specific runnable NC derived from the exact released NC source;
 2. finalized current Tool Table / Tool Offset Table artifact or explicitly selected supported source mode;
-3. unique package-specific Offset Loader for the existing approved verification protocol.
+3. unique package-specific Offset Loader for the existing approved verification protocol;
+4. for a `MEASURED` package with released tool rows, the `TOOL_OFFSETS` sheet and the measured offset lines inside the Offset Loader (see section 5).
 
 The runnable NC has all placeholders resolved. Verification hooks are present only because the assigned Machine has Server Verification enabled.
 
@@ -214,7 +225,7 @@ The runnable NC has all placeholders resolved. Verification hooks are present on
 
 At minimum:
 
-1. package-specific runnable NC;
+1. package-specific runnable NC (with the part-counting cycle events when the Machine's CNC connection reads DPRNT);
 2. finalized current Tool Table / Tool Offset Table artifact or explicitly selected supported source mode.
 
 No active Server Verification hook and no executable verification Offset Loader are generated.
@@ -225,7 +236,7 @@ Do not generate CNC verification code or an executable CNC Offset Loader. Do not
 
 ## 7. Connectivity is delivery capability, not verification policy
 
-Network connectivity controls available delivery methods. It does not decide whether Server Verification is enabled.
+Network connectivity controls available delivery methods. It does not decide whether Server Verification is enabled. The CNC connection's DPRNT source does decide part counting: a Machine whose connection is enabled with a DPRNT source other than `NONE` receives the cycle events whether or not its verification is enabled.
 
 - If the Machine has a supported direct network transfer path and is connected, direct send may be offered.
 - File open/export/copy remains available for the normal shop-floor workflow.

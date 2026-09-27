@@ -41,11 +41,12 @@ public sealed class CaseComponentApiTests
                     && item.GetProperty("isChild").GetBoolean());
             }
 
-            using var forbidden = await client.PostAsJsonAsync("/api/v1/cases/case-a/operations", new
+            // An assembly carries its own operations (2026-09-26 rule).
+            using var assemblyOperation = await client.PostAsJsonAsync("/api/v1/cases/case-a/operations", new
             {
-                operationNumber = 10, name = "Illegal parent route", dependencyType = "INDEPENDENT"
+                operationNumber = 10, name = "Assembly route", dependencyType = "INDEPENDENT"
             });
-            Assert.Equal(HttpStatusCode.UnprocessableEntity, forbidden.StatusCode);
+            Assert.Equal(HttpStatusCode.Created, assemblyOperation.StatusCode);
 
             string derivedKey;
             using var derived = await client.GetAsync("/api/v1/cases/case-b/derived-orders");
