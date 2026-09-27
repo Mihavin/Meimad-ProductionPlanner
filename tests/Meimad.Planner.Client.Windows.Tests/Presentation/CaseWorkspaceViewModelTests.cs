@@ -737,6 +737,37 @@ public sealed class CaseWorkspaceViewModelTests
         Assert.False(viewModel.IsCreatingOperation);
     }
 
+    [Fact]
+    public async Task Kitaron_route_locked_case_keeps_operation_data_editable_but_closes_adding()
+    {
+        var api = new FakeApiClient(CreateCase() with { IsKitaronManaged = true, KitaronRouteLocked = true });
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(26));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+
+        Assert.True(viewModel.IsRouteLockedCase);
+        Assert.False(viewModel.BeginCreateOperationCommand.CanExecute(null));
+        Assert.False(viewModel.CanDeleteSelectedOperation);
+
+        await viewModel.BeginEditOperationAsync();
+
+        Assert.True(viewModel.CreateOperationCommand.CanExecute(null));
+        viewModel.NewOperationRequiredMachineType = CaseWorkspaceViewModel.ProductionNoteMachineType;
+        viewModel.NewOperationSetupTime = "00:30:00";
+        viewModel.NewOperationCycleTimePerPart = "00:02:00";
+        viewModel.NewOperationDependencyType = "INDEPENDENT";
+        await viewModel.CreateOperationAsync();
+
+        Assert.NotNull(api.LastOperationUpdate);
+        Assert.Null(api.LastOperationCreate);
+        Assert.Equal("Production Note", api.LastOperationUpdate!.RequiredMachineType);
+        Assert.Equal(1800, api.LastOperationUpdate.SetupTimeSeconds);
+        Assert.Equal(120, api.LastOperationUpdate.CycleTimePerPartSeconds);
+        Assert.Equal("INDEPENDENT", api.LastOperationUpdate.DependencyType);
+        Assert.False(viewModel.IsCreatingOperation);
+    }
+
     private static PlannerCase CreateCase() => new(
         "case-1",
         "PN-100",

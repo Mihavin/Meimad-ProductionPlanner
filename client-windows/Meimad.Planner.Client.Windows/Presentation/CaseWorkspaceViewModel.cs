@@ -783,7 +783,11 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase)
         && !IsCreatingBatch;
 
-    public bool CanCreateOperation => IsCreatingOperation && CanAddOperations;
+    /// <summary>Saves the open operation form. A locked Kitaron route closes only adding an
+    /// operation; an edit (Machine Type, Production Note, times, dependency) stays savable.</summary>
+    public bool CanCreateOperation => isEditingOperation
+        ? CanManageOperations
+        : isCreatingOperation && CanAddOperations;
 
     public bool CanBeginEditOperation =>
         CanManageOperations && SelectedOperation is not null && !IsCreatingOperation;
