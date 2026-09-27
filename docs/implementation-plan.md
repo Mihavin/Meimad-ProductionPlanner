@@ -976,3 +976,28 @@ Implemented:
 Tests: `TimelineApiTests.Production_notes_in_a_chain_never_block_the_operations_that_follow_them`, `CaseOperationCreateApiTests.Classifying_a_case_operation_reaches_not_started_work_orders_and_takes_notes_off_machines`, `KitaronBatchSyncTests.A_synchronization_brings_the_case_classification_to_not_started_work_orders`, and a note added to `MachineOperationExecutionApiTests.Start_suspend_resume_and_finish_advance_machine_backlog`, whose Work Order still completes.
 
 **Observed, not changed:** the production-run cycle accounting sets a finished Work Order to `completed`, while manual execution sets `complete` (`ProductionBatchValidator.CompleteStatus`). The Order roll-up in the cycle accounting checks for `completed`.
+
+### Pending Work Orders follow the Case, released ones are frozen - 2026-09-27
+
+Owner rule: a pending Work Order takes its operation list from the Case; releasing locks the list; returning to pending refreshes it.
+
+Owner decisions on the open points:
+
+- A released Work Order is frozen completely, times and Machine Type included. This replaces the v33 rule that Case time edits reach every not-started Batch Operation, and the Machine Type propagation added earlier the same day.
+- Returning to pending is refused once production has started (`work_order_started`).
+
+Live data at the time: 197 pending and 2 released Work Orders, none started. In pending Work Orders, 177 not-started operations differed from their Case and 171 Case Operations were missing. 41377 and 41506 are pending and each has an operation with a production package and a tool preparation.
+
+Implemented in `SqliteWorkOrderRouteRefresh`, which updates rows in place so machine assignments, readiness inputs and tool preparations stay attached:
+
+- **Not-started operations** take every Case Operation field. Numbers and positions follow the Case order through temporary values.
+- **Missing Case Operations** are added.
+- **Operations whose Case Operation is gone** are removed with their planning graph: assignment, planned legacy run, schedule pins, pauses and overrides. Machine backlogs are then compacted.
+- **Kept as they are:** started operations, and operations that a production package, E-Ink package, bench session or locked run refers to.
+- **Callers:** Case Operation create, update and delete; release (refresh, then freeze); unrelease (refresh); and every Kitaron synchronization for all pending Work Orders.
+- **Kitaron sync changes:** it no longer deletes and re-instantiates the operations of a changed unplanned work order. A route operation Kitaron dropped takes pending copies with it, and a released Work Order keeps it (reason "Production Batch").
+- **Removed:** `AppendToOpenBatchesAsync` and the not-started time and Machine Type synchronizers.
+
+Tests: `WorkOrderRouteReleaseTests` (pending follows every change and keeps placement; release freezes and unrelease refreshes; a started Work Order cannot go back) and `KitaronRouteSyncTests.A_pending_work_order_follows_the_route_and_lets_a_removed_operation_go`. Rewritten for the new rule: `CaseServicePersistenceTests`, `CaseOperationCreateApiTests`, and the released Work Orders in `PlanningDeletionApiTests`, `KitaronRouteSyncTests` and `PlanningBoardEnrichmentTests`.
+
+After the upgrade, the first Kitaron synchronization refreshes every pending Work Order. The two released ones (41508, 41512) stay as they are until they are set back to pending.

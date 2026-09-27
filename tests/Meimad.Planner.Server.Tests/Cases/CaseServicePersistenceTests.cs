@@ -248,7 +248,7 @@ public sealed class CaseServicePersistenceTests
     }
 
     [Fact]
-    public async Task Creating_case_operation_appends_it_to_open_batches_only()
+    public async Task Creating_case_operation_adds_it_to_pending_open_work_orders_only()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         var editAuthority = await GrantEditModeAsync(fixture.Database);
@@ -265,17 +265,19 @@ public sealed class CaseServicePersistenceTests
         await using (var insert = connection.CreateCommand())
         {
             insert.CommandText = """
-                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
-                VALUES ('batch-waiting', $caseId, 'B-W', 'waiting', 4),
-                       ('batch-in-production', $caseId, 'B-P', 'in_production', 4),
-                       ('batch-complete', $caseId, 'B-C', 'complete', 4),
-                       ('batch-cancelled', $caseId, 'B-X', 'cancelled', 4);
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity, release_state)
+                VALUES ('batch-waiting', $caseId, 'B-W', 'waiting', 4, 'pending'),
+                       ('batch-in-production', $caseId, 'B-P', 'in_production', 4, 'pending'),
+                       ('batch-released', $caseId, 'B-R', 'waiting', 4, 'released'),
+                       ('batch-complete', $caseId, 'B-C', 'complete', 4, 'pending'),
+                       ('batch-cancelled', $caseId, 'B-X', 'cancelled', 4, 'pending');
                 INSERT INTO batch_operations (
                     id, production_batch_id, source_case_operation_id, operation_number,
                     route_position, name, setup_seconds, cycle_seconds, status)
                 VALUES
                     ('op-waiting', 'batch-waiting', $operationId, 10, 0, 'Mill', 60, 30, 'not_started'),
                     ('op-in-production', 'batch-in-production', $operationId, 10, 0, 'Mill', 60, 30, 'in_progress'),
+                    ('op-released', 'batch-released', $operationId, 10, 0, 'Mill', 60, 30, 'not_started'),
                     ('op-complete', 'batch-complete', $operationId, 10, 0, 'Mill', 60, 30, 'completed'),
                     ('op-cancelled', 'batch-cancelled', $operationId, 10, 0, 'Mill', 60, 30, 'cancelled');
                 """;
@@ -333,7 +335,7 @@ public sealed class CaseServicePersistenceTests
                 FROM (SELECT id, version FROM production_batches ORDER BY id);
                 """;
             Assert.Equal(
-                "batch-cancelled:1,batch-complete:1,batch-in-production:2,batch-waiting:2",
+                "batch-cancelled:1,batch-complete:1,batch-in-production:2,batch-released:1,batch-waiting:2",
                 (string)(await versions.ExecuteScalarAsync())!);
         }
 
@@ -341,14 +343,14 @@ public sealed class CaseServicePersistenceTests
         {
             events.CommandText = """
                 SELECT COUNT(*) FROM structured_event_log
-                WHERE event_type = 'production_batch_route_appended';
+                WHERE event_type = 'production_batch_route_refreshed';
                 """;
             Assert.Equal(2L, (long)(await events.ExecuteScalarAsync())!);
         }
     }
 
     [Fact]
-    public async Task Creating_case_operation_rejects_a_number_still_used_by_an_open_batch_snapshot()
+    public async Task Creating_case_operation_rejects_a_number_a_started_operation_of_a_pending_work_order_still_uses()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         var editAuthority = await GrantEditModeAsync(fixture.Database);
@@ -366,18 +368,18 @@ public sealed class CaseServicePersistenceTests
         {
             insert.CommandText = """
                 INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
-                VALUES ('batch-open', $caseId, 'B-OPEN', 'waiting', 4);
+                VALUES ('batch-open', $caseId, 'B-OPEN', 'in_production', 4);
                 INSERT INTO batch_operations (
                     id, production_batch_id, source_case_operation_id, operation_number,
                     route_position, name, setup_seconds, cycle_seconds, status)
-                VALUES ('op-open', 'batch-open', $operationId, 10, 0, 'Mill', 60, 30, 'not_started');
+                VALUES ('op-open', 'batch-open', $operationId, 10, 0, 'Mill', 60, 30, 'in_progress');
                 """;
             insert.Parameters.AddWithValue("$caseId", created.CaseId);
             insert.Parameters.AddWithValue("$operationId", first.CaseOperationId);
             await insert.ExecuteNonQueryAsync();
         }
 
-        // Renumbering the source operation leaves the open Batch snapshot at number 10.
+        // Renumbering the source operation leaves the started operation of the pending Work Order at 10.
         await service.UpdateOperationAsync(
             created.CaseId,
             first.CaseOperationId,

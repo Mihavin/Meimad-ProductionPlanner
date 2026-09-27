@@ -337,7 +337,7 @@ Unless explicitly marked implemented, paths in this section are **Proposed**. Mu
 | `PATCH` | `/api/v1/cases/{caseId}` | Change approved current master fields. |
 | `GET` | `/api/v1/cases/{caseId}/operations` | Read ordered route template and dependencies. |
 | `GET` | `/api/v1/cases/{caseId}/preview` | Stream the Case preview image to a Windows planning caller. Configured drive-to-UNC mappings tolerate multihomed file-server DNS by trying resolved IPv4 paths. |
-| `POST` | `/api/v1/cases/{caseId}/operations` | Add a Case Operation; it is also appended as a `not_started` Batch Operation to every Batch of the Case that is not complete or cancelled. `422 validation_failed` with `batch_operation_number_in_use` when an open Batch snapshot still uses that number. |
+| `POST` | `/api/v1/cases/{caseId}/operations` | Add a Case Operation; every pending Work Order of the Case takes it as a `not_started` Batch Operation (released, complete and cancelled Work Orders are frozen). Editing (`PATCH`) or deleting a Case Operation changes pending Work Orders the same way; a delete is `409 delete_blocked` while a released Work Order, or a started copy, holds the operation. `422 validation_failed` with `batch_operation_number_in_use` when a pending Work Order still holds a started operation under that number. |
 | `PATCH` | `/api/v1/cases/{caseId}/operations/{operationId}` | Edit one route operation. |
 | `GET` | `/api/v1/cases/{caseId}/components` | List child Case Component relationships. |
 | `GET` | `/api/v1/cases/{caseId}/where-used` | List parent Cases that use this Case. |
@@ -2656,7 +2656,7 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
 
 ### Batch release and Kitaron ownership (schema v83)
 
-- `POST /api/v1/batches/{batchId}/release` and `/unrelease` (Edit Mode headers) set `releaseState`; the batch response adds `releaseState`, `releasedAt`, `releasedBy` and `kitaronMaterialOrders`.
+- `POST /api/v1/batches/{batchId}/release` and `/unrelease` (Edit Mode headers) set `releaseState`; the batch response adds `releaseState`, `releasedAt`, `releasedBy` and `kitaronMaterialOrders`. A pending Work Order's operations follow its Case (2026-09-27): `release` refreshes them from the Case and then freezes them, and `unrelease` refreshes them again. `unrelease` returns `422 work_order_started` when an operation has started or the Work Order is no longer waiting. Every refresh that changes a Work Order records one `production_batch_route_refreshed` event with the added, updated and removed counts.
 - `POST /api/v1/batches` returns 409 `kitaron_managed_read_only` while the Kitaron connector is enabled; `PATCH` and `DELETE` of a Kitaron-imported batch return the same.
 - `GET /api/v1/kitaron/material-orders` items add `unitPrice`, `lineTotal`, `customerOrderReference` and `workOrders: [ { workOrderNumber, partNumber, customerOrderNumber, customer, quantity, supplyDate, hasBatch } ]`.
 

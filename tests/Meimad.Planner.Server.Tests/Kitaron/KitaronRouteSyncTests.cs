@@ -501,10 +501,10 @@ public sealed class KitaronRouteSyncTests
                 [RouteOperation(30, 0, null, "a30"), RouteOperation(50, 1, 30, "a50"), RouteOperation(90, 2, 50, "a90")],
                 [inspect40, inspect60, pack95]);
             await repository.ApplyAsync(full, Now, CancellationToken.None);
-            // A waiting Batch uses OP90, and a planner pinned the packing step of that Batch.
+            // A released Work Order uses OP90 (its list is frozen), and a planner pinned the packing step of it.
             await ExecuteAsync(database, """
-                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
-                SELECT 'batch-r', case_id, 'B-R', 'waiting', 5 FROM case_operations WHERE operation_number = 90;
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity, release_state)
+                SELECT 'batch-r', case_id, 'B-R', 'waiting', 5, 'released' FROM case_operations WHERE operation_number = 90;
                 INSERT INTO batch_operations (id, production_batch_id, source_case_operation_id, operation_number, route_position,
                     name, required_machine_type, setup_seconds, cycle_seconds, status, dependency_type)
                 SELECT 'batch-op-90', 'batch-r', id, 90, 0, 'OP90', 'Mill 3x', 600, 120, 'not_started', 'independent'
@@ -545,6 +545,39 @@ public sealed class KitaronRouteSyncTests
             Assert.Equal(1L, await ScalarAsync(verify, "SELECT is_active FROM operation_resource_requirements WHERE step_number = 95;"));
             Assert.Equal(3L, await ScalarAsync(verify, "SELECT COUNT(*) FROM operation_resource_requirements WHERE is_active = 1;"));
         });
+    }
+
+    [Fact]
+    public async Task A_pending_work_order_follows_the_route_and_lets_a_removed_operation_go()
+    {
+        await RunAsync(async (application, _) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var full = Plan([RouteOperation(30, 0, null, "a30"), RouteOperation(90, 1, 30, "a90")], []);
+            await repository.ApplyAsync(full, Now, CancellationToken.None);
+            await ExecuteAsync(database, """
+                INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
+                SELECT 'batch-p', case_id, 'B-P', 'waiting', 5 FROM case_operations WHERE operation_number = 90;
+                """);
+
+            // The next synchronization gives the pending Work Order the Case's operations.
+            await repository.ApplyAsync(full, Now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal("30|90", await WorkOrderRouteAsync(database));
+
+            var remapped = await repository.ApplyAsync(
+                Plan([RouteOperation(30, 0, null, "a30")], []), Now.AddMinutes(2), CancellationToken.None);
+            Assert.Contains("1 Case Operation(s) and 0 auxiliary step(s) removed", remapped.Message);
+            Assert.Equal("30", await WorkOrderRouteAsync(database));
+        });
+
+        static async Task<string> WorkOrderRouteAsync(SqliteDatabase database)
+        {
+            await using var connection = await database.OpenConnectionAsync();
+            return (string)(await ScalarAsync(connection,
+                "SELECT group_concat(operation_number, '|') FROM (SELECT operation_number FROM batch_operations WHERE production_batch_id = 'batch-p' ORDER BY route_position);"))!;
+        }
     }
 
     [Fact]

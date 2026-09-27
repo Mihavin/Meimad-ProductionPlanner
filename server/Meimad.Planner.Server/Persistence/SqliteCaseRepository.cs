@@ -500,14 +500,10 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         command.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", candidate.RespectMasterCalendar ? 1 : 0);
         command.Parameters.AddWithValue("$createdAt", FormatInstant(candidate.CreatedAt));
         await command.ExecuteNonQueryAsync(cancellationToken);
-        await SqliteBatchOperationRows.AppendToOpenBatchesAsync(
-            connection,
-            transaction,
-            candidate,
-            ToDependencyStorageToken(operation.DependencyType),
-            actor,
-            candidate.CreatedAt,
-            cancellationToken);
+        // A pending Work Order takes its operation list from the Case.
+        var refresh = await SqliteWorkOrderRouteRefresh.RefreshCaseAsync(
+            connection, transaction, candidate.CaseId, actor, candidate.CreatedAt, cancellationToken);
+        EnsurePendingWorkOrdersTookNumber(refresh, candidate.OperationNumber);
         await transaction.CommitAsync(cancellationToken);
         return candidate;
     }
@@ -523,7 +519,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await EnsureEditAuthorityAsync(
+        var actor = await EnsureEditAuthorityAsync(
             connection,
             transaction,
             editAuthority,
@@ -663,69 +659,35 @@ internal sealed class SqliteCaseRepository : ICaseRepository
             throw new CaseOperationVersionConflictException(operationId, expectedVersion);
         }
 
-        // A Batch owns an execution snapshot of its Case Operation.  Keep the
-        // Machine Type and timing portion of every not-started snapshot in sync so
-        // the planning board and Timeline immediately recalculate with the revised
-        // routing.  Started and completed work remains an historical record.  An
-        // operation that became a Production Note leaves its Machine backlog.
-        await PropagateToNotStartedBatchOperationsAsync(
-            connection,
-            transaction,
-            candidate,
-            cancellationToken);
-        await SqliteMachineAssignmentRepository.ReleaseProductionNoteAssignmentsAsync(
-            connection, transaction, candidate.UpdatedAt, cancellationToken);
+        // A pending Work Order takes its operation list from the Case; a released one is frozen.
+        var refresh = await SqliteWorkOrderRouteRefresh.RefreshCaseAsync(
+            connection, transaction, candidate.CaseId, actor, candidate.UpdatedAt, cancellationToken);
+        EnsurePendingWorkOrdersTookNumber(refresh, candidate.OperationNumber);
 
         await transaction.CommitAsync(cancellationToken);
         return candidate;
     }
 
-    private static async Task PropagateToNotStartedBatchOperationsAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        CaseOperationDetails operation,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// A pending Work Order that still holds a started or kept operation under this number cannot take
+    /// the Case Operation, so the change is refused as when the number was in use.
+    /// </summary>
+    private static void EnsurePendingWorkOrdersTookNumber(
+        SqliteWorkOrderRouteRefresh.Result refresh,
+        int operationNumber)
     {
-        await using var update = connection.CreateCommand();
-        update.Transaction = transaction;
-        update.CommandText = """
-            UPDATE batch_operations
-            SET required_machine_type = $requiredMachineType,
-                setup_seconds = $setupSeconds,
-                cycle_seconds = $cycleSeconds,
-                qa_seconds = $qaSeconds,
-                load_unload_seconds = $loadUnloadSeconds,
-                load_unload_requires_worker = $loadUnloadRequiresWorker,
-                automatic_loading = $automaticLoading,
-                load_unload_every_n_parts = $loadUnloadEveryNParts,
-                has_external_delay = $hasExternalDelay,
-                external_delay_description = $externalDelayDescription,
-                external_delay_duration = $externalDelayDuration,
-                external_delay_duration_unit = $externalDelayDurationUnit,
-                external_delay_calendar_id = $externalDelayCalendarId,
-                external_delay_respect_master_calendar = $externalDelayRespectMasterCalendar,
-                version = version + 1,
-                updated_at = $updatedAt
-            WHERE source_case_operation_id = $sourceCaseOperationId
-              AND status = 'not_started';
-            """;
-        update.Parameters.AddWithValue("$sourceCaseOperationId", operation.CaseOperationId);
-        AddNullableText(update, "$requiredMachineType", operation.RequiredMachineType);
-        AddNullableInteger(update, "$setupSeconds", operation.SetupTimeSeconds);
-        AddNullableInteger(update, "$cycleSeconds", operation.CycleTimePerPartSeconds);
-        update.Parameters.AddWithValue("$qaSeconds", operation.QaTimeAfterSetupSeconds);
-        update.Parameters.AddWithValue("$loadUnloadSeconds", operation.LoadUnloadTimeSeconds);
-        update.Parameters.AddWithValue("$loadUnloadRequiresWorker", operation.LoadUnloadRequiresWorker ? 1 : 0);
-        update.Parameters.AddWithValue("$automaticLoading", operation.AutomaticLoading ? 1 : 0);
-        AddNullableInteger(update, "$loadUnloadEveryNParts", operation.LoadUnloadEveryNParts);
-        update.Parameters.AddWithValue("$hasExternalDelay", operation.HasExternalDelay ? 1 : 0);
-        AddNullableText(update, "$externalDelayDescription", operation.ExternalDelayDescription);
-        update.Parameters.AddWithValue("$externalDelayDuration", operation.ExternalDelayDuration);
-        update.Parameters.AddWithValue("$externalDelayDurationUnit", operation.ExternalDelayDurationUnit);
-        AddNullableText(update, "$externalDelayCalendarId", operation.ExternalDelayCalendarId);
-        update.Parameters.AddWithValue("$externalDelayRespectMasterCalendar", operation.RespectMasterCalendar ? 1 : 0);
-        update.Parameters.AddWithValue("$updatedAt", FormatInstant(operation.UpdatedAt));
-        await update.ExecuteNonQueryAsync(cancellationToken);
+        if (!refresh.NumberConflicts.Contains($"OP{operationNumber.ToString(CultureInfo.InvariantCulture)}"))
+        {
+            return;
+        }
+
+        throw new CaseOperationValidationException(
+        [
+            new CaseOperationValidationIssue(
+                "operationNumber",
+                "batch_operation_number_in_use",
+                $"Operation number {operationNumber} is still used by a started operation of a pending Work Order; choose another number.")
+        ]);
     }
 
     private static void ValidateExternalDelay(

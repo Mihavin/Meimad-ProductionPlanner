@@ -168,16 +168,15 @@ internal sealed class SqliteKitaronSyncRepository(
             await ReplaceWorkOrderSnapshotAsync(connection, transaction, plan.WorkOrders, now, cancellationToken);
         await DeactivateMissingComponentsAsync(
             connection, transaction, plan.KnownComponentSourceKeys, now, counts, cancellationToken);
-        await SynchronizeNotStartedBatchOperationTimesAsync(
-            connection, transaction, now, cancellationToken);
-        await SynchronizeNotStartedBatchOperationMachineTypesAsync(
-            connection, transaction, now, cancellationToken);
         await ApplyRouteLockAsync(connection, transaction, routeCaseIds, now, cancellationToken);
         if (plan.Batches is not null)
         {
             await ApplyBatchesAsync(
                 connection, transaction, plan.Batches, caseIds, now, counts, cancellationToken);
         }
+        // A pending Work Order takes its operation list from its Case; a released one is frozen.
+        await SqliteWorkOrderRouteRefresh.RefreshAllAsync(
+            connection, transaction, "Kitaron synchronization", now, cancellationToken);
         var materialStates = (plan.Batches ?? [])
             .GroupBy(item => item.MaterialState, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
@@ -721,84 +720,6 @@ internal sealed class SqliteKitaronSyncRepository(
             insert.Parameters.AddWithValue("$now", now.ToString("O"));
             await insert.ExecuteNonQueryAsync(cancellationToken);
         }
-    }
-
-    private static async Task SynchronizeNotStartedBatchOperationTimesAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        await using var update = connection.CreateCommand();
-        update.Transaction = transaction;
-        // A time copies into not-started Batch Operations only when the Case Operation has one;
-        // an empty Case Operation time never erases the time a Batch Operation already carries.
-        update.CommandText = """
-            UPDATE batch_operations
-            SET setup_seconds = COALESCE((
-                    SELECT case_operations.setup_seconds
-                    FROM case_operations
-                    WHERE case_operations.id = batch_operations.source_case_operation_id), setup_seconds),
-                cycle_seconds = COALESCE((
-                    SELECT case_operations.cycle_seconds
-                    FROM case_operations
-                    WHERE case_operations.id = batch_operations.source_case_operation_id), cycle_seconds),
-                version = version + 1,
-                updated_at = $now
-            WHERE status = 'not_started'
-              AND EXISTS (
-                    SELECT 1
-                    FROM case_operations
-                    WHERE case_operations.id = batch_operations.source_case_operation_id)
-              AND (
-                    EXISTS (
-                        SELECT 1 FROM case_operations
-                        WHERE case_operations.id = batch_operations.source_case_operation_id
-                          AND case_operations.setup_seconds IS NOT NULL
-                          AND case_operations.setup_seconds IS NOT batch_operations.setup_seconds)
-                    OR EXISTS (
-                        SELECT 1 FROM case_operations
-                        WHERE case_operations.id = batch_operations.source_case_operation_id
-                          AND case_operations.cycle_seconds IS NOT NULL
-                          AND case_operations.cycle_seconds IS NOT batch_operations.cycle_seconds));
-            """;
-        update.Parameters.AddWithValue("$now", now.ToString("O"));
-        await update.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// A not-started Work Order operation carries its Case Operation's Machine Type, so a planner's
-    /// classification (a Machine Type, or "Production Note" for a note-only step) reaches the Work
-    /// Orders already launched. An operation that became a Production Note leaves its Machine.
-    /// </summary>
-    private static async Task SynchronizeNotStartedBatchOperationMachineTypesAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        await using (var update = connection.CreateCommand())
-        {
-            update.Transaction = transaction;
-            update.CommandText = """
-                UPDATE batch_operations
-                SET required_machine_type = (
-                        SELECT case_operations.required_machine_type
-                        FROM case_operations
-                        WHERE case_operations.id = batch_operations.source_case_operation_id),
-                    version = version + 1,
-                    updated_at = $now
-                WHERE status = 'not_started'
-                  AND EXISTS (
-                        SELECT 1 FROM case_operations
-                        WHERE case_operations.id = batch_operations.source_case_operation_id
-                          AND case_operations.required_machine_type IS NOT batch_operations.required_machine_type);
-                """;
-            update.Parameters.AddWithValue("$now", now.ToString("O"));
-            await update.ExecuteNonQueryAsync(cancellationToken);
-        }
-        await SqliteMachineAssignmentRepository.ReleaseProductionNoteAssignmentsAsync(
-            connection, transaction, now, cancellationToken);
     }
 
     /// <summary>
@@ -1665,7 +1586,6 @@ internal sealed class SqliteKitaronSyncRepository(
             held.Transaction = transaction;
             held.CommandText = """
                 SELECT CASE
-                    WHEN EXISTS (SELECT 1 FROM batch_operations WHERE source_case_operation_id = $id) THEN 'Production Batch'
                     WHEN EXISTS (
                         SELECT 1 FROM production_run_programs run_program
                         JOIN manufacturing_programs program ON program.id = run_program.manufacturing_program_id
@@ -1698,7 +1618,17 @@ internal sealed class SqliteKitaronSyncRepository(
                     ELSE NULL END;
                 """;
             Add(held, "$id", operation.Id);
-            if (await held.ExecuteScalarAsync(cancellationToken) is string reason)
+            // A pending Work Order's copy goes with the operation; a released, started or kept one holds it.
+            var reason = await SqliteWorkOrderRouteRefresh.IsHeldByWorkOrderAsync(
+                    connection, transaction, operation.Id, cancellationToken)
+                ? "Production Batch"
+                : await held.ExecuteScalarAsync(cancellationToken) as string;
+            if (reason is null)
+            {
+                await SqliteWorkOrderRouteRefresh.TryReleaseCaseOperationAsync(
+                    connection, transaction, operation.Id, cancellationToken);
+            }
+            else
             {
                 counts.OperationsKept++;
                 if (counts.KeptOperations.Count < 10)
@@ -2194,7 +2124,6 @@ internal sealed class SqliteKitaronSyncRepository(
                             update.Transaction = transaction;
                             update.CommandText = """
                                 DELETE FROM batch_allocations WHERE production_batch_id = $id;
-                                DELETE FROM batch_operations WHERE production_batch_id = $id;
                                 UPDATE production_batches
                                 SET planned_quantity = $quantity, batch_number = $number,
                                     version = version + 1, updated_at = $now
@@ -2204,9 +2133,9 @@ internal sealed class SqliteKitaronSyncRepository(
                             Add(update, "$number", item.BatchNumber); Add(update, "$now", now.ToString("O"));
                             await update.ExecuteNonQueryAsync(cancellationToken);
                         }
+                        // Its operations follow the Case while it is pending (the refresh at the end of
+                        // the synchronization) and stay frozen once released.
                         await InsertBatchAllocationsAsync(connection, transaction, item, batchId, caseId, now, cancellationToken);
-                        await SqliteProductionBatchRepository.InstantiateOperationsForImportAsync(
-                            connection, transaction, batchId, caseId, now, cancellationToken);
                         await SqliteOrderLifecycle.RecomputeForBatchAsync(connection, transaction, batchId, now, cancellationToken);
                         await UpsertLinkAsync(connection, transaction, "production_batch", item.SourceKey,
                             batchId, link.Value.OwnsTarget, item.SourceHash, now, cancellationToken);

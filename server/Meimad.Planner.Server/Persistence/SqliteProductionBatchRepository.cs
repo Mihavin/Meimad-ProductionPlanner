@@ -1018,7 +1018,10 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
 
     /// <summary>
     /// Sets the planner release state of a batch: `pending` (imported, not yet released) or
-    /// `released` (the planner released it for production). Needs Single Edit Mode.
+    /// `released` (the planner released it for production). Needs Single Edit Mode. A pending Work
+    /// Order takes its operation list from the Case and releasing freezes it, so releasing refreshes
+    /// the list one last time and going back to pending refreshes it again; a Work Order whose
+    /// production has started stays released.
     /// </summary>
     public async Task<ProductionBatch?> SetReleaseStateAsync(
         string batchId,
@@ -1031,6 +1034,30 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         await using (var transaction = connection.BeginTransaction(deferred: false))
         {
             var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+            if (released)
+            {
+                await SqliteWorkOrderRouteRefresh.RefreshWorkOrderAsync(
+                    connection, transaction, batchId, actor ?? "planner", now, cancellationToken);
+            }
+            else if (await ExistsAsync(
+                    connection, transaction,
+                    """
+                    SELECT EXISTS(
+                        SELECT 1 FROM production_batches b
+                        WHERE b.id = $id AND b.release_state = 'released'
+                          AND (b.status NOT IN ('waiting')
+                            OR EXISTS (SELECT 1 FROM batch_operations o
+                                       WHERE o.production_batch_id = b.id AND o.status <> 'not_started')
+                            OR EXISTS (SELECT 1 FROM production_runs run
+                                       JOIN batch_operations o ON o.id = run.legacy_batch_operation_id
+                                       WHERE o.production_batch_id = b.id AND run.structure_locked_at IS NOT NULL)));
+                    """,
+                    "$id", batchId, cancellationToken))
+            {
+                throw new ProductionBatchReleaseException(
+                    "work_order_started",
+                    "Production of this Work Order has started, so it stays released and keeps its operation list.");
+            }
             // A Work Order without operations stays pending: nothing could be planned or produced.
             if (released && await ExistsAsync(
                     connection, transaction,
@@ -1056,6 +1083,11 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
             command.Parameters.AddWithValue("$actor", (object?)actor ?? DBNull.Value);
             command.Parameters.AddWithValue("$id", batchId);
             await command.ExecuteNonQueryAsync(cancellationToken);
+            if (!released)
+            {
+                await SqliteWorkOrderRouteRefresh.RefreshWorkOrderAsync(
+                    connection, transaction, batchId, actor ?? "planner", now, cancellationToken);
+            }
             await transaction.CommitAsync(cancellationToken);
         }
         return await GetByIdAsync(batchId, cancellationToken);

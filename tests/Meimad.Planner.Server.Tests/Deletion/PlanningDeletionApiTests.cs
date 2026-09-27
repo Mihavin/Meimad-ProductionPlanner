@@ -17,6 +17,14 @@ public sealed class PlanningDeletionApiTests
         {
             await SeedAsync(application.Services);
             AddHeaders(client);
+            // A released Work Order keeps its frozen copy of the operation (a pending one would let it go).
+            var seeded = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var releaseConnection = await seeded.OpenConnectionAsync())
+            await using (var release = releaseConnection.CreateCommand())
+            {
+                release.CommandText = "UPDATE production_batches SET release_state = 'released' WHERE id = 'batch-1';";
+                await release.ExecuteNonQueryAsync();
+            }
 
             await AssertBlockedAsync(client, "/api/v1/cases/case-1");
             await AssertBlockedAsync(client, "/api/v1/orders/order-1");

@@ -103,20 +103,26 @@ public sealed class PlanningBoardEnrichmentTests
                         'board-machine', 'M-BOARD', 'Board machine', 'Mill', '[]',
                         'board-calendar', '{}', 'available', 1);
                     INSERT INTO cases (id, part_number, name, working_folder_path)
-                    VALUES ('board-case', 'PN-BOARD', 'Board case', 'C:\Cases\PN-BOARD');
+                    VALUES ('board-case', 'PN-BOARD', 'Board case', 'C:\Cases\PN-BOARD'),
+                           ('pending-case', 'PN-PENDING', 'Pending case', 'C:\Cases\PN-PENDING');
                     INSERT INTO production_batches (
                         id, case_id, batch_number, status, planned_quantity, release_state)
                     VALUES
                         ('released-batch', 'board-case', 'B-RELEASED', 'waiting', 4, 'released'),
-                        ('pending-batch', 'board-case', 'B-PENDING', 'waiting', 4, 'pending');
-                    INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
+                        ('pending-batch', 'pending-case', 'B-PENDING', 'waiting', 4, 'pending');
+                    -- Each Work Order matches its Case, as a pending one always does.
+                    INSERT INTO case_operations (
+                        id, case_id, operation_number, route_position, name, required_machine_type,
+                        setup_seconds, cycle_seconds)
                     VALUES
-                        ('case-op-10', 'board-case', 10, 0, 'Op 10'),
-                        ('case-op-20', 'board-case', 20, 1, 'Op 20'),
-                        ('case-op-30', 'board-case', 30, 2, 'Op 30'),
-                        ('case-op-40', 'board-case', 40, 3, 'Op 40'),
-                        ('case-op-50', 'board-case', 50, 4, 'Op 50'),
-                        ('case-op-60', 'board-case', 60, 5, 'Op 60');
+                        ('case-op-10', 'board-case', 10, 0, 'Mill', 'Mill', 60, 30),
+                        ('case-op-20', 'board-case', 20, 1, 'Laser', 'laser', 60, 30),
+                        ('case-op-30', 'board-case', 30, 2, 'MACHINE FINISH PER PS551170', NULL, NULL, NULL),
+                        ('case-op-40', 'board-case', 40, 3, 'Blank type', '  ', NULL, NULL),
+                        ('case-op-50', 'board-case', 50, 4, 'FOR CONTOUR SEE REPORT', 'Production Note', 0, 0),
+                        ('case-op-60', 'board-case', 60, 5, 'Assigned text step', NULL, 60, 30),
+                        ('pending-case-op-10', 'pending-case', 10, 0, 'Mill', 'Mill', 60, 30),
+                        ('pending-case-op-20', 'pending-case', 20, 1, 'Mill', 'Mill', 60, 30);
                     INSERT INTO batch_operations (
                         id, production_batch_id, source_case_operation_id, operation_number,
                         route_position, name, required_machine_type, setup_seconds, cycle_seconds, status)
@@ -127,8 +133,8 @@ public sealed class PlanningBoardEnrichmentTests
                         ('blank-type-op', 'released-batch', 'case-op-40', 40, 3, 'Blank type', '  ', NULL, NULL, 'not_started'),
                         ('note-op', 'released-batch', 'case-op-50', 50, 4, 'FOR CONTOUR SEE REPORT', 'Production Note', 0, 0, 'not_started'),
                         ('assigned-untyped-op', 'released-batch', 'case-op-60', 60, 5, 'Assigned text step', NULL, 60, 30, 'not_started'),
-                        ('pending-op', 'pending-batch', 'case-op-10', 10, 0, 'Mill', 'Mill', 60, 30, 'not_started'),
-                        ('pending-assigned-op', 'pending-batch', 'case-op-20', 20, 1, 'Mill', 'Mill', 60, 30, 'not_started');
+                        ('pending-op', 'pending-batch', 'pending-case-op-10', 10, 0, 'Mill', 'Mill', 60, 30, 'not_started'),
+                        ('pending-assigned-op', 'pending-batch', 'pending-case-op-20', 20, 1, 'Mill', 'Mill', 60, 30, 'not_started');
                     INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
                     VALUES
                         ('assigned-untyped', 'assigned-untyped-op', 'board-machine', 0),

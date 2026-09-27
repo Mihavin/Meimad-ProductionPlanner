@@ -2453,8 +2453,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             if (index >= 0) Batches[index] = saved;
             SelectedBatch = saved;
             StatusMessage = released
-                ? $"Work Order {saved.BatchNumber} released to production."
-                : $"Work Order {saved.BatchNumber} returned to pending.";
+                ? $"Work Order {saved.BatchNumber} released to production; its operation list is now frozen."
+                : $"Work Order {saved.BatchNumber} returned to pending; its operations follow the Case again.";
             PlanChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception exception) when (IsExpected(exception))

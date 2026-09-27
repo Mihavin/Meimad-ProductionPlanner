@@ -221,7 +221,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         return ids;
     }
 
-    private static async Task CompactMachineBacklogAsync(SqliteConnection c, SqliteTransaction t, string machineId, CancellationToken token)
+    internal static async Task CompactMachineBacklogAsync(SqliteConnection c, SqliteTransaction t, string machineId, CancellationToken token)
     {
         await using var command = c.CreateCommand(); command.Transaction = t;
         command.CommandText = """
@@ -235,6 +235,13 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             """;
         command.Parameters.AddWithValue("$machineId", machineId);
         await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task<string> ReadEditorAsync(SqliteConnection c, SqliteTransaction t, CancellationToken token)
+    {
+        await using var command = c.CreateCommand(); command.Transaction = t;
+        command.CommandText = "SELECT COALESCE(holder_user_id, holder_client_id) FROM edit_tokens WHERE id = 1;";
+        return await command.ExecuteScalarAsync(token) as string ?? "planner";
     }
 
     private static async Task ExecuteSqlAsync(SqliteConnection c, SqliteTransaction t, string sql, CancellationToken token)
@@ -267,7 +274,11 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
                 if (Convert.ToInt32(await kitaronLink.ExecuteScalarAsync(token), CultureInfo.InvariantCulture) == 1)
                     throw new KitaronManagedResourceException("Case Operation", id);
             }
-            await BlockIfAnyAsync(c, t, "batch_operations", "source_case_operation_id", id, "The Operation has already been instantiated in a Production Batch.", token);
+            // A pending Work Order takes its operation list from the Case, so its copy goes with the
+            // Operation; a released, started or completed Work Order keeps its frozen copy.
+            if (!await SqliteWorkOrderRouteRefresh.TryReleaseCaseOperationAsync(c, t, id, token))
+                throw new PlanningDeletionBlockedException(
+                    "The Operation is part of a released, started or completed Work Order. Set the Work Order back to Pending first, or keep the Operation.");
             await BlockIfAnyAsync(c, t, "process_revisions", "case_operation_id", id, "The Operation has immutable process or G-code release history.", token);
             // An imported Kitaron route is a sequence. Removing one of its operations re-links the
             // Kitaron-owned operations that followed it to the operation before it (or lets them start
@@ -347,6 +358,8 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             stage.Parameters.AddWithValue("$caseId", caseId);
             stage.Parameters.AddWithValue("$position", position);
             await stage.ExecuteNonQueryAsync(token);
+            await SqliteWorkOrderRouteRefresh.RefreshCaseAsync(
+                c, t, caseId, await ReadEditorAsync(c, t, token), timeProvider.GetUtcNow(), token);
             return true;
         }, token);
 

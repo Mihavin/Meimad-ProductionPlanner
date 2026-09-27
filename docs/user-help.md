@@ -38,7 +38,7 @@ The Case working folder contains the source engineering files. The Planner does 
 
 The Planning Board has a pool of unassigned operations and one backlog per machine.
 
-The pool (**UNASSIGNED**) lists only operations that have a Machine Type and belong to a released Work Order. An operation marked **Production Note** is a note only: it is never on the board or the Timeline, the next operation follows the one before the note, and the Work Order completes without it. Changing an operation's Machine Type in the Case also changes it in every Work Order where that operation has not started yet; an operation you turn into a note leaves its machine. To plan a pending Work Order, release it in the Case first. An operation without a Machine Type, such as a text step from the Kitaron production station ייצור, appears once you set its Machine Type in the Case; set a step that is only a note to **Production Note**. Operations already on a machine stay there.
+The pool (**UNASSIGNED**) lists only operations that have a Machine Type and belong to a released Work Order. An operation marked **Production Note** is a note only: it is never on the board or the Timeline, the next operation follows the one before the note, and the Work Order completes without it. A pending Work Order always has the Case's current operations; a released one keeps the list it had when you released it. An operation you turn into a note leaves its machine. To plan a pending Work Order, release it in the Case first. An operation without a Machine Type, such as a text step from the Kitaron production station ייצור, appears once you set its Machine Type in the Case; set a step that is only a note to **Production Note**. Operations already on a machine stay there.
 
 - Drag an operation from the pool or between machine backlogs to assign or move it.
 - Reordering is manual. The Planner does not optimize or silently repair the plan.
@@ -324,7 +324,7 @@ The Material Orders tab lists the material purchase-order lines from Kitaron. It
 
 ### Releasing Kitaron batches
 
-Production Batches come only from Kitaron. A new batch is Pending; select it on the Case's Batches tab and press Release when it may go to production, or Return to pending to take it back. The Material order column names the open Kitaron purchase lines for the batch's raw material. The Material Orders tab shows each purchase line's price and the batches and customer orders that use its material.
+Production Batches come only from Kitaron. A new batch is Pending; select it on the Case's Batches tab and press Release when it may go to production, or Return to pending to take it back. While a Work Order is Pending its operations follow the Case: every operation you add, change or delete in the Case changes the Work Order too. Release freezes the list; Case changes then no longer reach it. Returning it to Pending takes the Case's current list again. After production of a Work Order has started it cannot return to Pending. You cannot delete a Case operation while a released Work Order uses it. The Material order column names the open Kitaron purchase lines for the batch's raw material. The Material Orders tab shows each purchase line's price and the batches and customer orders that use its material.
 
 ### Work Orders, assemblies, station tabs, network folder
 

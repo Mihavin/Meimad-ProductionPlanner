@@ -206,8 +206,8 @@ public sealed class CaseOperationCreateApiTests
                 await snapshotResponse.Content.ReadAsStringAsync());
             var snapshots = snapshotDocument.RootElement.GetProperty("items").EnumerateArray().ToArray();
             Assert.Equal(2, snapshots.Length);
-            // The original snapshot keeps its name and receives only the propagated timing edit.
-            Assert.Equal("Saw", snapshots[0].GetProperty("name").GetString());
+            // The Work Order is pending, so it takes the whole edit from the Case.
+            Assert.Equal("Saw updated", snapshots[0].GetProperty("name").GetString());
             Assert.Equal(90, snapshots[0].GetProperty("setupTimeSeconds").GetInt32());
             // The Case Operation created after the Batch was appended as a not-started snapshot.
             Assert.Equal(

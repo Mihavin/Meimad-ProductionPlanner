@@ -1,6 +1,4 @@
 using System.Globalization;
-using Meimad.Planner.Server.Application.Cases;
-using Meimad.Planner.Server.Domain.CaseOperations;
 using Meimad.Planner.Server.Domain.ProductionBatches;
 using Microsoft.Data.Sqlite;
 
@@ -8,9 +6,9 @@ namespace Meimad.Planner.Server.Persistence;
 
 /// <summary>
 /// Shared writer for batch_operations snapshot rows. Production Batch creation snapshots the whole
-/// Case route through <see cref="InsertAsync"/>, and Case Operation creation appends the new
-/// operation to every open Batch through <see cref="AppendToOpenBatchesAsync"/>, so both paths
-/// write exactly the same snapshot shape.
+/// Case route through <see cref="InsertAsync"/>, and a pending Work Order that takes a new Case
+/// Operation copies it through <see cref="InsertFromCaseOperationAsync"/>, so both paths write the
+/// same snapshot shape.
 /// </summary>
 internal static class SqliteBatchOperationRows
 {
@@ -92,143 +90,54 @@ internal static class SqliteBatchOperationRows
     }
 
     /// <summary>
-    /// Appends a newly created Case Operation as a not-started Batch Operation to every Production
-    /// Batch of its Case whose status is neither complete nor cancelled, at that Batch's next route
-    /// position, bumping each affected Batch version and recording one structured event per Batch.
-    /// The append is rejected when an open Batch snapshot still uses the same operation number,
-    /// because (production_batch_id, operation_number) is unique; the caller's transaction then rolls
-    /// the Case Operation back too. Returns the affected Batch ids in creation order.
+    /// Copies a Case Operation into a Work Order as a not-started operation at the given number and
+    /// route position: how a pending Work Order takes an operation its Case gained.
     /// </summary>
-    internal static async Task<IReadOnlyList<string>> AppendToOpenBatchesAsync(
+    internal static async Task InsertFromCaseOperationAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        CaseOperationDetails operation,
-        string dependencyStorageToken,
-        string actor,
+        string batchId,
+        string caseOperationId,
+        int operationNumber,
+        int routePosition,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var targets = new List<(string BatchId, string BatchNumber, int NextRoutePosition, bool NumberInUse)>();
-        await using (var read = connection.CreateCommand())
-        {
-            read.Transaction = transaction;
-            read.CommandText = """
-                SELECT batch.id, batch.batch_number,
-                       COALESCE((SELECT MAX(route_position) + 1 FROM batch_operations
-                                 WHERE production_batch_id = batch.id), 0),
-                       EXISTS(SELECT 1 FROM batch_operations
-                              WHERE production_batch_id = batch.id
-                                AND operation_number = $operationNumber)
-                FROM production_batches batch
-                WHERE batch.case_id = $caseId
-                  AND batch.status NOT IN ('complete', 'cancelled')
-                ORDER BY batch.created_at, batch.id;
-                """;
-            read.Parameters.AddWithValue("$caseId", operation.CaseId);
-            read.Parameters.AddWithValue("$operationNumber", operation.OperationNumber);
-            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                targets.Add((reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt64(3) == 1));
-            }
-        }
-
-        var conflicts = targets
-            .Where(target => target.NumberInUse)
-            .Select(target => $"'{target.BatchNumber}'")
-            .ToArray();
-        if (conflicts.Length > 0)
-        {
-            throw new CaseOperationValidationException(
-            [
-                new(
-                    "operationNumber",
-                    "batch_operation_number_in_use",
-                    $"Operation number {operation.OperationNumber} is still used by the route snapshot of open Production Batch {string.Join(", ", conflicts)}; choose another number.")
-            ]);
-        }
-
-        var at = FormatInstant(now);
-        var appended = new List<string>(targets.Count);
-        foreach (var target in targets)
-        {
-            var snapshot = new BatchOperation(
-                Guid.NewGuid().ToString("N"),
-                target.BatchId,
-                operation.CaseOperationId,
-                operation.OperationNumber,
-                target.NextRoutePosition,
-                operation.Name,
-                operation.RequiredMachineType,
-                operation.SetupTimeSeconds,
-                operation.CycleTimePerPartSeconds,
-                ProductionBatchValidator.BatchOperationNotStartedStatus,
-                1,
-                now,
-                now,
-                operation.QaTimeAfterSetupSeconds,
-                operation.LoadUnloadTimeSeconds,
-                operation.LoadUnloadRequiresWorker,
-                operation.AutomaticLoading,
-                operation.LoadUnloadEveryNParts,
-                operation.DayShiftOnly,
-                HasExternalDelay: operation.HasExternalDelay,
-                ExternalDelayDescription: operation.ExternalDelayDescription,
-                ExternalDelayDuration: operation.ExternalDelayDuration,
-                ExternalDelayDurationUnit: operation.ExternalDelayDurationUnit,
-                ExternalDelayCalendarId: operation.ExternalDelayCalendarId,
-                RespectMasterCalendar: operation.RespectMasterCalendar);
-            await InsertAsync(
-                connection,
-                transaction,
-                snapshot,
-                dependencyStorageToken,
-                operation.PredecessorCaseOperationId,
-                operation.SimultaneousGroupKey,
-                cancellationToken);
-
-            await using (var bump = connection.CreateCommand())
-            {
-                bump.Transaction = transaction;
-                bump.CommandText = """
-                    UPDATE production_batches
-                    SET version = version + 1, updated_at = $at
-                    WHERE id = $batchId;
-                    """;
-                bump.Parameters.AddWithValue("$batchId", target.BatchId);
-                bump.Parameters.AddWithValue("$at", at);
-                await bump.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            await SqliteStructuredEventLogRepository.AppendAsync(
-                connection,
-                transaction,
-                new(
-                    "production_batch_route_appended",
-                    now,
-                    actor,
-                    new Dictionary<string, string>
-                    {
-                        ["productionBatchId"] = target.BatchId,
-                        ["batchOperationId"] = snapshot.BatchOperationId,
-                        ["caseId"] = operation.CaseId,
-                        ["caseOperationId"] = operation.CaseOperationId
-                    },
-                    "CASE_OPERATION_CREATED",
-                    null,
-                    new { routeOperationCount = target.NextRoutePosition },
-                    new
-                    {
-                        routeOperationCount = target.NextRoutePosition + 1,
-                        operationNumber = operation.OperationNumber,
-                        routePosition = target.NextRoutePosition,
-                        status = ProductionBatchValidator.BatchOperationNotStartedStatus
-                    }),
-                cancellationToken);
-            appended.Add(target.BatchId);
-        }
-
-        return appended;
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO batch_operations (
+                id, production_batch_id, source_case_operation_id,
+                operation_number, route_position, name, required_machine_type,
+                setup_seconds, cycle_seconds, status, version, created_at, updated_at,
+                dependency_type, predecessor_source_case_operation_id,
+                simultaneous_group_key,
+                qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                automatic_loading, load_unload_every_n_parts, day_shift_only,
+                has_external_delay, external_delay_description, external_delay_duration,
+                external_delay_duration_unit, external_delay_calendar_id,
+                external_delay_respect_master_calendar)
+            SELECT $id, $batchId, id,
+                   $operationNumber, $routePosition, name, required_machine_type,
+                   setup_seconds, cycle_seconds, $status, 1, $now, $now,
+                   dependency_type, predecessor_case_operation_id,
+                   simultaneous_group_key,
+                   qa_seconds, load_unload_seconds, load_unload_requires_worker,
+                   automatic_loading, load_unload_every_n_parts, day_shift_only,
+                   has_external_delay, external_delay_description, external_delay_duration,
+                   external_delay_duration_unit, external_delay_calendar_id,
+                   external_delay_respect_master_calendar
+            FROM case_operations
+            WHERE id = $caseOperationId;
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        command.Parameters.AddWithValue("$batchId", batchId);
+        command.Parameters.AddWithValue("$caseOperationId", caseOperationId);
+        command.Parameters.AddWithValue("$operationNumber", operationNumber);
+        command.Parameters.AddWithValue("$routePosition", routePosition);
+        command.Parameters.AddWithValue("$status", ProductionBatchValidator.BatchOperationNotStartedStatus);
+        command.Parameters.AddWithValue("$now", FormatInstant(now));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static string FormatInstant(DateTimeOffset value) =>
