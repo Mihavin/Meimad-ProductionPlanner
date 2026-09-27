@@ -59,9 +59,23 @@ public sealed class MachineOperationExecutionApiTests
         {
             await SeedAsync(application.Services);
             AddEditHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var noteConnection = await database.OpenConnectionAsync())
+            await using (var note = noteConnection.CreateCommand())
+            {
+                // A Production Note is never worked; the Work Order completes without it.
+                note.CommandText = """
+                    INSERT INTO case_operations (id, case_id, operation_number, route_position, name, required_machine_type)
+                    VALUES ('case-op-note', 'case-1', 15, 5, 'SEE NOTE 8', 'Production Note');
+                    INSERT INTO batch_operations (
+                        id, production_batch_id, source_case_operation_id,
+                        operation_number, route_position, name, required_machine_type, status)
+                    VALUES ('op-note', 'batch-1', 'case-op-note', 15, 5, 'SEE NOTE 8', 'Production Note', 'not_started');
+                    """;
+                await note.ExecuteNonQueryAsync();
+            }
 
             Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
-            var database = application.Services.GetRequiredService<SqliteDatabase>();
             await using (var statusConnection = await database.OpenConnectionAsync())
             {
                 Assert.Equal("in_production", await ScalarAsync(

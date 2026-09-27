@@ -81,7 +81,9 @@ internal static class SqliteOrderLifecycle
                       AND NOT EXISTS(
                           SELECT 1
                           FROM batch_operations operation
-                          WHERE operation.production_batch_id = allocation.production_batch_id)),
+                          WHERE operation.production_batch_id = allocation.production_batch_id
+                            AND lower(trim(COALESCE(operation.required_machine_type, ''))) <> 'production note')),
+                -- A Production Note is never worked, so it never holds the Order open.
                 NOT EXISTS(
                     SELECT 1
                     FROM batch_allocations allocation
@@ -90,7 +92,8 @@ internal static class SqliteOrderLifecycle
                       ON operation.production_batch_id = allocation.production_batch_id
                     WHERE allocation.order_id = $orderId
                       AND batch.status<>'cancelled'
-                      AND operation.status <> 'completed');
+                      AND operation.status <> 'completed'
+                      AND lower(trim(COALESCE(operation.required_machine_type, ''))) <> 'production note');
             """;
         command.Parameters.AddWithValue("$orderId", orderId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

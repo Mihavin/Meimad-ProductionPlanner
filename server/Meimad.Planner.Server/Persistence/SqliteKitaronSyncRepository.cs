@@ -170,6 +170,8 @@ internal sealed class SqliteKitaronSyncRepository(
             connection, transaction, plan.KnownComponentSourceKeys, now, counts, cancellationToken);
         await SynchronizeNotStartedBatchOperationTimesAsync(
             connection, transaction, now, cancellationToken);
+        await SynchronizeNotStartedBatchOperationMachineTypesAsync(
+            connection, transaction, now, cancellationToken);
         await ApplyRouteLockAsync(connection, transaction, routeCaseIds, now, cancellationToken);
         if (plan.Batches is not null)
         {
@@ -762,6 +764,41 @@ internal sealed class SqliteKitaronSyncRepository(
             """;
         update.Parameters.AddWithValue("$now", now.ToString("O"));
         await update.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// A not-started Work Order operation carries its Case Operation's Machine Type, so a planner's
+    /// classification (a Machine Type, or "Production Note" for a note-only step) reaches the Work
+    /// Orders already launched. An operation that became a Production Note leaves its Machine.
+    /// </summary>
+    private static async Task SynchronizeNotStartedBatchOperationMachineTypesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE batch_operations
+                SET required_machine_type = (
+                        SELECT case_operations.required_machine_type
+                        FROM case_operations
+                        WHERE case_operations.id = batch_operations.source_case_operation_id),
+                    version = version + 1,
+                    updated_at = $now
+                WHERE status = 'not_started'
+                  AND EXISTS (
+                        SELECT 1 FROM case_operations
+                        WHERE case_operations.id = batch_operations.source_case_operation_id
+                          AND case_operations.required_machine_type IS NOT batch_operations.required_machine_type);
+                """;
+            update.Parameters.AddWithValue("$now", now.ToString("O"));
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await SqliteMachineAssignmentRepository.ReleaseProductionNoteAssignmentsAsync(
+            connection, transaction, now, cancellationToken);
     }
 
     /// <summary>

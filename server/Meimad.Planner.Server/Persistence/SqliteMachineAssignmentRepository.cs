@@ -1099,7 +1099,9 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
                        COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
                        COALESCE(SUM(CASE WHEN status <> 'not_started' THEN 1 ELSE 0 END), 0)
                 FROM batch_operations
-                WHERE production_batch_id = $batchId;
+                WHERE production_batch_id = $batchId
+                  -- A Production Note is never worked, so it never holds the Work Order open.
+                  AND lower(trim(COALESCE(required_machine_type, ''))) <> 'production note';
                 """;
             read.Parameters.AddWithValue("$batchId", batchId);
             await using var reader = await read.ExecuteReaderAsync(cancellationToken);
@@ -1438,6 +1440,73 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             null,
             reader.IsDBNull(12) ? null : reader.GetString(12),
             typeCapabilities);
+    }
+
+    /// <summary>
+    /// Takes Production Notes off the Machines. A note is never Machine work, so a not-started
+    /// operation that became a note (its Case Operation was reclassified) leaves its backlog, and the
+    /// operations behind it close the gap in their stored order, as a manual unassignment does.
+    /// </summary>
+    internal static async Task ReleaseProductionNoteAssignmentsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var notes = new List<(string AssignmentId, string MachineId)>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT machine_assignments.id, machine_assignments.machine_id
+                FROM machine_assignments
+                JOIN batch_operations
+                  ON batch_operations.id = machine_assignments.batch_operation_id
+                WHERE machine_assignments.released_at IS NULL
+                  AND batch_operations.status = 'not_started'
+                  AND lower(trim(COALESCE(batch_operations.required_machine_type, ''))) = 'production note';
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                notes.Add((reader.GetString(0), reader.GetString(1)));
+            }
+        }
+
+        foreach (var machine in notes.GroupBy(note => note.MachineId, StringComparer.Ordinal))
+        {
+            var released = machine.Select(note => note.AssignmentId).ToHashSet(StringComparer.Ordinal);
+            var original = await ReadAssignmentsForMachineAsync(
+                connection, transaction, machine.Key, cancellationToken);
+            foreach (var assignmentId in released)
+            {
+                await using var release = connection.CreateCommand();
+                release.Transaction = transaction;
+                release.CommandText = """
+                    UPDATE machine_assignments
+                    SET released_at=$at,backlog_position=1000000000+rowid,production_run_id=NULL,
+                        version=version+1,updated_at=$at
+                    WHERE id=$id AND released_at IS NULL;
+                    """;
+                release.Parameters.AddWithValue("$id", assignmentId);
+                release.Parameters.AddWithValue("$at", FormatInstant(now));
+                await release.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            var remaining = original
+                .Where(assignment => !released.Contains(assignment.MachineAssignmentId))
+                .ToList();
+            await StageBacklogAsync(connection, transaction, remaining, cancellationToken);
+            await WriteFinalBacklogsAsync(
+                connection,
+                transaction,
+                [],
+                remaining,
+                remaining.ToDictionary(assignment => assignment.MachineAssignmentId, StringComparer.Ordinal),
+                string.Empty,
+                now,
+                cancellationToken);
+        }
     }
 
     private static async Task<MachineAssignment?> ReadAssignmentForOperationAsync(

@@ -664,20 +664,23 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         }
 
         // A Batch owns an execution snapshot of its Case Operation.  Keep the
-        // timing portion of every not-started snapshot in sync so the planning
-        // board and Timeline immediately recalculate with the revised routing
-        // times.  Started and completed work remains an historical record.
-        await PropagateTimingToNotStartedBatchOperationsAsync(
+        // Machine Type and timing portion of every not-started snapshot in sync so
+        // the planning board and Timeline immediately recalculate with the revised
+        // routing.  Started and completed work remains an historical record.  An
+        // operation that became a Production Note leaves its Machine backlog.
+        await PropagateToNotStartedBatchOperationsAsync(
             connection,
             transaction,
             candidate,
             cancellationToken);
+        await SqliteMachineAssignmentRepository.ReleaseProductionNoteAssignmentsAsync(
+            connection, transaction, candidate.UpdatedAt, cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
         return candidate;
     }
 
-    private static async Task PropagateTimingToNotStartedBatchOperationsAsync(
+    private static async Task PropagateToNotStartedBatchOperationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         CaseOperationDetails operation,
@@ -687,7 +690,8 @@ internal sealed class SqliteCaseRepository : ICaseRepository
         update.Transaction = transaction;
         update.CommandText = """
             UPDATE batch_operations
-            SET setup_seconds = $setupSeconds,
+            SET required_machine_type = $requiredMachineType,
+                setup_seconds = $setupSeconds,
                 cycle_seconds = $cycleSeconds,
                 qa_seconds = $qaSeconds,
                 load_unload_seconds = $loadUnloadSeconds,
@@ -706,6 +710,7 @@ internal sealed class SqliteCaseRepository : ICaseRepository
               AND status = 'not_started';
             """;
         update.Parameters.AddWithValue("$sourceCaseOperationId", operation.CaseOperationId);
+        AddNullableText(update, "$requiredMachineType", operation.RequiredMachineType);
         AddNullableInteger(update, "$setupSeconds", operation.SetupTimeSeconds);
         AddNullableInteger(update, "$cycleSeconds", operation.CycleTimePerPartSeconds);
         update.Parameters.AddWithValue("$qaSeconds", operation.QaTimeAfterSetupSeconds);

@@ -956,3 +956,23 @@ The Tool Catalog imports and exports Cimatron cutter workbooks (NC-Process > Cut
 The review after the merge found that the import always set the type Cimatron describes, while the export writes several catalog types as one Cimatron cutter kind. An export and re-import therefore turned face mills, counterbores and boring heads into end mills, engravers into chamfer mills, T-slot mills into slot mills and spot drills into center drills. Fixed: `CimatronCutterLibrary.MergedToolType` keeps the existing type when it exports as the same technology, tip and taper as the cutter. Tests: `CimatronToolTransferApiTests` (four scenarios) and `A_reimport_keeps_catalog_types_Cimatron_folds_into_one_cutter_kind`.
 
 **Not yet verified:** that Cimatron's Menu > Import reads an exported workbook needs a trial on the CAM PC. The tests only read the export back with the Server's own reader.
+
+### Production Notes never block - 2026-09-27
+
+Owner rule: a Production Note is a note only and must not affect the Timeline or block anything. Live data showed four ways notes still did:
+
+1. Work Order operations kept the Machine Type they were launched with. On Case 16W1120-13 the planner marked the text steps as Production Note and typed OP30 Mill 3x and OP90 Mill 5x. Work Order 41508 kept all nine operations untyped in one chain (34 differing operations overall). So its notes sat on the Timeline as unassigned work, OP90 waited behind them, and its note OP120 was still on a Machine.
+2. The Timeline drops notes, so an operation whose predecessor was a note got `dependency_snapshot_missing` and was blocked. Three Case Operations on 16W1120-14 and 16W121-21 follow a note.
+3. Work Order and Order completion counted notes, which never complete.
+4. A note left on a Machine at backlog position 0 would stop the next operation from starting (Start requires position 0).
+
+Implemented:
+
+- The Case Operation edit copies the Machine Type to not-started Batch Operations along with the times. The Kitaron synchronization does the same every run (`SynchronizeNotStartedBatchOperationMachineTypesAsync`), which heals existing Work Orders.
+- `SqliteMachineAssignmentRepository.ReleaseProductionNoteAssignmentsAsync` takes not-started notes off their Machines and compacts the backlog as a manual unassignment does.
+- `SqliteTimelineSourceRepository` resolves predecessors past notes.
+- Batch status, cycle accounting and the Order lifecycle ignore notes.
+
+Tests: `TimelineApiTests.Production_notes_in_a_chain_never_block_the_operations_that_follow_them`, `CaseOperationCreateApiTests.Classifying_a_case_operation_reaches_not_started_work_orders_and_takes_notes_off_machines`, `KitaronBatchSyncTests.A_synchronization_brings_the_case_classification_to_not_started_work_orders`, and a note added to `MachineOperationExecutionApiTests.Start_suspend_resume_and_finish_advance_machine_backlog`, whose Work Order still completes.
+
+**Observed, not changed:** the production-run cycle accounting sets a finished Work Order to `completed`, while manual execution sets `complete` (`ProductionBatchValidator.CompleteStatus`). The Order roll-up in the cycle accounting checks for `completed`.

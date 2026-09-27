@@ -197,7 +197,8 @@ internal static class SqliteProductionRunCycleAccounting
             SET status=CASE WHEN NOT EXISTS(
                 SELECT 1 FROM batch_operations operation
                 WHERE operation.production_batch_id=production_batches.id
-                  AND operation.status<>'completed')
+                  AND operation.status<>'completed'
+                  AND lower(trim(COALESCE(operation.required_machine_type,''))) <> 'production note')
                 THEN 'completed' ELSE 'in_progress' END,
                 version=version+1,updated_at=$at
             WHERE id IN(

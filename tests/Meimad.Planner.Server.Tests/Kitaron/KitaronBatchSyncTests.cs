@@ -382,6 +382,45 @@ public sealed class KitaronBatchSyncTests
         });
     }
 
+    [Fact]
+    public async Task A_synchronization_brings_the_case_classification_to_not_started_work_orders()
+    {
+        await RunAsync(async application =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            var note = new KitaronSyncOperation(
+                KitaronRoutePlanner.OperationKey("PN-ROUTE", 50), "PN-ROUTE", 50, 1, "FOR CONTOUR SEE REPORT 16PR006",
+                "Production Note", 0, 0, "note-hash");
+            var batch = new KitaronSyncBatch(
+                "wo:4021", "PN-ROUTE", "4021", 5, [new KitaronSyncBatchAllocation("7001", 5)], "unknown", null, "hash-classify");
+            var plan = Plan([Operation(), note], [batch]);
+            await repository.ApplyAsync(plan, Now, CancellationToken.None);
+
+            // A Work Order launched before the Case was classified: untyped operations, and the text
+            // step already placed on a Machine ahead of the real one.
+            await ExecuteAsync(database, """
+                UPDATE batch_operations SET required_machine_type = NULL;
+                INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active)
+                VALUES ('machine-1', '10', 'Machine 10', 'Mill 3x', 'calendar-r', 'active', 1);
+                INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                SELECT 'assignment-' || operation_number, id, 'machine-1', CASE operation_number WHEN 50 THEN 0 ELSE 1 END
+                FROM batch_operations;
+                """);
+
+            await repository.ApplyAsync(plan, Now.AddMinutes(1), CancellationToken.None);
+
+            await using var connection = await database.OpenConnectionAsync();
+            Assert.Equal("30:Mill 3x|50:Production Note", await ScalarAsync(connection,
+                "SELECT group_concat(operation_number || ':' || required_machine_type, '|') FROM (SELECT * FROM batch_operations ORDER BY operation_number);"));
+            Assert.Equal(0L, await ScalarAsync(connection,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id = 'assignment-50' AND released_at IS NULL;"));
+            Assert.Equal(0L, await ScalarAsync(connection,
+                "SELECT backlog_position FROM machine_assignments WHERE id = 'assignment-30';"));
+        });
+    }
+
     private static KitaronSyncOperation Operation() => new(
         KitaronRoutePlanner.OperationKey("PN-ROUTE", 30), "PN-ROUTE", 30, 0, "Mill", "Mill 3x", 600, 120, "op-hash");
 

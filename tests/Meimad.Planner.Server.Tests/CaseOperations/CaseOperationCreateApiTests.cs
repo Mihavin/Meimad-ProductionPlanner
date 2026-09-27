@@ -362,6 +362,81 @@ public sealed class CaseOperationCreateApiTests
         });
     }
 
+    [Fact]
+    public async Task Classifying_a_case_operation_reaches_not_started_work_orders_and_takes_notes_off_machines()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var caseId = await CreateCaseAsync(client);
+            var mill = await CreateOperationAsync(client, caseId, new
+            {
+                operationNumber = 10, name = "Mill stage 1", requiredMachineType = (string?)null,
+                setupTimeSeconds = 60, cycleTimePerPartSeconds = 30, dependencyType = "INDEPENDENT"
+            });
+            var text = await CreateOperationAsync(client, caseId, new
+            {
+                operationNumber = 20, name = "FOR CONTOUR SEE REPORT 16PR006", requiredMachineType = (string?)null,
+                setupTimeSeconds = 0, cycleTimePerPartSeconds = 0, dependencyType = "INDEPENDENT"
+            });
+            var millId = mill.GetProperty("caseOperationId").GetString()!;
+            var textId = text.GetProperty("caseOperationId").GetString()!;
+            using (var batch = await client.PostAsJsonAsync("/api/v1/batches", new
+            {
+                caseId, batchNumber = "B-NOTE", status = "waiting", plannedQuantity = 5,
+                allocations = new[] { new { allocationType = "stock", quantity = 5 } }
+            }))
+            {
+                Assert.True(batch.StatusCode == HttpStatusCode.Created, await batch.Content.ReadAsStringAsync());
+            }
+
+            // The Work Order's text step was placed on a Machine before anyone classified it.
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO working_calendars (id, name, time_zone_id) VALUES ('calendar-1', 'Day', 'UTC');
+                    INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active)
+                    VALUES ('machine-1', 'M-1', 'Mill 1', 'Mill 3x', 'calendar-1', 'active', 1);
+                    INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                    SELECT 'assignment-' || operation_number, id, 'machine-1',
+                           CASE operation_number WHEN 20 THEN 0 ELSE 1 END
+                    FROM batch_operations;
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using (var note = await client.SendAsync(PatchRequest(caseId, textId, 1, new { requiredMachineType = "Production Note" })))
+            {
+                Assert.True(note.StatusCode == HttpStatusCode.OK, await note.Content.ReadAsStringAsync());
+            }
+            using (var typed = await client.SendAsync(PatchRequest(caseId, millId, 1, new { requiredMachineType = "Mill 3x" })))
+            {
+                Assert.True(typed.StatusCode == HttpStatusCode.OK, await typed.Content.ReadAsStringAsync());
+            }
+
+            await using var check = await database.OpenConnectionAsync();
+            Assert.Equal("Production Note", await ScalarAsync(check,
+                $"SELECT required_machine_type FROM batch_operations WHERE source_case_operation_id = '{textId}';"));
+            Assert.Equal("Mill 3x", await ScalarAsync(check,
+                $"SELECT required_machine_type FROM batch_operations WHERE source_case_operation_id = '{millId}';"));
+            // The note left the Machine; the real operation behind it moved up to position 0.
+            Assert.Equal(0L, await ScalarAsync(check,
+                "SELECT COUNT(*) FROM machine_assignments WHERE id = 'assignment-20' AND released_at IS NULL;"));
+            Assert.Equal(0L, await ScalarAsync(check,
+                "SELECT backlog_position FROM machine_assignments WHERE id = 'assignment-10';"));
+        });
+    }
+
+    private static async Task<object?> ScalarAsync(SqliteConnection connection, string sql)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return await command.ExecuteScalarAsync();
+    }
+
     private static async Task<JsonElement> CreateOperationAsync(
         HttpClient client,
         string caseId,

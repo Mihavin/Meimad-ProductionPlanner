@@ -521,7 +521,57 @@ internal sealed class SqliteTimelineSourceRepository : ITimelineSourceRepository
                 ManualPriority: NullableInt(reader, reader.GetOrdinal("manual_priority"))));
         }
 
+        await reader.DisposeAsync();
+        await ResolvePredecessorsPastProductionNotesAsync(connection, transaction, values, cancellationToken);
         return values;
+    }
+
+    /// <summary>
+    /// A Production Note is only a note in the chain and is not scheduled, so it never holds an
+    /// operation back: an operation that follows a note follows the note's own predecessor instead
+    /// (over any run of notes), and one whose notes lead back to no real operation follows nothing.
+    /// </summary>
+    private static async Task ResolvePredecessorsPastProductionNotesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        List<TimelineSourceOperation> operations,
+        CancellationToken cancellationToken)
+    {
+        var notes = new Dictionary<(string BatchId, string SourceCaseOperationId), string?>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT production_batch_id, source_case_operation_id,
+                       CASE WHEN dependency_type IN ('sequential', 'parallel_capable')
+                            THEN predecessor_source_case_operation_id END
+                FROM batch_operations
+                WHERE lower(trim(COALESCE(required_machine_type, ''))) = 'production note';
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                notes[(reader.GetString(0), reader.GetString(1))] = NullableString(reader, 2);
+            }
+        }
+        if (notes.Count == 0) return;
+
+        for (var index = 0; index < operations.Count; index++)
+        {
+            var operation = operations[index];
+            var predecessor = operation.PredecessorSourceCaseOperationId;
+            if (predecessor is null || !notes.ContainsKey((operation.BatchId, predecessor))) continue;
+
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (predecessor is not null
+                && notes.TryGetValue((operation.BatchId, predecessor), out var notePredecessor))
+            {
+                predecessor = visited.Add(predecessor) ? notePredecessor : null;
+            }
+            operations[index] = predecessor is null
+                ? operation with { DependencyType = "independent", PredecessorSourceCaseOperationId = null }
+                : operation with { PredecessorSourceCaseOperationId = predecessor };
+        }
     }
 
     private static async Task<IReadOnlyList<TimelineSourceDowntime>> ReadDowntimesAsync(

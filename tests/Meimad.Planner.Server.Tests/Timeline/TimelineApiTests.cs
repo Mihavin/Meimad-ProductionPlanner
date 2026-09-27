@@ -2175,6 +2175,71 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Production_notes_in_a_chain_never_block_the_operations_that_follow_them()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                // OP20 follows two notes that follow OP10; OP50 follows a note that follows nothing.
+                command.CommandText = """
+                    INSERT INTO machines (id, number, name, machine_type, working_calendar_id, status, is_active)
+                    VALUES ('machine-2', 'M-2', 'Second mill', 'mill', 'calendar-1', 'active', 1);
+                    INSERT INTO case_operations (
+                        id, case_id, operation_number, route_position, name, required_machine_type,
+                        setup_seconds, cycle_seconds, dependency_type, predecessor_case_operation_id)
+                    VALUES
+                        ('case-note-a', 'case-1', 12, 10, 'SEE NOTE 8', 'Production Note', 0, 0, 'sequential', 'case-op-1'),
+                        ('case-note-b', 'case-1', 14, 11, 'FOR CONTOUR SEE REPORT', 'Production Note', 0, 0, 'sequential', 'case-note-a'),
+                        ('case-note-c', 'case-1', 40, 12, 'GAUGE REMINDER', 'Production Note', 0, 0, 'independent', NULL),
+                        ('case-op-5', 'case-1', 50, 13, 'Fifth', 'mill', 0, 600, 'sequential', 'case-note-c');
+                    INSERT INTO batch_operations (
+                        id, production_batch_id, source_case_operation_id, operation_number, route_position,
+                        name, required_machine_type, setup_seconds, cycle_seconds, status,
+                        dependency_type, predecessor_source_case_operation_id)
+                    VALUES
+                        ('note-a', 'batch-1', 'case-note-a', 12, 10, 'SEE NOTE 8', 'Production Note', 0, 0, 'not_started', 'sequential', 'case-op-1'),
+                        ('note-b', 'batch-1', 'case-note-b', 14, 11, 'FOR CONTOUR SEE REPORT', 'Production Note', 0, 0, 'not_started', 'sequential', 'case-note-a'),
+                        ('note-c', 'batch-1', 'case-note-c', 40, 12, 'GAUGE REMINDER', 'Production Note', 0, 0, 'not_started', 'independent', NULL),
+                        ('op-5', 'batch-1', 'case-op-5', 50, 13, 'Fifth', 'mill', 0, 600, 'not_started', 'sequential', 'case-note-c');
+                    UPDATE batch_operations SET predecessor_source_case_operation_id = 'case-note-b' WHERE id = 'op-2';
+                    INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                    VALUES ('assignment-5', 'op-5', 'machine-2', 0);
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using var response = await client.GetAsync(
+                "/api/v1/timeline?from=2026-08-11T08:00:00Z&to=2026-08-11T18:00:00Z&asOf=2026-08-11T08:00:00Z");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = document.RootElement;
+            Assert.DoesNotContain(root.GetProperty("conflicts").EnumerateArray(), conflict =>
+                conflict.GetProperty("code").GetString() is "dependency_snapshot_missing" or "dependency_unresolved");
+            var dependencies = root.GetProperty("dependencies").EnumerateArray()
+                .Select(value => (value.GetProperty("fromOperationId").GetString(), value.GetProperty("toOperationId").GetString()))
+                .ToArray();
+            Assert.Contains(("op-1", "op-2"), dependencies);
+            Assert.DoesNotContain(dependencies, value => value.Item2 == "op-5");
+
+            var work = root.GetProperty("machines").EnumerateArray()
+                .SelectMany(machine => machine.GetProperty("intervals").EnumerateArray())
+                .Where(interval => interval.GetProperty("type").GetString() == "operation")
+                .ToArray();
+            Assert.DoesNotContain(work, interval => interval.GetProperty("operationId").GetString() is "note-a" or "note-b" or "note-c");
+            var op1End = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-1")
+                .Max(interval => interval.GetProperty("endsAt").GetDateTimeOffset());
+            var op2Start = work.Where(interval => interval.GetProperty("operationId").GetString() == "op-2")
+                .Min(interval => interval.GetProperty("startsAt").GetDateTimeOffset());
+            Assert.True(op2Start >= op1End);
+            Assert.Contains(work, interval => interval.GetProperty("operationId").GetString() == "op-5");
+        });
+    }
+
+    [Fact]
     public async Task Timeline_api_reports_unassigned_predecessor_and_projects_child_as_waiting()
     {
         await RunWithServerAsync(async (application, client) =>
