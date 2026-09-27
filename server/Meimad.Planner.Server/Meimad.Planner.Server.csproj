@@ -41,6 +41,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Cimatron 2026's own empty External Cutters workbook: the Tool Room's Cimatron export fills its Cutters sheet. -->
+    <EmbeddedResource Include="ToolCatalog\CimatronCutters.xlsm" LogicalName="Meimad.Planner.Server.ToolCatalog.CimatronCutters.xlsm" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="KitaronSetup\index.html"
              Link="wwwroot\kitaron-setup\index.html"
              CopyToOutputDirectory="PreserveNewest"

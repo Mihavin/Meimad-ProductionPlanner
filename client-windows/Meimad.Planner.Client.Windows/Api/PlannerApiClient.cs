@@ -313,6 +313,18 @@ internal interface IPlannerApiClient : IDisposable
         string catalogToolId, string clientId, string userId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>
+    /// Reads a Cimatron cutter workbook into the catalog: a preview reports what each cutter would
+    /// do, `apply` creates and updates the tools (identified like the Tool Room).
+    /// </summary>
+    Task<PlannerCimatronImport> ImportCimatronCutterWorkbookAsync(
+        string workbookPath, bool apply, string clientId, string userId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>The catalog as a Cimatron cutter workbook (.xlsm) for Cimatron's cutter import.</summary>
+    Task<PlannerCimatronExport> ExportCimatronCutterWorkbookAsync(
+        bool includeInactive, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     /// <summary>The immutable released NC file exactly as stored (encoding and line endings kept).</summary>
     Task<byte[]> ReadGCodeFileBytesAsync(
         string caseId, string caseOperationId, string releaseId,
@@ -1936,6 +1948,38 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Headers.Add(UserIdHeader, userId);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
+    public async Task<PlannerCimatronImport> ImportCimatronCutterWorkbookAsync(
+        string workbookPath, bool apply, string clientId, string userId, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/tool-catalog/import/cimatron", clientId);
+        request.Headers.Add(UserIdHeader, userId);
+        using var content = new MultipartFormDataContent();
+        await using var stream = File.OpenRead(workbookPath);
+        using var file = new StreamContent(stream);
+        content.Add(file, "workbook", Path.GetFileName(workbookPath));
+        content.Add(new StringContent(apply ? "true" : "false"), "apply");
+        request.Content = content;
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<PlannerCimatronImport>(response, cancellationToken);
+    }
+
+    public async Task<PlannerCimatronExport> ExportCimatronCutterWorkbookAsync(
+        bool includeInactive, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            "api/v1/tool-catalog/export/cimatron" + (includeInactive ? "?includeInactive=true" : string.Empty), cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+        static int Count(HttpResponseMessage message, string header) =>
+            message.Headers.TryGetValues(header, out var values)
+            && int.TryParse(values.FirstOrDefault(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var count)
+                ? count
+                : 0;
+        return new PlannerCimatronExport(
+            await response.Content.ReadAsByteArrayAsync(cancellationToken),
+            Count(response, "X-Meimad-Exported-Tools"),
+            Count(response, "X-Meimad-Skipped-Tools"));
     }
 
     public async Task<QcDecisionResult> DecideQcAsync(

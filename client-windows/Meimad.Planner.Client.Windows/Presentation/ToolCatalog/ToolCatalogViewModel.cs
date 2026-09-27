@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Net.Http;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.Client.Windows.Presentation.ToolPreparation;
@@ -385,6 +386,76 @@ internal sealed class ToolCatalogViewModel : ToolPreparationObservable
             IsBusy = false;
         }
     }
+
+    /// <summary>What importing a Cimatron cutter workbook would do; nothing is saved.</summary>
+    internal async Task<PlannerCimatronImport?> PreviewCimatronImportAsync(string workbookPath)
+    {
+        if (api is not { } client || IsBusy) return null;
+        IsBusy = true;
+        try
+        {
+            var preview = await client.ImportCimatronCutterWorkbookAsync(workbookPath, apply: false, clientId, userId);
+            Status = $"{preview.FileName}: {CimatronSummary(preview)}";
+            return preview;
+        }
+        catch (Exception exception) when (exception is PlannerApiException or HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        {
+            Status = exception.Message;
+            return null;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>Creates and updates the catalog tools a Cimatron cutter workbook describes.</summary>
+    internal async Task ApplyCimatronImportAsync(string workbookPath)
+    {
+        if (api is not { } client || IsBusy) return;
+        IsBusy = true;
+        try
+        {
+            var result = await client.ImportCimatronCutterWorkbookAsync(workbookPath, apply: true, clientId, userId);
+            Status = $"Imported {result.FileName}: {CimatronSummary(result)}";
+        }
+        catch (Exception exception) when (exception is PlannerApiException or HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        {
+            Status = exception.Message;
+            return;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+        await RefreshAsync();
+    }
+
+    /// <summary>Saves the catalog as a Cimatron cutter workbook for Cimatron's cutter import.</summary>
+    internal async Task ExportCimatronAsync(string workbookPath)
+    {
+        if (api is not { } client || IsBusy) return;
+        IsBusy = true;
+        try
+        {
+            var export = await client.ExportCimatronCutterWorkbookAsync(IncludeInactive);
+            await File.WriteAllBytesAsync(workbookPath, export.Workbook);
+            Status = export.SkippedCount == 0
+                ? $"Exported {export.ExportedCount} tools to {workbookPath}."
+                : $"Exported {export.ExportedCount} tools to {workbookPath}; {export.SkippedCount} turning or other tools have no Cimatron cutter and were left out.";
+        }
+        catch (Exception exception) when (exception is PlannerApiException or HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        {
+            Status = exception.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    internal static string CimatronSummary(PlannerCimatronImport import) =>
+        $"{import.Created} new, {import.Updated} updated, {import.Unchanged} unchanged, {import.Skipped} skipped.";
 
     private async Task RefreshListKeepingAsync(PlannerCatalogTool? keep)
     {
