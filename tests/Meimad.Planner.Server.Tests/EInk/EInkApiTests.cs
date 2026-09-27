@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -447,9 +448,10 @@ public sealed class EInkApiTests
                     > DateTimeOffset.MinValue);
             }
 
+            using (client.SignedInWithOnly(Permissions.PlanMachines))
             using (var unauthorized = await client.SendAsync(PostQcDecision(
                        "PASS", "not authorized", includeAuthority: false)))
-                Assert.Equal((HttpStatusCode)428, unauthorized.StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, unauthorized.StatusCode);
 
             await GrantEditAsync(application.Services);
             using (var failedResponse = await client.SendAsync(PostQcDecision(
@@ -532,12 +534,9 @@ public sealed class EInkApiTests
             using (var longReason = await client.SendAsync(
                        PostQcDecision("FAIL", new string('x', 1001))))
                 Assert.Equal(HttpStatusCode.UnprocessableEntity, longReason.StatusCode);
-            using (var staleAuthority = await client.SendAsync(
-                       PostQcDecision("PASS", null, generation: "2")))
-                Assert.Equal(HttpStatusCode.Conflict, staleAuthority.StatusCode);
-            using (var wrongUser = await client.SendAsync(
-                       PostQcDecision("PASS", null, userId: "other-user")))
-                Assert.Equal(HttpStatusCode.Conflict, wrongUser.StatusCode);
+            using (client.SignedInWithOnly(Permissions.PlanMachines, Permissions.PrepareTools))
+            using (var planner = await client.SendAsync(PostQcDecision("PASS", null)))
+                Assert.Equal(HttpStatusCode.Forbidden, planner.StatusCode);
             using (var unknownRun = await client.SendAsync(PostQcDecision(
                        "PASS", null, productionRunId: "unknown-run")))
                 Assert.Equal(HttpStatusCode.NotFound, unknownRun.StatusCode);
@@ -570,6 +569,36 @@ public sealed class EInkApiTests
             var audit = await ReadQcAuditAsync(application.Services);
             Assert.Single(audit);
             Assert.Empty((await ReadQueueAsync(client)).EnumerateArray());
+        });
+    }
+
+    [Fact]
+    public async Task A_second_qc_decision_on_the_same_part_explains_who_decided_it_first()
+    {
+        await RunWithServerAsync(async (application, client, packageRoot) =>
+        {
+            await SeedAsync(application.Services, packageRoot);
+            await GrantEditAsync(application.Services);
+            await EnterSetupRunAsync(application.Services);
+            using (var send = await client.SendAsync(PostEvent(
+                       "3041", new { event_type = "SEND_TO_QC" })))
+                Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+
+            using (var first = await client.SendAsync(PostQcDecision("PASS", "Measured OK", userId: "qc-dana")))
+                Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+            using var second = await client.SendAsync(PostQcDecision("FAIL", "Burr on edge", userId: "qc-ron"));
+
+            Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+            using var json = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+            var error = json.RootElement.GetProperty("error");
+            Assert.Equal("edit_conflict", error.GetProperty("code").GetString());
+            Assert.Contains("already has a QC result: PASS", error.GetProperty("message").GetString(), StringComparison.Ordinal);
+            var conflict = error.GetProperty("conflict");
+            Assert.Equal("QC queue item", conflict.GetProperty("resource").GetString());
+            Assert.Equal("qc-dana", conflict.GetProperty("changedBy").GetString());
+            Assert.NotEqual(JsonValueKind.Null, conflict.GetProperty("changedAt").ValueKind);
+            Assert.Contains("Refresh the QC queue", conflict.GetProperty("advice").GetString(), StringComparison.Ordinal);
+            Assert.Single(await ReadQcAuditAsync(application.Services));
         });
     }
 
@@ -1269,7 +1298,7 @@ public sealed class EInkApiTests
                 $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}",
                 $"--EInk:PackageRoot={packageRoot}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         var started = false;
         try
         {

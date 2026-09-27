@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Maintenance;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Maintenance;
 
@@ -19,7 +20,7 @@ internal static class ServerMaintenanceEndpoints
         ServerMaintenanceService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out _, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.ManageSetup, out _, out _, out var error))
         {
             return error!;
         }
@@ -34,7 +35,7 @@ internal static class ServerMaintenanceEndpoints
         ServerMaintenanceService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out _, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.ManageSetup, out _, out _, out var error))
         {
             return error!;
         }
@@ -138,10 +139,10 @@ internal static class ServerMaintenanceEndpoints
     {
         authority = null;
         userId = null;
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out authority, out error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out authority, out error))
         {
             return false;
         }
-        return PlanningHttpSupport.TryReadClientIdentity(context, out _, out userId, out error);
+        return PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.ManageSetup, out _, out userId, out error);
     }
 }

@@ -4,6 +4,7 @@ using Meimad.Planner.Server.Domain.LegacyImport;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.LegacyImport;
 
@@ -133,7 +134,7 @@ internal static class LegacyImportEndpoints
         LegacyImportService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(httpContext, out var authority, out var accessError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.ManageSetup, out var authority, out var accessError))
         {
             return accessError!;
         }

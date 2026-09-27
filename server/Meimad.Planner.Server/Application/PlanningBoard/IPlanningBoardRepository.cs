@@ -138,4 +138,6 @@ internal sealed record PlanningBoardMachine(
     string? AxisType,
     IReadOnlyList<string> Capabilities,
     bool IsActive,
-    IReadOnlyList<PlanningBoardOperation> Backlog);
+    IReadOnlyList<PlanningBoardOperation> Backlog,
+    // MachineBacklogStamp of the whole open backlog; a move sends it back to prove the order it saw.
+    string BacklogStamp = "");

@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.JobPackages;
 using Meimad.Planner.Server.Domain.JobPackages;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.JobPackages;
 
@@ -17,8 +18,7 @@ internal static class JobPackageEndpoints
         JobPackageService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                context,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines,
                 out var editAuthority,
                 out var error))
         {

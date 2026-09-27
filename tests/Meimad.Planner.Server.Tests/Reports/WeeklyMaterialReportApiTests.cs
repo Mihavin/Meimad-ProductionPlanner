@@ -105,7 +105,7 @@ public sealed class WeeklyMaterialReportApiTests
             ["--Server:Host=127.0.0.1", "--Server:Port=5097", $"--Database:Path={Path.Combine(root, "test.db")}"],
             webHost =>
             {
-                webHost.UseTestServer();
+                webHost.UseSignedInTestServer();
                 webHost.ConfigureServices(services =>
                 {
                     var scheduler = services.FirstOrDefault(descriptor =>

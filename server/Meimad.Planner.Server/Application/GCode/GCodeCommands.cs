@@ -20,7 +20,8 @@ internal sealed record ReleaseGCodeCommand(
     UploadedReleaseFile? GCodeFile,
     UploadedReleaseFile? ToolTableFile,
     string? ManufacturingProgramId = null,
-    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null);
+    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null,
+    string? ExpectedLatestReleaseId = null);
 
 internal sealed record PublishGCodeReleaseCommand(
     string CaseId,
@@ -41,7 +42,9 @@ internal sealed record PublishGCodeReleaseCommand(
     NcVerificationHook VerificationHook,
     DateTimeOffset ReleasedAt,
     string? ManufacturingProgramId = null,
-    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null);
+    IReadOnlyList<ManufacturingProgramRevisionOutput>? Outputs = null,
+    // The newest release of the program the programmer saw: "" = none, null = not checked.
+    string? ExpectedLatestReleaseId = null);
 
 internal sealed record ProgramPublicationContext(string CaseId, string CaseOperationId);
 

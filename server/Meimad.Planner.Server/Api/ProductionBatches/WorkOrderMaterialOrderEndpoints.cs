@@ -2,6 +2,7 @@ using System.Globalization;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.Data.Sqlite;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ProductionBatches;
 
@@ -42,7 +43,7 @@ internal static class WorkOrderMaterialOrderEndpoints
         string batchId, string sourceKey, bool verify, HttpContext context, SqliteDatabase database,
         TimeProvider timeProvider, CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.VerifyMaterials, out var authority, out var error)) return error!;
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
         string actor;
@@ -142,17 +143,9 @@ internal static class WorkOrderMaterialOrderEndpoints
     private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection, SqliteTransaction transaction, EditAuthority authority, CancellationToken cancellationToken)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(connection, transaction, DateTimeOffset.UtcNow, cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
-            throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        if (!string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(2) != authority.Generation)
-            throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
-        return reader.IsDBNull(1) ? authority.ClientId : reader.GetString(1);
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        await Task.CompletedTask;
+        return SignedInActor.Require(authority);
     }
 
     private static string? Text(SqliteDataReader reader, int index) => reader.IsDBNull(index) ? null : reader.GetString(index);

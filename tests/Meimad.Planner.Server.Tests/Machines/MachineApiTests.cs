@@ -56,6 +56,61 @@ public sealed class MachineApiTests
     }
 
     [Fact]
+    public async Task A_move_based_on_an_outdated_Machine_order_is_refused_and_names_the_other_planner()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedCalendarAndOperationsAsync(application.Services);
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            var machineId = await CreateMachineAsync(client, "M-STAMP", "mill", []);
+
+            // Dana and Ron both loaded the Planning Board while the Machine was empty.
+            var seenStamp = await BacklogStampAsync(client, machineId);
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "planner-dana");
+            using (var dana = await client.PutAsJsonAsync("/api/v1/batch-operations/op-a/assignment",
+                       new { machineId, backlogPosition = 0, expectedBacklogStamp = seenStamp }))
+                Assert.Equal(HttpStatusCode.Created, dana.StatusCode);
+            // Dana's next drop still carries the stamp she loaded; her own move is not a conflict.
+            using (var danaAgain = await client.PutAsJsonAsync("/api/v1/batch-operations/op-a/assignment",
+                       new { machineId, backlogPosition = 0, expectedBacklogStamp = seenStamp }))
+                Assert.Equal(HttpStatusCode.OK, danaAgain.StatusCode);
+
+            client.DefaultRequestHeaders.Remove("X-Meimad-User-Id");
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "planner-ron");
+            using (var ron = await client.PutAsJsonAsync("/api/v1/batch-operations/op-b/assignment",
+                       new { machineId, backlogPosition = 0, expectedBacklogStamp = seenStamp }))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, ron.StatusCode);
+                using var json = JsonDocument.Parse(await ron.Content.ReadAsStringAsync());
+                var error = json.RootElement.GetProperty("error");
+                Assert.Equal("edit_conflict", error.GetProperty("code").GetString());
+                Assert.Contains("M-STAMP", error.GetProperty("message").GetString(), StringComparison.Ordinal);
+                var conflict = error.GetProperty("conflict");
+                Assert.Equal("Planning Board backlog", conflict.GetProperty("resource").GetString());
+                Assert.Equal("planner-dana", conflict.GetProperty("changedBy").GetString());
+                Assert.Contains("Refresh the Planning Board", conflict.GetProperty("advice").GetString(), StringComparison.Ordinal);
+            }
+
+            var currentStamp = await BacklogStampAsync(client, machineId);
+            Assert.NotEqual(seenStamp, currentStamp);
+            using (var retry = await client.PutAsJsonAsync("/api/v1/batch-operations/op-b/assignment",
+                       new { machineId, backlogPosition = 0, expectedBacklogStamp = currentStamp }))
+                Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        });
+    }
+
+    private static async Task<string> BacklogStampAsync(HttpClient client, string machineId)
+    {
+        using var response = await client.GetAsync("/api/v1/planning-board");
+        response.EnsureSuccessStatusCode();
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("machines").EnumerateArray()
+            .Single(machine => machine.GetProperty("machineId").GetString() == machineId)
+            .GetProperty("backlogStamp").GetString()!;
+    }
+
+    [Fact]
     public async Task Machine_catalog_and_assignment_commands_work_over_http()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -677,7 +732,7 @@ public sealed class MachineApiTests
                 id,
                 new("HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 1, 2, 3, 4, 9003, 5, 6, 6, 300, true),
                 0,
-                new EditAuthority("machine-api-client", 1));
+                new EditAuthority("machine-api-client", 1, "machine-api-user"));
 
             using var current = await client.GetAsync($"/api/v1/machines/{id}");
             using var revert = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/machines/{id}")
@@ -1029,7 +1084,7 @@ public sealed class MachineApiTests
                 "--Server:Port=5099",
                 $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

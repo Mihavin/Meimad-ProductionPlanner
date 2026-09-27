@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -119,7 +120,7 @@ public sealed class JobPackageApiTests
     }
 
     [Fact]
-    public async Task Duplicate_revision_invalid_paths_and_stale_editor_leave_no_partial_package()
+    public async Task Duplicate_revision_invalid_paths_and_unpermitted_user_leave_no_partial_package()
     {
         await RunAsync(async (application, client, workingFolder, packageRoot) =>
         {
@@ -161,10 +162,9 @@ public sealed class JobPackageApiTests
             Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
             Assert.Single(Directory.GetDirectories(packageRoot));
 
-            client.DefaultRequestHeaders.Remove("X-Meimad-Edit-Generation");
-            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "99");
+            using var qc = client.SignedInWithOnly(Permissions.DecideQc);
             using var stale = await client.PostAsJsonAsync("/api/v1/job-packages", Request("R2"));
-            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, stale.StatusCode);
             Assert.Single(Directory.GetDirectories(packageRoot));
             Assert.Empty(Directory.GetDirectories(packageRoot, ".staging-*"));
         });
@@ -186,8 +186,10 @@ public sealed class JobPackageApiTests
                 Content = JsonContent.Create(Request("R1"))
             };
             request.Headers.Add("X-Meimad-Tablet-Id", TabletId);
+            using var signedOut = client.SignedOut();
             using var response = await client.SendAsync(request);
-            Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            signedOut.Dispose();
 
             using var checklist = await client.SendAsync(DeviceGet(
                 $"/api/v1/eink/tablets/{TabletId}/checklist-comments"));
@@ -346,7 +348,7 @@ public sealed class JobPackageApiTests
                 $"--Database:Path={Path.Combine(root, "test.db")}",
                 $"--EInk:PackageRoot={packageRoot}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

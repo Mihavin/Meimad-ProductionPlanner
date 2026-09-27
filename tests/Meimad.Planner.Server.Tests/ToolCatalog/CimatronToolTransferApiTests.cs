@@ -31,9 +31,10 @@ public sealed class CimatronToolTransferApiTests
         Assert.Equal(30, preview.RootElement.GetProperty("rows").GetArrayLength());
         Assert.Empty(await ToolsAsync(client));
 
-        // Applying needs the client identity headers.
+        // Applying needs a signed-in user.
+        using var signedOut = anonymous.SignedOut();
         using var unidentified = await PostAsync(anonymous, workbook, apply: true);
-        Assert.Equal(HttpStatusCode.PreconditionRequired, unidentified.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, unidentified.StatusCode);
 
         using var applied = await ImportAsync(client, workbook, apply: true);
         Assert.True(applied.RootElement.GetProperty("applied").GetBoolean());

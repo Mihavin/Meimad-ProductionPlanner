@@ -60,7 +60,7 @@ public sealed class ServerApplicationTests
     {
         using var application = ServerApplication.Build(
             ["--Server:Host=0.0.0.0", "--Server:Port=6200"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         var options = application.Services.GetRequiredService<ServerOptions>();
 
@@ -70,33 +70,11 @@ public sealed class ServerApplicationTests
     }
 
     [Fact]
-    public void Configuration_overrides_edit_mode_timeout()
-    {
-        using var application = ServerApplication.Build(
-            ["--EditMode:TransferTimeoutSeconds=12"],
-            webHost => webHost.UseTestServer());
-
-        var options = application.Services.GetRequiredService<EditModeOptions>();
-        Assert.Equal(12, options.TransferTimeoutSeconds);
-        Assert.Equal(TimeSpan.FromSeconds(12), options.TransferTimeout);
-    }
-
-    [Fact]
-    public void Configuration_rejects_invalid_edit_mode_timeout()
-    {
-        var exception = Assert.Throws<InvalidOperationException>(() => ServerApplication.Build(
-            ["--EditMode:TransferTimeoutSeconds=0"],
-            webHost => webHost.UseTestServer()));
-
-        Assert.Contains("between 1 and 3600", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void Configuration_overrides_tv_dashboard_refresh_and_urgency()
     {
         using var application = ServerApplication.Build(
             ["--TvDashboard:RefreshAfterSeconds=20", "--TvDashboard:UrgentWithinHours=72"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         var options = application.Services.GetRequiredService<TvDashboardOptions>();
         Assert.Equal(20, options.RefreshAfterSeconds);
@@ -108,7 +86,7 @@ public sealed class ServerApplicationTests
     {
         var exception = Assert.Throws<InvalidOperationException>(() => ServerApplication.Build(
             ["--TvDashboard:RefreshAfterSeconds=1"],
-            webHost => webHost.UseTestServer()));
+            webHost => webHost.UseSignedInTestServer()));
 
         Assert.Contains("between 5 and 300", exception.Message, StringComparison.Ordinal);
     }
@@ -119,7 +97,7 @@ public sealed class ServerApplicationTests
         var folder = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ConfiguredBackups");
         using var application = ServerApplication.Build(
             [$"--Backup:Folder={folder}", "--Backup:RetentionCount=9"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         var options = application.Services.GetRequiredService<BackupOptions>();
         Assert.Equal(Path.GetFullPath(folder), options.BackupFolder);
@@ -187,7 +165,7 @@ public sealed class ServerApplicationTests
     {
         var exception = Assert.Throws<InvalidOperationException>(() => ServerApplication.Build(
             ["--Backup:RetentionCount=0"],
-            webHost => webHost.UseTestServer()));
+            webHost => webHost.UseSignedInTestServer()));
 
         Assert.Contains("between 1 and 3650", exception.Message, StringComparison.Ordinal);
     }
@@ -205,7 +183,7 @@ public sealed class ServerApplicationTests
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
 
-            Assert.Equal(85L, (long)(await command.ExecuteScalarAsync())!);
+            Assert.Equal(86L, (long)(await command.ExecuteScalarAsync())!);
         }
         finally
         {
@@ -217,6 +195,6 @@ public sealed class ServerApplicationTests
     {
         return ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
     }
 }

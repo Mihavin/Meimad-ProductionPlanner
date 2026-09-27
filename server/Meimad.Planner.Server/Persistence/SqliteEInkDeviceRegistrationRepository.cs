@@ -333,20 +333,9 @@ internal sealed class SqliteEInkDeviceRegistrationRepository : IEInkDeviceRegist
         EditAuthority authority,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)
-            || reader.IsDBNull(0)
-            || !string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(2) != authority.Generation)
-        {
-            throw new EditModeMutationException(
-                "edit_authority_required",
-                "The active Server Edit Mode generation is required for device administration.");
-        }
-        return reader.IsDBNull(1) ? authority.ClientId : reader.GetString(1);
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        await Task.CompletedTask;
+        return SignedInActor.Require(authority);
     }
 
     private static EInkDeviceRegistration Map(SqliteDataReader reader) => new(

@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.ProductionRuns;
 using Meimad.Planner.Server.Domain.ProductionRuns;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ProductionRuns;
 
@@ -95,7 +96,7 @@ internal static class ProductionRunEndpoints
         CreateProductionRunRequest request, HttpContext context,
         ProductionRunService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error))
             return error!;
         try
         {
@@ -114,7 +115,7 @@ internal static class ProductionRunEndpoints
         string runId, AssignProductionRunRequest request, HttpContext context,
         ProductionRunService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error))
             return error!;
         if (!TryVersion(context, runId, out var expectedVersion, out error)) return error!;
         try
@@ -133,7 +134,7 @@ internal static class ProductionRunEndpoints
         string runId, CreateProductionRunRequest request, HttpContext context,
         ProductionRunService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (!TryVersion(context, runId, out var expectedVersion, out error)) return error!;
         try
         {
@@ -147,7 +148,7 @@ internal static class ProductionRunEndpoints
     private static async Task<IResult> UnassignAsync(
         string runId, HttpContext context, ProductionRunService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (!TryVersion(context, runId, out var expectedVersion, out error)) return error!;
         try
         {
@@ -162,7 +163,7 @@ internal static class ProductionRunEndpoints
         string runId, CancelProductionRunRequest request, HttpContext context,
         ProductionRunService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error))
             return error!;
         if (!TryVersion(context, runId, out var expectedVersion, out error)) return error!;
         try
@@ -183,7 +184,7 @@ internal static class ProductionRunEndpoints
         ExecuteAsync(runId, context, (version, authority) => service.ActivateProgramAsync(runId, programId, version, authority, token));
     private static async Task<IResult> RecordCycleAsync(string runId, string programId, RecordProductionRunCycleRequest request, HttpContext context, ProductionRunExecutionService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (!TryVersion(context, runId, out var version, out error)) return error!;
         try
         {
@@ -203,7 +204,7 @@ internal static class ProductionRunEndpoints
 
     private static async Task<IResult> ExecuteAsync(string runId, HttpContext context, Func<int, EditAuthority, Task<ProductionRun>> action)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (!TryVersion(context, runId, out var version, out error)) return error!;
         try { var value = await action(version, authority!); SetTag(context.Response, value); return Results.Ok(ProductionRunResponse.FromDomain(value)); }
         catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }

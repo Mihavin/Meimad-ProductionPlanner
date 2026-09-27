@@ -1778,7 +1778,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         string caseId, string caseOperationId, NcViewer.NcViewerReleaseCommand command)
     {
         if (apiClient is null) return new(false, "Connect to the Meimad Server first.");
-        if (!isEditor) return new(false, "Edit Mode is required: acquire it in the Planner window, then release again.");
+        if (!isEditor) return new(false, "Your account may not release NC programs. Ask an administrator for the NC release permission.");
         if (string.IsNullOrWhiteSpace(command.PostprocessorId)) return new(false, "Choose the postprocessor.");
         if (string.IsNullOrWhiteSpace(command.ReleaseComment)) return new(false, "A release comment is required.");
         if (!File.Exists(command.FilePath)) return new(false, $"The saved program was not found: {command.FilePath}");
@@ -1811,7 +1811,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     command.ReuseActiveToolTable,
                     command.ConfirmToolTable,
                     command.FilePath,
-                    !newRevision || string.IsNullOrWhiteSpace(command.ToolTableFilePath) ? null : command.ToolTableFilePath),
+                    !newRevision || string.IsNullOrWhiteSpace(command.ToolTableFilePath) ? null : command.ToolTableFilePath,
+                    ExpectedLatestReleaseId(caseOperationId)),
                 clientId,
                 editGeneration);
             var placed = await PlaceReleasedProgramAsync(caseId, caseOperationId, command.FilePath, released);
@@ -1953,6 +1954,19 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     internal void SetToolTableFileSelection(string path) => ToolTableFilePath = path;
 
+    private string? gcodeCatalogOperationId;
+
+    /// <summary>
+    /// The newest release of the Operation this screen shows ("" = none), so the Server can refuse a
+    /// release when another programmer released for the same Operation meanwhile; null when the
+    /// screen shows another Operation and there is nothing to compare.
+    /// </summary>
+    private string? ExpectedLatestReleaseId(string caseOperationId) =>
+        gcodeCatalogOperationId == caseOperationId
+            ? GCodeReleases.OrderByDescending(release => release.ReleasedAt)
+                .Select(release => release.GCodeReleaseId).FirstOrDefault() ?? string.Empty
+            : null;
+
     internal async Task RefreshGCodeAsync()
     {
         if (apiClient is null || SelectedCase is null || SelectedOperation is null || IsBusy)
@@ -1979,6 +1993,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             Replace(ProcessRevisions, catalog.ProcessRevisions);
             Replace(GCodePostprocessors, catalog.Postprocessors);
             Replace(GCodeReleases, catalog.Releases);
+            gcodeCatalogOperationId = operationId;
             SelectedReleasePostprocessor = GCodePostprocessors.FirstOrDefault(value =>
                     value.PostprocessorId == selectedPostprocessorId)
                 ?? GCodePostprocessors.FirstOrDefault(value => value.IsActive)
@@ -2062,7 +2077,8 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     GCodeFilePath,
                     !IsNewProcessRevisionRelease || string.IsNullOrWhiteSpace(ToolTableFilePath)
                         ? null
-                        : ToolTableFilePath),
+                        : ToolTableFilePath,
+                    ExpectedLatestReleaseId(SelectedOperation.CaseOperationId)),
                 clientId,
                 editGeneration);
             var placed = await PlaceReleasedProgramAsync(
@@ -2582,7 +2598,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     {
         if (!CanManageModelFiles || apiClient is null || SelectedCase is null)
         {
-            ModelFilesStatus = "Edit Mode and a selected Case are required to link model files.";
+            ModelFilesStatus = "Select a Case, with an account that may edit Cases, to link model files.";
             return null;
         }
 
@@ -2918,6 +2934,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
 
     private void ClearGCodeCatalog()
     {
+        gcodeCatalogOperationId = null;
         ActiveProcessRevision = null;
         ProcessRevisions.Clear();
         GCodePostprocessors.Clear();

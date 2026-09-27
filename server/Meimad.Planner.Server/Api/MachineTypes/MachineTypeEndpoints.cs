@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.MachineTypes;
 using Meimad.Planner.Server.Domain.MachineTypes;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.MachineTypes;
 
@@ -33,7 +34,7 @@ internal static class MachineTypeEndpoints
 
     private static async Task<IResult> CreateAsync(CreateMachineTypeRequest request, HttpContext context, MachineTypeService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             var value = await service.CreateAsync(request.ToCommand(), authority!, token);
@@ -45,7 +46,7 @@ internal static class MachineTypeEndpoints
 
     private static async Task<IResult> UpdateAsync(string machineTypeId, PatchMachineTypeRequest request, HttpContext context, MachineTypeService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         if (!PlanningHttpSupport.TryReadExpectedVersion(context.Request.Headers.IfMatch, "machine-type", machineTypeId, out var version))
         {
             var missing = StringValues.IsNullOrEmpty(context.Request.Headers.IfMatch);
@@ -64,7 +65,7 @@ internal static class MachineTypeEndpoints
 
     private static async Task<IResult> DeleteAsync(string machineTypeId, HttpContext context, MachineTypeService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             return await service.DeleteAsync(machineTypeId, authority!, token)

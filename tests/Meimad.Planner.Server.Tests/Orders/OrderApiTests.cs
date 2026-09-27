@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -100,15 +101,16 @@ public sealed class OrderApiTests
     }
 
     [Fact]
-    public async Task Mutation_requires_active_edit_mode()
+    public async Task Mutation_requires_the_work_order_permission()
     {
         await RunWithServerAsync(async (application, client) =>
         {
             await SeedCaseAsync(application.Services, "case-no-edit");
+            using var technologist = client.SignedInWithOnly(Permissions.EditCases);
             using var createResponse = await client.PostAsJsonAsync(
                 "/api/v1/orders",
                 ValidCreateBody("case-no-edit"));
-            Assert.Equal((HttpStatusCode)428, createResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, createResponse.StatusCode);
         });
     }
 
@@ -187,7 +189,7 @@ public sealed class OrderApiTests
                 "--Server:Port=5099",
                 $"--Database:Path={databasePath}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         try
         {

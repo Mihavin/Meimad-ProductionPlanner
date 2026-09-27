@@ -66,7 +66,7 @@ public sealed class PreparationQueueApiTests
 
     private static WebApplication Build(string databasePath) => ServerApplication.Build(
         ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={databasePath}"],
-        builder => builder.UseTestServer());
+        builder => builder.UseSignedInTestServer());
 
     private static async Task<IReadOnlyList<string>> IdsAsync(HttpClient client, string stage)
     {

@@ -147,5 +147,5 @@ public sealed class ClientInstallerApiTests
             $"--ProductionPackages:PackageRoot={Path.Combine(root, "packages")}",
             $"--ClientInstaller:Folder={installerFolder}"
         ],
-        webHost => webHost.UseTestServer());
+        webHost => webHost.UseSignedInTestServer());
 }

@@ -54,81 +54,24 @@
                         </Ellipse>
                     </Border>
 
-                    <Button x:Name="EditModeToggleButton" Click="ToggleEditMode_Click"
-                            Width="30" Height="30" Padding="3" Margin="0,0,4,0">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                <Setter Property="IsEnabled" Value="False" />
-                                <Setter Property="AutomationProperties.Name" Value="Edit Mode unavailable" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ModeLevel}" Value="viewer">
-                                        <Setter Property="IsEnabled" Value="True" />
-                                        <Setter Property="AutomationProperties.Name" Value="Request Edit Mode" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
-                                        <Setter Property="IsEnabled" Value="True" />
-                                        <Setter Property="AutomationProperties.Name" Value="Release Edit Mode" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding ModeLevel}" Value="requesting">
-                                        <Setter Property="AutomationProperties.Name" Value="Edit Mode request pending" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                        <Button.ToolTip>
-                            <StackPanel MaxWidth="320">
-                                <TextBlock FontWeight="Bold">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Text" Value="Edit Mode unavailable" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ModeLevel}" Value="viewer"><Setter Property="Text" Value="Request Edit Mode" /></DataTrigger>
-                                                <DataTrigger Binding="{Binding ModeLevel}" Value="editor"><Setter Property="Text" Value="Release Edit Mode" /></DataTrigger>
-                                                <DataTrigger Binding="{Binding ModeLevel}" Value="requesting"><Setter Property="Text" Value="Edit Mode request pending" /></DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <TextBlock Text="{Binding ModeDetail}" TextWrapping="Wrap" Margin="0,3,0,0" />
-                            </StackPanel>
-                        </Button.ToolTip>
-                        <Grid Width="16" Height="16">
-                            <Grid x:Name="LockedIcon">
-                                <Grid.Style>
-                                    <Style TargetType="Grid">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <Path Data="M4,7 L4,5 C4,2.8 5.8,1 8,1 C10.2,1 12,2.8 12,5 L12,7"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                      StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
-                                <Border Width="12" Height="9" VerticalAlignment="Bottom" CornerRadius="1"
-                                        Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                            </Grid>
-                            <Grid x:Name="UnlockedIcon">
-                                <Grid.Style>
-                                    <Style TargetType="Grid">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ModeLevel}" Value="editor">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <Path Data="M12,7 L12,5 C12,2.8 10.2,1 8,1 C5.8,1 4,2.8 4,5"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                      StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
-                                <Border Width="12" Height="9" VerticalAlignment="Bottom" CornerRadius="1"
-                                        Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                            </Grid>
-                        </Grid>
-                    </Button>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                AutomationProperties.Name="Signed-in user">
+                        <TextBlock x:Name="SignedInUserText" Text="{Binding ModeHeadline}" Foreground="White"
+                                   VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold">
+                            <TextBlock.ToolTip>
+                                <TextBlock Text="{Binding ModeDetail}" TextWrapping="Wrap" MaxWidth="320" />
+                            </TextBlock.ToolTip>
+                        </TextBlock>
+                        <Button Content="Sign in" Command="{Binding SignInCommand}" Height="30" Margin="0,0,4,0"
+                                Visibility="{Binding IsSignedIn, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                ToolTip="Sign in with your user name and password" />
+                        <Button Content="Password…" Click="ChangePassword_Click" Height="30" Margin="0,0,4,0"
+                                Visibility="{Binding IsSignedIn, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                ToolTip="Change your password" />
+                        <Button Content="Sign out" Command="{Binding SignOutCommand}" Height="30" Margin="0,0,4,0"
+                                Visibility="{Binding IsSignedIn, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                ToolTip="End your session on this computer" />
+                    </StackPanel>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -136,26 +79,6 @@
                     <TextBlock Text="  PRODUCTION PLANNER" Foreground="White" Opacity="0.72"
                                FontSize="13" VerticalAlignment="Center" />
                 </StackPanel>
-            </DockPanel>
-        </Border>
-
-        <Border Grid.Row="1" Background="#FFF8E1" BorderBrush="{StaticResource YellowBrush}"
-                BorderThickness="0,0,0,1" Padding="12,7">
-            <Border.Style>
-                <Style TargetType="Border">
-                    <Setter Property="Visibility" Value="Collapsed" />
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding HasPendingTransfer}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </Border.Style>
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button Content="Release / Transfer" Command="{Binding ApproveTransferCommand}" />
-                    <Button Content="Reject" Command="{Binding RejectTransferCommand}" Margin="0" />
-                </StackPanel>
-                <TextBlock Text="{Binding PendingTransferText}" FontWeight="SemiBold"
-                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
             </DockPanel>
         </Border>
 
@@ -216,6 +139,10 @@
             </TabItem>
             <TabItem Header="Material Orders" ToolTip="Kitaron material purchase-order lines with their reported delivery status">
                 <views:MaterialOrdersView DataContext="{Binding MaterialOrders}" Margin="5" />
+            </TabItem>
+            <TabItem Header="Users" ToolTip="Administrators: manage user accounts, user types and permissions"
+                     Visibility="{Binding CanManageUsers, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <views:UserAdministrationView DataContext="{Binding UserAdministration}" Margin="5" />
             </TabItem>
         </TabControl>
 

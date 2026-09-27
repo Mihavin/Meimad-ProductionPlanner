@@ -193,7 +193,8 @@ internal sealed class GCodeService
                 verificationHook,
                 releasedAt,
                 command.ManufacturingProgramId,
-                command.Outputs), authority, cancellationToken);
+                command.Outputs,
+                command.ExpectedLatestReleaseId), authority, cancellationToken);
             logger.LogInformation(
                 "Released G-code {ReleaseId} for Operation {OperationId}, Process Revision {ProcessRevisionNumber}, Postprocessor {PostprocessorId}, Post Revision {PostRevision}.",
                 release.GCodeReleaseId,

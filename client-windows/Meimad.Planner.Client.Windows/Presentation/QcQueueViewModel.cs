@@ -55,8 +55,8 @@ internal sealed class QcQueueViewModel : INotifyPropertyChanged
 
     public bool IsEditor => isEditor;
     public string EditModeText => isEditor
-        ? "Edit Mode — QC decisions enabled"
-        : "View Mode — queue monitoring only";
+        ? "You may record QC decisions"
+        : "Queue monitoring only: your account may not record QC decisions";
 
     internal void AttachSession(
         IPlannerApiClient? client,

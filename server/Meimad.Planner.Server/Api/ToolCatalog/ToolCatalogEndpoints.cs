@@ -4,6 +4,7 @@ using Meimad.Planner.Server.Domain.ToolCatalog;
 using Meimad.Planner.Server.Domain.ToolPreparations;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ToolCatalog;
 
@@ -58,7 +59,7 @@ internal static class ToolCatalogEndpoints
                     "Provide exactly one Cimatron cutter workbook in the 'workbook' field.", context);
             var apply = bool.TryParse(form["apply"].ToString(), out var value) && value;
             string? userId = null;
-            if (apply && !PlanningHttpSupport.TryReadClientIdentity(context, out _, out userId, out var identityError))
+            if (apply && !PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.EditToolLibrary, out _, out userId, out var identityError))
                 return identityError!;
             await using var stream = files[0].OpenReadStream();
             var result = await service.ImportAsync(stream, Path.GetFileName(files[0].FileName), apply, userId, token);
@@ -120,7 +121,7 @@ internal static class ToolCatalogEndpoints
     private static async Task<IResult> CreateAsync(
         ToolCatalogToolRequest request, ToolCatalogService service, HttpContext context, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out var userId, out var identityError))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.EditToolLibrary, out _, out var userId, out var identityError))
             return identityError!;
         try
         {
@@ -133,7 +134,7 @@ internal static class ToolCatalogEndpoints
     private static async Task<IResult> UpdateAsync(
         string toolId, ToolCatalogToolRequest request, ToolCatalogService service, HttpContext context, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out var userId, out var identityError))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.EditToolLibrary, out _, out var userId, out var identityError))
             return identityError!;
         if (request.ExpectedVersion is null or < 1)
             return PlanningHttpSupport.Error(StatusCodes.Status400BadRequest, "tool_catalog_expected_version_required",
@@ -148,7 +149,7 @@ internal static class ToolCatalogEndpoints
 
     private static async Task<IResult> DeleteAsync(string toolId, ToolCatalogService service, HttpContext context, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out _, out var identityError))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.EditToolLibrary, out _, out _, out var identityError))
             return identityError!;
         try
         {

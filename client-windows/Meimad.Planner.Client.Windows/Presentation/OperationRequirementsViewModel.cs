@@ -330,7 +330,7 @@ internal sealed class OperationRequirementsViewModel : INotifyPropertyChanged
 
     private async Task MutateAsync(Func<Task> action, string success, string operationId)
     {
-        if (!CanEdit) { StatusMessage = "Edit Mode is required to change auxiliary steps."; return; }
+        if (!CanEdit) { StatusMessage = "Your account may not change auxiliary steps of Case Operations."; return; }
         IsBusy = true;
         try
         {

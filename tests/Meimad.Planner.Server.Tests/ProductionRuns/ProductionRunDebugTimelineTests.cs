@@ -105,7 +105,7 @@ public sealed class ProductionRunDebugTimelineTests
             Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             [$"--Database:Path={Path.Combine(directory, "test.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

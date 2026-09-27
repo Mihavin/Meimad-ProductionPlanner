@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Qc;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Qc;
 
@@ -23,11 +24,9 @@ internal static class QcWorkflowEndpoints
         QcWorkflowService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                context, out var authority, out var authorityError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.DecideQc, out var authority, out var authorityError))
             return authorityError!;
-        if (!PlanningHttpSupport.TryReadClientIdentity(
-                context, out _, out var userId, out var identityError))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.DecideQc, out _, out var userId, out var identityError))
             return identityError!;
 
         try

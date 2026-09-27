@@ -332,9 +332,9 @@ Implemented Machine behavior covers master-data normalization, unique numbers, s
 
 Implemented G-code/readiness behavior covers immutable process, tool-table/tool-row and Postprocessor-specific release history; native structured CSV/JSON and Cimatron MHT tool-table ingestion; explicit or uniquely resolved assignment release selection; local verified-material receipts and Batch reservations; exact Machine/process/release offset readiness; capacity; compatibility; centralized component evaluation; board/timeline explanation; transactional Start blocking; and exact production pins. The Windows Case Operations screen exposes only Release, never Draft. Not-ready work stays planned and requires a manual correction; no program, tool, process, assignment, reservation, or Batch quantity is silently changed. Detailed readiness boundaries remain documented in [G-code release and readiness architecture](gcode-readiness-architecture.md).
 
-## 7. Phase 4 - Single Edit Mode
+## 7. Phase 4 - Single Edit Mode (superseded)
 
-**Implementation status:** Core server coordination complete. Human authentication, caller-class authorization, notifications, disconnect/crash policy, audit, and retention remain.
+**Implementation status:** Superseded on 2026-09-27 by user accounts, permissions and parallel editing (see "User accounts replace Single Edit Mode" at the end of this plan). The history below describes the retired mechanism.
 
 ### Scope
 
@@ -687,9 +687,9 @@ The following questions are unresolved in the provided source documents. IDs sho
 
 ### Single Edit Mode and identity
 
-- **OD-012 - Authentication/authorization:** Choose human identity, roles, TV/device credentials, administrator boundary, and audit requirements.
-- **OD-013 - Edit lease:** Resolved that every implemented planning mutation requires the current client ID and generation. The stored lease deadline is the transfer-response deadline, not a heartbeat. Define heartbeat, disconnect/crash/restart behavior, and stale unsaved edits.
-- **OD-014 - Transfer contention:** Resolved MVP to one pending requester, no queue, Reject returning the requester to Viewer, and a configurable 1–3600 second server timeout with a 30-second default. Define cancellation, notifications, takeover safeguards, history retention, and audit.
+- **OD-012 - Authentication/authorization:** Resolved 2026-09-27 for Windows users: Server-held accounts with user name and password, administrator-managed user types granting fixed permissions, everyone signed in may view; TV and tablets keep their credential-free scopes. Open: password policy beyond length, LAN transport security (OD-017), and account audit history.
+- **OD-013 - Edit lease:** Superseded 2026-09-27: there is no edit lease; parallel changes are checked per record, per Machine backlog, per NC release and per QC state. Formerly resolved that every implemented planning mutation requires the current client ID and generation. The stored lease deadline is the transfer-response deadline, not a heartbeat. Define heartbeat, disconnect/crash/restart behavior, and stale unsaved edits.
+- **OD-014 - Transfer contention:** Superseded 2026-09-27 (no Edit Mode transfer). Formerly resolved MVP to one pending requester, no queue, Reject returning the requester to Viewer, and a configurable 1–3600 second server timeout with a 30-second default. Define cancellation, notifications, takeover safeguards, history retention, and audit.
 
 ### API, files, and deployment
 
@@ -1028,3 +1028,30 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 
 - No transfer or presetting time is added between two uses of a migrating copy.
 - A copy's holder is ignored, per the decision.
+
+## User accounts replace Single Edit Mode (2026-09-27, schema v86)
+
+**Owner decisions (2026-09-27):**
+
+- Sign-in: user name and password; accounts live on the Server; an administrator creates users and resets passwords.
+- Edit Mode: replaced by per-record checks. Users work in parallel; a change based on stale data is refused with who/when/what and advice; the Planning Board order is checked per Machine.
+- Permissions: a fixed permission list; administrators create user types and tick permissions; a user can have several types. Initial types: QC, Programmer, Tool Room manager, Planning, Technologist; the built-in Administrator may do everything.
+- Viewing: everyone signs in; TV dashboard and tablets are unchanged.
+
+**Implemented:**
+
+- `SchemaV86UserAccountsMigration`: `user_accounts`, `user_types`, `user_type_permissions`, `user_account_types`, `user_sessions`, `machine_backlog_changes`; the Administrator type and the five initial types. `edit_tokens` stays unused.
+- `AccountService`/`SqliteAccountRepository`: PBKDF2-SHA256 passwords, 12-hour sliding sessions (token hash only), 5-failure/5-minute lockout, first-administrator bootstrap, last-administrator guard, versioned user and type edits.
+- `SignInMiddleware` (401/403 for every `/api/` route except auth, installer, tablets, TV, the local Kitaron setup page, and loopback `GET /api/v1/machines…` for the upgrade script), `PlanningHttpSupport.TryAuthorize*` with the permission per endpoint, and `SignedInActor` in place of the Edit Mode checks. The Edit Mode endpoints, service, timeout worker, repository and options are removed.
+- Conflicts: `EditConflictException` and `ConflictResponseMiddleware` answer `409 edit_conflict` with `conflict { resource, changedBy, changedAt, advice }` and add the same object to existing stale-version refusals, naming the last saver from the in-memory `ChangeJournal`. QC decisions on an already decided part, G-code releases with a stale `expectedLatestReleaseId`, and moves with a stale Machine `backlogStamp` are refused with explanations; a planner's own consecutive moves are allowed.
+- Windows client: sign-in window (first administrator, temporary password change, voluntary change), header with the signed-in user, Sign in/Password/Sign out, per-screen rights from the account's permissions, administrator-only Users page (users, user types, permission checkboxes), a global conflict message, backlog stamps on moves and the expected release on G-code releases; he/ru texts.
+- Also fixed on the way: a pooled SQLite connection left inside a transaction by a cancelled request is rolled back before reuse (the live log showed "cannot start a transaction within a transaction" on the preparation queues); the Planning Board shows a dropped card at once and reloads in the background (the drop request takes milliseconds; the full board read with its Timeline conflict calculation takes 0.6–1.2 s).
+
+**Tests:** `AccountApiTests`, the conflict tests in `EInkApiTests`, `GCodeReleaseApiTests`, `MachineApiTests`, `CaseApiTests`, `SqliteDatabasePoolTests`; client `MainWindowViewModelTests`, `UserAdministrationViewModelTests`, `PlannerApiClientTests`, board drop tests. Existing API tests run as an administrator through the test-only `UseSignedInTestServer`; their former Edit Mode checks now check permissions.
+
+**Open points:**
+
+- Account changes are not yet in a separate audit history (the row keeps `updated_by`/`updated_at`).
+- The change journal behind "changed by" for ordinary version conflicts is in memory and forgets on a Server restart.
+- The Windows client does not keep the session across restarts; each start signs in.
+- LAN transport security (HTTP) is unchanged (OD-017): passwords and tokens cross the factory LAN unencrypted.

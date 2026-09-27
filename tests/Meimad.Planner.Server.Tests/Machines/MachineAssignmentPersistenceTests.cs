@@ -278,7 +278,7 @@ public sealed class MachineAssignmentPersistenceTests
 
     private static async Task<EditAuthority> GrantEditModeAsync(SqliteDatabase database)
     {
-        var authority = new EditAuthority("machine-test-client", 1);
+        var authority = new EditAuthority("machine-test-client", 1, "machine-test-user");
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """

@@ -237,13 +237,6 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
         await command.ExecuteNonQueryAsync(token);
     }
 
-    private static async Task<string> ReadEditorAsync(SqliteConnection c, SqliteTransaction t, CancellationToken token)
-    {
-        await using var command = c.CreateCommand(); command.Transaction = t;
-        command.CommandText = "SELECT COALESCE(holder_user_id, holder_client_id) FROM edit_tokens WHERE id = 1;";
-        return await command.ExecuteScalarAsync(token) as string ?? "planner";
-    }
-
     private static async Task ExecuteSqlAsync(SqliteConnection c, SqliteTransaction t, string sql, CancellationToken token)
     {
         await using var command = c.CreateCommand(); command.Transaction = t; command.CommandText = sql;
@@ -359,7 +352,7 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
             stage.Parameters.AddWithValue("$position", position);
             await stage.ExecuteNonQueryAsync(token);
             await SqliteWorkOrderRouteRefresh.RefreshCaseAsync(
-                c, t, caseId, await ReadEditorAsync(c, t, token), timeProvider.GetUtcNow(), token);
+                c, t, caseId, SignedInActor.Require(authority), timeProvider.GetUtcNow(), token);
             return true;
         }, token);
 
@@ -411,11 +404,8 @@ internal sealed class SqlitePlanningDeletionRepository : IPlanningDeletionReposi
 
     private static async Task EnsureEditAuthorityAsync(SqliteConnection c, SqliteTransaction t, EditAuthority authority, CancellationToken token)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(c, t, DateTimeOffset.UtcNow, token);
-        await using var command = c.CreateCommand(); command.Transaction = t;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token) || reader.IsDBNull(0)) throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        if (reader.GetString(0) != authority.ClientId || reader.GetInt64(1) != authority.Generation) throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(authority);
+        await Task.CompletedTask;
     }
 }

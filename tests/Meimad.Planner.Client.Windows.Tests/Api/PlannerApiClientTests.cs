@@ -1257,7 +1257,7 @@ public sealed class PlannerApiClientTests
     }
 
     [Fact]
-    public async Task Reads_health_and_edit_state_over_http_only()
+    public async Task Signs_in_and_sends_the_session_as_a_bearer_token()
     {
         var handler = new RecordingHandler(
             Json(HttpStatusCode.OK, """
@@ -1268,65 +1268,132 @@ public sealed class PlannerApiClientTests
                   "serverTimeUtc": "2026-08-11T10:00:00Z"
                 }
                 """),
-            Json(HttpStatusCode.OK, EditJson("viewer", 4)));
+            Json(HttpStatusCode.OK, """{ "hasAccounts": true }"""),
+            Json(HttpStatusCode.OK, """
+                {
+                  "token": "session-token",
+                  "expiresAt": "2026-08-11T22:00:00Z",
+                  "user": {
+                    "userId": "user-1", "userName": "dana", "displayName": "Dana Cohen",
+                    "isAdministrator": false, "permissions": ["qc.decide"], "mustChangePassword": false
+                  }
+                }
+                """),
+            Json(HttpStatusCode.OK, """
+                {
+                  "userId": "user-1", "userName": "dana", "displayName": "Dana Cohen",
+                  "isAdministrator": false, "permissions": ["qc.decide"], "mustChangePassword": false
+                }
+                """));
         using var api = CreateClient(handler);
 
         var health = await api.GetHealthAsync();
-        var edit = await api.GetEditModeAsync("windows-01");
+        var state = await api.GetAuthStateAsync();
+        var session = await api.SignInAsync("dana", "secret-1", "windows-01");
+        api.SetSessionToken(session.Token);
+        var account = await api.GetSignedInAccountAsync();
 
         Assert.Equal("healthy", health.Status);
-        Assert.Equal("Meimad Planner Server", health.Service);
-        Assert.Equal(ClientEditState.Viewer, edit.State);
-        Assert.Equal(4, edit.Generation);
-        Assert.Equal("/health", handler.Requests[0].Path);
-        Assert.Equal("/api/v1/edit-mode", handler.Requests[1].Path);
-        Assert.Equal("windows-01", handler.Requests[1].ClientId);
+        Assert.True(state.HasAccounts);
+        Assert.Equal("/api/v1/auth/sign-in", handler.Requests[2].Path);
+        Assert.Contains("\"userName\":\"dana\"", handler.Requests[2].Body, StringComparison.Ordinal);
+        Assert.Contains("\"clientId\":\"windows-01\"", handler.Requests[2].Body, StringComparison.Ordinal);
+        Assert.Null(handler.Requests[2].Authorization);
+        Assert.Equal("Bearer session-token", handler.Requests[3].Authorization);
+        Assert.True(account.Has(PlannerPermissions.DecideQc));
+        Assert.False(account.Has(PlannerPermissions.EditCases));
     }
 
     [Fact]
-    public async Task Edit_commands_send_client_user_generation_and_decision()
+    public async Task User_administration_sends_expected_versions()
     {
+        const string user = """
+            {
+              "userId": "user-2", "userName": "ron", "displayName": "Ron", "isActive": true,
+              "mustChangePassword": true, "lastSignInAt": null,
+              "types": [{ "userTypeId": "user-type-planning", "name": "Planning", "isAdministrator": false }],
+              "version": 2, "updatedAt": "2026-08-11T10:00:00Z", "updatedBy": "admin"
+            }
+            """;
         var handler = new RecordingHandler(
-            Json(HttpStatusCode.Accepted, EditJson("requestingEdit", 7, includePending: true)),
-            Json(HttpStatusCode.OK, EditJson("viewer", 8)),
-            Json(HttpStatusCode.OK, EditJson("editor", 9)));
+            Json(HttpStatusCode.Created, user),
+            Json(HttpStatusCode.OK, user),
+            new HttpResponseMessage(HttpStatusCode.NoContent),
+            new HttpResponseMessage(HttpStatusCode.NoContent));
         using var api = CreateClient(handler);
 
-        var requested = await api.RequestEditAsync("windows-02", "Local Planner");
-        await api.ReleaseEditAsync("windows-02", 7);
-        await api.DecideTransferAsync("windows-02", 8, "request/with slash", release: false);
+        await api.CreateUserAsync("ron", "Ron", "temporary-1", true, ["user-type-planning"]);
+        var updated = await api.UpdateUserAsync("user-2", "Ron", true, ["user-type-planning"], 1);
+        await api.ResetUserPasswordAsync("user-2", "temporary-2");
+        await api.DeleteUserTypeAsync("user-type/odd", 3);
 
-        Assert.Equal(ClientEditState.RequestingEdit, requested.State);
-        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
-        Assert.Equal("windows-02", handler.Requests[0].ClientId);
-        Assert.Equal("Local Planner", handler.Requests[0].UserId);
-        Assert.Equal("7", handler.Requests[1].Generation);
-        Assert.Equal(
-            "/api/v1/edit-mode/requests/request%2Fwith%20slash/decision",
-            handler.Requests[2].Path);
-        Assert.Equal("8", handler.Requests[2].Generation);
-        Assert.Contains("\"decision\":\"reject\"", handler.Requests[2].Body, StringComparison.Ordinal);
+        Assert.Equal("Planning", updated.Types.Single().Name);
+        Assert.Contains("\"password\":\"temporary-1\"", handler.Requests[0].Body, StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Put, handler.Requests[1].Method);
+        Assert.Contains("\"expectedVersion\":1", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Equal("/api/v1/users/user-2/password", handler.Requests[2].Path);
+        Assert.Equal("/api/v1/user-types/user-type%2Fodd?expectedVersion=3", handler.Requests[3].Path);
     }
 
     [Fact]
     public async Task Safe_server_error_is_exposed_without_raw_content()
     {
-        var handler = new RecordingHandler(Json(HttpStatusCode.Conflict, """
+        var handler = new RecordingHandler(Json(HttpStatusCode.Unauthorized, """
             {
               "error": {
-                "code": "edit_request_pending",
-                "message": "Another client is already waiting."
+                "code": "sign_in_failed",
+                "message": "The user name or password is wrong."
               }
             }
             """));
         using var api = CreateClient(handler);
 
         var exception = await Assert.ThrowsAsync<PlannerApiException>(() =>
-            api.RequestEditAsync("windows-03", "Planner"));
+            api.SignInAsync("dana", "wrong", "windows-03"));
 
-        Assert.Equal(HttpStatusCode.Conflict, exception.StatusCode);
-        Assert.Equal("edit_request_pending", exception.Code);
-        Assert.Equal("Another client is already waiting.", exception.Message);
+        Assert.Equal(HttpStatusCode.Unauthorized, exception.StatusCode);
+        Assert.Equal("sign_in_failed", exception.Code);
+        Assert.Equal("The user name or password is wrong.", exception.Message);
+        Assert.Null(exception.Conflict);
+    }
+
+    [Fact]
+    public async Task A_conflict_carries_who_when_and_advice_and_is_reported_once()
+    {
+        var handler = new RecordingHandler(Json(HttpStatusCode.Conflict, """
+            {
+              "error": {
+                "code": "edit_conflict",
+                "message": "This part already has a QC result: PASS. Your decision was not saved.",
+                "details": [],
+                "conflict": {
+                  "resource": "QC queue item",
+                  "changedBy": "Dana Cohen (dana)",
+                  "changedAt": "2026-08-11T10:00:00Z",
+                  "advice": "Refresh the QC queue; the part has left it."
+                }
+              }
+            }
+            """));
+        using var api = CreateClient(handler);
+        var reported = new List<PlannerApiException>();
+        void Observe(PlannerApiException value) => reported.Add(value);
+        PlannerApiException.ConflictRaised += Observe;
+        try
+        {
+            var exception = await Assert.ThrowsAsync<PlannerApiException>(() => api.SignOutAsync());
+
+            Assert.Equal("edit_conflict", exception.Code);
+            Assert.Equal("QC queue item", exception.Conflict!.Resource);
+            Assert.Equal("Dana Cohen (dana)", exception.Conflict.ChangedBy);
+            Assert.Equal(DateTimeOffset.Parse("2026-08-11T10:00:00Z"), exception.Conflict.ChangedAt);
+            Assert.Equal("Refresh the QC queue; the part has left it.", exception.Conflict.Advice);
+            Assert.Same(exception, Assert.Single(reported));
+        }
+        finally
+        {
+            PlannerApiException.ConflictRaised -= Observe;
+        }
     }
 
     [Fact]
@@ -2703,26 +2770,6 @@ public sealed class PlannerApiClientTests
         }
         """;
 
-    private static string EditJson(string state, int generation, bool includePending = false) => $$"""
-        {
-          "state": "{{state}}",
-          "generation": {{generation}},
-          "holder": null,
-          "pendingRequest": {{(includePending ? """
-            {
-              "requestId": "request-1",
-              "requesterClientId": "windows-02",
-              "requesterUserId": "Local Planner",
-              "status": "pending",
-              "requestedAt": "2026-08-11T10:00:00Z",
-              "decisionDeadline": "2026-08-11T10:00:30Z"
-            }
-            """ : "null")}},
-          "serverTime": "2026-08-11T10:00:00Z",
-          "transferTimeoutSeconds": 30
-        }
-        """;
-
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> responses;
@@ -2748,7 +2795,8 @@ public sealed class PlannerApiClientTests
                 request.Content is null
                     ? string.Empty
                     : await request.Content.ReadAsStringAsync(cancellationToken),
-                ReadHeader(request, "If-Modified-Since")));
+                ReadHeader(request, "If-Modified-Since"),
+                request.Headers.Authorization?.ToString()));
             return responses.Dequeue();
         }
 
@@ -2764,5 +2812,6 @@ public sealed class PlannerApiClientTests
         string? Generation,
         string? IfMatch,
         string Body,
-        string? IfModifiedSince = null);
+        string? IfModifiedSince = null,
+        string? Authorization = null);
 }

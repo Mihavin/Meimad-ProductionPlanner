@@ -139,7 +139,7 @@ public sealed class KitaronOrphanOrderCleanupTests
                 "--Server:Port=5099",
                 $"--Database:Path={Path.Combine(directory, "kitaron-orphan-test.db")}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

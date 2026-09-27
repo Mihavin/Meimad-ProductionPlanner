@@ -438,8 +438,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public bool IsEditor => isEditor;
 
     public string AuthorityText => isEditor
-        ? "Edit Mode is held: setup changes are enabled."
-        : "View Mode: setup data is read-only.";
+        ? "Your account may change setup data."
+        : "Setup data is read-only for your account.";
 
     public WorkingCalendar? SelectedCalendar
     {

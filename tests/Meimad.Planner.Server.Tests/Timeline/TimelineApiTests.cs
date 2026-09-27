@@ -2768,7 +2768,7 @@ public sealed class TimelineApiTests
             [.. arguments],
             webHost =>
             {
-                webHost.UseTestServer();
+                webHost.UseSignedInTestServer();
                 webHost.ConfigureServices(services =>
                 {
                     services.RemoveAll<TimeProvider>();

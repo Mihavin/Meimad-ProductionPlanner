@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -19,8 +20,11 @@ public sealed class ServerMaintenanceApiTests
         {
             await SeedAsync(application.Services);
 
-            using var anonymous = await client.GetAsync("/api/v1/server-maintenance/database");
-            Assert.Equal((HttpStatusCode)428, anonymous.StatusCode);
+            using (client.SignedOut())
+            {
+                using var anonymous = await client.GetAsync("/api/v1/server-maintenance/database");
+                Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+            }
 
             AddIdentityHeaders(client, includeEditGeneration: false);
             using var status = await client.GetAsync("/api/v1/server-maintenance/database");
@@ -62,7 +66,7 @@ public sealed class ServerMaintenanceApiTests
     }
 
     [Fact]
-    public async Task Purge_requires_current_edit_authority_and_a_fresh_preview()
+    public async Task Purge_requires_the_setup_permission_and_a_fresh_preview()
     {
         await RunAsync(async (application, client, backupFolder) =>
         {
@@ -78,9 +82,12 @@ public sealed class ServerMaintenanceApiTests
                 reason = "Test retention cleanup"
             };
 
-            using var missingEdit = await client.PostAsJsonAsync(
-                "/api/v1/server-maintenance/collected-data/purge", request);
-            Assert.Equal((HttpStatusCode)428, missingEdit.StatusCode);
+            using (client.SignedInWithOnly(Permissions.PlanMachines))
+            {
+                using var missingEdit = await client.PostAsJsonAsync(
+                    "/api/v1/server-maintenance/collected-data/purge", request);
+                Assert.Equal(HttpStatusCode.Forbidden, missingEdit.StatusCode);
+            }
 
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
             using var changed = await client.PostAsJsonAsync(
@@ -99,13 +106,6 @@ public sealed class ServerMaintenanceApiTests
             Assert.False(Directory.Exists(backupFolder)
                 && Directory.GetFiles(backupFolder, "*.db", SearchOption.TopDirectoryOnly).Length > 0);
             Assert.Equal(1, await CountAsync(application.Services, "machine_telemetry_raw", "raw-in"));
-
-            client.DefaultRequestHeaders.Remove("X-Meimad-Edit-Generation");
-            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "9");
-            using var stale = await client.PostAsJsonAsync(
-                "/api/v1/server-maintenance/collected-data/purge", request);
-            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-            Assert.Contains("edit_generation_stale", await stale.Content.ReadAsStringAsync());
         });
     }
 
@@ -263,7 +263,7 @@ public sealed class ServerMaintenanceApiTests
                 $"--Backup:Folder={backupFolder}",
                 "--Backup:RetentionCount=20"
             ],
-            builder => builder.UseTestServer());
+            builder => builder.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

@@ -106,7 +106,7 @@ public sealed class ProductionRunCancelApiTests
         var directory = Path.Combine(Path.GetTempPath(), "MeimadRunCancelApi", Guid.NewGuid().ToString("N"));
         var app = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(directory, "test.db")}"],
-            web => web.UseTestServer());
+            web => web.UseSignedInTestServer());
         try
         {
             await app.StartAsync();

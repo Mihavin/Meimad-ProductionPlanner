@@ -13,39 +13,37 @@ public sealed class MainWindowViewModelTests
         "windows-client-01");
 
     [Fact]
-    public async Task Initialize_shows_health_and_editor_state()
+    public async Task Initialize_asks_for_sign_in_then_applies_the_accounts_permissions()
     {
-        var api = new FakeApiClient
-        {
-            Health = new ServerHealth(
-                "healthy",
-                "Meimad Planner Server",
-                "0.1.0",
-                DateTimeOffset.Parse("2026-08-11T10:00:00Z")),
-            EditMode = new EditModeStatus(
-                ClientEditState.Editor,
-                12,
-                new EditModeHolder(
-                    Settings.ClientId,
-                    Settings.LocalUserName,
-                    12,
-                    DateTimeOffset.Parse("2026-08-11T09:00:00Z")),
-                null,
-                DateTimeOffset.Parse("2026-08-11T10:00:00Z"),
-                30)
-        };
+        var api = new FakeApiClient { Health = Healthy(), Account = Planner() };
         using var viewModel = new MainWindowViewModel(
             new FakeSettingsStore(Settings),
             new FakeApiClientFactory(api));
+        var signInRequests = 0;
+        viewModel.SignInRequired += (_, _) => signInRequests++;
 
         await viewModel.InitializeAsync();
 
         Assert.Equal("healthy", viewModel.HealthLevel);
-        Assert.Contains("Connected", viewModel.HealthHeadline, StringComparison.Ordinal);
+        Assert.Equal(1, signInRequests);
+        Assert.False(viewModel.IsSignedIn);
+        Assert.Equal("offline", viewModel.ModeLevel);
+        Assert.False(viewModel.MachinePlanningBoard.CanDrag);
+        Assert.Equal("Miriam", viewModel.LastUserName);
+
+        Assert.Null(await viewModel.SignInAsync("dana", "secret-1"));
+        await viewModel.CompleteSignInAsync();
+
+        Assert.Equal("session-dana", api.SessionToken);
+        Assert.True(viewModel.IsSignedIn);
         Assert.Equal("editor", viewModel.ModeLevel);
-        Assert.Contains("you are the editor", viewModel.ModeHeadline, StringComparison.Ordinal);
-        Assert.True(viewModel.ReleaseEditCommand.CanExecute(null));
-        Assert.False(viewModel.RequestEditCommand.CanExecute(null));
+        Assert.Contains("Dana Planner", viewModel.ModeHeadline, StringComparison.Ordinal);
+        Assert.Contains("Planning Board", viewModel.ModeDetail, StringComparison.Ordinal);
+        Assert.True(viewModel.MachinePlanningBoard.CanDrag);
+        Assert.False(viewModel.Setup.IsEditor);
+        Assert.False(viewModel.CanManageUsers);
+        Assert.True(viewModel.SignOutCommand.CanExecute(null));
+        Assert.Equal("dana", viewModel.LastUserName);
     }
 
     [Fact]
@@ -56,7 +54,7 @@ public sealed class MainWindowViewModelTests
         var api = new FakeApiClient
         {
             HealthTask = healthCompletion.Task,
-            EditMode = Editor()
+            Account = Planner()
         };
         using var viewModel = new MainWindowViewModel(
             new FakeSettingsStore(Settings),
@@ -89,72 +87,102 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("offline", viewModel.HealthLevel);
         Assert.Equal("Server unavailable", viewModel.HealthHeadline);
         Assert.Equal("offline", viewModel.ModeLevel);
-        Assert.Contains("disabled", viewModel.ModeDetail, StringComparison.Ordinal);
-        Assert.False(viewModel.RequestEditCommand.CanExecute(null));
-        Assert.False(viewModel.ReleaseEditCommand.CanExecute(null));
+        Assert.Equal("Not signed in", viewModel.ModeHeadline);
+        Assert.False(viewModel.SignOutCommand.CanExecute(null));
+        Assert.False(viewModel.MachinePlanningBoard.CanDrag);
     }
 
     [Fact]
-    public async Task Viewer_tooltip_identifies_the_current_editor_by_user_name()
+    public async Task An_empty_server_creates_the_first_administrator_who_may_manage_users()
     {
-        var api = new FakeApiClient
-        {
-            Health = Healthy(),
-            EditMode = new EditModeStatus(
-                ClientEditState.Viewer,
-                12,
-                new EditModeHolder("windows-remote", "Rivka", 12, DateTimeOffset.UtcNow),
-                null,
-                DateTimeOffset.UtcNow,
-                30)
-        };
+        var api = new FakeApiClient { Health = Healthy(), HasAccounts = false };
         using var viewModel = new MainWindowViewModel(
             new FakeSettingsStore(Settings),
             new FakeApiClientFactory(api));
 
         await viewModel.InitializeAsync();
 
-        Assert.Contains("Edit Mode held by: Rivka", viewModel.ModeDetail, StringComparison.Ordinal);
-        Assert.DoesNotContain("windows-remote", viewModel.ModeDetail, StringComparison.Ordinal);
-    }
+        Assert.True(viewModel.NeedsFirstAdministrator);
+        Assert.Contains("first administrator", viewModel.ModeDetail, StringComparison.Ordinal);
+        Assert.Null(await viewModel.CreateFirstAdministratorAsync("owner", "The Owner", "secret-1"));
+        await viewModel.CompleteSignInAsync();
 
-    [Fact]
-    public async Task Compact_toggle_flow_requests_and_releases_existing_edit_token()
-    {
-        var viewer = new EditModeStatus(
-            ClientEditState.Viewer,
-            12,
-            new EditModeHolder("windows-remote", "Rivka", 12, DateTimeOffset.UtcNow),
-            null,
-            DateTimeOffset.UtcNow,
-            30);
-        var editor = Editor();
-        var api = new FakeApiClient
-        {
-            Health = Healthy(),
-            EditMode = viewer,
-            RequestEditResult = editor,
-            ReleaseEditResult = viewer
-        };
-        using var viewModel = new MainWindowViewModel(
-            new FakeSettingsStore(Settings),
-            new FakeApiClientFactory(api));
-        await viewModel.InitializeAsync();
-
-        Assert.False(viewModel.Setup.IsEditor);
-        Assert.True(viewModel.RequestEditCommand.CanExecute(null));
-        await viewModel.RequestEditAsync();
-
-        Assert.Equal(1, api.RequestEditCount);
-        Assert.Equal("editor", viewModel.ModeLevel);
+        Assert.False(viewModel.NeedsFirstAdministrator);
+        Assert.True(viewModel.CanManageUsers);
         Assert.True(viewModel.Setup.IsEditor);
-        Assert.True(viewModel.ReleaseEditCommand.CanExecute(null));
+        Assert.Contains("Administrator", viewModel.ModeDetail, StringComparison.Ordinal);
+    }
 
-        await viewModel.ReleaseEditAsync();
+    [Fact]
+    public async Task A_temporary_password_is_replaced_before_the_screens_load()
+    {
+        var api = new FakeApiClient { Health = Healthy(), Account = Planner() with { MustChangePassword = true } };
+        using var viewModel = new MainWindowViewModel(
+            new FakeSettingsStore(Settings),
+            new FakeApiClientFactory(api));
+        await viewModel.InitializeAsync();
 
-        Assert.Equal(1, api.ReleaseEditCount);
-        Assert.Equal("viewer", viewModel.ModeLevel);
-        Assert.False(viewModel.Setup.IsEditor);
+        Assert.Null(await viewModel.SignInAsync("dana", "temporary-1"));
+        Assert.True(viewModel.Account!.MustChangePassword);
+        Assert.Equal("The current password is wrong.", await viewModel.ChangePasswordAsync("wrong", "dana-secret"));
+        Assert.Null(await viewModel.ChangePasswordAsync("temporary-1", "dana-secret"));
+        api.Account = Planner();
+        await viewModel.CompleteSignInAsync();
+
+        Assert.True(viewModel.IsSignedIn);
+        Assert.True(viewModel.MachinePlanningBoard.CanDrag);
+    }
+
+    [Fact]
+    public async Task Sign_out_and_an_ended_session_both_ask_to_sign_in_again()
+    {
+        var api = new FakeApiClient { Health = Healthy(), Account = Planner() };
+        using var viewModel = new MainWindowViewModel(
+            new FakeSettingsStore(Settings),
+            new FakeApiClientFactory(api));
+        var signInRequests = 0;
+        viewModel.SignInRequired += (_, _) => signInRequests++;
+        await viewModel.InitializeAsync();
+        await viewModel.SignInAsync("dana", "secret-1");
+        await viewModel.CompleteSignInAsync();
+
+        await viewModel.SignOutAsync();
+
+        Assert.Equal(1, api.SignOutCount);
+        Assert.Null(api.SessionToken);
+        Assert.False(viewModel.IsSignedIn);
+        Assert.False(viewModel.MachinePlanningBoard.CanDrag);
+        Assert.Equal(2, signInRequests);
+
+        // The session ends on the Server (12 hours without use): the next refresh notices.
+        await viewModel.SignInAsync("dana", "secret-1");
+        await viewModel.CompleteSignInAsync();
+        api.SessionEnded = true;
+        await viewModel.RefreshAsync();
+
+        Assert.False(viewModel.IsSignedIn);
+        Assert.Equal("Session ended", viewModel.ModeHeadline);
+        Assert.Equal(3, signInRequests);
+    }
+
+    [Fact]
+    public async Task A_closed_sign_in_is_not_asked_again_until_the_user_presses_sign_in()
+    {
+        var api = new FakeApiClient { Health = Healthy(), Account = Planner() };
+        using var viewModel = new MainWindowViewModel(
+            new FakeSettingsStore(Settings),
+            new FakeApiClientFactory(api));
+        var signInRequests = 0;
+        viewModel.SignInRequired += (_, _) => signInRequests++;
+        await viewModel.InitializeAsync();
+
+        await viewModel.CompleteSignInAsync();
+        await viewModel.RefreshAsync();
+        Assert.Equal(1, signInRequests);
+
+        Assert.True(viewModel.SignInCommand.CanExecute(null));
+        viewModel.SignInCommand.Execute(null);
+        Assert.Equal(2, signInRequests);
     }
 
     [Fact]
@@ -168,7 +196,7 @@ public sealed class MainWindowViewModelTests
         var api = new FakeApiClient
         {
             Health = Healthy(),
-            EditMode = Editor(),
+            Account = Planner(),
             Board = new PlanningBoardSnapshot(
                 DateTimeOffset.UtcNow, "available", "Calculated", [], [operation], [machine])
         };
@@ -176,6 +204,8 @@ public sealed class MainWindowViewModelTests
             new FakeSettingsStore(Settings),
             new FakeApiClientFactory(api));
         await viewModel.InitializeAsync();
+        await viewModel.SignInAsync("dana", "secret-1");
+        await viewModel.CompleteSignInAsync();
         var sharedTimeline = viewModel.Timeline;
         var timelineRequestsBeforeChange = api.TimelineRequestCount;
 
@@ -207,7 +237,7 @@ public sealed class MainWindowViewModelTests
         var api = new FakeApiClient
         {
             Health = Healthy(),
-            EditMode = Editor(),
+            Account = Planner(),
             Board = new PlanningBoardSnapshot(
                 DateTimeOffset.UtcNow, "available", "Calculated", [], [], [machine])
         };
@@ -215,6 +245,8 @@ public sealed class MainWindowViewModelTests
             new FakeSettingsStore(Settings),
             new FakeApiClientFactory(api));
         await viewModel.InitializeAsync();
+        await viewModel.SignInAsync("dana", "secret-1");
+        await viewModel.CompleteSignInAsync();
         var sharedTimeline = viewModel.Timeline;
         var timelineRequestsBeforeChange = api.TimelineRequestCount;
 
@@ -234,13 +266,9 @@ public sealed class MainWindowViewModelTests
     private static ServerHealth Healthy() => new(
         "healthy", "Meimad Planner Server", "0.1.0", DateTimeOffset.UtcNow);
 
-    private static EditModeStatus Editor() => new(
-        ClientEditState.Editor,
-        12,
-        new EditModeHolder(Settings.ClientId, Settings.LocalUserName, 12, DateTimeOffset.UtcNow),
-        null,
-        DateTimeOffset.UtcNow,
-        30);
+    private static SignedInAccount Planner() => new(
+        "user-dana", "dana", "Dana Planner", false,
+        [PlannerPermissions.PlanMachines, PlannerPermissions.ManageWorkOrders], false);
 
     private sealed class FakeSettingsStore : IClientSettingsStore
     {
@@ -277,15 +305,15 @@ public sealed class MainWindowViewModelTests
 
         internal Task<ServerHealth>? HealthTask { get; init; }
 
-        internal EditModeStatus? EditMode { get; init; }
+        internal SignedInAccount? Account { get; set; }
 
-        internal EditModeStatus? RequestEditResult { get; init; }
+        internal bool HasAccounts { get; init; } = true;
 
-        internal EditModeStatus? ReleaseEditResult { get; init; }
+        internal bool SessionEnded { get; set; }
 
-        internal int RequestEditCount { get; private set; }
+        internal string? SessionToken { get; private set; }
 
-        internal int ReleaseEditCount { get; private set; }
+        internal int SignOutCount { get; private set; }
 
         internal Exception? Failure { get; init; }
 
@@ -303,34 +331,52 @@ public sealed class MainWindowViewModelTests
                 ? Task.FromResult(Health!)
                 : Task.FromException<ServerHealth>(Failure));
 
-        public Task<EditModeStatus> GetEditModeAsync(
-            string clientId,
-            CancellationToken cancellationToken = default) => Task.FromResult(EditMode!);
+        public void SetSessionToken(string? token) => SessionToken = token;
 
-        public Task<EditModeStatus> RequestEditAsync(
+        public Task<AuthState> GetAuthStateAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AuthState(HasAccounts));
+
+        public Task<SignInSession> SignInAsync(
+            string userName,
+            string password,
             string clientId,
-            string userId,
             CancellationToken cancellationToken = default)
         {
-            RequestEditCount++;
-            return Task.FromResult(RequestEditResult ?? EditMode!);
+            SessionEnded = false;
+            return Task.FromResult(new SignInSession($"session-{userName}", DateTimeOffset.UtcNow.AddHours(12), Account!));
         }
 
-        public Task<EditModeStatus> ReleaseEditAsync(
+        public Task<SignInSession> CreateFirstAdministratorAsync(
+            string userName,
+            string displayName,
+            string password,
             string clientId,
-            long generation,
             CancellationToken cancellationToken = default)
         {
-            ReleaseEditCount++;
-            return Task.FromResult(ReleaseEditResult ?? EditMode!);
+            Account = new SignedInAccount("user-owner", userName, displayName, true, [], false);
+            return Task.FromResult(new SignInSession($"session-{userName}", DateTimeOffset.UtcNow.AddHours(12), Account));
         }
 
-        public Task<EditModeStatus> DecideTransferAsync(
-            string clientId,
-            long generation,
-            string requestId,
-            bool release,
-            CancellationToken cancellationToken = default) => Task.FromResult(EditMode!);
+        public Task SignOutAsync(CancellationToken cancellationToken = default)
+        {
+            SignOutCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task<SignedInAccount> GetSignedInAccountAsync(CancellationToken cancellationToken = default) =>
+            SessionEnded
+                ? Task.FromException<SignedInAccount>(new PlannerApiException(
+                    System.Net.HttpStatusCode.Unauthorized, "sign_in_required", "Sign in to the Meimad Planner."))
+                : Task.FromResult(Account!);
+
+        public Task ChangePasswordAsync(
+            string currentPassword,
+            string newPassword,
+            CancellationToken cancellationToken = default) =>
+            currentPassword == "wrong"
+                ? Task.FromException(new PlannerApiException(
+                    System.Net.HttpStatusCode.UnprocessableEntity, "current_password_wrong", "The current password is wrong."))
+                : Task.CompletedTask;
 
         public Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
             CaseQuery query,

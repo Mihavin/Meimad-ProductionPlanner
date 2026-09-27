@@ -12,6 +12,7 @@ internal interface IMachineAssignmentRepository
         MachineAssignmentOverrideConfirmation? overrideConfirmation,
         DateTimeOffset now,
         EditAuthority editAuthority,
+        string? expectedBacklogStamp,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<MachineAssignmentOverrideLog>> ListOverridesAsync(

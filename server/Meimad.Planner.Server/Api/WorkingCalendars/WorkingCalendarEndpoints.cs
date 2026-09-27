@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.WorkingCalendars;
 using Meimad.Planner.Server.Domain.WorkingCalendars;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.WorkingCalendars;
 
@@ -38,7 +39,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var accessError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var accessError))
         {
             return accessError!;
         }
@@ -102,7 +103,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         if (!PlanningHttpSupport.TryReadExpectedVersion(
                 context.Request.Headers.IfMatch,
                 "working-calendar",
@@ -136,7 +137,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             return await service.DeleteAsync(workingCalendarId, authority!, cancellationToken)
@@ -161,7 +162,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         if (string.IsNullOrWhiteSpace(request.WorkingCalendarId))
             return PlanningHttpSupport.Error(422, "validation_failed", "workingCalendarId is required.", context);
         try
@@ -181,7 +182,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             await service.ClearSetupCalendarAsync(authority!, cancellationToken);
@@ -202,7 +203,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         if (string.IsNullOrWhiteSpace(request.WorkingCalendarId))
             return PlanningHttpSupport.Error(422, "validation_failed", "workingCalendarId is required.", context);
         try
@@ -221,7 +222,7 @@ internal static class WorkingCalendarEndpoints
         WorkingCalendarService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             await service.ClearMasterCalendarAsync(authority!, cancellationToken);

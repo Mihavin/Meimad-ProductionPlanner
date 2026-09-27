@@ -252,7 +252,7 @@ internal sealed class LegacyExcelImportViewModel : INotifyPropertyChanged
             if (apiClient is null)
                 return "Import is disabled because the Server is not connected.";
             if (!IsEditor)
-                return "Import is disabled because Edit Mode is not held. Acquire Edit Mode, then preview again.";
+                return "Import is disabled because your account may not change setup data. Ask an administrator for the Setup permission.";
             if (IsBusy)
                 return "Import is disabled while the preview or import request is running.";
             if (preview is null)

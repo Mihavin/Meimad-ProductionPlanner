@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -70,12 +71,14 @@ public sealed class WorkingCalendarApiTests
     {
         await RunWithServerAsync(async (application, client) =>
         {
+            var viewer = client.SignedInWithOnly(Permissions.PlanMachines);
             using var withoutHeaders = await client.PostAsJsonAsync("/api/v1/working-calendars", new
             {
                 name = "Bad", timeZoneId = "UTC", workdays = new[] { "monday" },
                 shiftStartsAtLocal = "18:00", shiftEndsAtLocal = "06:00"
             });
-            Assert.Equal((HttpStatusCode)428, withoutHeaders.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, withoutHeaders.StatusCode);
+            viewer.Dispose();
 
             await GrantEditModeAsync(application.Services);
             AddEditHeaders(client);
@@ -393,7 +396,7 @@ public sealed class WorkingCalendarApiTests
         var directoryPath = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Calendar.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directoryPath, "test.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

@@ -4,6 +4,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.Data.Sqlite;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.NetworkFolder;
 
@@ -36,7 +37,7 @@ internal static class NetworkFolderEndpoints
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         var root = string.IsNullOrWhiteSpace(request.RootPath) ? null : NetworkFolderSettings.Normalize(request.RootPath.Trim());
         if (root is not null && (!Path.IsPathRooted(root) || root.Length > 1000))
             return Invalid(context, "rootPath", "The network folder must be a full path, preferably a UNC path such as \\\\server\\share\\folder.");
@@ -135,16 +136,9 @@ internal static class NetworkFolderEndpoints
     private static async Task EnsureEditAuthorityAsync(
         SqliteConnection connection, SqliteTransaction transaction, EditAuthority authority, CancellationToken cancellationToken)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(connection, transaction, DateTimeOffset.UtcNow, cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
-            throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        if (!string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != authority.Generation)
-            throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(authority);
+        await Task.CompletedTask;
     }
 
     private static IResult Invalid(HttpContext context, string field, string message) =>

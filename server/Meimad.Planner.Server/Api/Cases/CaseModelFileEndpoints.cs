@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Cases;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Cases;
 
@@ -54,8 +55,6 @@ internal sealed record UpdateCaseModelFileRequest(
 
 internal static class CaseModelFileEndpoints
 {
-    private const string ClientIdHeader = "X-Meimad-Client-Id";
-    private const string EditGenerationHeader = "X-Meimad-Edit-Generation";
     private static readonly Regex EntityTagPattern = new(
         "^\"case-model-file:(?<id>[^:\"]+):v(?<version>\\d+)\"$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -239,27 +238,8 @@ internal static class CaseModelFileEndpoints
     private static bool TryReadEditAuthority(
         HttpContext httpContext,
         out EditAuthority? editAuthority,
-        out IResult? error)
-    {
-        editAuthority = null;
-        error = null;
-        var clientId = httpContext.Request.Headers[ClientIdHeader].ToString();
-        var generationValue = httpContext.Request.Headers[EditGenerationHeader].ToString();
-        if (string.IsNullOrWhiteSpace(clientId)
-            || !long.TryParse(generationValue, NumberStyles.None, CultureInfo.InvariantCulture, out var generation)
-            || generation < 0)
-        {
-            error = Error(
-                StatusCodes.Status428PreconditionRequired,
-                "precondition_required",
-                $"{ClientIdHeader} and a valid {EditGenerationHeader} are required.",
-                httpContext);
-            return false;
-        }
-
-        editAuthority = new EditAuthority(clientId, generation);
-        return true;
-    }
+        out IResult? error) =>
+        PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.EditCases, out editAuthority, out error);
 
     private static void SetEntityTag(HttpResponse response, CaseModelFile file) =>
         response.Headers.ETag = $"\"case-model-file:{file.CaseModelFileId}:v{file.Version}\"";

@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.Downtimes;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Downtimes;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Downtimes;
 
@@ -33,7 +34,7 @@ internal static class MachineDowntimeEndpoints
 
     private static async Task<IResult> CreateAsync(CreateMachineDowntimeRequest request, HttpContext context, MachineDowntimeService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         try
         {
             var value = request.ToCommand() switch
@@ -50,7 +51,7 @@ internal static class MachineDowntimeEndpoints
 
     private static async Task<IResult> UpdateAsync(string downtimeId, UpdatePlannedMaintenanceRequest request, HttpContext context, MachineDowntimeService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (!TryVersion(context, downtimeId, out var version, out var versionError)) return versionError!;
         try
         {
@@ -63,7 +64,7 @@ internal static class MachineDowntimeEndpoints
 
     private static async Task<IResult> RestoreAsync(string downtimeId, RestoreBreakdownRequest request, HttpContext context, MachineDowntimeService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (!TryVersion(context, downtimeId, out var version, out var versionError)) return versionError!;
         try
         {

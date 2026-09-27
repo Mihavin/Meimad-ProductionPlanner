@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -148,12 +149,14 @@ public sealed class TimelineAuxiliaryProjectionTests
                 .GetProperty("intervals").EnumerateArray().Single();
             var start = placed.GetProperty("startsAt").GetDateTimeOffset();
 
+            var viewer = client.SignedInWithOnly();
             using var forbidden = await client.PutAsJsonAsync("/api/v1/timeline/auxiliary-pins", new
             {
                 batchOperationId = "op-1", requirementId = "req-final", workstationId = "station-inspection-2",
                 plannedStartsAt = start.AddHours(1), plannedEndsAt = start.AddHours(1).AddMinutes(15), pinStart = true
             });
-            Assert.Equal(HttpStatusCode.PreconditionRequired, forbidden.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            viewer.Dispose();
 
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "pin-editor");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
@@ -238,7 +241,7 @@ public sealed class TimelineAuxiliaryProjectionTests
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}", "--Timeline:TimeZoneId=UTC"],
             webHost =>
             {
-                webHost.UseTestServer();
+                webHost.UseSignedInTestServer();
                 webHost.ConfigureServices(services =>
                 {
                     services.RemoveAll<TimeProvider>();

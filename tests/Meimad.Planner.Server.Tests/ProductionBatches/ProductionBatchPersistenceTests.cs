@@ -293,7 +293,7 @@ public sealed class ProductionBatchPersistenceTests
 
     private static async Task<EditAuthority> GrantEditModeAsync(SqliteDatabase database)
     {
-        var authority = new EditAuthority("batch-persistence-client", 1);
+        var authority = new EditAuthority("batch-persistence-client", 1, "batch-persistence-user");
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """

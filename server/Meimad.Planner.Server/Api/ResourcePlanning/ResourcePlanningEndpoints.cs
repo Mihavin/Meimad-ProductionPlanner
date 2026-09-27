@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.ResourcePlanning;
 using Meimad.Planner.Server.Domain.ResourcePlanning;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ResourcePlanning;
 
@@ -31,10 +32,10 @@ internal static class ResourcePlanningEndpoints
         endpoints.MapGet("/api/v1/case-operations/{operationId}/resource-requirements",async(string operationId,ResourceMasterDataService s,CancellationToken t)=>Results.Ok(await s.ListRequirementsAsync(operationId,t)));
         endpoints.MapPost("/api/v1/case-operations/{operationId}/resource-requirements",CreateRequirementAsync);
         endpoints.MapPatch("/api/v1/resource-requirements/{requirementId}",(string requirementId,RequirementUpdateRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>
-            Mutate(c,a=>s.UpdateRequirementAsync(requirementId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,
+            MutateCase(c,a=>s.UpdateRequirementAsync(requirementId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,
                 r.CapacityRequired,r.EstimatedDurationSeconds,r.DurationPerUnitSeconds,r.Direction,r.SimultaneousGroupKey,r.PredecessorRequirementId,r.Name,r.StepNumber,r.IsActive,r.ExpectedVersion,a,t)));
         endpoints.MapDelete("/api/v1/resource-requirements/{requirementId}",(string requirementId,int version,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>
-            Mutate(c,async a=>{await s.DeleteRequirementAsync(requirementId,version,a,t);return new{id=requirementId};}));
+            MutateCase(c,async a=>{await s.DeleteRequirementAsync(requirementId,version,a,t);return new{id=requirementId};}));
     }
 
     private static IResult Preview(ResourcePlanningInput input, AutomaticResourceScheduler scheduler)
@@ -53,11 +54,14 @@ internal static class ResourcePlanningEndpoints
     private static async Task<IResult> SetEmployeeSkillsAsync(string employeeId, EmployeeSkillsRequest r, HttpContext c, ResourceMasterDataService s, CancellationToken t) =>
         await Mutate(c, async a => { await s.SetEmployeeSkillsAsync(employeeId, r.SkillIds, a, t); return new { employeeId, skillIds = r.SkillIds ?? [] }; });
     private static async Task<IResult> CreateRequirementAsync(string operationId,RequirementRequest r,HttpContext c,ResourceMasterDataService s,CancellationToken t)=>
-        await Mutate(c,a=>s.CreateRequirementAsync(operationId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,r.CapacityRequired,r.EstimatedDurationSeconds,r.Direction,r.SimultaneousGroupKey,r.PredecessorRequirementId,a,t,r.Name,r.StepNumber,r.DurationPerUnitSeconds));
+        await MutateCase(c,a=>s.CreateRequirementAsync(operationId,r.SequencePosition,r.ResourceClass,r.WorkstationTypeId,r.ExternalResourceId,r.RequiredCapability,r.RequiredSkillId,r.CapacityRequired,r.EstimatedDurationSeconds,r.Direction,r.SimultaneousGroupKey,r.PredecessorRequirementId,a,t,r.Name,r.StepNumber,r.DurationPerUnitSeconds));
 
-    private static async Task<IResult> Mutate<T>(HttpContext context, Func<Application.EditMode.EditAuthority,Task<T>> action)
+    private static Task<IResult> MutateCase<T>(HttpContext context, Func<Application.EditMode.EditAuthority,Task<T>> action) =>
+        Mutate(context, action, Permissions.EditCases);
+
+    private static async Task<IResult> Mutate<T>(HttpContext context, Func<Application.EditMode.EditAuthority,Task<T>> action, string permission = Permissions.ManageSetup)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, permission, out var authority, out var error)) return error!;
         try { return Results.Ok(await action(authority!)); }
         catch (ResourceMasterDataException e) { return PlanningHttpSupport.Error(422,e.Code,e.Message,context,[new { field=e.Field,code=e.Code,message=e.Message }]); }
         catch (Application.Kitaron.KitaronManagedResourceException e) { return PlanningHttpSupport.Error(409,"kitaron_managed_read_only",e.Message,context); }

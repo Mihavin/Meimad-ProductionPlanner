@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -119,12 +120,13 @@ public sealed class AdministrativeSetupApiTests
     }
 
     [Fact]
-    public async Task Mutations_require_edit_mode_and_enabled_reports_require_complete_valid_delivery_settings()
+    public async Task Mutations_require_the_setup_permission_and_enabled_reports_require_complete_valid_delivery_settings()
     {
         await RunAsync(async (_,client)=>
         {
+            using var viewer=client.SignedInWithOnly();
             using var unauthorized=await client.PostAsJsonAsync("/api/v1/resources",new{employeeNumber="E-1",firstName="No",lastName="Edit",role="regular_worker",assignedCalendarId="missing",isActive=true});
-            Assert.Equal((HttpStatusCode)428,unauthorized.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden,unauthorized.StatusCode);
         });
         await RunAsync(async (application,client)=>
         {
@@ -162,8 +164,11 @@ public sealed class AdministrativeSetupApiTests
             using var viewerPatch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/resources/{resourceId}")
             { Content = JsonContent.Create(new { notes = "Viewer write" }) };
             viewerPatch.Headers.IfMatch.Add(new EntityTagHeaderValue(entityTag));
-            using var viewerResponse = await client.SendAsync(viewerPatch);
-            Assert.Equal((HttpStatusCode)428, viewerResponse.StatusCode);
+            using (client.SignedInWithOnly(Permissions.PlanMachines))
+            {
+                using var viewerResponse = await client.SendAsync(viewerPatch);
+                Assert.Equal(HttpStatusCode.Forbidden, viewerResponse.StatusCode);
+            }
 
             AddEditHeaders(client);
             using var stalePatch = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/resources/{resourceId}")
@@ -334,7 +339,7 @@ public sealed class AdministrativeSetupApiTests
     private static void AddEditHeaders(HttpClient client){client.DefaultRequestHeaders.Add("X-Meimad-Client-Id","admin-client");client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation","1");}
     private static async Task GrantEditAsync(IServiceProvider services){var database=services.GetRequiredService<SqliteDatabase>();await using var connection=await database.OpenConnectionAsync();await using var command=connection.CreateCommand();command.CommandText="UPDATE edit_tokens SET holder_client_id='admin-client',holder_user_id='admin',generation=1,acquired_at='2026-08-12T00:00:00Z',version=version+1 WHERE id=1;";await command.ExecuteNonQueryAsync();}
     private static async Task RunAsync(Func<WebApplication,HttpClient,Task> test,IIsraeliHolidaySource? holidaySource=null)
-    {var folder=Path.Combine(Path.GetTempPath(),"MeimadPlanner.Admin.Tests",Guid.NewGuid().ToString("N"));var app=ServerApplication.Build([$"--Database:Path={Path.Combine(folder,"test.db")}"],host=>{host.UseTestServer();if(holidaySource is not null)host.ConfigureServices(services=>{services.RemoveAll<IIsraeliHolidaySource>();services.AddSingleton(holidaySource);});});try{await app.StartAsync();using var client=app.GetTestClient();await test(app,client);await app.StopAsync();}finally{await app.DisposeAsync();SqliteConnection.ClearAllPools();if(Directory.Exists(folder))Directory.Delete(folder,true);}}
+    {var folder=Path.Combine(Path.GetTempPath(),"MeimadPlanner.Admin.Tests",Guid.NewGuid().ToString("N"));var app=ServerApplication.Build([$"--Database:Path={Path.Combine(folder,"test.db")}"],host=>{host.UseSignedInTestServer();if(holidaySource is not null)host.ConfigureServices(services=>{services.RemoveAll<IIsraeliHolidaySource>();services.AddSingleton(holidaySource);});});try{await app.StartAsync();using var client=app.GetTestClient();await test(app,client);await app.StopAsync();}finally{await app.DisposeAsync();SqliteConnection.ClearAllPools();if(Directory.Exists(folder))Directory.Delete(folder,true);}}
 
     private sealed class TestHolidaySource(IReadOnlyList<IsraeliHolidaySourceItem> items):IIsraeliHolidaySource
     {

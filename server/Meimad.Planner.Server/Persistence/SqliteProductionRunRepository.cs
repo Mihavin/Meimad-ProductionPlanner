@@ -699,7 +699,11 @@ internal sealed class SqliteProductionRunRepository : IProductionRunRepository
     private static async Task IncrementRunVersionAsync(SqliteConnection c,SqliteTransaction t,string id,DateTimeOffset at,CancellationToken token)
     { await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="UPDATE production_runs SET version=version+1,updated_at=$at WHERE id=$id;";q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$at",Format(at));await q.ExecuteNonQueryAsync(token); }
     private static async Task<string> EnsureEditAuthorityAsync(SqliteConnection c,SqliteTransaction t,EditAuthority a,CancellationToken token)
-    { await SqliteEditModeRepository.ApplyExpiredRequestAsync(c,t,DateTimeOffset.UtcNow,token);await using var q=c.CreateCommand();q.Transaction=t;q.CommandText="SELECT holder_client_id,holder_user_id,generation FROM edit_tokens WHERE id=1;";await using var r=await q.ExecuteReaderAsync(token);if(!await r.ReadAsync(token)||r.IsDBNull(0))throw new EditModeMutationException("edit_mode_required","No Windows client currently holds Edit Mode.");if(r.GetString(0)!=a.ClientId||r.GetInt64(2)!=a.Generation)throw new EditModeMutationException("edit_generation_stale","This client does not hold the active Edit Mode generation.");return r.IsDBNull(1)?a.ClientId:r.GetString(1); }
+    {
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        await Task.CompletedTask;
+        return SignedInActor.Require(a);
+    }
     private static string Format(DateTimeOffset value)=>value.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture);
     private static DateTimeOffset Parse(string value)=>DateTimeOffset.Parse(value,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind);
     private sealed record PreparedProgram(CreateProductionRunProgramCommand Command,IReadOnlyList<PreparedOutput> Outputs);

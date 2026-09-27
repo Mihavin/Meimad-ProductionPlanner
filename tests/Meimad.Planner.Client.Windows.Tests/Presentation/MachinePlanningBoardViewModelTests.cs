@@ -215,7 +215,34 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.Equal("warning", viewModel.Feedback[0].Severity);
         Assert.Equal("Assignment override cancelled", viewModel.Feedback[0].Title);
         Assert.Contains("reason is required", viewModel.Feedback[0].Message, StringComparison.Ordinal);
-        Assert.Equal(1, api.BoardReadCount);
+        // The card was shown on the Machine at once; the refused drop reloads the board to put it back.
+        Assert.Equal(2, api.BoardReadCount);
+    }
+
+    [Fact]
+    public async Task A_drop_shows_the_card_on_the_Machine_before_the_Server_answers()
+    {
+        var gate = new TaskCompletionSource();
+        var api = new FakeApiClient(BoardBefore())
+        {
+            SnapshotAfterAssignment = BoardAfterAssignment(),
+            AssignmentGate = gate
+        };
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(9));
+        await viewModel.EnsureLoadedAsync();
+        var operation = viewModel.Pool.Single();
+        var machine = viewModel.Machines.Single();
+
+        var drop = viewModel.AssignOrMoveAsync(operation, machine, 0);
+
+        Assert.False(drop.IsCompleted);
+        Assert.Empty(viewModel.Pool);
+        Assert.Same(operation, machine.Backlog.Single());
+        gate.SetResult();
+        await drop;
+        Assert.Equal("operation-1", viewModel.Machines.Single().Backlog.Single().BatchOperationId);
+        Assert.Equal(2, api.BoardReadCount);
     }
 
     [Fact]
@@ -281,7 +308,7 @@ public sealed class MachinePlanningBoardViewModelTests
         await viewModel.AssignOrMoveAsync(viewModel.Pool.Single(), viewModel.Machines.Single(), 0);
 
         Assert.Null(api.AssignedOperationId);
-        Assert.Equal("Edit Mode required", viewModel.Feedback[0].Title);
+        Assert.Equal("Permission required", viewModel.Feedback[0].Title);
         Assert.False(viewModel.CanDrag);
     }
 
@@ -308,7 +335,7 @@ public sealed class MachinePlanningBoardViewModelTests
         Assert.Null(api.PlanningModeAssignmentId);
         Assert.False(viewModel.CanUndo);
         Assert.False(viewModel.CanRedo);
-        Assert.Equal("Edit Mode required", viewModel.Feedback[0].Title);
+        Assert.Equal("Permission required", viewModel.Feedback[0].Title);
     }
 
     [Fact]
@@ -721,6 +748,7 @@ public sealed class MachinePlanningBoardViewModelTests
         internal string? ClientId { get; private set; }
         internal long Generation { get; private set; }
         internal int BoardReadCount { get; private set; }
+        internal TaskCompletionSource? AssignmentGate { get; init; }
         internal int PreviewReadCount { get; private set; }
         internal MachineCreate? CreatedMachine { get; private set; }
         internal WorkingCalendarCreate? CreatedCalendar { get; private set; }
@@ -802,7 +830,7 @@ public sealed class MachinePlanningBoardViewModelTests
             Task.FromResult(new TimelineSnapshot(
                 DateTimeOffset.UtcNow, from, to, [], [], [], []));
 
-        public Task AssignOrMoveOperationAsync(
+        public async Task AssignOrMoveOperationAsync(
             string batchOperationId,
             string machineId,
             int backlogPosition,
@@ -810,6 +838,7 @@ public sealed class MachinePlanningBoardViewModelTests
             long editGeneration,
             CancellationToken cancellationToken = default)
         {
+            if (AssignmentGate is not null) await AssignmentGate.Task;
             AssignedOperationId = batchOperationId;
             TargetMachineId = machineId;
             TargetPosition = backlogPosition;
@@ -829,8 +858,6 @@ public sealed class MachinePlanningBoardViewModelTests
             {
                 snapshot = SnapshotAfterAssignment;
             }
-
-            return Task.CompletedTask;
         }
 
         public Task AssignOrMoveOperationAsync(

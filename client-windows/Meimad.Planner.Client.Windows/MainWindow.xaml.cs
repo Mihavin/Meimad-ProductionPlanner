@@ -35,6 +35,9 @@ public partial class MainWindow : Window
         viewModel.SetupQueue.ActionRequested += PreparationActionRequested;
         viewModel.ClientUpdateAvailable += (_, update) =>
             Dispatcher.BeginInvoke(new Action(() => ClientUpdateWindow.Show(this, update)));
+        viewModel.SignInRequired += (_, _) =>
+            Dispatcher.BeginInvoke(new Action(ShowSignIn), DispatcherPriority.Background);
+        PlannerApiException.ConflictRaised += OnConflictRaised;
         PlanningBoardView.OpenOperationRequested += PlanningBoardOpenOperationRequested;
         MainTimelineView.OperationActionRequested += TimelineOperationActionRequested;
         refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -151,8 +154,49 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ShowSignIn()
+    {
+        if (!IsLoaded) return;
+        try
+        {
+            SignInWindow.Show(this, viewModel);
+            await viewModel.CompleteSignInAsync();
+        }
+        catch (Exception exception)
+        {
+            Trace.WriteLine($"Sign-in failed: {exception}");
+        }
+    }
+
+    private void ChangePassword_Click(object sender, RoutedEventArgs e) =>
+        SignInWindow.ShowChangePassword(this, viewModel);
+
+    /// <summary>
+    /// Another user changed what this user was changing: explain what happened, who did it and
+    /// when, and what to do next, whichever screen made the change.
+    /// </summary>
+    private void OnConflictRaised(PlannerApiException conflict)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var details = conflict.Conflict!;
+            var who = details.ChangedBy is null
+                ? string.Empty
+                : details.ChangedAt is { } at
+                    ? $"\n\nChanged by {details.ChangedBy} at {at.ToLocalTime():g}."
+                    : $"\n\nChanged by {details.ChangedBy}.";
+            LocalizedMessageBox.Show(
+                this,
+                $"{conflict.Message}{who}\n\nWhat to do: {details.Advice}",
+                $"Someone else changed this {details.Resource}",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }));
+    }
+
     private void OnClosed(object? sender, EventArgs e)
     {
+        PlannerApiException.ConflictRaised -= OnConflictRaised;
         refreshTimer.Stop();
         timelineWindow?.Close();
         viewModel.Dispose();
@@ -178,18 +222,6 @@ public partial class MainWindow : Window
         timelineWindow.OperationActionRequested += TimelineOperationActionRequested;
         timelineWindow.Closed += (_, _) => timelineWindow = null;
         timelineWindow.Show();
-    }
-
-    private async void ToggleEditMode_Click(object sender, RoutedEventArgs e)
-    {
-        if (viewModel.ModeLevel == "editor")
-        {
-            await viewModel.ReleaseEditAsync();
-        }
-        else if (viewModel.ModeLevel == "viewer")
-        {
-            await viewModel.RequestEditAsync();
-        }
     }
 
     private async void PreparationActionRequested(object? sender, PreparationQueueActionRequest request)

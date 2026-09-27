@@ -2,6 +2,7 @@ using System.Net.Mail;
 using System.Text.Json.Serialization;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Reports;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Reports;
 
@@ -16,13 +17,9 @@ internal static class WeeklyEmployeeEfficiencyReportEndpoints
 
     private static async Task<IResult> RecordMeasurementAsync(
         EmployeeWorkMeasurementRequest request, HttpContext context,
-        WeeklyEmployeeEfficiencyReportService service, EditModeService editMode, CancellationToken token)
+        WeeklyEmployeeEfficiencyReportService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)
-            || !PlanningHttpSupport.TryReadClientIdentity(context, out _, out var userId, out error)) return error!;
-        var edit = await editMode.GetStatusAsync(authority!.ClientId, token);
-        if (edit.CallerState != EditClientState.Editor || edit.Generation != authority.Generation)
-            return PlanningHttpSupport.Error(409, "edit_authority_required", "The active Server Edit Mode generation is required to record employee work.", context);
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.ManageSetup, out _, out var userId, out var error)) return error!;
         try
         {
             var value = await service.RecordAsync(new(request.EmployeeResourceId, request.WorkDate,
@@ -40,12 +37,9 @@ internal static class WeeklyEmployeeEfficiencyReportEndpoints
 
     private static async Task<IResult> SendAsync(
         HttpContext context, WeeklyEmployeeEfficiencyReportService service,
-        EditModeService editMode, CancellationToken token)
+        CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
-        var edit = await editMode.GetStatusAsync(authority!.ClientId, token);
-        if (edit.CallerState != EditClientState.Editor || edit.Generation != authority.Generation)
-            return PlanningHttpSupport.Error(409, "edit_authority_required", "The active Server Edit Mode generation is required to send the report.", context);
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out _, out var error)) return error!;
         try { return Results.Ok(Response(await service.SendNowAsync(token))); }
         catch (EmployeeEfficiencyReportDeliveryException exception)
         { return PlanningHttpSupport.Error(422, "report_delivery_not_configured", exception.Message, context); }

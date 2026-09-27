@@ -696,3 +696,16 @@ Key target constraints are: one or more programs per run; one or more outputs pe
 - Schema v84 adds `work_order_material_orders(production_batch_id -> production_batches ON DELETE CASCADE, material_order_source_key -> kitaron_material_orders ON DELETE CASCADE, verified_by, verified_at, PRIMARY KEY both)`: the purchase lines a planner verified for a Work Order. `kitaron_batch_material_checks.material_order_keys` keeps only the candidates.
 
 - Schema v85 adds `kitaron_work_orders.start_date` (Kitaron `TRootCard.StartDate`, the planned production start).
+
+## Accounts and parallel editing (schema v86)
+
+Owner decision 2026-09-27 replaces Single Edit Mode; `edit_tokens` remains in the schema unused.
+
+- `user_accounts`: `id`, unique case-insensitive `user_name`, `display_name`, `password_hash` (`pbkdf2-sha256$210000$salt$hash`), `is_active`, `must_change_password`, `failed_sign_ins`, `locked_until`, `last_sign_in_at`, `version`, `created_at`, `updated_at`, `updated_by`.
+- `user_types`: `id`, unique `name`, `description`, `is_administrator` (the built-in `user-type-administrator` row), `version`, timestamps, `updated_by`. Initial rows: Administrator, QC, Programmer, Tool Room manager, Planning, Technologist.
+- `user_type_permissions` (`user_type_id`, `permission`): the fixed permission codes of `docs/api-contract.md` §2.
+- `user_account_types` (`user_id`, `user_type_id`): an account may have several types; a type in use cannot be deleted.
+- `user_sessions`: `token_hash` (SHA-256 of the bearer token; the token itself is never stored), `user_id`, `client_id`, `created_at`, `last_seen_at`, `expires_at` (12 hours after last use), `revoked_at`. Sessions older than 30 days are removed.
+- `machine_backlog_changes` (`machine_id`, `stamp_after`, `changed_by`, `changed_at`): the last manual backlog change per Machine, so a refused move can name the planner whose change produced the current order.
+
+Actors recorded on planning rows (`released_by`, `user_id`, `confirmed_by_user_id`, `changed_by`, …) are now the signed-in account's user name.

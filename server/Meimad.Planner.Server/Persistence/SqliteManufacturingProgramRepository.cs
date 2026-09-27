@@ -392,17 +392,9 @@ internal sealed class SqliteManufacturingProgramRepository : IManufacturingProgr
     private static async Task<string> EnsureEditAuthorityAsync(
         SqliteConnection connection, SqliteTransaction transaction, EditAuthority authority, CancellationToken token)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(connection, transaction, DateTimeOffset.UtcNow, token);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token) || reader.IsDBNull(0))
-            throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        if (!string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(2) != authority.Generation)
-            throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
-        return reader.IsDBNull(1) ? authority.ClientId : reader.GetString(1);
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        await Task.CompletedTask;
+        return SignedInActor.Require(authority);
     }
 
     private static string Format(DateTimeOffset value) =>

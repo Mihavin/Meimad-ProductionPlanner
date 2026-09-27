@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -17,10 +18,11 @@ public sealed class ToolCatalogApiTests
         await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
         var client = server.Client;
 
-        // Writes need the client identity headers, like the Tool Room's measurements.
+        // Writes need a user who may edit the tool library.
         using var anonymous = new HttpClient(server.Application.GetTestServer().CreateHandler()) { BaseAddress = client.BaseAddress };
+        using var programmer = anonymous.SignedInWithOnly(Permissions.ReleaseNc);
         using var unidentified = await anonymous.PostAsJsonAsync(Route, Turning());
-        Assert.Equal(HttpStatusCode.PreconditionRequired, unidentified.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, unidentified.StatusCode);
 
         using var created = await client.PostAsJsonAsync(Route, Turning());
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);

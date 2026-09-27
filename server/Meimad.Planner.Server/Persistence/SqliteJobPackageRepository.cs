@@ -278,19 +278,9 @@ internal sealed class SqliteJobPackageRepository : IJobPackageRepository
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)
-            || reader.IsDBNull(0)
-            || !string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(1) != editAuthority.Generation)
-        {
-            throw new EditModeMutationException(
-                "edit_authority_required",
-                "The active Server Edit Mode generation is required to publish a job package.");
-        }
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(editAuthority);
+        await Task.CompletedTask;
     }
 
     private static void Bind(SqliteCommand command, string name, object? value) =>

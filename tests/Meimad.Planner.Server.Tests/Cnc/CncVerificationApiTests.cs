@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -24,14 +25,14 @@ public sealed class CncVerificationApiTests
             [
                 "--Server:Host=127.0.0.1", "--Server:Port=5096",
                 $"--Database:Path={Path.Combine(root, "test.db")}"
-            ], webHost => webHost.UseTestServer());
+            ], webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();
             var database = application.Services.GetRequiredService<SqliteDatabase>();
             await CncVerificationFoundationTests.SeedAsync(database);
             var foundation = application.Services.GetRequiredService<CncVerificationFoundationService>();
-            var authority = new EditAuthority("verification-client", 1);
+            var authority = new EditAuthority("verification-client", 1, "verification-user");
             await foundation.UpdateSettingsAsync("machine-verification", new(
                 "HAAS_DPRNT_TCP", 8080, 9001, 9002, 605, 10501, 10500, 10502, 10503,
                 9003, 10504, 6, 6, 300, true), 0, authority);
@@ -46,10 +47,13 @@ public sealed class CncVerificationApiTests
                     VerificationSession: new(731841, 6, 6, 300)));
 
             using var client = application.GetTestClient();
-            using var denied = await client.PostAsJsonAsync(
-                "/api/v1/production-runs/run-verification/verification/invalidate",
-                new { machineId = "machine-verification", reason = "Fixture changed" });
-            Assert.Equal(HttpStatusCode.PreconditionRequired, denied.StatusCode);
+            using (client.SignedInWithOnly(Permissions.PlanMachines))
+            {
+                using var denied = await client.PostAsJsonAsync(
+                    "/api/v1/production-runs/run-verification/verification/invalidate",
+                    new { machineId = "machine-verification", reason = "Fixture changed" });
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            }
 
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "verification-client");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");

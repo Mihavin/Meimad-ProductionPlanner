@@ -199,7 +199,7 @@ public sealed class CaseComponentApiTests
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Component.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directory, "test.db")}"],
-            builder => builder.UseTestServer());
+            builder => builder.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

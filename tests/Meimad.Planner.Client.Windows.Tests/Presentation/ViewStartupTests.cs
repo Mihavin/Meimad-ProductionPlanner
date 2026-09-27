@@ -31,7 +31,7 @@ public sealed class ViewStartupTests
         var mainViewRemainedVisible = false;
         var serverIndicatorWasCompactAndAccessible = false;
         var mainHeaderHidConnectionText = false;
-        var editModeButtonWasCompactAndStateful = false;
+        var signedInHeaderShowsTheUser = false;
         var operationActionsWereCompactPlayerIcons = false;
         var operationRowWasDenseAndComplete = false;
         var toolPreparationWindowRenderedRowsAndPreview = false;
@@ -127,28 +127,14 @@ public sealed class ViewStartupTests
                 mainHeaderHidConnectionText = !mainWindowText.Contains(plannerViewModel.HealthHeadline)
                     && !mainWindowText.Any(value => value.StartsWith("Local user:", StringComparison.Ordinal));
 
-                var editModeButton = Assert.IsType<Button>(plannerWindow.FindName("EditModeToggleButton"));
-                var lockedIcon = Assert.IsType<Grid>(plannerWindow.FindName("LockedIcon"));
-                var unlockedIcon = Assert.IsType<Grid>(plannerWindow.FindName("UnlockedIcon"));
-                var modeLevelProperty = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.ModeLevel))!;
-                modeLevelProperty.SetValue(plannerViewModel, "viewer");
+                // The header names the signed-in person; Edit Mode no longer exists.
+                var signedInUser = Assert.IsType<TextBlock>(plannerWindow.FindName("SignedInUserText"));
+                var modeHeadlineProperty = typeof(MainWindowViewModel).GetProperty(nameof(MainWindowViewModel.ModeHeadline))!;
+                modeHeadlineProperty.SetValue(plannerViewModel, "👤 Dana Cohen");
                 plannerWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-                var viewerStateWasLocked = editModeButton.IsEnabled
-                    && AutomationProperties.GetName(editModeButton) == "Request Edit Mode"
-                    && lockedIcon.Visibility == Visibility.Visible
-                    && unlockedIcon.Visibility == Visibility.Collapsed;
-                modeLevelProperty.SetValue(plannerViewModel, "editor");
-                plannerWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-                var editorStateWasUnlocked = editModeButton.IsEnabled
-                    && AutomationProperties.GetName(editModeButton) == "Release Edit Mode"
-                    && lockedIcon.Visibility == Visibility.Collapsed
-                    && unlockedIcon.Visibility == Visibility.Visible;
-                editModeButtonWasCompactAndStateful = editModeButton.Width <= 30
-                    && editModeButton.Height <= 30
-                    && editModeButton.ToolTip is not null
-                    && Descendants<System.Windows.Shapes.Path>(editModeButton).Count() == 2
-                    && viewerStateWasLocked
-                    && editorStateWasUnlocked;
+                signedInHeaderShowsTheUser = signedInUser.Text == "👤 Dana Cohen"
+                    && signedInUser.ToolTip is not null
+                    && plannerWindow.FindName("EditModeToggleButton") is null;
 
                 // The Tool Room's tool table window: released rows, the selected tool's editor and the drawn preview.
                 var toolPreparationApi = new PreparationQueueViewModelTests.FakeApiClient([])
@@ -604,7 +590,7 @@ public sealed class ViewStartupTests
             "English UI text remained after localization: " + string.Join(" | ", localizationFailures));
         Assert.True(serverIndicatorWasCompactAndAccessible);
         Assert.True(mainHeaderHidConnectionText);
-        Assert.True(editModeButtonWasCompactAndStateful);
+        Assert.True(signedInHeaderShowsTheUser);
         Assert.True(operationActionsWereCompactPlayerIcons);
         Assert.True(operationRowWasDenseAndComplete);
         Assert.True(assignmentModeActionsWereVisible);

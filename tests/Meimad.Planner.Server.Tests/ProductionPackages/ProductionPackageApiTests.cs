@@ -22,7 +22,7 @@ public sealed class ProductionPackageApiTests
         await using var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
              $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();
@@ -83,7 +83,7 @@ public sealed class ProductionPackageApiTests
                 $"--Database:Path={Path.Combine(root, "test.db")}",
                 $"--GCode:ReleaseRoot={releaseRoot}",
                 $"--ProductionPackages:PackageRoot={packageRoot}"
-            ], webHost => webHost.UseTestServer());
+            ], webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();
@@ -224,7 +224,7 @@ public sealed class ProductionPackageApiTests
         await using var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
              $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();
@@ -296,7 +296,7 @@ public sealed class ProductionPackageApiTests
             ["--Server:Host=127.0.0.1", "--Server:Port=5098",
              $"--Database:Path={Path.Combine(root, "test.db")}",
              $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();
@@ -358,7 +358,7 @@ public sealed class ProductionPackageApiTests
             ["--Server:Host=127.0.0.1", "--Server:Port=5098",
              $"--Database:Path={Path.Combine(root, "test.db")}",
              $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();
@@ -401,7 +401,7 @@ public sealed class ProductionPackageApiTests
         await using var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
              $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={Path.Combine(root, "packages")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

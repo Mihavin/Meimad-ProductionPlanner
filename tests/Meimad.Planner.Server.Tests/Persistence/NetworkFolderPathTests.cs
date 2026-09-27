@@ -63,7 +63,7 @@ public sealed class NetworkFolderPathTests
         var generated = Path.Combine(directory, "KitaronCases", "PN-KIT");
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={databasePath}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

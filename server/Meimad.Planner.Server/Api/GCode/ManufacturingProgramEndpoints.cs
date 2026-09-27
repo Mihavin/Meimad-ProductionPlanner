@@ -3,6 +3,7 @@ using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Domain.GCode;
 using System.Text.Json;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.GCode;
 
@@ -47,7 +48,7 @@ internal static class ManufacturingProgramEndpoints
         ManufacturingProgramService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ReleaseNc, out var authority, out var error))
             return error!;
         try
         {
@@ -69,7 +70,7 @@ internal static class ManufacturingProgramEndpoints
         ManufacturingProgramService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ReleaseNc, out var authority, out var error))
             return error!;
         if (!PlanningHttpSupport.TryReadExpectedVersion(
                 context.Request.Headers.IfMatch, "manufacturing-program", programId, out var expectedVersion))
@@ -100,7 +101,7 @@ internal static class ManufacturingProgramEndpoints
         GCodeService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ReleaseNc, out var authority, out var error))
             return error!;
         try
         {
@@ -133,7 +134,8 @@ internal static class ManufacturingProgramEndpoints
                 Text(form, "releaseComment"), Text(form, "processChangeDescription"),
                 Boolean(form, "confirmNewProcessRevision"), Boolean(form, "reuseActiveToolTable"),
                 Boolean(form, "confirmToolTable"), Upload(form.Files.GetFile("gcodeFile")),
-                Upload(form.Files.GetFile("toolTableFile")), programId, outputs), authority!, token);
+                Upload(form.Files.GetFile("toolTableFile")), programId, outputs,
+                Text(form, "expectedLatestReleaseId")), authority!, token);
             return Results.Created(
                 $"/api/v1/manufacturing-programs/{programId}/gcode-releases/{release.GCodeReleaseId}",
                 GCodeReleaseResponse.FromDomain(release));

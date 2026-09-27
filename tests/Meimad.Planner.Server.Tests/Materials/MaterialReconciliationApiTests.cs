@@ -222,7 +222,7 @@ public sealed class MaterialReconciliationApiTests
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Material.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directory, "test.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

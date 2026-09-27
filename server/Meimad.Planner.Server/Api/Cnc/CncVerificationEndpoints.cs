@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Application.Machines;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Cnc;
 
@@ -33,7 +34,7 @@ internal static class CncVerificationEndpoints
         string runId, CreateOffsetLoaderReleaseRequest request, HttpContext context,
         CncVerificationFoundationService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             var value = await service.CreateOffsetLoaderReleaseAsync(runId,
@@ -101,7 +102,7 @@ internal static class CncVerificationEndpoints
         string machineId, UpdateCncVerificationSettingsRequest request, HttpContext context,
         CncVerificationFoundationService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             var value = await service.UpdateSettingsAsync(machineId, new(
@@ -125,7 +126,7 @@ internal static class CncVerificationEndpoints
         CncVerificationFoundationService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error))
             return error!;
         try
         {
@@ -146,7 +147,7 @@ internal static class CncVerificationEndpoints
         CncVerificationFoundationService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error))
             return error!;
         try
         {

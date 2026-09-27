@@ -275,7 +275,7 @@ public sealed class EndToEndAcceptanceTests
                 $"--Backup:Folder={paths.BackupRoot}",
                 "--Backup:RetentionCount=2"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

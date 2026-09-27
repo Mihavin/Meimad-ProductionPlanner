@@ -157,7 +157,7 @@ internal sealed class ModelViewerViewModel(ModelViewerContext context, string ca
             StatusMessage = Files.Count == 0
                 ? (context.IsEditor
                     ? "No model files are linked to this Case yet. Add a STEP or STL file."
-                    : "No model files are linked to this Case yet. Acquire Edit Mode to add one.")
+                    : "No model files are linked to this Case yet. An account that may edit Cases can add one.")
                 : $"{Files.Count} model file(s) linked to this Case.";
         }
         catch (Exception exception) when (IsExpected(exception))
@@ -174,7 +174,7 @@ internal sealed class ModelViewerViewModel(ModelViewerContext context, string ca
     {
         if (!CanEdit)
         {
-            StatusMessage = "Edit Mode is required to link model files.";
+            StatusMessage = "Your account may not link model files to Cases.";
             return null;
         }
 
@@ -217,7 +217,7 @@ internal sealed class ModelViewerViewModel(ModelViewerContext context, string ca
     {
         if (!CanEdit)
         {
-            StatusMessage = "Edit Mode is required to remove model files.";
+            StatusMessage = "Your account may not remove model files from Cases.";
             return false;
         }
 

@@ -36,18 +36,8 @@ internal sealed class SqliteKitaronStationRepository(SqliteDatabase database) : 
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(deferred: false);
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(connection, transaction, DateTimeOffset.UtcNow, cancellationToken);
-        await using (var check = connection.CreateCommand())
-        {
-            check.Transaction = transaction;
-            check.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
-            await using var reader = await check.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
-                throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-            if (!string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-                || reader.GetInt64(1) != authority.Generation)
-                throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
-        }
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(authority);
         var current = (await ReadAsync(connection, transaction, kitaronStationId, cancellationToken)).FirstOrDefault()
             ?? throw new KitaronStationNotFoundException(kitaronStationId);
         if (current.Version != expectedVersion) throw new KitaronStationVersionConflictException();

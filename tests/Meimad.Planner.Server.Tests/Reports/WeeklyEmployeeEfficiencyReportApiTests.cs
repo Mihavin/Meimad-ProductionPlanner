@@ -99,7 +99,7 @@ public sealed class WeeklyEmployeeEfficiencyReportApiTests
     {
         var root=Path.Combine(Path.GetTempPath(),"MeimadPlanner.Efficiency.Tests",Guid.NewGuid().ToString("N"));
         var app=ServerApplication.Build(["--Server:Host=127.0.0.1","--Server:Port=5098",$"--Database:Path={Path.Combine(root,"test.db")}"], webHost =>
-        { webHost.UseTestServer(); webHost.ConfigureServices(services => { var scheduler=services.FirstOrDefault(descriptor=>descriptor.ServiceType==typeof(IHostedService)&&descriptor.ImplementationType==typeof(WeeklyEmployeeEfficiencyReportScheduler));if(scheduler is not null)services.Remove(scheduler);services.RemoveAll<TimeProvider>();services.AddSingleton(timeProvider);services.RemoveAll<IEmployeeEfficiencyEmailSender>();services.AddSingleton<IEmployeeEfficiencyEmailSender>(sender); }); });
+        { webHost.UseSignedInTestServer(); webHost.ConfigureServices(services => { var scheduler=services.FirstOrDefault(descriptor=>descriptor.ServiceType==typeof(IHostedService)&&descriptor.ImplementationType==typeof(WeeklyEmployeeEfficiencyReportScheduler));if(scheduler is not null)services.Remove(scheduler);services.RemoveAll<TimeProvider>();services.AddSingleton(timeProvider);services.RemoveAll<IEmployeeEfficiencyEmailSender>();services.AddSingleton<IEmployeeEfficiencyEmailSender>(sender); }); });
         try { await app.StartAsync();using var client=app.GetTestClient();await test(app,client);await app.StopAsync(); }
         finally { await app.DisposeAsync();SqliteConnection.ClearAllPools();if(Directory.Exists(root))Directory.Delete(root,true); }
     }

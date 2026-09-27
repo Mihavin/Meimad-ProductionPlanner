@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Materials;
 using Meimad.Planner.Server.Domain.Materials;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Materials;
 
@@ -88,23 +89,8 @@ internal static class MaterialReconciliationEndpoints
         _ => throw exception
     };
 
-    private static bool TryAuthority(HttpContext context, out EditAuthority? authority, out IResult? error)
-    {
-        authority = null;
-        error = null;
-        var clientId = context.Request.Headers["X-Meimad-Client-Id"].ToString();
-        var generationText = context.Request.Headers["X-Meimad-Edit-Generation"].ToString();
-        if (string.IsNullOrWhiteSpace(clientId)
-            || !long.TryParse(generationText, NumberStyles.None, CultureInfo.InvariantCulture, out var generation)
-            || generation < 0)
-        {
-            error = Problem(StatusCodes.Status428PreconditionRequired, "precondition_required",
-                "X-Meimad-Client-Id and a valid X-Meimad-Edit-Generation are required.", context);
-            return false;
-        }
-        authority = new(clientId, generation);
-        return true;
-    }
+    private static bool TryAuthority(HttpContext context, out EditAuthority? authority, out IResult? error) =>
+        PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.VerifyMaterials, out authority, out error);
 
     private static IResult Problem(
         int status, string code, string message, HttpContext context, object? details = null) =>

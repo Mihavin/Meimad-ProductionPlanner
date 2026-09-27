@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -194,7 +195,7 @@ public sealed class KitaronRouteSyncTests
     }
 
     [Fact]
-    public async Task Station_decisions_are_validated_and_need_edit_mode()
+    public async Task Station_decisions_are_validated_and_need_the_setup_permission()
     {
         await RunAsync(async (application, client) =>
         {
@@ -203,21 +204,14 @@ public sealed class KitaronRouteSyncTests
             var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
             await repository.ApplyAsync(Plan([], [], stations: Stations()), Now, CancellationToken.None);
 
+            var viewer = client.SignedInWithOnly(Permissions.EditCases);
             using var noEditMode = await client.PutAsJsonAsync("/api/v1/kitaron/stations/4", new
             {
                 importRole = "IGNORE", defaultMinutesPerPart = 0, defaultMinutesPerBatch = 0, capacityRequired = 1, expectedVersion = 1
             });
-            Assert.Equal(HttpStatusCode.PreconditionRequired, noEditMode.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, noEditMode.StatusCode);
+            viewer.Dispose();
 
-            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "someone-else");
-            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
-            using var wrongHolder = await client.PutAsJsonAsync("/api/v1/kitaron/stations/4", new
-            {
-                importRole = "IGNORE", defaultMinutesPerPart = 0, defaultMinutesPerBatch = 0, capacityRequired = 1, expectedVersion = 1
-            });
-            Assert.Equal(HttpStatusCode.Conflict, wrongHolder.StatusCode);
-
-            client.DefaultRequestHeaders.Remove("X-Meimad-Client-Id");
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "route-editor");
             client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "planner");
             using var missingType = await client.PutAsJsonAsync("/api/v1/kitaron/stations/4", new
@@ -757,7 +751,7 @@ public sealed class KitaronRouteSyncTests
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.KitaronRoute.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directory, "route-test.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

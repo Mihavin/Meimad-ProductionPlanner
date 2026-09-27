@@ -8,7 +8,9 @@ namespace Meimad.Planner.Server.Api.MachineAssignments;
 internal sealed record AssignMachineRequest(
     string? MachineId,
     int BacklogPosition,
-    MachineAssignmentOverrideRequest? CompatibilityOverride);
+    MachineAssignmentOverrideRequest? CompatibilityOverride,
+    // The target Machine's backlogStamp from the Planning Board the planner saw; omit to skip the check.
+    string? ExpectedBacklogStamp = null);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record MachineAssignmentOverrideRequest(bool Confirmed, string? Reason);

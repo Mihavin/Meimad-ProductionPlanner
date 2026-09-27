@@ -1,5 +1,6 @@
 using System.Globalization;
 using Meimad.Planner.Server.Application.Timeline;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Timeline;
 
@@ -23,13 +24,13 @@ internal static class TimelineEndpoints
         ITimelineAuxiliaryPinRepository repository,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         if (string.IsNullOrWhiteSpace(request.BatchOperationId) || string.IsNullOrWhiteSpace(request.RequirementId))
         {
             return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed",
                 "batchOperationId and requirementId are required.", context);
         }
-        var userId = context.Request.Headers["X-Meimad-User-Id"].ToString().Trim();
+        var userId = authority!.UserId ?? string.Empty;
         try
         {
             var pin = await repository.SetAsync(new TimelineAuxiliaryPin(
@@ -57,7 +58,7 @@ internal static class TimelineEndpoints
         ITimelineAuxiliaryPinRepository repository,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var error)) return error!;
         try
         {
             return await repository.ClearAsync(batchOperationId, requirementId, authority!, cancellationToken)

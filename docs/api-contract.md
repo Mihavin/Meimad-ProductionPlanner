@@ -1,5 +1,15 @@
 # API Contract
 
+**Accounts replace Single Edit Mode (schema v86, owner decision 2026-09-27).** Every Windows-client
+API call carries `Authorization: Bearer <session token>` from `POST /api/v1/auth/sign-in`; each
+mutation needs the permission of its area (§2). Users work in parallel: every change carries the
+version, state, release, or backlog stamp it was based on, and the Server refuses a change based on
+stale data with an explained conflict (§3.3). The `/api/v1/edit-mode` routes are removed. Where a
+section below still says a mutation "requires Edit Mode", "the active editor", or the
+`X-Meimad-Edit-Generation` header, read "requires a signed-in account holding the permission of
+that area"; the Server ignores the former edit-generation and user-id headers and takes the user
+from the session.
+
 Kitaron status clarification: `OrderClosed` uses Kitaron codes `1 = open` and `2 = closed`, so only code `2` maps to API status `inactive`. Other recognized Boolean closure fields close on a nonzero value. `StopProduction` remains the higher-precedence `cancelled` fact.
 
 **Persistent CNC workflow mode variable: REMOVED.** **Protected temporary setup
@@ -55,17 +65,31 @@ Do not implement client and server independently against unreviewed examples. Fr
 
 ## 2. Caller classes and permissions
 
-| Caller | Required capability | Permitted behavior |
+| Caller | Credential | Permitted behavior |
 |---|---|---|
-| Windows client in View Mode | `planning.read` | Read master data and projections; request Edit Mode. |
-| Windows client holding Edit Mode | `planning.read`, `planning.edit` | Read and submit approved planning mutations using the active edit generation. |
-| TV Dashboard | `dashboard.read` | Read TV projection only, or an explicitly approved subset. |
-| E-Ink device | `eink.read:<deviceId>`, `eink.send_to_qc:<deviceId>` | Read only its assigned resources and invoke only `SEND_TO_QC` for the Server-resolved eligible Production Run. |
-| Server operator | TBD | Health, backup, restore, migration, and device administration must use a separately approved administrative boundary. |
+| Signed-in Windows user | Bearer session token | Read everything the Windows client shows; create Production Packages; change the areas its user types grant (below). |
+| Administrator | Bearer session token of an account with the built-in Administrator type | Every permission, including users, user types and permissions. |
+| TV Dashboard | None (factory LAN) | Read the TV projection only. |
+| E-Ink device | `TabletID` (identifier, not a credential) | Read only its Server-resolved resources and invoke only `SEND_TO_QC`. |
+| Server PC itself (loopback) | None | The Kitaron setup page routes, and `GET /api/v1/machines…` for the upgrade script's CNC verification gate. |
 
-TV and E-Ink callers must never receive `planning.edit`. A valid user credential without the active Edit Mode generation is insufficient for a planning mutation.
+Permission catalog (fixed codes; administrators create user types and tick permissions; an account may hold several types):
 
-The implemented Windows shell currently uses the development `X-Meimad-Client-Id` and `X-Meimad-User-Id` headers documented below. It persists a stable client ID and local display name, then derives an ASCII API user ID locally; this is not authentication or authorization. Replacing these headers with authenticated identity must preserve the caller-relative Edit Mode states and generation checks.
+| Code | Name | Covers |
+|---|---|---|
+| `cases.edit` | Edit cases and operations | Cases, Case Operations, auxiliary steps (resource requirements), components, model files; deleting Cases and Case Operations. |
+| `nc.release` | Release G-code and tool tables | G-code and tool-table releases, process revisions, Manufacturing Programs. |
+| `toolroom.prepare` | Prepare tools | Tool Room preparation versions (offsets, lengths, diameters). |
+| `tools.catalog` | Edit the tool library | Tool catalog tools, Cimatron import/export. |
+| `qc.decide` | Decide QC | PASS/FAIL decisions in the QC queue. |
+| `planning.board` | Plan machines | Assignments and backlog order, planning modes and priorities, Timeline pins, Production Runs, readiness inputs, E-Ink job packages, downtimes. |
+| `planning.workorders` | Manage Work Orders and orders | Orders and Work Orders (Batches), release/unrelease, deleting them. |
+| `materials.verify` | Verify materials | Work Order material-order verification, material receipts and reservations. |
+| `production.execute` | Run operations | Start, pause, reset, finish, manual reports. |
+| `setup.manage` | Setup and integrations | Machines, Machine Types, calendars, resources, postprocessors, network folder, Kitaron stations, CNC, E-Ink registrations, reports, imports, Server maintenance, client-portal customers. |
+| `users.manage` | Manage users | Users, user types and their permissions. |
+
+Everyone signed in may view Cases, the Planning Board, the Timeline, NC files, tool tables and the tool library, and create Production Packages. The initial user types are QC (`qc.decide`), Programmer (`nc.release`), Tool Room manager (`toolroom.prepare`, `tools.catalog`), Planning (`planning.board`, `planning.workorders`, `materials.verify`, `production.execute`) and Technologist (`cases.edit`); administrators edit or add types. A signed-out call returns `401 sign_in_required`; a signed-in call without the permission returns `403 permission_required` naming the permission; an account whose password an administrator reset returns `403 password_change_required` until the user chooses a new one.
 
 ## 3. Common conventions
 
@@ -87,24 +111,25 @@ Clients should send `X-Correlation-Id`; the Server returns it or creates one. Lo
 
 ### 3.3 Concurrency
 
-The proposed contract combines:
+Users change data in parallel. A change carries what it was based on, and the Server refuses it when that is no longer current:
 
-- `ETag` / `If-Match` for record or aggregate revision.
-- `X-Meimad-Edit-Generation` for the current Single Edit Mode generation.
+- `ETag` / `If-Match` or a body `expectedVersion` for a record (`412 resource_version_stale` or `409 *_version_conflict` / `*_changed` / `*_stale`).
+- `expectedBacklogStamp` on `PUT /api/v1/batch-operations/{id}/assignment`: the target Machine's `backlogStamp` from `GET /api/v1/planning-board`. A different current order returns `409 edit_conflict`; the planner's own previous move is not a conflict (the client shows a drop before the Server answers).
+- `expectedLatestReleaseId` on G-code releases (multipart field): the newest release of the Operation the programmer saw, `""` for none. A newer release by anyone returns `409 edit_conflict` naming who released it.
+- QC decisions: a part that already has a PASS/FAIL result returns `409 edit_conflict` naming who decided it.
 
-Every planning mutation validates both where applicable. Resource mutations require `If-Match`; commands affecting multiple resources require `expectedPlanRevision` in the body. An absent or stale edit generation returns `409 Conflict` with `edit_mode_required` or `edit_generation_stale`. This contract does not use `423` for MVP.
+Every such refusal carries a `conflict` object in the error envelope (§3.6): `resource`, `changedBy` (display name and user name when known), `changedAt`, and `advice`. For record-version refusals the Server names the last user who saved a change through the same resource path in the last 12 hours, when it knows one (an in-memory journal that forgets on restart and does not see background work such as Kitaron synchronization).
 
 Example mutation headers:
 
 ```http
-Authorization: Bearer <credential-format-tbd>
+Authorization: Bearer <session token>
 X-Meimad-Client-Id: planner-pc-02
-X-Meimad-Edit-Generation: 42
 If-Match: "case:opaque-case-id:v7"
 Idempotency-Key: 3e65716f-1a1d-4dc7-a777-f48e7cd84040
 ```
 
-`Idempotency-Key` is the target requirement on resource-creation and transfer-request POSTs so a retry cannot duplicate work. The current Case POST does not persist/deduplicate keys. Single Edit Mode makes a repeated request from the one pending requester idempotent by state, but does not persist general idempotency keys. The retention window and credential binding for keys are TBD. The future authenticated Server derives the user from the credential; caller-supplied identity headers are development-only.
+`Idempotency-Key` is the target requirement on resource-creation POSTs so a retry cannot duplicate work. The current Case POST does not persist/deduplicate keys. `X-Meimad-Client-Id` still names the Windows installation in audit rows; the user comes from the session.
 
 ### 3.4 Pagination and filtering
 
@@ -153,16 +178,16 @@ The allowed color values and meanings are fixed by the functional specification.
 ```json
 {
   "error": {
-    "code": "edit_mode_required",
-    "message": "This client does not hold Edit Mode.",
+    "code": "edit_conflict",
+    "message": "Another planner changed the backlog of Machine 14 after you loaded the Planning Board. Your move was not saved.",
     "correlationId": "opaque-id",
-    "details": [
-      {
-        "field": null,
-        "code": "current_editor",
-        "message": "Edit Mode is currently held by another client."
-      }
-    ]
+    "details": [],
+    "conflict": {
+      "resource": "Planning Board backlog",
+      "changedBy": "Dana Cohen (dana)",
+      "changedAt": "2026-09-27T09:41:12Z",
+      "advice": "Refresh the Planning Board to see the current order of the Machine, then move the operation again."
+    }
   }
 }
 ```
@@ -174,11 +199,13 @@ Messages help users; stable `code` values drive client behavior. Validation erro
 | Error code | HTTP | Meaning |
 |---|---:|---|
 | `validation_failed` | `422` | One or more approved domain fields/invariants failed. |
-| `precondition_required` | `428` | Required `If-Match`, edit generation, or plan revision was omitted. |
+| `precondition_required` | `428` | Required `If-Match` or plan revision was omitted. |
 | `resource_version_stale` | `412` | Resource `ETag` no longer matches. |
 | `plan_revision_stale` | `409` | A multi-resource command was based on an older plan. |
-| `edit_mode_required` | `409` | Caller is not the active editor. |
-| `edit_generation_stale` | `409` | Caller previously edited but ownership transferred. |
+| `sign_in_required` | `401` | No valid session; sign in (sessions end after 12 hours without use). |
+| `permission_required` | `403` | The account's user types lack the permission named in `details`. |
+| `password_change_required` | `403` | The account has a temporary password; `POST /api/v1/auth/password` first. |
+| `edit_conflict` | `409` | Someone else changed the data this change was based on; see `conflict`. |
 | `idempotency_conflict` | `409` | A reused key has a different payload. |
 | `resource_not_found` | `404` | Resource does not exist or is outside caller scope. |
 
@@ -227,101 +254,27 @@ The Windows client calls the manifest route once per session after its first suc
 
 **Proposed.** Returns API version, supported contract features, server time, and client compatibility range. It does not expose infrastructure secrets.
 
-## 5. Single Edit Mode contract
+## 5. Accounts, sign-in and user administration
 
-### 5.1 Read current state
+Implemented (schema v86). Single Edit Mode and its `/api/v1/edit-mode` routes are retired; the `edit_tokens` table stays in the schema unused.
 
-`GET /api/v1/edit-mode` is implemented and requires `X-Meimad-Client-Id`. A future authenticated version also requires `planning.read`. Reading state may atomically materialize an already-expired automatic transfer.
+| Method | Path | Caller | Behavior |
+|---|---|---|---|
+| `GET` | `/api/v1/auth/state` | anyone | `{ hasAccounts }`; false on a new Server. |
+| `POST` | `/api/v1/auth/first-administrator` | anyone, once | `{ userName, displayName, password, clientId }` creates the first account as an administrator and signs it in; `409 accounts_exist` afterwards. |
+| `POST` | `/api/v1/auth/sign-in` | anyone | `{ userName, password, clientId }` returns `{ token, expiresAt, user }`. Wrong password `401 sign_in_failed`; five failures lock the account for 5 minutes (`423 account_locked`); a switched-off account `403 account_inactive`. |
+| `POST` | `/api/v1/auth/sign-out` | session | Ends the session. |
+| `GET` | `/api/v1/auth/me` | session | `{ userId, userName, displayName, isAdministrator, permissions, mustChangePassword }`. |
+| `POST` | `/api/v1/auth/password` | session | `{ currentPassword, newPassword }`; clears `mustChangePassword`. |
+| `GET` | `/api/v1/permissions` | session | The permission catalog `{ items: [ { code, name, description } ] }`. |
+| `GET`/`POST` | `/api/v1/users` | `users.manage` | List; create `{ userName, displayName, password, isActive, userTypeIds }` with a temporary password the user must change. |
+| `PUT` | `/api/v1/users/{userId}` | `users.manage` | `{ displayName, isActive, userTypeIds, expectedVersion }`; a stale version is `409 edit_conflict`; leaving no active administrator is `409 last_administrator`. |
+| `POST` | `/api/v1/users/{userId}/password` | `users.manage` | `{ password }` sets a temporary password and ends the user's sessions (not the caller's own). |
+| `GET`/`POST` | `/api/v1/user-types` | `users.manage` | List `{ userTypeId, name, description, isAdministrator, permissions, userCount, version, updatedAt, updatedBy }`; create `{ name, description, permissions }`. Unknown permission codes are `422 permission_unknown`. |
+| `PUT` | `/api/v1/user-types/{userTypeId}` | `users.manage` | `{ name, description, permissions, expectedVersion }`; the Administrator type is fixed (`409 administrator_type_fixed`). |
+| `DELETE` | `/api/v1/user-types/{userTypeId}?expectedVersion=n` | `users.manage` | Removes an unused type; `409 user_type_in_use` while an account has it. |
 
-```json
-{
-  "state": "editor",
-  "generation": 42,
-  "holder": {
-    "clientId": "opaque-client-id",
-    "userId": "opaque-user-id",
-    "generation": 42,
-    "acquiredAt": "2026-08-11T11:00:00Z"
-  },
-  "pendingRequest": null,
-  "serverTime": "2026-08-11T11:20:00Z",
-  "transferTimeoutSeconds": 30
-}
-```
-
-`state` is caller-relative: `viewer`, `editor`, or `requestingEdit`. An unheld token therefore appears as `viewer` with `holder: null`. Conditional polling/notifications remain unimplemented.
-
-### 5.2 Request Edit Mode
-
-`POST /api/v1/edit-mode/requests` is implemented. It requires `X-Meimad-Client-Id` and `X-Meimad-User-Id` and has no request body. These headers are development identity inputs until authentication binds them to a Windows session. TV authentication remains pending. An E-Ink TabletID is only an identifier and never grants planning Edit Mode or mutation authority.
-
-If unheld, the Server grants immediately with `201 Created` and returns the full Edit Mode state. If held, it atomically creates one transfer request and returns `202 Accepted` with the full state, including `pendingRequest`. The default deadline is 30 seconds; `EditMode:TransferTimeoutSeconds` is configurable from 1 through 3600 seconds. Repeating the same pending request is idempotent. Exactly one request may be pending; another requester receives `409 edit_request_pending` and is not queued.
-
-Proposed `202 Accepted` response:
-
-```json
-{
-  "state": "requestingEdit",
-  "generation": 42,
-  "holder": {
-    "clientId": "planner-pc-02",
-    "userId": "planner-user-02",
-    "generation": 42,
-    "acquiredAt": "2026-08-11T11:00:00Z"
-  },
-  "pendingRequest": {
-    "requestId": "opaque-request-id",
-    "requesterClientId": "planner-pc-03",
-    "requesterUserId": "planner-user-03",
-    "status": "pending",
-    "requestedAt": "2026-08-11T11:20:00Z",
-    "decisionDeadline": "2026-08-11T11:20:30Z",
-    "decidedAt": null,
-    "grantedGeneration": null
-  },
-  "serverTime": "2026-08-11T11:20:00Z",
-  "transferTimeoutSeconds": 30
-}
-```
-
-### 5.3 Read request outcome
-
-`GET /api/v1/edit-mode/requests/{requestId}` is implemented and requires `X-Meimad-Client-Id`. Only the requester or current holder may read it. Reading may first materialize an expired automatic transfer.
-
-```json
-{
-  "requestId": "opaque-request-id",
-  "status": "autoTransferred",
-  "requestedAt": "2026-08-11T11:20:00Z",
-  "decisionDeadline": "2026-08-11T11:20:30Z",
-  "decidedAt": "2026-08-11T11:20:30Z",
-  "grantedGeneration": 43
-}
-```
-
-Implemented statuses are `pending`, `transferred`, `rejected`, and `autoTransferred`. After Reject, the requester returns to Viewer and may submit a new request.
-
-### 5.4 Holder decision
-
-`POST /api/v1/edit-mode/requests/{requestId}/decision` is implemented. It requires the current `X-Meimad-Client-Id` and `X-Meimad-Edit-Generation`.
-
-```json
-{
-  "decision": "release"
-}
-```
-
-`decision` is `release` or `reject`. Only the matching current holder generation may decide a pending request. Release transfers immediately and increments the generation. Reject keeps the token and its generation. An identical repeated final decision returns current state; a contradictory one returns `409 edit_request_already_decided`.
-
-### 5.5 Voluntary release
-
-`POST /api/v1/edit-mode/release` is implemented, requires the active client/generation headers, and has no request body. It returns `200` with the resulting state. If a transfer request is pending, voluntary release transfers to that requester and increments the generation. Otherwise it clears the holder and increments the generation, ensuring the released authority is stale. A stale repeat returns `409 edit_generation_stale`.
-
-### 5.6 Automatic transfer
-
-The Server, never a client timer, performs the timeout transition atomically. At the configured deadline with no valid holder response, it invalidates the prior generation and grants a new generation to the requester. A background timeout worker checks every second. Status, Edit Mode commands, and every planning write also process an expired request before checking authority, so the former editor cannot mutate after the deadline even between worker ticks.
-
-The source-compatible default is 30 seconds; this implementation task explicitly approves configuration from 1 through 3600 seconds. Heartbeat, disconnect/crash recovery, unsaved edits, notifications, history retention, authenticated permissions, audit, and takeover UX remain open decisions.
+Passwords are 6–200 characters and stored as PBKDF2-SHA256 (210,000 iterations, per-account salt). The session token is 32 random bytes; the Server stores only its SHA-256. A session ends after 12 hours without use; account and permission changes reach open sessions within about 20 seconds. The Windows client does not store the token on disk: each start signs in again, and the last user name is offered.
 
 ## 6. Domain resource endpoints
 
@@ -1133,7 +1086,7 @@ Mapping responses mark `orders.status` and `orders.price` with `connectorManaged
 | `GET` | `/api/v1/conflicts` | Current explained conflicts, optionally filtered by Machine, Case, Batch, or severity. |
 | `GET` | `/api/v1/tv-dashboard` | Compact, read-only kiosk projection. |
 
-**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing unfinished Batch Operations: each assigned one in exactly one Machine `backlog`, and in the unassigned `pool` only those with a non-blank Machine Type whose Production Batch `release_state` is `released` (2026-09-27; Production Notes are never included). Other unassigned operations are in neither list. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, nullable estimated seconds, nullable `machineAssignmentId`/`assignmentVersion`, and `planningMode`. Unassigned pool rows use null assignment identity/version and `manual`; an assigned backlog row carries its authoritative schema-v24 values. Each Machine includes number/name, process/axis/capabilities, active state, and ordered backlog.
+**Implemented now:** `GET /api/v1/planning-board` returns one SQLite read-transaction snapshot containing unfinished Batch Operations: each assigned one in exactly one Machine `backlog`, and in the unassigned `pool` only those with a non-blank Machine Type whose Production Batch `release_state` is `released` (2026-09-27; Production Notes are never included). Other unassigned operations are in neither list. Each operation includes Batch/Case display identity, operation number/name, required Machine type, current timing values, status, assignment position, Batch planned quantity, sorted distinct allocated Order Numbers, nullable estimated seconds, nullable `machineAssignmentId`/`assignmentVersion`, and `planningMode`. Unassigned pool rows use null assignment identity/version and `manual`; an assigned backlog row carries its authoritative schema-v24 values. Each Machine includes number/name, process/axis/capabilities, active state, ordered backlog, and `backlogStamp` (a fingerprint of its whole open backlog order, sent back as `expectedBacklogStamp` with a move; §3.3).
 
 The added operation fields are:
 
@@ -2621,7 +2574,7 @@ TLS/certificate deployment, human identity provider/login, CSRF/browser strategy
 | Machine Assignments | `/machine-assignments`, `/batch-operations/{id}/assignment` | Windows read; active editor explicitly assigns/moves/unassigns. |
 | Timeline calculation | `/timeline` | Read-only deterministic projection; never repairs the plan. |
 | Conflicts | `/conflicts` | Read-only explained projection; no dismiss/repair route. |
-| Single Edit Mode | `/edit-mode`, `/edit-mode/requests`, request outcome/decision, `/edit-mode/release` | Implemented development identity headers; Windows-only credential policy pending auth. |
+| Accounts | `/auth/*`, `/permissions`, `/users`, `/user-types` | Implemented sign-in sessions, permissions per user type, administrator-only user management (§5); replaces Single Edit Mode. |
 | TV Dashboard | UI `/tv-dashboard/`; projection `/api/v1/tv-dashboard` | Implemented read-only TV UI and projection; auth pending. |
 | Official job packages | `POST /job-packages` | Implemented active-editor immutable generation/publication; no update/delete. |
 | E-Ink | `/eink/devices/{deviceId}/version`, `/machine-screen`, `/package-manifest`, revision manifest/files, `/time-config`; `/api/tablet/ping`; `/api/tablets/{tablet_id}/status` and `/events`; admin `/eink/device-registrations` | Implemented device-scoped GET data, active-editor registration administration, MAC-only discovery/bootstrap, Production-Run-backed physical status, and idempotent `SEND_TO_QC`; it is the only approved device mutation. |

@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -169,13 +170,14 @@ public sealed class MachineOperationExecutionApiTests
     }
 
     [Fact]
-    public async Task Execution_commands_require_current_edit_mode()
+    public async Task Execution_commands_require_the_production_permission()
     {
         await RunWithServerAsync(async (application, client) =>
         {
             await SeedAsync(application.Services);
+            using var qc = client.SignedInWithOnly(Permissions.DecideQc);
             using var response = await client.PostAsync("/api/v1/batch-operations/op-1/start", null);
-            Assert.Equal((HttpStatusCode)428, response.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         });
     }
 
@@ -434,7 +436,7 @@ public sealed class MachineOperationExecutionApiTests
         var directoryPath = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Execution.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directoryPath, "test.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

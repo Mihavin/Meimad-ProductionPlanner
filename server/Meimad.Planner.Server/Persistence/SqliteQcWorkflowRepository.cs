@@ -1,4 +1,5 @@
 using System.Globalization;
+using Meimad.Planner.Server.Application.Concurrency;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Qc;
 using Microsoft.Data.Sqlite;
@@ -73,6 +74,14 @@ internal sealed class SqliteQcWorkflowRepository(SqliteDatabase database)
         var target = await ReadDecisionTargetAsync(
             connection, transaction, command.ProductionRunId, cancellationToken)
             ?? throw new QcWorkflowNotFoundException(command.ProductionRunId);
+        if (target.LatestEventType is "QC_PASS" or "QC_FAIL")
+            throw new EditConflictException(
+                "QC queue item",
+                $"This part already has a QC result: {(target.LatestEventType == "QC_PASS" ? "PASS" : "FAIL")}. Your decision was not saved.",
+                "Refresh the QC queue; the part has left it. If the result is wrong, the setupist sends the part to QC " +
+                "again from the Machine tablet and you decide it again.",
+                target.LatestUserId,
+                target.LatestEventAt);
         if (target.LatestEventType != "SEND_TO_QC")
             throw new QcWorkflowStateException(
                 "PASS or FAIL is allowed only while the Production Run is IN_QC.");
@@ -175,7 +184,7 @@ internal sealed class SqliteQcWorkflowRepository(SqliteDatabase database)
         await using var query = connection.CreateCommand();
         query.Transaction = transaction;
         query.CommandText = """
-            SELECT event.machine_id,event.event_type,event.server_received_at
+            SELECT event.machine_id,event.event_type,event.server_received_at,event.user_id
             FROM production_runs run
             LEFT JOIN production_run_workflow_events event ON event.id=(
                 SELECT latest.id
@@ -191,7 +200,8 @@ internal sealed class SqliteQcWorkflowRepository(SqliteDatabase database)
             ? new(
                 reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
                 reader.IsDBNull(1) ? null : reader.GetString(1),
-                reader.IsDBNull(2) ? DateTimeOffset.MinValue : Parse(reader.GetString(2)))
+                reader.IsDBNull(2) ? DateTimeOffset.MinValue : Parse(reader.GetString(2)),
+                reader.IsDBNull(3) ? null : reader.GetString(3))
             : null;
     }
 
@@ -202,19 +212,10 @@ internal sealed class SqliteQcWorkflowRepository(SqliteDatabase database)
         string userId,
         CancellationToken cancellationToken)
     {
-        await using var query = connection.CreateCommand();
-        query.Transaction = transaction;
-        query.CommandText = "SELECT holder_client_id,holder_user_id,generation FROM edit_tokens WHERE id=1;";
-        await using var reader = await query.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)
-            || reader.IsDBNull(0)
-            || reader.IsDBNull(1)
-            || reader.GetString(0) != authority.ClientId
-            || reader.GetString(1) != userId
-            || reader.GetInt64(2) != authority.Generation)
-            throw new EditModeMutationException(
-                "edit_authority_required",
-                "The active Server Edit Mode generation is required for QC decisions.");
+        // Single Edit Mode is retired: the API authorized the signed-in QC user for this decision.
+        if (SignedInActor.Require(authority) != userId)
+            throw new EditModeMutationException("sign_in_required", "The QC decision must be made by the signed-in user.");
+        await Task.CompletedTask;
     }
 
     private static string Format(DateTimeOffset value) =>
@@ -233,5 +234,5 @@ internal sealed class SqliteQcWorkflowRepository(SqliteDatabase database)
     private sealed record OutputRow(string Part, string Operation);
     private sealed record SetupistRow(string Id, string? Name);
     private sealed record DecisionTargetRow(
-        string MachineId, string? LatestEventType, DateTimeOffset LatestEventAt);
+        string MachineId, string? LatestEventType, DateTimeOffset LatestEventAt, string? LatestUserId);
 }

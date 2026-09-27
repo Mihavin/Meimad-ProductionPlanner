@@ -42,7 +42,7 @@
             BorderThickness="1" Padding="14">
       <StackPanel>
         <TextBlock Text="Inspection decision" FontSize="18" FontWeight="SemiBold" />
-        <TextBlock Text="Select a waiting Production Run. PASS and FAIL require the active Edit Mode generation."
+        <TextBlock Text="Select a waiting Production Run. PASS and FAIL need the QC permission; if another inspector decides first, the Planner explains it."
                    TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
                    Margin="0,6,0,12" />
         <TextBlock Text="Machine" FontWeight="SemiBold" />

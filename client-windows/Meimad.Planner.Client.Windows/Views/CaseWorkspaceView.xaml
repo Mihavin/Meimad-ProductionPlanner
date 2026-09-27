@@ -196,7 +196,7 @@
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FormField}"><TextBlock Text="Notes" Style="{StaticResource FieldLabel}"/><TextBox Text="{Binding Notes}" IsReadOnly="{Binding IsUnlockedFieldsReadOnly}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap"/></StackPanel>
                                 <DockPanel>
-                                    <TextBlock Text="Saving requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="Saving requires an account that may edit Cases." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                         <Button Content="Cancel New Case" Command="{Binding CancelCreateCommand}">
                                             <Button.Style>
@@ -418,7 +418,7 @@
                                     <TextBlock Text="INDEPENDENT uses no referenced operation. SEQUENTIAL and PARALLEL_CAPABLE require one. LOCKED_SIMULTANEOUS also requires a group key. The Server validates the complete dependency graph."
                                                TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,10" />
                                     <DockPanel>
-                                        <TextBlock Text="Saving requires active Server-issued Edit Mode." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Saving requires an account that may edit Cases." Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                             <Button Content="Cancel" Command="{Binding CancelCreateOperationCommand}" />
                                             <Button Content="{Binding OperationSaveButtonText}" Command="{Binding CreateOperationCommand}" Margin="0" />

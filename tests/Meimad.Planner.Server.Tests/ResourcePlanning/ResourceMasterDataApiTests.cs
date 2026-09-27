@@ -16,7 +16,7 @@ public sealed class ResourceMasterDataApiTests
     {
         var root=Path.Combine(Path.GetTempPath(),"MeimadPlanner.ResourceMaster.Tests",Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        await using var app=ServerApplication.Build(["--Server:Host=127.0.0.1","--Server:Port=5098",$"--Database:Path={Path.Combine(root,"test.db")}"],b=>b.UseTestServer());
+        await using var app=ServerApplication.Build(["--Server:Host=127.0.0.1","--Server:Port=5098",$"--Database:Path={Path.Combine(root,"test.db")}"],b=>b.UseSignedInTestServer());
         try
         {
             await app.StartAsync();

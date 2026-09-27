@@ -998,6 +998,56 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
+    public async Task A_release_based_on_an_older_view_of_the_operation_is_refused_and_names_who_released()
+    {
+        await RunAsync(async (application, client, releaseRoot) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "programmer-a");
+            var first = await ReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Initial",
+                Encoding.UTF8.GetBytes("M30\n"), Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false,
+                processDescription: "Initial manufacturing process");
+
+            // Programmer B opened the Operation before A's release and still sees no program.
+            client.DefaultRequestHeaders.Remove("X-Meimad-User-Id");
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "programmer-b");
+            using (var stale = await SendReleaseAsync(
+                       client, "post-a", "LOCAL_POST_REVISION", "B's program",
+                       Encoding.UTF8.GetBytes("G0 X2\nM30\n"), null,
+                       confirmNewProcess: false, reuseActiveTools: true, confirmTools: true,
+                       expectedLatestReleaseId: string.Empty))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+                using var json = JsonDocument.Parse(await stale.Content.ReadAsStringAsync());
+                var error = json.RootElement.GetProperty("error");
+                Assert.Equal("edit_conflict", error.GetProperty("code").GetString());
+                Assert.Contains("program.nc", error.GetProperty("message").GetString(), StringComparison.Ordinal);
+                var conflict = error.GetProperty("conflict");
+                Assert.Equal("NC program", conflict.GetProperty("resource").GetString());
+                Assert.Equal("programmer-a", conflict.GetProperty("changedBy").GetString());
+                Assert.Contains("compare", conflict.GetProperty("advice").GetString(), StringComparison.OrdinalIgnoreCase);
+            }
+
+            // After looking at A's release, B releases on top of it knowingly.
+            using (var informed = await SendReleaseAsync(
+                       client, "post-a", "LOCAL_POST_REVISION", "B's program",
+                       Encoding.UTF8.GetBytes("G0 X2\nM30\n"), null,
+                       confirmNewProcess: false, reuseActiveTools: true, confirmTools: true,
+                       expectedLatestReleaseId: first.ReleaseId))
+                Assert.Equal(HttpStatusCode.Created, informed.StatusCode);
+
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using var connection = await database.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM gcode_releases WHERE postprocessor_id = 'post-a';";
+            Assert.Equal(2L, (long)(await command.ExecuteScalarAsync())!);
+        });
+    }
+
+    [Fact]
     public async Task Concurrent_local_releases_get_unique_post_revisions()
     {
         await RunAsync(async (application, client, releaseRoot) =>
@@ -1446,9 +1496,14 @@ public sealed class GCodeReleaseApiTests
         string? processDescription = null,
         string toolFileName = "tools.csv",
         bool includeVerificationHook = true,
-        int? verificationIdentity = null)
+        int? verificationIdentity = null,
+        string? expectedLatestReleaseId = null)
     {
         var content = new MultipartFormDataContent();
+        if (expectedLatestReleaseId is not null)
+        {
+            content.Add(new StringContent(expectedLatestReleaseId), "expectedLatestReleaseId");
+        }
         content.Add(new StringContent(postprocessorId), "postprocessorId");
         content.Add(new StringContent(scope), "changeScope");
         content.Add(new StringContent(comment), "releaseComment");
@@ -1573,7 +1628,7 @@ public sealed class GCodeReleaseApiTests
             ],
             webHost =>
             {
-                webHost.UseTestServer();
+                webHost.UseSignedInTestServer();
                 if (services is not null) webHost.ConfigureServices(services);
             });
 

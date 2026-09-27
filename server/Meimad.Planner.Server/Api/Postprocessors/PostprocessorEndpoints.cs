@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Postprocessors;
 using Meimad.Planner.Server.Domain.Postprocessors;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Postprocessors;
 
@@ -49,7 +50,7 @@ internal static class PostprocessorEndpoints
         PostprocessorService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error))
         {
             return error!;
         }
@@ -75,7 +76,7 @@ internal static class PostprocessorEndpoints
         PostprocessorService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error))
         {
             return error!;
         }
@@ -117,7 +118,7 @@ internal static class PostprocessorEndpoints
         PostprocessorService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error))
         {
             return error!;
         }

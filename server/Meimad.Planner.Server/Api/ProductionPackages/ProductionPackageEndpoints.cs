@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Application.ProductionPackages;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ProductionPackages;
 
@@ -20,7 +21,7 @@ internal static class ProductionPackageEndpoints
         HttpContext context,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out var userId, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, null, out _, out var userId, out var error))
             return error!;
         try
         {

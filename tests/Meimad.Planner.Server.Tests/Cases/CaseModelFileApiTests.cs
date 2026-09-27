@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -111,10 +112,11 @@ public sealed class CaseModelFileApiTests
         {
             await SeedAsync(application.Services);
 
+            using (client.SignedInWithOnly())
             using (var noHeaders = await client.PostAsJsonAsync(
                        "/api/v1/cases/case-1/model-files", new { filePath = @"C:\cad\part.stp" }))
             {
-                Assert.Equal((HttpStatusCode)428, noHeaders.StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, noHeaders.StatusCode);
             }
 
             AddHeaders(client);
@@ -217,7 +219,7 @@ public sealed class CaseModelFileApiTests
         var path = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ModelFiles.Tests", Guid.NewGuid().ToString("N"));
         var app = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5097", $"--Database:Path={Path.Combine(path, "test.db")}"],
-            host => host.UseTestServer());
+            host => host.UseSignedInTestServer());
         try
         {
             await app.StartAsync();

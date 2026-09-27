@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.MachineAssignments;
 
@@ -29,8 +30,7 @@ internal static class MachineAssignmentEndpoints
         MachineAssignmentService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                httpContext,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.PlanMachines,
                 out var authority,
                 out var accessError))
         {
@@ -49,7 +49,8 @@ internal static class MachineAssignmentEndpoints
                         request.CompatibilityOverride.Confirmed,
                         request.CompatibilityOverride.Reason ?? string.Empty),
                 authority!,
-                cancellationToken);
+                cancellationToken,
+                request.ExpectedBacklogStamp);
             var response = MachineAssignmentResponse.FromDomain(result.Assignment);
             SetEntityTag(httpContext.Response, result.Assignment);
             return result.WasCreated
@@ -71,8 +72,7 @@ internal static class MachineAssignmentEndpoints
         MachineAssignmentService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                httpContext,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.PlanMachines,
                 out var authority,
                 out var accessError))
         {
@@ -155,8 +155,7 @@ internal static class MachineAssignmentEndpoints
         MachineAssignmentService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                httpContext,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.PlanMachines,
                 out var authority,
                 out var accessError))
         {
@@ -234,7 +233,7 @@ internal static class MachineAssignmentEndpoints
         string batchOperationId, ManualOperationReportRequest request, HttpContext context,
         MachineAssignmentService service, CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var accessError)) return accessError!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.RunOperations, out var authority, out var accessError)) return accessError!;
         try
         {
             var result = await service.RecordManualReportAsync(batchOperationId, request.ReportType ?? string.Empty,
@@ -252,8 +251,7 @@ internal static class MachineAssignmentEndpoints
         MachineAssignmentService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                context, out var authority, out var accessError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.RunOperations, out var authority, out var accessError))
         {
             return accessError!;
         }

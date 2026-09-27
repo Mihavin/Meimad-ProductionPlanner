@@ -1305,7 +1305,10 @@ internal sealed record GCodeReleaseCreate(
     bool ReuseActiveToolTable,
     bool ConfirmToolTable,
     string GCodeFilePath,
-    string? ToolTableFilePath);
+    string? ToolTableFilePath,
+    // The newest release of the Operation the programmer saw ("" = none); the Server refuses the
+    // release when another programmer released in the meantime.
+    string? ExpectedLatestReleaseId = null);
 
 internal sealed record CaseComponent(
     string CaseComponentId,
@@ -1723,7 +1726,10 @@ internal sealed record PlanningBoardMachine(
     string? AxisType,
     IReadOnlyList<string> Capabilities,
     bool IsActive,
-    IReadOnlyList<PlanningBoardOperation> Backlog);
+    IReadOnlyList<PlanningBoardOperation> Backlog,
+    // Fingerprint of the Machine's order; a move sends it back so the Server can refuse a move
+    // based on an order another planner has changed since.
+    string BacklogStamp = "");
 
 internal sealed record BatchOperationExecution(
     string BatchOperationId,
@@ -2448,13 +2454,15 @@ internal sealed class PlannerApiException : Exception
 {
     internal PlannerApiException(
         HttpStatusCode statusCode, string code, string message,
-        string? requiredMachineType = null, string? selectedMachineType = null)
+        string? requiredMachineType = null, string? selectedMachineType = null,
+        PlannerConflict? conflict = null)
         : base(message)
     {
         StatusCode = statusCode;
         Code = code;
         RequiredMachineType = requiredMachineType;
         SelectedMachineType = selectedMachineType;
+        Conflict = conflict;
     }
 
     internal HttpStatusCode StatusCode { get; }
@@ -2462,7 +2470,83 @@ internal sealed class PlannerApiException : Exception
     internal string Code { get; }
     internal string? RequiredMachineType { get; }
     internal string? SelectedMachineType { get; }
+
+    /// <summary>Set when the Server refused a change because someone else changed the data first.</summary>
+    internal PlannerConflict? Conflict { get; }
+
+    /// <summary>
+    /// Raised for every conflict the Server reports, on the thread that read the answer, so the
+    /// main window can explain it once whatever screen made the change.
+    /// </summary>
+    internal static event Action<PlannerApiException>? ConflictRaised;
+
+    internal static void ReportConflict(PlannerApiException exception) => ConflictRaised?.Invoke(exception);
 }
+
+/// <summary>What changed under the user, who changed it and when, and what the user can do.</summary>
+internal sealed record PlannerConflict(
+    string Resource,
+    string? ChangedBy,
+    DateTimeOffset? ChangedAt,
+    string Advice);
+
+/// <summary>The permission codes of the Server's catalog (Settings → Users shows their names).</summary>
+internal static class PlannerPermissions
+{
+    internal const string EditCases = "cases.edit";
+    internal const string ReleaseNc = "nc.release";
+    internal const string PrepareTools = "toolroom.prepare";
+    internal const string EditToolLibrary = "tools.catalog";
+    internal const string DecideQc = "qc.decide";
+    internal const string PlanMachines = "planning.board";
+    internal const string ManageWorkOrders = "planning.workorders";
+    internal const string VerifyMaterials = "materials.verify";
+    internal const string RunOperations = "production.execute";
+    internal const string ManageSetup = "setup.manage";
+    internal const string ManageUsers = "users.manage";
+}
+
+internal sealed record AuthState(bool HasAccounts);
+
+internal sealed record SignedInAccount(
+    string UserId,
+    string UserName,
+    string DisplayName,
+    bool IsAdministrator,
+    IReadOnlyList<string> Permissions,
+    bool MustChangePassword)
+{
+    internal bool Has(string permission) => IsAdministrator || Permissions.Contains(permission);
+}
+
+internal sealed record SignInSession(string Token, DateTimeOffset ExpiresAt, SignedInAccount User);
+
+internal sealed record PermissionInfo(string Code, string Name, string Description);
+
+internal sealed record UserTypeSummary(string UserTypeId, string Name, bool IsAdministrator);
+
+internal sealed record UserAccountInfo(
+    string UserId,
+    string UserName,
+    string DisplayName,
+    bool IsActive,
+    bool MustChangePassword,
+    DateTimeOffset? LastSignInAt,
+    IReadOnlyList<UserTypeSummary> Types,
+    int Version,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy);
+
+internal sealed record UserTypeInfo(
+    string UserTypeId,
+    string Name,
+    string? Description,
+    bool IsAdministrator,
+    IReadOnlyList<string> Permissions,
+    int UserCount,
+    int Version,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy);
 
 internal sealed class PlannerProtocolException : Exception
 {

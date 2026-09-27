@@ -3,6 +3,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.AdministrativeSetup;
 using Microsoft.Extensions.Primitives;
 using System.Globalization;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.AdministrativeSetup;
 
@@ -27,13 +28,13 @@ internal static class AdministrativeSetupEndpoints
     }
 
     private static async Task<IResult> CreateResourceAsync(CreateEmployeeResourceRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    { if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!; try{var value=await service.CreateResourceAsync(request.ToCommand(),authority!,token);SetTag(context.Response,"resource",value.ResourceId,value.Version);return Results.Created($"/api/v1/resources/{value.ResourceId}",EmployeeResourceResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;} }
+    { if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!; try{var value=await service.CreateResourceAsync(request.ToCommand(),authority!,token);SetTag(context.Response,"resource",value.ResourceId,value.Version);return Results.Created($"/api/v1/resources/{value.ResourceId}",EmployeeResourceResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;} }
     private static async Task<IResult> GetResourceAsync(string resourceId,HttpContext context,AdministrativeSetupService service,CancellationToken token)
     {var value=await service.GetResourceAsync(resourceId,token);if(value is null)return NotFound(context,"Employee Resource");SetTag(context.Response,"resource",value.ResourceId,value.Version);return Results.Ok(EmployeeResourceResponse.FromDomain(value));}
     private static async Task<IResult> UpdateResourceAsync(string resourceId,PatchEmployeeResourceRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;if(!Expected(context,"resource",resourceId,out var version,out var etagError))return etagError!;try{var value=await service.UpdateResourceAsync(resourceId,version,request.ToCommand(),authority!,token);SetTag(context.Response,"resource",value.ResourceId,value.Version);return Results.Ok(EmployeeResourceResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;if(!Expected(context,"resource",resourceId,out var version,out var etagError))return etagError!;try{var value=await service.UpdateResourceAsync(resourceId,version,request.ToCommand(),authority!,token);SetTag(context.Response,"resource",value.ResourceId,value.Version);return Results.Ok(EmployeeResourceResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> DeleteResourceAsync(string resourceId,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;try{return await service.DeleteResourceAsync(resourceId,authority!,token)?Results.NoContent():NotFound(context,"Employee Resource");}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;try{return await service.DeleteResourceAsync(resourceId,authority!,token)?Results.NoContent():NotFound(context,"Employee Resource");}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> ListEmployeeExceptionsAsync(string resourceId, string? from, string? to, HttpContext context, AdministrativeSetupService service, CancellationToken token)
     {
         if (!TryDate(from, "from", context, out var fromDate, out var error) || !TryDate(to, "to", context, out var toDate, out error)) return error!;
@@ -42,20 +43,20 @@ internal static class AdministrativeSetupEndpoints
     }
     private static async Task<IResult> CreateEmployeeExceptionAsync(string resourceId, CreateEmployeeCalendarExceptionRequest request, HttpContext context, AdministrativeSetupService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try { var value = await service.CreateEmployeeExceptionAsync(resourceId, request.ToCommand(), authority!, token); SetTag(context.Response, "employee-exception", value.ExceptionId, value.Version); return Results.Created($"/api/v1/resources/{resourceId}/exceptions/{value.ExceptionId}", EmployeeCalendarExceptionResponse.FromDomain(value)); }
         catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
     }
     private static async Task<IResult> UpdateEmployeeExceptionAsync(string resourceId, string exceptionId, PatchEmployeeCalendarExceptionRequest request, HttpContext context, AdministrativeSetupService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         if (!Expected(context, "employee-exception", exceptionId, out var version, out var etagError)) return etagError!;
         try { var value = await service.UpdateEmployeeExceptionAsync(resourceId, exceptionId, version, request.ToCommand(), authority!, token); SetTag(context.Response, "employee-exception", value.ExceptionId, value.Version); return Results.Ok(EmployeeCalendarExceptionResponse.FromDomain(value)); }
         catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
     }
     private static async Task<IResult> DeleteEmployeeExceptionAsync(string resourceId, string exceptionId, HttpContext context, AdministrativeSetupService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try { return await service.DeleteEmployeeExceptionAsync(resourceId, exceptionId, authority!, token) ? Results.NoContent() : NotFound(context, "Employee Calendar Exception"); }
         catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
     }
@@ -66,19 +67,19 @@ internal static class AdministrativeSetupEndpoints
         catch (Exception exception) when (TryMap(exception, context, out var mapped)) { return mapped!; }
     }
     private static async Task<IResult> CreateHolidayAsync(CreateIsraeliHolidayRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;try{var value=await service.CreateHolidayAsync(request.ToCommand(),authority!,token);SetTag(context.Response,"israeli-holiday",value.IsraeliHolidayId,value.Version);return Results.Created($"/api/v1/israeli-holidays/{value.IsraeliHolidayId}",IsraeliHolidayResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;try{var value=await service.CreateHolidayAsync(request.ToCommand(),authority!,token);SetTag(context.Response,"israeli-holiday",value.IsraeliHolidayId,value.Version);return Results.Created($"/api/v1/israeli-holidays/{value.IsraeliHolidayId}",IsraeliHolidayResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> GetHolidayAsync(string holidayId,HttpContext context,AdministrativeSetupService service,CancellationToken token)
     {var value=await service.GetHolidayAsync(holidayId,token);if(value is null)return NotFound(context,"Israeli Holiday");SetTag(context.Response,"israeli-holiday",value.IsraeliHolidayId,value.Version);return Results.Ok(IsraeliHolidayResponse.FromDomain(value));}
     private static async Task<IResult> UpdateHolidayAsync(string holidayId,PatchIsraeliHolidayRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;if(!Expected(context,"israeli-holiday",holidayId,out var version,out var etagError))return etagError!;try{var value=await service.UpdateHolidayAsync(holidayId,version,request.ToCommand(),authority!,token);SetTag(context.Response,"israeli-holiday",value.IsraeliHolidayId,value.Version);return Results.Ok(IsraeliHolidayResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;if(!Expected(context,"israeli-holiday",holidayId,out var version,out var etagError))return etagError!;try{var value=await service.UpdateHolidayAsync(holidayId,version,request.ToCommand(),authority!,token);SetTag(context.Response,"israeli-holiday",value.IsraeliHolidayId,value.Version);return Results.Ok(IsraeliHolidayResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> DeleteHolidayAsync(string holidayId,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;try{return await service.DeleteHolidayAsync(holidayId,authority!,token)?Results.NoContent():NotFound(context,"Israeli Holiday");}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;try{return await service.DeleteHolidayAsync(holidayId,authority!,token)?Results.NoContent():NotFound(context,"Israeli Holiday");}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> SynchronizeHolidaysAsync(SyncIsraeliHolidaysRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;try{return Results.Ok(IsraeliHolidaySyncResponse.FromDomain(await service.SynchronizeHolidaysAsync(request.ToCommand(),authority!,token)));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;try{return Results.Ok(IsraeliHolidaySyncResponse.FromDomain(await service.SynchronizeHolidaysAsync(request.ToCommand(),authority!,token)));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> GetReportSettingsAsync(HttpContext context,AdministrativeSetupService service,CancellationToken token)
     {var value=await service.GetReportEmailSettingsAsync(token);SetTag(context.Response,"report-email-settings","1",value.Version);return Results.Ok(ReportEmailSettingsResponse.FromDomain(value));}
     private static async Task<IResult> UpdateReportSettingsAsync(UpdateReportEmailSettingsRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
-    {if(!PlanningHttpSupport.TryReadEditAuthority(context,out var authority,out var error))return error!;if(!Expected(context,"report-email-settings","1",out var version,out var etagError))return etagError!;try{var value=await service.UpdateReportEmailSettingsAsync(version,request.ToCommand(),authority!,token);SetTag(context.Response,"report-email-settings","1",value.Version);return Results.Ok(ReportEmailSettingsResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;if(!Expected(context,"report-email-settings","1",out var version,out var etagError))return etagError!;try{var value=await service.UpdateReportEmailSettingsAsync(version,request.ToCommand(),authority!,token);SetTag(context.Response,"report-email-settings","1",value.Version);return Results.Ok(ReportEmailSettingsResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
 
     private static bool Expected(HttpContext context,string kind,string id,out int version,out IResult? error)
     {if(PlanningHttpSupport.TryReadExpectedVersion(context.Request.Headers.IfMatch,kind,id,out version)){error=null;return true;}var missing=StringValues.IsNullOrEmpty(context.Request.Headers.IfMatch);error=PlanningHttpSupport.Error(missing?428:412,missing?"precondition_required":"resource_version_stale",$"A matching {kind} If-Match header is required.",context);return false;}

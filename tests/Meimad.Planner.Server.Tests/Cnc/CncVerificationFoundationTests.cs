@@ -26,7 +26,7 @@ public sealed class CncVerificationFoundationTests
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
         var service = Service(fixture.Database);
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         var request = new CreateOffsetLoaderRelease(
             "machine-verification", "gcode-verification", "tools-verification",
             new string('a', 64), "{\"measurementRevision\":7}");
@@ -55,7 +55,7 @@ public sealed class CncVerificationFoundationTests
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
         var service = Service(fixture.Database);
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         var create = Settings(null, enabled: false);
 
         var first = await service.UpdateSettingsAsync("machine-verification", create, 0, authority);
@@ -92,7 +92,7 @@ public sealed class CncVerificationFoundationTests
         var error = await Assert.ThrowsAsync<CncVerificationValidationException>(() =>
             Service(fixture.Database).UpdateSettingsAsync(
                 "machine-verification", command, 0,
-                new EditAuthority("verification-client", 1)));
+                new EditAuthority("verification-client", 1, "verification-user")));
 
         Assert.Equal(expectedCode, error.Code);
     }
@@ -111,13 +111,13 @@ public sealed class CncVerificationFoundationTests
         var error = await Assert.ThrowsAsync<CncVerificationValidationException>(() =>
             Service(fixture.Database).UpdateSettingsAsync(
                 "machine-verification", command, 0,
-                new EditAuthority("verification-client", 1)));
+                new EditAuthority("verification-client", 1, "verification-user")));
 
         Assert.Equal("variable_collision", error.Code);
 
         await Service(fixture.Database).UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", false), 0,
-            new EditAuthority("verification-client", 1));
+            new EditAuthority("verification-client", 1, "verification-user"));
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var update = connection.CreateCommand();
         update.CommandText = """
@@ -136,7 +136,7 @@ public sealed class CncVerificationFoundationTests
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
         var service = Service(fixture.Database);
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
 
         var programError = await Assert.ThrowsAsync<CncVerificationValidationException>(() =>
             service.UpdateSettingsAsync("machine-verification",
@@ -259,7 +259,7 @@ public sealed class CncVerificationFoundationTests
         await using var fixture = await TemporaryDatabase.CreateAsync();
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         var request = new CreateOffsetLoaderRelease(
             "machine-verification", "gcode-verification", "tools-verification");
 
@@ -282,7 +282,7 @@ public sealed class CncVerificationFoundationTests
         var error = await Assert.ThrowsAsync<CncVerificationTargetException>(() =>
             service.CreateOffsetLoaderReleaseAsync("run-verification", new(
                 "machine-verification", "gcode-historical", "tools-verification"),
-                new EditAuthority("verification-client", 1)));
+                new EditAuthority("verification-client", 1, "verification-user")));
 
         Assert.Equal("offset_loader_context_invalid", error.Code);
         Assert.Contains("hook-eligible", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -296,7 +296,7 @@ public sealed class CncVerificationFoundationTests
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync("machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
             "machine-verification", "gcode-verification", "tools-verification"), authority);
@@ -374,7 +374,7 @@ public sealed class CncVerificationFoundationTests
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync("machine-verification", Settings("machine-secret-value", true), 0, authority);
         var first = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
             "machine-verification", "gcode-verification", "tools-verification"), authority);
@@ -409,7 +409,7 @@ $"MEIMAD/V/1/EVENT/OLC/ID/OFFSET-OLD/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFFSE
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -471,7 +471,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/VERIFY-OK/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSET
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -540,7 +540,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/IDENTITY-VALID-SVS/SEQ/106/MACROVERSION/6/PROGRAM/6543
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -589,7 +589,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/REPLAY-AFTER-SUPERSEDE/SEQ/104/MACROVERSION/6/PROGRAM/
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var first = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -651,7 +651,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/CORRELATE-CURRENT/SEQ/105/MACROVERSION/6/PROGRAM/65432
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -694,7 +694,7 @@ $"MEIMAD/V/1/EVENT/OLC/ID/RECOVERY-OLC/SEQ/101/MACROVERSION/6/PROGRAM/654321/OFF
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -744,7 +744,7 @@ $"MEIMAD/V/1/EVENT/SVS/ID/EXPIRE-SVS/SEQ/102/MACROVERSION/6/PROGRAM/654321/OFFSE
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository,
             new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync(
             "machine-verification", Settings("machine-secret-value", true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
@@ -1126,7 +1126,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
             new SqliteProductionRunCncObservationRepository(fixture.Database, clock),
             new OperationalAnomalyService(new SqliteOperationalAnomalyRepository(fixture.Database)),
             clock, NullLogger<CncDprintEventIngestionService>.Instance);
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await SeedEndToEndDeviceAndNextRunAsync(fixture.Database);
         await using (var readyConnection = await fixture.Database.OpenConnectionAsync())
         await using (var readyEvidence = readyConnection.CreateCommand())
@@ -1381,7 +1381,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository, new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync("machine-verification", Settings(null, true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
             "machine-verification", "gcode-verification", "tools-verification"), authority);
@@ -1426,7 +1426,7 @@ $"MEIMAD/V/1/EVENT/SVF/ID/LATE-FAIL-SVF/SEQ/102/MACROVERSION/6/PROGRAM/654321/OF
         await SeedAsync(fixture.Database);
         var repository = new SqliteCncVerificationFoundationRepository(fixture.Database);
         var service = new CncVerificationFoundationService(repository, new FixedTimeProvider(Now));
-        var authority = new EditAuthority("verification-client", 1);
+        var authority = new EditAuthority("verification-client", 1, "verification-user");
         await service.UpdateSettingsAsync("machine-verification", Settings(null, true), 0, authority);
         var release = await service.CreateOffsetLoaderReleaseAsync("run-verification", new(
             "machine-verification", "gcode-verification", "tools-verification"), authority);

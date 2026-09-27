@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Application.Reports;
 using Meimad.Planner.Server.Application.EditMode;
 using System.Net.Mail;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Reports;
 
@@ -19,20 +20,13 @@ internal static class WeeklyMaterialReportEndpoints
     private static async Task<IResult> SendAsync(
         HttpContext context,
         WeeklyMaterialReportService service,
-        EditModeService editMode,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out _, out var error))
         {
             return error!;
         }
 
-        var edit = await editMode.GetStatusAsync(authority!.ClientId, token);
-        if (edit.CallerState != EditClientState.Editor || edit.Generation != authority.Generation)
-        {
-            return PlanningHttpSupport.Error(409, "edit_authority_required",
-                "The active Server Edit Mode generation is required to send the report.", context);
-        }
 
         try
         {

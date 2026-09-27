@@ -94,8 +94,8 @@
                     <TextBox Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}" />
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="2">
-                    <TextBlock Text="Local user name" Style="{StaticResource SetupFieldLabel}" />
-                    <TextBox Text="{Binding LocalUserName, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Text="Last signed-in user" Style="{StaticResource SetupFieldLabel}" />
+                    <TextBox Text="{Binding LocalUserName, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="True" ToolTip="Offered in the sign-in window; sign in to change it" />
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Bottom">
                     <Button Content="Save" Command="{Binding SaveConnectionCommand}" />
@@ -1110,7 +1110,7 @@
                                  ToolTip="Where the Kitaron synchronization creates working folders for new Cases" />
                         <StackPanel Orientation="Horizontal">
                             <Button Content="Save network folder" Command="{Binding SaveCommand}"
-                                    ToolTip="Saves the folder and converts the stored Case links once; needs Edit Mode." />
+                                    ToolTip="Saves the folder and converts the stored Case links once; needs the Setup permission." />
                             <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
                         </StackPanel>
                         <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold" />
@@ -1143,7 +1143,7 @@
                                     <StackPanel Style="{StaticResource SetupField}"><TextBlock Text="Save folder on this PC" Style="{StaticResource SetupFieldLabel}" /><TextBox Text="{Binding BackupFolder, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
                                 </UniformGrid>
                                 <Button Content="Download verified backup" Command="{Binding DownloadBackupCommand}" IsEnabled="{Binding IsEditor}" HorizontalAlignment="Left" />
-                                <TextBlock Text="Only the active Edit Mode holder can download a backup." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                                <TextBlock Text="Only an account with the Setup permission can download a backup." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
                             </StackPanel>
                         </Border>
 

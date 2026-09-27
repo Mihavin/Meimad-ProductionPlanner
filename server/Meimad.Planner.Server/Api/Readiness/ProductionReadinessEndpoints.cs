@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Readiness;
 using Meimad.Planner.Server.Domain.Readiness;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Readiness;
 
@@ -40,8 +41,7 @@ internal static class ProductionReadinessEndpoints
         ProductionReadinessService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                context, out var authority, out var accessError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var accessError))
         {
             return accessError!;
         }

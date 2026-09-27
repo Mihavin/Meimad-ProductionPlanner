@@ -153,14 +153,8 @@ internal sealed class SqliteTimelineAuxiliaryPinRepository(SqliteDatabase databa
     private static async Task EnsureEditAuthorityAsync(
         SqliteConnection connection, SqliteTransaction transaction, EditAuthority authority, CancellationToken cancellationToken)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(connection, transaction, DateTimeOffset.UtcNow, cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
-            throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        if (!string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal) || reader.GetInt64(1) != authority.Generation)
-            throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(authority);
+        await Task.CompletedTask;
     }
 }

@@ -22,8 +22,8 @@ The repository contains implemented Server, Windows client, TV, E-Ink, migration
 1. The central Meimad Planner Server is the sole authority for production-planning data.
 2. Only the server may open, migrate, back up, or restore the SQLite database. Never let a client open SQLite directly or place the database on a network share.
 3. Keep Machine selection and Machine backlog authority manual. Never auto-select a Machine, auto-optimize/reorder a Machine backlog, or silently repair authoritative/confirmed facts. After the planner supplies Machine anchors, automatically calculate deterministic provisional Employee/Workstation/External Resource assignments and resulting shifts as defined by rule 34; the planner may override/pin them.
-4. Windows Planning Clients are the only MVP editing clients. Enforce exactly one server-controlled editor at a time through Single Edit Mode. A requester asks the current editor; Release transfers immediately, Reject keeps the current holder, no response transfers automatically after the server-configured timeout (30-second default), and the holder may release voluntarily.
-5. TV Dashboard is a read-only operational consumer. E-Ink clients are read-only for planning/package content except for the narrowly scoped `SEND_TO_QC` operational command defined in the API contract. Tablets never request planning Edit Mode or general mutation rights.
+4. Windows Planning Clients are the only MVP editing clients. Every Windows user signs in with a Server-held account (user name and password; owner decision 2026-09-27, replacing Single Edit Mode). Each mutation requires the permission of its area, granted through administrator-managed user types; everyone signed in may view. Users edit in parallel: every change carries the version, backlog stamp, release, or state it was based on, and the Server refuses a stale change atomically with an explanation of what changed, who changed it, when, and what to do. Never let a client decide authority, and never silently overwrite another user's change.
+5. TV Dashboard is a read-only operational consumer. E-Ink clients are read-only for planning/package content except for the narrowly scoped `SEND_TO_QC` operational command defined in the API contract. Tablets never sign in or receive planning permissions or general mutation rights.
 6. Keep the MVP on the factory LAN/Wi-Fi. Do not add public Internet exposure, router port forwarding, remote editing, or customer access.
 7. Any later customer access must be a separate, minimal, read-only portal. It must not expose drawings, certificates of conformity, or VPN access to the factory network.
 8. Preserve the domain separation:
@@ -85,7 +85,7 @@ CNC controller-state boundary:
 
 ## Quality and change rules
 
-- Add tests with functionality. At minimum, cover domain invariants, all four dependency modes, timeline/conflict behavior, allocation validation, Single Edit Mode races and timeout behavior, API authorization/read-only boundaries, migrations, backup/restore, and E-Ink cache/checksum failure modes.
+- Add tests with functionality. At minimum, cover domain invariants, all four dependency modes, timeline/conflict behavior, allocation validation, sign-in, permission, and parallel-edit conflict behavior, API authorization/read-only boundaries, migrations, backup/restore, and E-Ink cache/checksum failure modes.
 - Test that the planner reports conflicts without changing the user's assignments or backlog order.
 - Test that TV credentials cannot use mutation endpoints; E-Ink requests identified by `TabletID` may access only that tablet's Server-resolved resources and `SEND_TO_QC` scope, cannot call any other mutation, and cannot select an arbitrary device/Machine/run. Tablet-local notes never enter server state.
 - Preserve accessibility: status must remain understandable without color and on muted Color E-Ink panels.

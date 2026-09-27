@@ -382,7 +382,7 @@ public sealed class TvDashboardApiTests
                 "--Server:Port=5099",
                 $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

@@ -15,7 +15,7 @@ public sealed class CasePoolFilterApiTests
         var directory = Path.Combine(Path.GetTempPath(), "MeimadPlanner.PoolFilter.Tests", Guid.NewGuid().ToString("N"));
         var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(directory, "pool.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

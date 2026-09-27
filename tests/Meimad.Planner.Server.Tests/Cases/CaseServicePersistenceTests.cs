@@ -476,19 +476,19 @@ public sealed class CaseServicePersistenceTests
     }
 
     [Fact]
-    public async Task Stale_edit_generation_is_rejected_before_case_write()
+    public async Task Change_without_a_signed_in_user_is_rejected_before_case_write()
     {
         await using var fixture = await TemporaryDatabase.CreateAsync();
         var activeAuthority = await GrantEditModeAsync(fixture.Database);
-        var staleAuthority = activeAuthority with { Generation = activeAuthority.Generation - 1 };
+        var anonymousAuthority = activeAuthority with { UserId = null };
         var service = CreateService(fixture.Database);
 
         var exception = await Assert.ThrowsAsync<EditModeMutationException>(() =>
             service.CreateAsync(
                 CompleteCaseCommand(Path.Combine(Path.GetTempPath(), "stale-edit-case")),
-                staleAuthority));
+                anonymousAuthority));
 
-        Assert.Equal("edit_generation_stale", exception.Code);
+        Assert.Equal("sign_in_required", exception.Code);
         await using var connection = await fixture.Database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM cases;";
@@ -500,7 +500,7 @@ public sealed class CaseServicePersistenceTests
 
     private static async Task<EditAuthority> GrantEditModeAsync(SqliteDatabase database)
     {
-        var editAuthority = new EditAuthority("case-service-test-client", 1);
+        var editAuthority = new EditAuthority("case-service-test-client", 1, "case-service-test-user");
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """

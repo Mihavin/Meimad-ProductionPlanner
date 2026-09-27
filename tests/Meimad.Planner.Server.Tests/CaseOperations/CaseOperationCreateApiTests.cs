@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -351,14 +352,15 @@ public sealed class CaseOperationCreateApiTests
     }
 
     [Fact]
-    public async Task Requires_active_edit_generation()
+    public async Task Requires_the_case_edit_permission()
     {
         await RunWithServerAsync(async (_, client) =>
         {
+            using var programmer = client.SignedInWithOnly(Permissions.ReleaseNc);
             using var response = await client.PostAsJsonAsync(
                 "/api/v1/cases/missing/operations",
                 new { operationNumber = 10, name = "Saw", dependencyType = "INDEPENDENT" });
-            Assert.Equal((HttpStatusCode)428, response.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         });
     }
 
@@ -517,7 +519,7 @@ public sealed class CaseOperationCreateApiTests
                 "--Server:Port=5099",
                 $"--Database:Path={Path.Combine(directoryPath, "api-test.db")}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         try
         {

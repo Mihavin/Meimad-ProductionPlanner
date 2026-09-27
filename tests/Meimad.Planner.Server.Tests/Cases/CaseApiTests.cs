@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -59,6 +60,48 @@ public sealed class CaseApiTests
     }
 
     [Fact]
+    public async Task A_stale_case_edit_explains_who_changed_the_case_and_what_to_do()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await GrantEditModeAsync(application.Services);
+            AddEditHeaders(client);
+            using var createResponse = await client.PostAsJsonAsync("/api/v1/cases", ValidCreateBody());
+            using var createDocument = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync());
+            var caseId = createDocument.RootElement.GetProperty("caseId").GetString();
+            var openedTag = createResponse.Headers.ETag!.ToString();
+
+            // Two technologists opened the Case; Dana saves first.
+            using (var dana = Patch(caseId!, openedTag, "Dana's note", "tech-dana"))
+            using (var saved = await client.SendAsync(dana))
+                Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+            using var ron = Patch(caseId!, openedTag, "Ron's note", "tech-ron");
+            using var refused = await client.SendAsync(ron);
+
+            Assert.Equal(HttpStatusCode.PreconditionFailed, refused.StatusCode);
+            using var json = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            var error = json.RootElement.GetProperty("error");
+            Assert.Equal("resource_version_stale", error.GetProperty("code").GetString());
+            var conflict = error.GetProperty("conflict");
+            Assert.Equal("Case", conflict.GetProperty("resource").GetString());
+            Assert.Equal("tech-dana", conflict.GetProperty("changedBy").GetString());
+            Assert.NotEqual(JsonValueKind.Null, conflict.GetProperty("changedAt").ValueKind);
+            Assert.Contains("Refresh to load the current Case", conflict.GetProperty("advice").GetString(), StringComparison.Ordinal);
+        });
+
+        static HttpRequestMessage Patch(string caseId, string entityTag, string notes, string user)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/cases/{caseId}")
+            {
+                Content = JsonContent.Create(new { notes })
+            };
+            request.Headers.TryAddWithoutValidation("If-Match", entityTag);
+            request.Headers.Add("X-Meimad-User-Id", user);
+            return request;
+        }
+    }
+
+    [Fact]
     public async Task Create_rejects_missing_working_folder_path()
     {
         await RunWithServerAsync(async (application, client) =>
@@ -83,15 +126,26 @@ public sealed class CaseApiTests
     }
 
     [Fact]
-    public async Task Mutation_rejects_client_without_active_edit_generation()
+    public async Task Mutation_rejects_signed_out_and_unpermitted_users()
     {
         await RunWithServerAsync(async (_, client) =>
         {
+            using (client.SignedOut())
+            {
+                using var signedOut = await client.PostAsJsonAsync("/api/v1/cases", ValidCreateBody());
+                Assert.Equal(HttpStatusCode.Unauthorized, signedOut.StatusCode);
+                Assert.Contains("sign_in_required", await signedOut.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            }
+
+            using var qc = client.SignedInWithOnly(Permissions.DecideQc);
             using var response = await client.PostAsJsonAsync(
                 "/api/v1/cases",
                 ValidCreateBody());
 
-            Assert.Equal((HttpStatusCode)428, response.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains("permission_required", body, StringComparison.Ordinal);
+            Assert.Contains(Permissions.EditCases, body, StringComparison.Ordinal);
         });
     }
 
@@ -297,7 +351,7 @@ public sealed class CaseApiTests
                 "--Server:Port=5099",
                 $"--Database:Path={databasePath}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         try
         {

@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -560,10 +561,12 @@ public sealed class ProductionBatchApiTests
         {
             await SeedPlanningDataAsync(application.Services);
 
+            var viewer = client.SignedInWithOnly();
             using var noEditResponse = await client.PostAsJsonAsync(
                 "/api/v1/batches",
                 StockBatchBody("B-NO-EDIT", 5, 5));
-            Assert.Equal((HttpStatusCode)428, noEditResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, noEditResponse.StatusCode);
+            viewer.Dispose();
 
             await GrantEditModeAsync(application.Services);
             AddEditHeaders(client);
@@ -802,7 +805,7 @@ public sealed class ProductionBatchApiTests
                 "--Server:Port=5099",
                 $"--Database:Path={databasePath}"
             ],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
 
         try
         {

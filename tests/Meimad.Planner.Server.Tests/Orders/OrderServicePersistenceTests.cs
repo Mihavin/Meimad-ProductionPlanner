@@ -95,7 +95,7 @@ public sealed class OrderServicePersistenceTests
 
     private static async Task<EditAuthority> GrantEditModeAsync(SqliteDatabase database)
     {
-        var editAuthority = new EditAuthority("order-service-test-client", 1);
+        var editAuthority = new EditAuthority("order-service-test-client", 1, "order-service-test-user");
         await using var connection = await database.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """

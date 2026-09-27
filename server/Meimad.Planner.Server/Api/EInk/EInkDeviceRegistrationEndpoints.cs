@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EInk;
 using Meimad.Planner.Server.Application.EditMode;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.EInk;
 
@@ -31,8 +32,7 @@ internal static class EInkDeviceRegistrationEndpoints
         EInkDeviceRegistrationService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                context,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,
                 out var editAuthority,
                 out var error))
         {
@@ -63,8 +63,7 @@ internal static class EInkDeviceRegistrationEndpoints
         EInkDeviceRegistrationService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                context,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,
                 out var editAuthority,
                 out var error))
         {
@@ -92,7 +91,7 @@ internal static class EInkDeviceRegistrationEndpoints
     private static async Task<IResult> DeleteAsync(string deviceId, HttpContext context,
         EInkDeviceRegistrationService service, CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
         try
         {
             await service.DeleteAsync(deviceId, authority!, cancellationToken);

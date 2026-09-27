@@ -94,8 +94,8 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
     public bool IsEditor => isEditor;
     public bool CanEditIdentity => isEditor;
     public string EditModeText => isEditor
-        ? "Edit Mode — terminal administration enabled"
-        : "View Mode — monitoring only";
+        ? "You may administer terminals"
+        : "Monitoring only: your account may not administer terminals";
     public string ToggleEnabledText => Selected?.IsEnabled == true
         ? "Disable"
         : "Enable";
@@ -140,7 +140,7 @@ internal sealed class UserTerminalsViewModel : INotifyPropertyChanged
             Selected = selectedId is null
                 ? null
                 : Terminals.FirstOrDefault(item => item.DeviceId == selectedId);
-            Status = $"{Terminals.Count} registered tablet(s). Monitoring remains available in View Mode.";
+            Status = $"{Terminals.Count} registered tablet(s). Monitoring is available to every signed-in user.";
         }
         catch (Exception exception)
         {

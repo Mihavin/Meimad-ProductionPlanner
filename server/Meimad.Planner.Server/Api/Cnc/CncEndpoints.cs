@@ -4,6 +4,7 @@ using System.Text.Json;
 using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.Cnc;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Cnc;
 
@@ -35,7 +36,7 @@ internal static class CncEndpoints
         string machineId, CncConnectionUpdateRequest request, HttpContext context,
         CncConnectionService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var accessError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var accessError))
             return accessError!;
         try
         {
@@ -82,7 +83,7 @@ internal static class CncEndpoints
     private static async Task<IResult> ReconnectAsync(
         string machineId, HttpContext context, CncConnectionService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out _, out var accessError)) return accessError!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out _, out var accessError)) return accessError!;
         try
         {
             await service.ReconnectAsync(machineId, token);

@@ -367,7 +367,7 @@ public sealed class PlanningDeletionApiTests
         var path = Path.Combine(Path.GetTempPath(), "MeimadPlanner.Delete.Tests", Guid.NewGuid().ToString("N"));
         var app = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5099", $"--Database:Path={Path.Combine(path, "test.db")}"],
-            host => host.UseTestServer());
+            host => host.UseSignedInTestServer());
         try { await app.StartAsync(); using var client = app.GetTestClient(); await test(app, client); await app.StopAsync(); }
         finally { await app.DisposeAsync(); SqliteConnection.ClearAllPools(); if (Directory.Exists(path)) Directory.Delete(path, true); }
     }

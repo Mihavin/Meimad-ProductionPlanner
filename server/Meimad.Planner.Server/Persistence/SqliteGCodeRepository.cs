@@ -1,4 +1,5 @@
 using System.Globalization;
+using Meimad.Planner.Server.Application.Concurrency;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Domain.GCode;
@@ -63,6 +64,12 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         var postprocessorName = await ReadActivePostprocessorNameAsync(
             connection, transaction, command.PostprocessorId, cancellationToken)
             ?? throw new GCodePostprocessorNotFoundException(command.PostprocessorId);
+        if (command.ExpectedLatestReleaseId is { } expectedLatest)
+        {
+            await EnsureNoNewerReleaseAsync(
+                connection, transaction, command.ManufacturingProgramId, command.CaseOperationId,
+                expectedLatest.Trim(), cancellationToken);
+        }
         var active = await ReadActiveProcessAsync(
             connection, transaction, programId, command.CaseOperationId, cancellationToken);
         var readinessBefore = await ReadAffectedReadinessAsync(
@@ -761,6 +768,49 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         }
     }
 
+    /// <summary>
+    /// Two programmers releasing NC for the same Operation: the second release must not silently
+    /// replace a program its author never saw. The client sends the newest release it showed.
+    /// </summary>
+    private static async Task EnsureNoNewerReleaseAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string? manufacturingProgramId,
+        string caseOperationId,
+        string expectedLatestReleaseId,
+        CancellationToken token)
+    {
+        // An Operation's own release is checked against every release the Operation shows; a combined
+        // Manufacturing Program's release against the releases of that program.
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT release.id, release.original_file_name, release.released_by, release.released_at,
+                   revision.revision_number, release.post_specific_revision,
+                   COALESCE(postprocessor.name, release.postprocessor_id)
+            FROM gcode_releases release
+            JOIN process_revisions revision ON revision.id = release.process_revision_id
+            LEFT JOIN postprocessors postprocessor ON postprocessor.id = release.postprocessor_id
+            WHERE ($programId IS NULL AND release.case_operation_id = $operationId)
+               OR revision.manufacturing_program_id = $programId
+            ORDER BY release.released_at DESC, release.rowid DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$programId", (object?)manufacturingProgramId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$operationId", caseOperationId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return;
+        if (string.Equals(reader.GetString(0), expectedLatestReleaseId, StringComparison.Ordinal)) return;
+        throw new EditConflictException(
+            "NC program",
+            $"Another NC program was released for this Operation after you opened it: {reader.GetString(1)} " +
+            $"(process revision {reader.GetInt32(4)}, {reader.GetString(6)} revision {reader.GetInt32(5)}). Your file was not released.",
+            "Open the Operation again to see the new release and compare it with your file. Release yours only if it " +
+            "should replace theirs; it then becomes the next revision.",
+            reader.GetString(2),
+            DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+    }
+
     private static async Task InsertReleaseAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1056,24 +1106,9 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         EditAuthority authority,
         CancellationToken token)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(
-            connection, transaction, DateTimeOffset.UtcNow, token);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token) || reader.IsDBNull(0))
-        {
-            throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        }
-
-        if (!string.Equals(reader.GetString(0), authority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(2) != authority.Generation)
-        {
-            throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
-        }
-
-        return reader.IsDBNull(1) ? authority.ClientId : reader.GetString(1);
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        await Task.CompletedTask;
+        return SignedInActor.Require(authority);
     }
 
     private static GCodeRelease ReadRelease(SqliteDataReader reader) => new(

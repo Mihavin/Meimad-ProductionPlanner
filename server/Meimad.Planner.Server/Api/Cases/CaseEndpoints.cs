@@ -6,13 +6,12 @@ using Meimad.Planner.Server.Domain.Cases;
 using Meimad.Planner.Server.Domain.CaseOperations;
 using Microsoft.Extensions.Primitives;
 using Meimad.Planner.Server.Application.Kitaron;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Cases;
 
 internal static class CaseEndpoints
 {
-    private const string ClientIdHeader = "X-Meimad-Client-Id";
-    private const string EditGenerationHeader = "X-Meimad-Edit-Generation";
 
     internal static void MapCaseEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -614,31 +613,8 @@ internal static class CaseEndpoints
     private static bool TryReadEditAuthority(
         HttpContext httpContext,
         out EditAuthority? editAuthority,
-        out IResult? error)
-    {
-        editAuthority = null;
-        error = null;
-        var clientId = httpContext.Request.Headers[ClientIdHeader].ToString();
-        var generationValue = httpContext.Request.Headers[EditGenerationHeader].ToString();
-        if (string.IsNullOrWhiteSpace(clientId)
-            || !long.TryParse(
-                generationValue,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var generation)
-            || generation < 0)
-        {
-            error = Error(
-                StatusCodes.Status428PreconditionRequired,
-                "precondition_required",
-                $"{ClientIdHeader} and a valid {EditGenerationHeader} are required.",
-                httpContext);
-            return false;
-        }
-
-        editAuthority = new EditAuthority(clientId, generation);
-        return true;
-    }
+        out IResult? error) =>
+        PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.EditCases, out editAuthority, out error);
 
     private static bool TryReadExpectedVersion(
         StringValues ifMatch,

@@ -1,4 +1,5 @@
 using Meimad.Planner.Server.Application.ClientPortal;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ClientPortal;
 
@@ -39,6 +40,7 @@ internal static class ClientPortalCustomerEndpoints
         ClientPortalCustomerService service,
         CancellationToken token)
     {
+        if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var denied)) return denied!;
         try
         {
             var value = await service.CreateAsync(request.CustomerId, request.Customer, token);
@@ -56,6 +58,7 @@ internal static class ClientPortalCustomerEndpoints
         ClientPortalCustomerService service,
         CancellationToken token)
     {
+        if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var denied)) return denied!;
         try
         {
             var value = await service.RenameAsync(customerId, request.Customer, token);
@@ -65,8 +68,11 @@ internal static class ClientPortalCustomerEndpoints
     }
 
     private static async Task<IResult> DeleteAsync(
-        string customerId, HttpContext context, ClientPortalCustomerService service, CancellationToken token) =>
-        await service.DeleteAsync(customerId, token) ? Results.NoContent() : NotFound(context);
+        string customerId, HttpContext context, ClientPortalCustomerService service, CancellationToken token)
+    {
+        if (!PlanningHttpSupport.TryAuthorize(context, Permissions.ManageSetup, out _, out var denied)) return denied!;
+        return await service.DeleteAsync(customerId, token) ? Results.NoContent() : NotFound(context);
+    }
 
     private static bool TryMap(Exception exception, HttpContext context, out IResult? result)
     {

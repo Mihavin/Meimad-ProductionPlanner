@@ -7,7 +7,7 @@ namespace Meimad.Planner.Server.Tests.Cnc;
 
 public sealed class NcDialectVerificationSettingsTests
 {
-    private static readonly EditAuthority Authority = new("verification-client", 1);
+    private static readonly EditAuthority Authority = new("verification-client", 1, "verification-user");
 
     [Fact]
     public async Task Variable_ranges_follow_the_Machine_NC_dialect()

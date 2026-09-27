@@ -185,7 +185,8 @@ internal sealed record PlanningBoardMachineResponse(
     string? AxisType,
     IReadOnlyList<string> Capabilities,
     bool IsActive,
-    IReadOnlyList<PlanningBoardOperationResponse> Backlog)
+    IReadOnlyList<PlanningBoardOperationResponse> Backlog,
+    string BacklogStamp)
 {
     internal static PlanningBoardMachineResponse FromApplication(
         PlanningBoardMachine machine) => new(
@@ -196,5 +197,6 @@ internal sealed record PlanningBoardMachineResponse(
         machine.AxisType,
         machine.Capabilities,
         machine.IsActive,
-        machine.Backlog.Select(PlanningBoardOperationResponse.FromApplication).ToArray());
+        machine.Backlog.Select(PlanningBoardOperationResponse.FromApplication).ToArray(),
+        machine.BacklogStamp);
 }

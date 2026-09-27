@@ -2,6 +2,7 @@ using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Domain.Cnc;
 using Meimad.Planner.Server.Domain.Haas;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Haas;
 
@@ -33,7 +34,7 @@ internal static class HaasEndpoints
         string machineId, HaasConnectionUpdateRequest request, HttpContext context,
         HaasIntegrationService service, CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var accessError))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var accessError))
             return accessError!;
         try
         {

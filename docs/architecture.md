@@ -38,7 +38,7 @@ The repository contains an implemented .NET 10 Server host and server-owned SQLi
 
 Production Batch cancellation is a server-owned immediate transaction, not a client-side status edit. It terminates the selected Batch execution graph, zeroes mutable count projections, closes active execution intervals, releases reservations/assignments, compacts affected backlogs, recomputes linked demand, and appends a structured audit event. Append-only CNC cycle/workflow evidence is deliberately retained. The transaction rejects a Production Run shared with another Batch so the multi-output atomicity boundary cannot be broken by a single-Batch command.
 
-The API-only Windows client has a compact connection/Edit Mode header, Setup page, User Terminals page, and QC Queue. The Planning Board and Timeline remain Server-authoritative, manual planning surfaces; TV is read-only. E-Ink package/planning access remains read-only, with the separately scoped `SEND_TO_QC` command outside Edit Mode. Schema v54 implements idempotent sends; schema v55 scopes retry identity to one inspection attempt so `QC_FAIL` can return to setup and permit a fresh send. The read-only QC Queue is available without Edit Mode, while PASS/FAIL require the active editor and append user-attributed workflow events. The ESP32 prototype compiles a bounded status client and guarded send action, but physical interaction and shop-floor validation remain incomplete.
+The API-only Windows client has a compact connection/signed-in-user header, Setup page, User Terminals page, and QC Queue. The Planning Board and Timeline remain Server-authoritative, manual planning surfaces; TV is read-only. E-Ink package/planning access remains read-only, with the separately scoped `SEND_TO_QC` command outside Edit Mode. Schema v54 implements idempotent sends; schema v55 scopes retry identity to one inspection attempt so `QC_FAIL` can return to setup and permit a fresh send. The read-only QC Queue is available without Edit Mode, while PASS/FAIL require the active editor and append user-attributed workflow events. The ESP32 prototype compiles a bounded status client and guarded send action, but physical interaction and shop-floor validation remain incomplete.
 
 The Case workspace contains a client-local STEP presentation boundary. `OCCSharp` dynamically invokes OpenCascade to read the selected B-rep and tessellate its faces under explicit file/vertex/triangle limits; WPF `Viewport3D` owns depth-buffered display and PNG capture. The same unscaled mesh, center-of-gravity target, orthographic camera width, and uniform screen projection serve three presentation-only modes: Shaded, Visible edges (boundary/crease/silhouette overlay), and Wireframe (unique tessellation edges with faces hidden). Initial load fits the camera exactly once; orbit and resize rerender without recalculating the fit, wheel zoom changes only the stored camera width, and explicit Fit recalculates it. The 2D edge/bounding overlays project the original mesh coordinates through that same camera basis and center, preventing the former rotated-bounds centering offset. Shaded is the load default, with edges and bounding box off until requested. No STEP bytes, mesh, display mode, camera state, or measurement is sent to the Server or stored in SQLite. Fit uses only tessellated body vertices, excluding STEP coordinate-system entities. Closed consistently oriented meshes use a signed-volume center of gravity as their orbit target; open/non-solid geometry falls back to its geometry-vertex centroid. If OpenCascade cannot produce faces, the UI labels and displays the bounded legacy edge/point fallback rather than fabricating a solid.
 
@@ -89,7 +89,7 @@ flowchart LR
 
     subgraph Server[Meimad Planner Server]
         API[REST / Local API]
-        Edit[Single Edit Mode]
+        Edit[Accounts, Permissions and Conflict Checks]
         App[Application Orchestration]
         Domain[Domain / Business Rules]
         Timeline[Timeline / Time Calculation Engine]
@@ -173,11 +173,11 @@ The pure engine currently returns deterministic blocking input/calculation confl
 
 Conflicts are projections, not silent repair commands. The engine may cause a structurally invalid command to be rejected according to the approved policy, but it must never mutate a valid manual plan to remove a warning.
 
-### 4.7 Single Edit Mode
+### 4.7 Accounts, permissions and conflict checks
 
-Single Edit Mode is a Server-owned coordination component. Its implemented caller states are Viewer, Editor, and RequestingEdit. It guarantees at most one active Windows editor generation and one pending transfer request while other Windows clients remain viewers. A competing requester receives `edit_request_pending` rather than being placed in an implicit queue. TV and E-Ink clients are architecturally prohibited from requesting or holding edit authority. TabletID is not accepted as Windows Edit Mode authority.
+Owner decision 2026-09-27 (schema v86) replaces Single Edit Mode. `SignInMiddleware` resolves the bearer session of every `/api/` call to a signed-in account (401 otherwise, 403 while a temporary password is unchanged); device, TV, installer and local Kitaron-setup routes keep their own scopes. Each endpoint checks the permission of its area through `PlanningHttpSupport.TryAuthorize*`; the account's user types grant permissions, the Administrator type grants all. Repositories take the actor from the account (`SignedInActor`).
 
-Every implemented planning mutation validates the active client ID and generation in the same immediate SQLite transaction as the write. Release transfers immediately, Reject retains the current holder and returns the requester to Viewer, no response transfers automatically after the configured timeout, and voluntary release transfers a pending requester or clears the token when none is pending. The default timeout remains 30 seconds; `EditMode:TransferTimeoutSeconds` accepts 1–3600 seconds. A server timeout worker materializes expired transfers, and all status/command/write transactions also process an expired request before checking authority, so an old generation cannot write after its deadline. Authentication, disconnect/crash policy, notifications, and audit remain TBD.
+Users work in parallel. Each change carries what it was based on (record version, Machine `backlogStamp`, the newest G-code release, the QC state), checked in the same immediate SQLite transaction as the write. `ConflictResponseMiddleware` turns every refusal based on stale data into one explained shape — what changed, who changed it, when, and what to do — using `EditConflictException` or, for endpoint version refusals, the in-memory `ChangeJournal` of recent saves. The Windows client shows it from any screen.
 
 ### 4.8 SQLite persistence and migrations
 
@@ -247,12 +247,12 @@ The implemented `client-windows/` application uses WPF on .NET 10 and establishe
 
 - a validated HTTP/HTTPS Server root setting;
 - a simple local display name and stable client ID stored under Local AppData;
-- a compact main header with a connection indicator/tooltip and one lock/unlock Edit Mode action;
+- a compact main header with a connection indicator/tooltip, the signed-in person, and Sign in/Password…/Sign out;
 - a once-per-session client/Server version-pair check against `GET /api/v1/client-installer`: when the Server's bundled client package is newer, `ClientUpdateWindow` downloads the MSI, verifies its SHA-256, and starts `msiexec` through a detached script that waits for the client to exit and restarts it (`ClientUpdatePolicy`, `ClientInstallerLauncher`); a client newer than the Server's package, or a mismatch without an installer, only raises an attention notice and the client never downgrades itself;
 - a dedicated Setup page for connection Save/Connect/Refresh, Working Calendar management and Setup Calendar selection, Machine management, reusable Machine Type management, Employee/Resource administration, Israeli holidays, report/email settings, and staged legacy Excel preview/mapping/automatic-draft/review/commit;
 - `/health` connectivity/version status;
 - Viewer, Editor, and RequestingEdit presentation;
-- Edit Mode request, voluntary release, transfer approval, and rejection interactions;
+- a sign-in window (first administrator, temporary-password change) and an administrator-only Users page;
 - bounded HTTP timeouts, safe error presentation, and five-second status refresh;
 - a Case Pool with Server-side search, customer, and derived-active filters plus deterministic Part Number, closest-current-Order-delivery, and Customer ordering;
 - Part Number/customer cards and unobstructed preview thumbnails fetched as bytes from the Server preview route, with text reserved for missing-preview/error state;
@@ -417,30 +417,23 @@ sequenceDiagram
 
 The preview token is staging, not authority. Commit does not trust suggestions, and every non-skip selection is explicit. Existing backlog rows keep their positions; imported assignments append in workbook source order. A failed row rolls back the entire approved import.
 
-## 7. Single Edit Mode
+## 7. Parallel editing
 
 ```mermaid
 sequenceDiagram
-    participant R as Requesting Windows Client
-    participant S as Server Edit Coordinator
-    participant H as Current Holder
+    participant A as Planner A
+    participant S as Server
+    participant B as Planner B
 
-    R->>S: Request Edit Mode
-    S-->>H: Transfer request, 30-second countdown
-    alt Holder releases
-        H->>S: Release
-        S-->>R: Token transferred
-    else Holder rejects
-        H->>S: Reject
-        S-->>R: Viewer / rejected outcome
-    else No response by timeout
-        S->>S: Atomic automatic transfer
-        S-->>H: View Mode
-        S-->>R: Token transferred
-    end
+    A->>S: GET planning-board (backlogStamp X)
+    B->>S: GET planning-board (backlogStamp X)
+    A->>S: PUT assignment, expectedBacklogStamp X
+    S-->>A: 200, backlog now Y (recorded: A changed it)
+    B->>S: PUT assignment, expectedBacklogStamp X
+    S-->>B: 409 edit_conflict: changed by A at 10:41, refresh and move again
 ```
 
-The implemented coordinator serializes transitions with immediate SQLite transactions. The token singleton and unique pending-request index preserve one editor and one requester under concurrent acquisition and decision races. Every ownership change increments the generation. The no-response timeout is server-controlled and configurable from 1–3600 seconds, with 30 seconds as the source-compatible default. Multiple-requester queueing is deliberately absent in MVP; a client may retry after the active request finishes. Human identity, heartbeat/disconnect behavior, unsaved client state, notification transport, request cancellation, history retention, and audit remain open decisions.
+Every check runs inside the write transaction, so of two simultaneous changes exactly one succeeds and the other is refused without partial effects. The same pattern protects QC decisions (a decided part), G-code releases (`expectedLatestReleaseId`) and every versioned record (`If-Match` / `expectedVersion`).
 
 ## 8. Read-model flow
 
@@ -506,7 +499,7 @@ Minimum boundaries are:
 
 - Factory-LAN-only service exposure.
 - No direct client database access.
-- Human identity and Edit Mode checked for every planning mutation.
+- The signed-in account and its permission checked for every planning mutation; stale changes refused with an explanation.
 - TV/human authentication remains TBD. Tablet communication is intentionally unauthenticated for MVP; TabletID grants no Windows authority.
 - MVP E-Ink communication intentionally has no tablet authentication. TabletID is an identifier only; MAC may support discovery/mapping; neither is a credential. The accepted trusted-LAN spoofing risk is documented.
 - Implemented E-Ink enable/disable and spare-device reassignment; production administrative authorization/audit remains TBD.

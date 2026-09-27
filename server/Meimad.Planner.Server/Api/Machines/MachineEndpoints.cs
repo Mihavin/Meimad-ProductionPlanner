@@ -5,6 +5,7 @@ using Meimad.Planner.Server.Application.Machines;
 using Meimad.Planner.Server.Application.Postprocessors;
 using Meimad.Planner.Server.Domain.Machines;
 using Microsoft.Extensions.Primitives;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Machines;
 
@@ -27,8 +28,7 @@ internal static class MachineEndpoints
         MachineService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                httpContext,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.ManageSetup,
                 out var authority,
                 out var accessError))
         {
@@ -82,8 +82,7 @@ internal static class MachineEndpoints
         MachineService service,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(
-                httpContext,
+        if (!PlanningHttpSupport.TryAuthorizeEdit(httpContext, Permissions.ManageSetup,
                 out var authority,
                 out var accessError))
         {

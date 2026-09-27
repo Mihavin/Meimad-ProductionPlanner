@@ -47,26 +47,85 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-    Task<EditModeStatus> GetEditModeAsync(
-        string clientId,
-        CancellationToken cancellationToken = default);
+    /// <summary>Sends <paramref name="token"/> as the bearer session on every later request (null: signed out).</summary>
+    void SetSessionToken(string? token)
+    {
+    }
 
-    Task<EditModeStatus> RequestEditAsync(
+    Task<AuthState> GetAuthStateAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<SignInSession> SignInAsync(
+        string userName,
+        string password,
         string clientId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<SignInSession> CreateFirstAdministratorAsync(
+        string userName,
+        string displayName,
+        string password,
+        string clientId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task SignOutAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    Task<SignedInAccount> GetSignedInAccountAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task ChangePasswordAsync(
+        string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<IReadOnlyList<PermissionInfo>> ListPermissionsAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<UserAccountInfo>> ListUsersAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<UserAccountInfo> CreateUserAsync(
+        string userName,
+        string displayName,
+        string password,
+        bool isActive,
+        IReadOnlyList<string> userTypeIds,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<UserAccountInfo> UpdateUserAsync(
         string userId,
-        CancellationToken cancellationToken = default);
+        string displayName,
+        bool isActive,
+        IReadOnlyList<string> userTypeIds,
+        int expectedVersion,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-    Task<EditModeStatus> ReleaseEditAsync(
-        string clientId,
-        long generation,
-        CancellationToken cancellationToken = default);
+    Task ResetUserPasswordAsync(
+        string userId,
+        string password,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-    Task<EditModeStatus> DecideTransferAsync(
-        string clientId,
-        long generation,
-        string requestId,
-        bool release,
-        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<UserTypeInfo>> ListUserTypesAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<UserTypeInfo> CreateUserTypeAsync(
+        string name,
+        string? description,
+        IReadOnlyList<string> permissions,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<UserTypeInfo> UpdateUserTypeAsync(
+        string userTypeId,
+        string name,
+        string? description,
+        IReadOnlyList<string> permissions,
+        int expectedVersion,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task DeleteUserTypeAsync(
+        string userTypeId,
+        int expectedVersion,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
     Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
         CaseQuery query,
@@ -841,6 +900,21 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>A move that also proves the target Machine order the planner saw.</summary>
+    Task AssignOrMoveOperationAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        string? expectedBacklogStamp,
+        string clientId,
+        long editGeneration,
+        MachineAssignmentCompatibilityOverride? compatibilityOverride,
+        CancellationToken cancellationToken = default) =>
+        compatibilityOverride is null
+            ? AssignOrMoveOperationAsync(batchOperationId, machineId, backlogPosition, clientId, editGeneration, cancellationToken)
+            : AssignOrMoveOperationAsync(batchOperationId, machineId, backlogPosition, clientId, editGeneration,
+                compatibilityOverride, cancellationToken);
+
     Task UnassignOperationAsync(
         string batchOperationId,
         string clientId,
@@ -1028,59 +1102,146 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         }
     }
 
-    public async Task<EditModeStatus> GetEditModeAsync(
+    public void SetSessionToken(string? token)
+    {
+        var value = string.IsNullOrEmpty(token)
+            ? null
+            : new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        httpClient.DefaultRequestHeaders.Authorization = value;
+        importHttpClient.DefaultRequestHeaders.Authorization = value;
+    }
+
+    public async Task<AuthState> GetAuthStateAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/auth/state", cancellationToken);
+        return await ReadSuccessAsync<AuthState>(response, cancellationToken);
+    }
+
+    public async Task<SignInSession> SignInAsync(
+        string userName,
+        string password,
         string clientId,
         CancellationToken cancellationToken = default)
     {
-        using var request = CreateRequest(HttpMethod.Get, "api/v1/edit-mode", clientId);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return Map(await ReadSuccessAsync<EditModeDto>(response, cancellationToken));
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/auth/sign-in", new { userName, password, clientId }, cancellationToken);
+        return await ReadSuccessAsync<SignInSession>(response, cancellationToken);
     }
 
-    public async Task<EditModeStatus> RequestEditAsync(
+    public async Task<SignInSession> CreateFirstAdministratorAsync(
+        string userName,
+        string displayName,
+        string password,
         string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/auth/first-administrator", new { userName, displayName, password, clientId }, cancellationToken);
+        return await ReadSuccessAsync<SignInSession>(response, cancellationToken);
+    }
+
+    public async Task SignOutAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsync("api/v1/auth/sign-out", null, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
+    public async Task<SignedInAccount> GetSignedInAccountAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/auth/me", cancellationToken);
+        return await ReadSuccessAsync<SignedInAccount>(response, cancellationToken);
+    }
+
+    public async Task ChangePasswordAsync(
+        string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/auth/password", new { currentPassword, newPassword }, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<PermissionInfo>> ListPermissionsAsync(CancellationToken cancellationToken = default) =>
+        ReadListAsync<PermissionInfo>("api/v1/permissions", cancellationToken);
+
+    public Task<IReadOnlyList<UserAccountInfo>> ListUsersAsync(CancellationToken cancellationToken = default) =>
+        ReadListAsync<UserAccountInfo>("api/v1/users", cancellationToken);
+
+    public async Task<UserAccountInfo> CreateUserAsync(
+        string userName,
+        string displayName,
+        string password,
+        bool isActive,
+        IReadOnlyList<string> userTypeIds,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/users", new { userName, displayName, password, isActive, userTypeIds }, cancellationToken);
+        return await ReadSuccessAsync<UserAccountInfo>(response, cancellationToken);
+    }
+
+    public async Task<UserAccountInfo> UpdateUserAsync(
         string userId,
+        string displayName,
+        bool isActive,
+        IReadOnlyList<string> userTypeIds,
+        int expectedVersion,
         CancellationToken cancellationToken = default)
     {
-        using var request = CreateRequest(HttpMethod.Post, "api/v1/edit-mode/requests", clientId);
-        request.Headers.Add(UserIdHeader, userId);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return Map(await ReadSuccessAsync<EditModeDto>(response, cancellationToken));
+        using var response = await httpClient.PutAsJsonAsync(
+            $"api/v1/users/{Uri.EscapeDataString(userId)}",
+            new { displayName, isActive, userTypeIds, expectedVersion }, cancellationToken);
+        return await ReadSuccessAsync<UserAccountInfo>(response, cancellationToken);
     }
 
-    public async Task<EditModeStatus> ReleaseEditAsync(
-        string clientId,
-        long generation,
+    public async Task ResetUserPasswordAsync(
+        string userId,
+        string password,
         CancellationToken cancellationToken = default)
     {
-        using var request = CreateRequest(HttpMethod.Post, "api/v1/edit-mode/release", clientId);
-        request.Headers.Add(
-            EditGenerationHeader,
-            generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return Map(await ReadSuccessAsync<EditModeDto>(response, cancellationToken));
+        using var response = await httpClient.PostAsJsonAsync(
+            $"api/v1/users/{Uri.EscapeDataString(userId)}/password", new { password }, cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
 
-    public async Task<EditModeStatus> DecideTransferAsync(
-        string clientId,
-        long generation,
-        string requestId,
-        bool release,
+    public Task<IReadOnlyList<UserTypeInfo>> ListUserTypesAsync(CancellationToken cancellationToken = default) =>
+        ReadListAsync<UserTypeInfo>("api/v1/user-types", cancellationToken);
+
+    public async Task<UserTypeInfo> CreateUserTypeAsync(
+        string name,
+        string? description,
+        IReadOnlyList<string> permissions,
         CancellationToken cancellationToken = default)
     {
-        using var request = CreateRequest(
-            HttpMethod.Post,
-            $"api/v1/edit-mode/requests/{Uri.EscapeDataString(requestId)}/decision",
-            clientId);
-        request.Headers.Add(
-            EditGenerationHeader,
-            generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        request.Content = JsonContent.Create(new
-        {
-            decision = release ? "release" : "reject"
-        });
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        return Map(await ReadSuccessAsync<EditModeDto>(response, cancellationToken));
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/user-types", new { name, description, permissions }, cancellationToken);
+        return await ReadSuccessAsync<UserTypeInfo>(response, cancellationToken);
+    }
+
+    public async Task<UserTypeInfo> UpdateUserTypeAsync(
+        string userTypeId,
+        string name,
+        string? description,
+        IReadOnlyList<string> permissions,
+        int expectedVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PutAsJsonAsync(
+            $"api/v1/user-types/{Uri.EscapeDataString(userTypeId)}",
+            new { name, description, permissions, expectedVersion }, cancellationToken);
+        return await ReadSuccessAsync<UserTypeInfo>(response, cancellationToken);
+    }
+
+    public async Task DeleteUserTypeAsync(
+        string userTypeId,
+        int expectedVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.DeleteAsync(
+            $"api/v1/user-types/{Uri.EscapeDataString(userTypeId)}?expectedVersion={expectedVersion.ToString(CultureInfo.InvariantCulture)}",
+            cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
     }
 
     public async Task<IReadOnlyList<PlannerCase>> ListCasesAsync(
@@ -1345,6 +1506,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         content.Add(new StringContent(create.ConfirmNewProcessRevision.ToString()), "confirmNewProcessRevision");
         content.Add(new StringContent(create.ReuseActiveToolTable.ToString()), "reuseActiveToolTable");
         content.Add(new StringContent(create.ConfirmToolTable.ToString()), "confirmToolTable");
+        if (create.ExpectedLatestReleaseId is not null)
+        {
+            content.Add(new StringContent(create.ExpectedLatestReleaseId), "expectedLatestReleaseId");
+        }
         await using var gcodeStream = File.OpenRead(create.GCodeFilePath);
         using var gcodeContent = new StreamContent(gcodeStream);
         content.Add(gcodeContent, "gcodeFile", Path.GetFileName(create.GCodeFilePath));
@@ -3082,6 +3247,25 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             compatibilityOverride,
             cancellationToken);
 
+    public Task AssignOrMoveOperationAsync(
+        string batchOperationId,
+        string machineId,
+        int backlogPosition,
+        string? expectedBacklogStamp,
+        string clientId,
+        long editGeneration,
+        MachineAssignmentCompatibilityOverride? compatibilityOverride,
+        CancellationToken cancellationToken = default) =>
+        AssignOrMoveOperationCoreAsync(
+            batchOperationId,
+            machineId,
+            backlogPosition,
+            clientId,
+            editGeneration,
+            compatibilityOverride,
+            cancellationToken,
+            expectedBacklogStamp);
+
     private async Task AssignOrMoveOperationCoreAsync(
         string batchOperationId,
         string machineId,
@@ -3089,7 +3273,8 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         string clientId,
         long editGeneration,
         MachineAssignmentCompatibilityOverride? compatibilityOverride,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedBacklogStamp = null)
     {
         using var request = CreateRequest(
             HttpMethod.Put,
@@ -3102,7 +3287,8 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         {
             machineId,
             backlogPosition,
-            compatibilityOverride
+            compatibilityOverride,
+            expectedBacklogStamp = string.IsNullOrEmpty(expectedBacklogStamp) ? null : expectedBacklogStamp
         });
         using var response = await httpClient.SendAsync(request, cancellationToken);
         await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
@@ -3430,12 +3616,25 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             // The safe fallback below avoids showing raw server content.
         }
 
-        throw new PlannerApiException(
+        var conflict = error?.Error?.Conflict is { } found
+            ? new PlannerConflict(
+                string.IsNullOrWhiteSpace(found.Resource) ? "item" : found.Resource,
+                found.ChangedBy,
+                found.ChangedAt,
+                found.Advice ?? "Refresh to load the current data, then make your change again.")
+            : null;
+        var exception = new PlannerApiException(
             response.StatusCode,
             error?.Error?.Code ?? "server_error",
             error?.Error?.Message ?? $"Server returned HTTP {(int)response.StatusCode}.",
             DetailString(error?.Error?.Details, "requiredMachineType"),
-            DetailString(error?.Error?.Details, "selectedMachineType"));
+            DetailString(error?.Error?.Details, "selectedMachineType"),
+            conflict);
+        if (conflict is not null)
+        {
+            PlannerApiException.ReportConflict(exception);
+        }
+        throw exception;
     }
 
     private static string? DetailString(IReadOnlyList<JsonElement>? details, string propertyName)
@@ -3460,41 +3659,6 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         response.Headers.ETag?.ToString()
         ?? throw new PlannerProtocolException("Server response is missing the resource ETag.");
 
-    private static EditModeStatus Map(EditModeDto dto)
-    {
-        var state = dto.State switch
-        {
-            "viewer" => ClientEditState.Viewer,
-            "editor" => ClientEditState.Editor,
-            "requestingEdit" => ClientEditState.RequestingEdit,
-            _ => throw new PlannerProtocolException(
-                $"Server returned unknown Edit Mode state '{dto.State ?? "<null>"}'.")
-        };
-        var holder = dto.Holder is null
-            ? null
-            : new EditModeHolder(
-                Required(dto.Holder.ClientId, "holder client ID"),
-                Required(dto.Holder.UserId, "holder user ID"),
-                dto.Holder.Generation,
-                dto.Holder.AcquiredAt);
-        var pending = dto.PendingRequest is null
-            ? null
-            : new EditTransferRequest(
-                Required(dto.PendingRequest.RequestId, "request ID"),
-                Required(dto.PendingRequest.RequesterClientId, "requester client ID"),
-                Required(dto.PendingRequest.RequesterUserId, "requester user ID"),
-                Required(dto.PendingRequest.Status, "request status"),
-                dto.PendingRequest.RequestedAt,
-                dto.PendingRequest.DecisionDeadline);
-        return new EditModeStatus(
-            state,
-            dto.Generation,
-            holder,
-            pending,
-            dto.ServerTime,
-            dto.TransferTimeoutSeconds);
-    }
-
     private static string Required(string? value, string field)
     {
         return string.IsNullOrWhiteSpace(value)
@@ -3516,31 +3680,12 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         long? ByteLength,
         string? Sha256);
 
-    private sealed record EditModeDto(
-        string? State,
-        long Generation,
-        EditModeHolderDto? Holder,
-        EditTransferRequestDto? PendingRequest,
-        DateTimeOffset ServerTime,
-        int TransferTimeoutSeconds);
-
-    private sealed record EditModeHolderDto(
-        string? ClientId,
-        string? UserId,
-        long Generation,
-        DateTimeOffset AcquiredAt);
-
-    private sealed record EditTransferRequestDto(
-        string? RequestId,
-        string? RequesterClientId,
-        string? RequesterUserId,
-        string? Status,
-        DateTimeOffset RequestedAt,
-        DateTimeOffset DecisionDeadline);
-
     private sealed record ErrorEnvelope(ErrorBody? Error);
 
-    private sealed record ErrorBody(string? Code, string? Message, IReadOnlyList<JsonElement>? Details);
+    private sealed record ErrorBody(
+        string? Code, string? Message, IReadOnlyList<JsonElement>? Details, ConflictBody? Conflict = null);
+
+    private sealed record ConflictBody(string? Resource, string? ChangedBy, DateTimeOffset? ChangedAt, string? Advice);
 
     private sealed record ListResponse<T>(IReadOnlyList<T> Items, string? NextCursor);
 }

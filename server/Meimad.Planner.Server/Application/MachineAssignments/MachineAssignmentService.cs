@@ -36,7 +36,8 @@ internal sealed class MachineAssignmentService
         int backlogPosition,
         MachineAssignmentOverrideConfirmation? overrideConfirmation,
         EditAuthority editAuthority,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? expectedBacklogStamp = null)
     {
         if (string.IsNullOrWhiteSpace(batchOperationId))
         {
@@ -101,6 +102,7 @@ internal sealed class MachineAssignmentService
             overrideConfirmation,
             timeProvider.GetUtcNow(),
             editAuthority,
+            string.IsNullOrWhiteSpace(expectedBacklogStamp) ? null : expectedBacklogStamp.Trim(),
             cancellationToken);
     }
 

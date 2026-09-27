@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.Accounts;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -37,10 +38,11 @@ public sealed class ToolPreparationApiTests
         Assert.False(rows[2].GetProperty("isRequired").GetBoolean());
         Assert.Equal(JsonValueKind.Null, rows[0].GetProperty("measuredLength").ValueKind);
 
-        // Saving needs the client identity headers, like Production Package creation.
+        // Saving needs a user who may prepare tools.
         using var anonymous = new HttpClient(server.Application.GetTestServer().CreateHandler()) { BaseAddress = client.BaseAddress };
+        using var librarian = anonymous.SignedInWithOnly(Permissions.EditToolLibrary);
         using var unidentified = await anonymous.PutAsJsonAsync(Route, Update(0, MeasuredTools()));
-        Assert.Equal(HttpStatusCode.PreconditionRequired, unidentified.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, unidentified.StatusCode);
 
         using var wrongVersion = await client.PutAsJsonAsync(Route, Update(1, MeasuredTools()));
         Assert.Equal(HttpStatusCode.Conflict, wrongVersion.StatusCode);
@@ -311,7 +313,7 @@ public sealed class ToolPreparationApiTests
             var application = ServerApplication.Build(
                 ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
                  $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={Path.Combine(root, "packages")}"],
-                webHost => webHost.UseTestServer());
+                webHost => webHost.UseSignedInTestServer());
             await application.StartAsync();
             await SeedAsync(application.Services, releaseRoot, verificationEnabled, confirmOffsets);
             var client = application.GetTestClient();

@@ -49,7 +49,7 @@
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
           <TextBlock Text="Selected terminal" FontSize="18" FontWeight="SemiBold" />
-          <TextBlock Text="Monitoring is read-only and remains available without Edit Mode."
+          <TextBlock Text="Monitoring is read-only and available to every signed-in user."
                      TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
                      Margin="0,6,0,12" />
 
@@ -74,7 +74,7 @@
 
           <Separator Margin="0,14" />
           <TextBlock Text="Terminal administration" FontSize="18" FontWeight="SemiBold" />
-          <TextBlock Text="Registration and Machine assignment require the active Edit Mode generation. TabletID is an identifier, not a credential."
+          <TextBlock Text="Registration and Machine assignment need the Setup permission. TabletID is an identifier, not a credential."
                      TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
                      Margin="0,4,0,10" />
           <StackPanel IsEnabled="{Binding IsEditor}">

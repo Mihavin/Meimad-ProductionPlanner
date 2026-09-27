@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Application.Deletion;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Kitaron;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Deletion;
 
@@ -8,16 +9,16 @@ internal static class PlanningDeletionEndpoints
 {
     internal static void MapPlanningDeletionEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapDelete("/api/v1/cases/{caseId}", (string caseId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, a => s.DeleteCaseAsync(caseId, a, t)));
-        endpoints.MapDelete("/api/v1/cases/{caseId}/operations/{operationId}", (string caseId, string operationId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, a => s.DeleteCaseOperationAsync(caseId, operationId, a, t)));
-        endpoints.MapDelete("/api/v1/orders/{orderId}", (string orderId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, a => s.DeleteOrderAsync(orderId, a, t)));
-        endpoints.MapDelete("/api/v1/batches/{batchId}", (string batchId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, a => s.DeleteBatchAsync(batchId, a, t)));
-        endpoints.MapDelete("/api/v1/machines/{machineId}", (string machineId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, a => s.DeleteMachineAsync(machineId, a, t)));
+        endpoints.MapDelete("/api/v1/cases/{caseId}", (string caseId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, Permissions.EditCases, a => s.DeleteCaseAsync(caseId, a, t)));
+        endpoints.MapDelete("/api/v1/cases/{caseId}/operations/{operationId}", (string caseId, string operationId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, Permissions.EditCases, a => s.DeleteCaseOperationAsync(caseId, operationId, a, t)));
+        endpoints.MapDelete("/api/v1/orders/{orderId}", (string orderId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, Permissions.ManageWorkOrders, a => s.DeleteOrderAsync(orderId, a, t)));
+        endpoints.MapDelete("/api/v1/batches/{batchId}", (string batchId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, Permissions.ManageWorkOrders, a => s.DeleteBatchAsync(batchId, a, t)));
+        endpoints.MapDelete("/api/v1/machines/{machineId}", (string machineId, HttpContext c, PlanningDeletionService s, CancellationToken t) => DeleteAsync(c, Permissions.ManageSetup, a => s.DeleteMachineAsync(machineId, a, t)));
     }
 
-    private static async Task<IResult> DeleteAsync(HttpContext context, Func<EditAuthority, Task<bool>> delete)
+    private static async Task<IResult> DeleteAsync(HttpContext context, string permission, Func<EditAuthority, Task<bool>> delete)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, permission, out var authority, out var error)) return error!;
         try
         {
             return await delete(authority!)

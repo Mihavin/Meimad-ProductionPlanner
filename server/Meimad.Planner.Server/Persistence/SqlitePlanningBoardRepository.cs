@@ -1,3 +1,4 @@
+using Meimad.Planner.Server.Application.MachineAssignments;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.PlanningBoard;
 using Meimad.Planner.Server.Configuration;
@@ -28,6 +29,7 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         var machines = await ReadMachinesAsync(connection, transaction, cancellationToken);
         var operations = await ReadOperationsAsync(
             connection, transaction, setupEstimation, cancellationToken);
+        var stamps = await ReadBacklogStampsAsync(connection, transaction, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         var byMachine = operations
@@ -41,7 +43,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 StringComparer.Ordinal);
         var projectedMachines = machines.Select(machine => machine with
         {
-            Backlog = byMachine.GetValueOrDefault(machine.MachineId, [])
+            Backlog = byMachine.GetValueOrDefault(machine.MachineId, []),
+            BacklogStamp = stamps.GetValueOrDefault(machine.MachineId) ?? MachineBacklogStamp.Of([])
         }).ToArray();
         // ReadOperationsAsync computes Latest Start over each Work Order's full route, so the pool
         // rule is applied only after it.
@@ -54,6 +57,30 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
             .ToArray();
 
         return new PlanningBoardSnapshot(DateTimeOffset.UtcNow, pool, projectedMachines);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, string>> ReadBacklogStampsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT machine_id, id
+            FROM machine_assignments
+            WHERE released_at IS NULL
+            ORDER BY machine_id, backlog_position;
+            """;
+        var ids = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var machineId = reader.GetString(0);
+            if (!ids.TryGetValue(machineId, out var list)) ids[machineId] = list = [];
+            list.Add(reader.GetString(1));
+        }
+        return ids.ToDictionary(pair => pair.Key, pair => MachineBacklogStamp.Of(pair.Value), StringComparer.Ordinal);
     }
 
     private static async Task<IReadOnlyList<PlanningBoardMachine>> ReadMachinesAsync(

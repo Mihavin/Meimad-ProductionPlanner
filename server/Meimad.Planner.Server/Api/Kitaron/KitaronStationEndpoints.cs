@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Kitaron;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.Kitaron;
 
@@ -28,8 +29,8 @@ internal static class KitaronStationEndpoints
         KitaronSyncService syncService,
         CancellationToken cancellationToken)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error)) return error!;
-        var userId = context.Request.Headers["X-Meimad-User-Id"].ToString().Trim();
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup, out var authority, out var error)) return error!;
+        var userId = authority!.UserId ?? string.Empty;
         try
         {
             var value = await service.DecideAsync(

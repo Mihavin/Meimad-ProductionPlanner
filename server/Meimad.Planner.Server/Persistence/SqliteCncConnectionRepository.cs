@@ -408,14 +408,9 @@ internal sealed class SqliteCncConnectionRepository(SqliteDatabase database) : I
         SqliteConnection connection, SqliteTransaction transaction,
         EditAuthority authority, CancellationToken token)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(connection, transaction, DateTimeOffset.UtcNow, token);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token) || reader.IsDBNull(0)
-            || reader.GetString(0) != authority.ClientId || reader.GetInt64(1) != authority.Generation)
-            throw new EditModeMutationException("edit_generation_stale", "The active edit authority is no longer valid.");
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(authority);
+        await Task.CompletedTask;
     }
 
     private const string ConnectionSelect = """

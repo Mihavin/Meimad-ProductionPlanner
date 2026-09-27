@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.ToolPreparations;
 using Meimad.Planner.Server.Domain.ToolPreparations;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.ToolPreparations;
 
@@ -39,7 +40,7 @@ internal static class ToolPreparationEndpoints
         HttpContext context,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadClientIdentity(context, out _, out var userId, out var identityError))
+        if (!PlanningHttpSupport.TryAuthorizeIdentity(context, Permissions.PrepareTools, out _, out var userId, out var identityError))
             return identityError!;
         try
         {

@@ -284,12 +284,9 @@ internal sealed class SqliteAdministrativeSetupRepository : IAdministrativeSetup
 
     private static async Task EnsureEditAuthorityAsync(SqliteConnection c, SqliteTransaction t, EditAuthority authority, CancellationToken token)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(c, t, DateTimeOffset.UtcNow, token);
-        await using var command = c.CreateCommand(); command.Transaction = t;
-        command.CommandText = "SELECT holder_client_id,generation FROM edit_tokens WHERE id=1;";
-        await using var reader = await command.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token) || reader.IsDBNull(0)) throw new EditModeMutationException("edit_mode_required", "No Windows client currently holds Edit Mode.");
-        if (reader.GetString(0) != authority.ClientId || reader.GetInt64(1) != authority.Generation) throw new EditModeMutationException("edit_generation_stale", "This client does not hold the active Edit Mode generation.");
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        SignedInActor.Require(authority);
+        await Task.CompletedTask;
     }
 
     private static async Task<EmployeeResource?> ReadResourceAsync(SqliteConnection c, SqliteTransaction? t, string id, CancellationToken token)

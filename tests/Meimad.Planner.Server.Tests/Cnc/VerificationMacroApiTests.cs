@@ -18,7 +18,7 @@ public sealed class VerificationMacroApiTests
         Directory.CreateDirectory(root);
         await using var application = ServerApplication.Build(
             ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}"],
-            webHost => webHost.UseTestServer());
+            webHost => webHost.UseSignedInTestServer());
         try
         {
             await application.StartAsync();

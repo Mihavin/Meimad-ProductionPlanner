@@ -4,7 +4,6 @@ using Meimad.Planner.Server.Api.Cases;
 using Meimad.Planner.Server.Api.Cnc;
 using Meimad.Planner.Server.Api.AdministrativeSetup;
 using Meimad.Planner.Server.Api.Anomalies;
-using Meimad.Planner.Server.Api.EditMode;
 using Meimad.Planner.Server.Api.EventLogging;
 using Meimad.Planner.Server.Api.Deletion;
 using Meimad.Planner.Server.Api.Downtimes;
@@ -42,6 +41,7 @@ using Meimad.Planner.Server.Application.Cases;
 using Meimad.Planner.Server.Application.Cnc;
 using Meimad.Planner.Server.Application.AdministrativeSetup;
 using Meimad.Planner.Server.Application.Anomalies;
+using Meimad.Planner.Server.Application.Concurrency;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.EventLogging;
 using Meimad.Planner.Server.Application.Deletion;
@@ -88,6 +88,8 @@ using Meimad.Planner.Server.Infrastructure.Cnc;
 using Meimad.Planner.Server.Infrastructure.MtConnect;
 using Meimad.Planner.Server.Application.ToolRequirements;
 using Meimad.Planner.Server.Api.ToolRequirements;
+using Meimad.Planner.Server.Application.Accounts;
+using Meimad.Planner.Server.Api.Accounts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
@@ -115,7 +117,6 @@ public static class ServerApplication
             builder.Configuration,
             builder.Environment.ContentRootPath);
         var serverFileAccessOptions = ServerFileAccessOptions.FromConfiguration(builder.Configuration);
-        var editModeOptions = EditModeOptions.FromConfiguration(builder.Configuration);
         var backupOptions = BackupOptions.FromConfiguration(
             builder.Configuration,
             builder.Environment.ContentRootPath,
@@ -144,7 +145,6 @@ public static class ServerApplication
         builder.Services.AddSingleton(databaseOptions);
         builder.Services.AddSingleton(serverFileAccessOptions);
         builder.Services.AddSingleton<ServerFilePathResolver>();
-        builder.Services.AddSingleton(editModeOptions);
         builder.Services.AddSingleton(backupOptions);
         builder.Services.AddSingleton(tvDashboardOptions);
         builder.Services.AddSingleton(eInkOptions);
@@ -182,9 +182,6 @@ public static class ServerApplication
         builder.Services.AddSingleton<CaseModelFileService>();
         builder.Services.AddHostedService<DatabaseInitializationService>();
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton<IEditModeRepository, SqliteEditModeRepository>();
-        builder.Services.AddSingleton<EditModeService>();
-        builder.Services.AddHostedService<EditModeTimeoutService>();
         builder.Services.AddSingleton<ICaseRepository, SqliteCaseRepository>();
         builder.Services.AddSingleton<CaseService>();
         builder.Services.AddSingleton<ICaseComponentRepository, SqliteCaseComponentRepository>();
@@ -221,6 +218,9 @@ public static class ServerApplication
         builder.Services.AddSingleton<CimatronToolTransferService>();
         builder.Services.AddSingleton<IToolRequirementSourceRepository, SqliteToolRequirementSourceRepository>();
         builder.Services.AddSingleton<ToolRequirementService>();
+        builder.Services.AddSingleton<IAccountRepository, SqliteAccountRepository>();
+        builder.Services.AddSingleton<AccountService>();
+        builder.Services.AddSingleton<ChangeJournal>();
         builder.Services.AddSingleton<IResourceMasterDataRepository, SqliteResourceMasterDataRepository>();
         builder.Services.AddSingleton<ResourceMasterDataService>();
         builder.Services.AddSingleton<AutomaticResourceScheduler>();
@@ -376,6 +376,9 @@ public static class ServerApplication
             FileProvider = new PhysicalFileProvider(kitaronSetupRoot)
         });
 
+        application.UseMiddleware<ConflictResponseMiddleware>();
+        application.UseMiddleware<SignInMiddleware>();
+
         application.MapGet("/health", () => Results.Ok(new
         {
             status = "healthy",
@@ -399,10 +402,10 @@ public static class ServerApplication
                     Path.Combine(kitaronSetupRoot, "index.html"),
                     "text/html; charset=utf-8")
                 : Results.NotFound());
+        application.MapAccountEndpoints();
         application.MapCaseEndpoints();
         application.MapCaseModelFileEndpoints();
         application.MapAdministrativeSetupEndpoints();
-        application.MapEditModeEndpoints();
         application.MapPlanningDeletionEndpoints();
         application.MapOrderEndpoints();
         application.MapProductionBatchEndpoints();

@@ -1,4 +1,5 @@
 using System.Globalization;
+using Meimad.Planner.Server.Application.Concurrency;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.EventLogging;
@@ -27,6 +28,7 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         MachineAssignmentOverrideConfirmation? overrideConfirmation,
         DateTimeOffset now,
         EditAuthority editAuthority,
+        string? expectedBacklogStamp,
         CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
@@ -79,6 +81,12 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             transaction,
             machineId,
             cancellationToken);
+        if (expectedBacklogStamp is not null)
+        {
+            await EnsureBacklogUnchangedAsync(
+                connection, transaction, targetMachine, targetOriginal, expectedBacklogStamp,
+                confirmedByUserId, cancellationToken);
+        }
         var sameMachine = current is not null
             && string.Equals(current.MachineId, machineId, StringComparison.Ordinal);
         var maximumPosition = sameMachine ? targetOriginal.Count - 1 : targetOriginal.Count;
@@ -170,6 +178,12 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             await SqliteNcCycleEstimateStore.RecalculateForMachineAsync(
                 connection, transaction, machineId, now,
                 confirmedByUserId, "machine_assignment_changed", cancellationToken);
+        }
+        await RecordBacklogChangeAsync(connection, transaction, machineId, confirmedByUserId, now, cancellationToken);
+        if (sourceOriginal.Count > 0)
+        {
+            await RecordBacklogChangeAsync(
+                connection, transaction, current!.MachineId, confirmedByUserId, now, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         return new AssignmentMutationResult(persisted, current is null);
@@ -270,6 +284,8 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
             string.Empty,
             now,
             cancellationToken);
+        await RecordBacklogChangeAsync(
+            connection, transaction, current.MachineId, SignedInActor.Require(editAuthority), now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
@@ -1529,6 +1545,75 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         return await reader.ReadAsync(cancellationToken) ? ReadAssignment(reader) : null;
     }
 
+    /// <summary>
+    /// Refuses a move whose planner saw another order of the target Machine than the current one.
+    /// Names the planner of the last manual change when that change produced the current order. The
+    /// planner's own last move is not a conflict: the client shows a drop before the Server answers,
+    /// so consecutive drops are based on an order the planner has already seen.
+    /// </summary>
+    private static async Task EnsureBacklogUnchangedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Machine machine,
+        IReadOnlyList<MachineAssignment> backlog,
+        string expectedStamp,
+        string actor,
+        CancellationToken cancellationToken)
+    {
+        var currentStamp = MachineBacklogStamp.Of(backlog.Select(assignment => assignment.MachineAssignmentId));
+        if (string.Equals(currentStamp, expectedStamp, StringComparison.OrdinalIgnoreCase)) return;
+
+        string? changedBy = null;
+        DateTimeOffset? changedAt = null;
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT stamp_after, changed_by, changed_at FROM machine_backlog_changes WHERE machine_id = $machineId;";
+            command.Parameters.AddWithValue("$machineId", machine.MachineId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken)
+                && string.Equals(reader.GetString(0), currentStamp, StringComparison.Ordinal))
+            {
+                changedBy = reader.GetString(1);
+                changedAt = DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+            }
+        }
+        if (string.Equals(changedBy, actor, StringComparison.OrdinalIgnoreCase)) return;
+
+        throw new EditConflictException(
+            "Planning Board backlog",
+            changedBy is null
+                ? $"The backlog of Machine {machine.Number} changed after you loaded the Planning Board (an operation was added, moved, started or finished). Your move was not saved."
+                : $"Another planner changed the backlog of Machine {machine.Number} after you loaded the Planning Board. Your move was not saved.",
+            "Refresh the Planning Board to see the current order of the Machine, then move the operation again.",
+            changedBy,
+            changedAt);
+    }
+
+    private static async Task RecordBacklogChangeAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string machineId,
+        string changedBy,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var backlog = await ReadAssignmentsForMachineAsync(connection, transaction, machineId, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO machine_backlog_changes (machine_id, stamp_after, changed_by, changed_at)
+            VALUES ($machineId, $stamp, $by, $at)
+            ON CONFLICT (machine_id) DO UPDATE SET
+                stamp_after = excluded.stamp_after, changed_by = excluded.changed_by, changed_at = excluded.changed_at;
+            """;
+        command.Parameters.AddWithValue("$machineId", machineId);
+        command.Parameters.AddWithValue("$stamp", MachineBacklogStamp.Of(backlog.Select(assignment => assignment.MachineAssignmentId)));
+        command.Parameters.AddWithValue("$by", changedBy);
+        command.Parameters.AddWithValue("$at", FormatInstant(now));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<MachineAssignment>> ReadAssignmentsForMachineAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1622,31 +1707,9 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         EditAuthority editAuthority,
         CancellationToken cancellationToken)
     {
-        await SqliteEditModeRepository.ApplyExpiredRequestAsync(
-            connection,
-            transaction,
-            DateTimeOffset.UtcNow,
-            cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT holder_client_id, holder_user_id, generation FROM edit_tokens WHERE id = 1;";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
-        {
-            throw new EditModeMutationException(
-                "edit_mode_required",
-                "No Windows client currently holds Edit Mode.");
-        }
-
-        if (!string.Equals(reader.GetString(0), editAuthority.ClientId, StringComparison.Ordinal)
-            || reader.GetInt64(2) != editAuthority.Generation)
-        {
-            throw new EditModeMutationException(
-                "edit_generation_stale",
-                "This client does not hold the active Edit Mode generation.");
-        }
-
-        return reader.GetString(1);
+        // Single Edit Mode is retired: the API authorized the signed-in user for this change.
+        await Task.CompletedTask;
+        return SignedInActor.Require(editAuthority);
     }
 
     private static string FormatInstant(DateTimeOffset value) =>

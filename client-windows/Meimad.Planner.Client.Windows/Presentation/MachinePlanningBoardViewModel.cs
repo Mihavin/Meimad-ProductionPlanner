@@ -210,8 +210,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
     public CalendarShiftOption SelectedCalendarShift { get => selectedCalendarShift; set => SetField(ref selectedCalendarShift, value); }
 
     public string ModeInstruction => isEditor
-        ? "Edit Mode: drag an operation to the exact Machine and backlog position you choose."
-        : "View Mode: assignments and backlog order are read-only.";
+        ? "Drag an operation to the exact Machine and backlog position you choose."
+        : "Your account may view the board; assignments and backlog order are read-only for you.";
 
     public string StatusMessage
     {
@@ -337,19 +337,62 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
     }
 
-    internal async Task RefreshAsync()
+    /// <summary>
+    /// Reloads the board from the Server. The read runs in the background without blocking drags:
+    /// a request made while one is running is queued and runs once afterwards, and a read that
+    /// started before a local drop is discarded so it cannot move the dropped card back.
+    /// </summary>
+    internal Task RefreshAsync()
     {
-        if (apiClient is null || IsBusy)
+        if (apiClient is null)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        IsBusy = true;
+        if (refreshInFlight is { IsCompleted: false })
+        {
+            refreshQueued = true;
+            return refreshInFlight;
+        }
+
+        refreshInFlight = RefreshUntilCurrentAsync();
+        return refreshInFlight;
+    }
+
+    private async Task RefreshUntilCurrentAsync()
+    {
+        IsRefreshing = true;
         try
         {
-            var snapshotTask = apiClient.GetPlanningBoardAsync();
-            var calendarsTask = apiClient.ListWorkingCalendarsAsync();
+            do
+            {
+                refreshQueued = false;
+                await RefreshOnceAsync();
+            }
+            while (refreshQueued);
+        }
+        finally
+        {
+            IsRefreshing = false;
+        }
+    }
+
+    private async Task RefreshOnceAsync()
+    {
+        var localChangesAtStart = localChangeVersion;
+        try
+        {
+            // The board is a few hundred KB of JSON: read and parse it off the UI thread.
+            var api = apiClient!;
+            var snapshotTask = Task.Run(() => api.GetPlanningBoardAsync());
+            var calendarsTask = api.ListWorkingCalendarsAsync();
             await Task.WhenAll(snapshotTask, calendarsTask);
+            if (localChangesAtStart != localChangeVersion)
+            {
+                refreshQueued = true;
+                return;
+            }
+
             var snapshot = await snapshotTask;
             ApplyCalendars(await calendarsTask);
             Apply(snapshot);
@@ -363,10 +406,39 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             StatusMessage = FriendlyMessage(exception);
         }
-        finally
+    }
+
+    private Task? refreshInFlight;
+    private bool refreshQueued;
+    private int localChangeVersion;
+    private bool isRefreshing;
+
+    public bool IsRefreshing
+    {
+        get => isRefreshing;
+        private set => SetField(ref isRefreshing, value);
+    }
+
+    /// <summary>
+    /// Shows a drop at once, before the Server answers: the card leaves the pool or its Machine and
+    /// takes its place in the target backlog. The Server stays the authority; the refresh after its
+    /// answer replaces this local picture, and a refusal puts the card back.
+    /// </summary>
+    private void PlaceLocally(
+        PlanningOperationViewModel operation,
+        PlanningMachineColumnViewModel targetMachine,
+        int targetPosition)
+    {
+        localChangeVersion++;
+        if (!Pool.Remove(operation))
         {
-            IsBusy = false;
+            foreach (var machine in Machines)
+            {
+                if (machine.Backlog.Remove(operation)) break;
+            }
         }
+
+        targetMachine.Backlog.Insert(Math.Clamp(targetPosition, 0, targetMachine.Backlog.Count), operation);
     }
 
     internal Task BeginAddMachineAsync()
@@ -589,6 +661,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             targetPosition = Math.Min(targetPosition, targetMachine.Backlog.Count);
         }
 
+        PlaceLocally(operation, targetMachine, targetPosition);
+        StatusMessage = $"Saving the move of {operation.DisplayTitle} to {targetMachine.DisplayName}…";
         IsBusy = true;
         try
         {
@@ -598,8 +672,10 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
                     operation.BatchOperationId,
                     targetMachine.MachineId,
                     targetPosition,
+                    targetMachine.BacklogStamp,
                     clientId,
-                    editGeneration);
+                    editGeneration,
+                    null);
                 AddFeedback(
                     "information",
                     "Manual assignment accepted",
@@ -619,6 +695,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
                         "warning",
                         "Assignment override cancelled",
                         $"{operation.DisplayTitle} remains unchanged. A confirmation reason is required to assign it to {targetMachine.DisplayName}.");
+                    await RefreshAsync();
                     StatusMessage = "The incompatible assignment was not confirmed.";
                     return;
                 }
@@ -627,6 +704,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
                     operation.BatchOperationId,
                     targetMachine.MachineId,
                     targetPosition,
+                    targetMachine.BacklogStamp,
                     clientId,
                     editGeneration,
                     new MachineAssignmentCompatibilityOverride(true, reason.Trim()));
@@ -639,6 +717,9 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         catch (Exception exception) when (IsExpected(exception))
         {
             AddAssignmentError(operation, targetMachine, exception);
+            IsBusy = false;
+            // The Server refused: its board puts the card back where it is.
+            await RefreshAsync();
             StatusMessage = FriendlyMessage(exception);
             return;
         }
@@ -710,8 +791,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             AddFeedback(
                 "attention",
-                "Edit Mode required",
-                $"{operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
+                "Permission required",
+                $"{operation.DisplayTitle} was not changed. Your account may not change the Planning Board.");
             return;
         }
 
@@ -801,8 +882,12 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         finally { IsBusy = false; }
     }
 
-    internal void ReportMoveFailure(Exception exception) =>
+    internal void ReportMoveFailure(Exception exception)
+    {
         StatusMessage = $"Operation move was not applied: {FriendlyMessage(exception)}";
+        // A drop is shown before the Server answers; reload so the card returns to its real place.
+        _ = RefreshAsync();
+    }
 
     internal async Task<PlannerProductionReadiness?> ReadProductionReadinessAsync(
         PlanningOperationViewModel operation)
@@ -837,8 +922,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             AddFeedback(
                 "attention",
-                "Edit Mode required",
-                $"Readiness for {operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
+                "Permission required",
+                $"Readiness for {operation.DisplayTitle} was not changed. Your account may not change the Planning Board.");
             return false;
         }
 
@@ -885,8 +970,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             AddFeedback(
                 "attention",
-                "Edit Mode required",
-                $"The planning mode for {operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
+                "Permission required",
+                $"The planning mode for {operation.DisplayTitle} was not changed. Your account may not change the Planning Board.");
             return;
         }
 
@@ -970,8 +1055,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         {
             AddFeedback(
                 "attention",
-                "Edit Mode required",
-                $"The setup priority for {operation.DisplayTitle} was not changed. Acquire Edit Mode and try again.");
+                "Permission required",
+                $"The setup priority for {operation.DisplayTitle} was not changed. Your account may not change the Planning Board.");
             return;
         }
 
@@ -1111,12 +1196,21 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     private bool TryBeginManualChange(PlanningOperationViewModel operation)
     {
-        if (apiClient is null || !isEditor || IsBusy)
+        if (apiClient is not null && isEditor && IsBusy)
         {
             AddFeedback(
                 "attention",
-                "Edit Mode required",
-                $"{operation.DisplayTitle} was not moved. Acquire Edit Mode and try again.");
+                "Still saving",
+                $"{operation.DisplayTitle} was not moved: the previous change is still being saved. Try again in a moment.");
+            return false;
+        }
+
+        if (apiClient is null || !isEditor)
+        {
+            AddFeedback(
+                "attention",
+                "Permission required",
+                $"{operation.DisplayTitle} was not moved. Your account may not change the Planning Board.");
             return false;
         }
 
@@ -1828,12 +1922,16 @@ internal sealed class PlanningMachineColumnViewModel : INotifyPropertyChanged
         AxisType = machine.AxisType;
         Capabilities = machine.Capabilities;
         IsActive = machine.IsActive;
+        BacklogStamp = machine.BacklogStamp;
         Backlog = new ObservableCollection<PlanningOperationViewModel>(
             machine.Backlog.Select(operation =>
                 new PlanningOperationViewModel(operation, planningModeEditAvailable)));
     }
 
     public string MachineId { get; }
+
+    /// <summary>The Server's fingerprint of this Machine's order when the board was read.</summary>
+    internal string BacklogStamp { get; }
     public event PropertyChangedEventHandler? PropertyChanged;
     public string Number { get; }
     public string Name { get; }

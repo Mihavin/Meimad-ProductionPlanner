@@ -1514,7 +1514,7 @@ public sealed class KitaronConnectionApiTests
             ],
             webHost =>
             {
-                webHost.UseTestServer();
+                webHost.UseSignedInTestServer();
                 webHost.ConfigureServices(services =>
                 {
                     services.RemoveAll<IKitaronConnectionTester>();

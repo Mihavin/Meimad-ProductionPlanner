@@ -262,7 +262,7 @@ internal sealed class KitaronStationsViewModel : INotifyPropertyChanged
 
     private async Task MutateAsync(Func<Task> action, string success)
     {
-        if (!CanEdit) { StatusMessage = "Edit Mode is required to decide Kitaron stations."; return; }
+        if (!CanEdit) { StatusMessage = "Your account may not change setup data such as Kitaron stations."; return; }
         IsBusy = true;
         var succeeded = false;
         try

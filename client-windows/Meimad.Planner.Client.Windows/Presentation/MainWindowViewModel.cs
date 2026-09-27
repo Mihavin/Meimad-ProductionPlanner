@@ -13,17 +13,18 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IPlannerApiClientFactory apiClientFactory;
     private IPlannerApiClient? apiClient;
     private ClientSettings? activeSettings;
-    private EditModeStatus? editStatus;
+    private SignedInAccount? account;
     private string clientId = string.Empty;
     private string healthLevel = "offline";
     private string healthHeadline = "Not connected";
     private string healthDetail = "Enter the factory Server address and connect.";
     private string modeLevel = "offline";
-    private string modeHeadline = "View Mode unavailable";
-    private string modeDetail = "Connect to read the server-owned Edit Mode state.";
+    private string modeHeadline = "Not signed in";
+    private string modeDetail = "Connect to the Server and sign in.";
     private bool isBusy;
-    private bool hasPendingTransfer;
-    private string pendingTransferText = string.Empty;
+    private bool needsFirstAdministrator;
+    private bool signInRequested;
+    private bool signInDeclined;
 
     internal MainWindowViewModel(
         IClientSettingsStore settingsStore,
@@ -52,6 +53,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             "SETUP_PENDING", "Setup — Setup Pending",
             "Operations whose NC and Tool Room gates are complete and remain in the setup workflow.");
         ToolCatalog = new ToolCatalog.ToolCatalogViewModel();
+        UserAdministration = new UserAdministrationViewModel();
         CaseWorkspace = new CaseWorkspaceViewModel(new WorkingFolderLauncher());
         MachinePlanningBoard = new MachinePlanningBoardViewModel(requestAssignmentOverrideReason);
         Timeline = new TimelineViewModel();
@@ -75,18 +77,13 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _ = MachinePlanningBoard.RefreshAsync();
             RefreshTimelineAfterPlanChange();
         };
-        RequestEditCommand = new AsyncCommand(
-            RequestEditAsync,
-            () => !IsBusy && editStatus?.State == ClientEditState.Viewer && HealthLevel == "healthy");
-        ReleaseEditCommand = new AsyncCommand(
-            ReleaseEditAsync,
-            () => !IsBusy && editStatus?.State == ClientEditState.Editor);
-        ApproveTransferCommand = new AsyncCommand(
-            () => DecideTransferAsync(release: true),
-            CanDecideTransfer);
-        RejectTransferCommand = new AsyncCommand(
-            () => DecideTransferAsync(release: false),
-            CanDecideTransfer);
+        SignOutCommand = new AsyncCommand(SignOutAsync, () => !IsBusy && account is not null);
+        SignInCommand = new AsyncCommand(() =>
+        {
+            signInDeclined = false;
+            RequestSignIn();
+            return Task.CompletedTask;
+        }, () => !IsBusy && account is null && apiClient is not null);
         UndoCommand = new AsyncCommand(
             MachinePlanningBoard.UndoAsync,
             () => !IsBusy && MachinePlanningBoard.CanUndo);
@@ -103,13 +100,34 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public AsyncCommand RequestEditCommand { get; }
+    public AsyncCommand SignOutCommand { get; }
 
-    public AsyncCommand ReleaseEditCommand { get; }
+    public AsyncCommand SignInCommand { get; }
 
-    public AsyncCommand ApproveTransferCommand { get; }
+    /// <summary>
+    /// Raised when the Server needs a signed-in account: no session yet, the session ended, or the
+    /// administrator set a temporary password that must be changed. The window shows the sign-in.
+    /// </summary>
+    public event EventHandler? SignInRequired;
 
-    public AsyncCommand RejectTransferCommand { get; }
+    public UserAdministrationViewModel UserAdministration { get; }
+
+    /// <summary>The signed-in account, or null before sign-in.</summary>
+    internal SignedInAccount? Account => account;
+
+    public bool IsSignedIn => account is not null;
+
+    public bool CanManageUsers => account?.Has(PlannerPermissions.ManageUsers) == true;
+
+    /// <summary>The Server has no account yet: the sign-in window creates the first administrator.</summary>
+    public bool NeedsFirstAdministrator
+    {
+        get => needsFirstAdministrator;
+        private set => SetField(ref needsFirstAdministrator, value);
+    }
+
+    /// <summary>The user name to offer in the sign-in window: the last one that signed in here.</summary>
+    internal string LastUserName => activeSettings?.LocalUserName ?? string.Empty;
 
     public AsyncCommand UndoCommand { get; }
 
@@ -193,17 +211,6 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool HasPendingTransfer
-    {
-        get => hasPendingTransfer;
-        private set => SetField(ref hasPendingTransfer, value);
-    }
-
-    public string PendingTransferText
-    {
-        get => pendingTransferText;
-        private set => SetField(ref pendingTransferText, value);
-    }
 
     internal async Task InitializeAsync()
     {
@@ -250,34 +257,124 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         await RunBusyAsync(RefreshCoreAsync);
     }
 
-    internal async Task RequestEditAsync()
-    {
-        if (apiClient is null)
-        {
-            return;
-        }
+    /// <summary>Signs in; returns an error to show in the sign-in window, or null when signed in.</summary>
+    internal Task<string?> SignInAsync(string userName, string password) =>
+        StartSessionAsync(api => api.SignInAsync(userName.Trim(), password, ClientId));
 
-        await RunBusyAsync(async () =>
+    /// <summary>Creates the first administrator of an empty Server and signs in as that account.</summary>
+    internal Task<string?> CreateFirstAdministratorAsync(string userName, string displayName, string password) =>
+        StartSessionAsync(api => api.CreateFirstAdministratorAsync(userName.Trim(), displayName.Trim(), password, ClientId));
+
+    /// <summary>Changes the signed-in user's password; returns an error to show, or null.</summary>
+    internal async Task<string?> ChangePasswordAsync(string currentPassword, string newPassword)
+    {
+        if (apiClient is null) return "Connect to the Server first.";
+        try
         {
-            editStatus = await apiClient.RequestEditAsync(
-                ClientId,
-                activeSettings!.LocalUserId);
-            ApplyEditStatus(editStatus);
-        });
+            await apiClient.ChangePasswordAsync(currentPassword, newPassword);
+            if (account is not null) account = account with { MustChangePassword = false };
+            return null;
+        }
+        catch (PlannerApiException exception)
+        {
+            return exception.Message;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            return FriendlyMessage(exception);
+        }
     }
 
-    internal async Task ReleaseEditAsync()
+    /// <summary>Called by the sign-in window when it closes, signed in or not.</summary>
+    internal async Task CompleteSignInAsync()
     {
-        if (apiClient is null || editStatus?.State != ClientEditState.Editor)
+        signInRequested = false;
+        // Closed without signing in: wait for the Sign in button instead of asking every refresh.
+        signInDeclined = account is null;
+        RaiseCommandStates();
+        if (account is { MustChangePassword: false })
+        {
+            await RefreshAsync();
+        }
+    }
+
+    internal async Task SignOutAsync()
+    {
+        if (apiClient is null) return;
+        try
+        {
+            await apiClient.SignOutAsync();
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            // The session is dropped locally in any case.
+        }
+
+        EndSession("Signed out", "Sign in to continue.");
+    }
+
+    private async Task<string?> StartSessionAsync(Func<IPlannerApiClient, Task<SignInSession>> start)
+    {
+        if (apiClient is null) return "Connect to the Server first.";
+        try
+        {
+            var session = await start(apiClient);
+            apiClient.SetSessionToken(session.Token);
+            account = session.User;
+            NeedsFirstAdministrator = false;
+            await RememberUserNameAsync(session.User.UserName);
+            return null;
+        }
+        catch (PlannerApiException exception)
+        {
+            return exception.Message;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            return FriendlyMessage(exception);
+        }
+    }
+
+    private async Task RememberUserNameAsync(string userName)
+    {
+        if (activeSettings is null || string.Equals(activeSettings.LocalUserName, userName, StringComparison.Ordinal))
         {
             return;
         }
 
-        await RunBusyAsync(async () =>
+        try
         {
-            editStatus = await apiClient.ReleaseEditAsync(ClientId, editStatus.Generation);
-            ApplyEditStatus(editStatus);
-        });
+            var settings = activeSettings with { LocalUserName = userName };
+            await settingsStore.SaveAsync(settings);
+            ApplySettings(settings);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            // Only the sign-in prefill is lost.
+        }
+    }
+
+    /// <summary>Drops the session and every screen's rights, and asks for a new sign-in.</summary>
+    private void EndSession(string headline, string detail)
+    {
+        account = null;
+        signInDeclined = false;
+        apiClient?.SetSessionToken(null);
+        ModeLevel = "offline";
+        ModeHeadline = headline;
+        ModeDetail = detail;
+        AttachSessions(null);
+        OnPropertyChanged(nameof(IsSignedIn));
+        OnPropertyChanged(nameof(CanManageUsers));
+        RaiseCommandStates();
+        RequestSignIn();
+    }
+
+    private void RequestSignIn()
+    {
+        if (signInRequested || signInDeclined) return;
+        signInRequested = true;
+        SignInRequired?.Invoke(this, EventArgs.Empty);
     }
 
     public void Dispose()
@@ -285,38 +382,51 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         apiClient?.Dispose();
     }
 
-    private async Task DecideTransferAsync(bool release)
-    {
-        if (apiClient is null
-            || editStatus?.State != ClientEditState.Editor
-            || editStatus.PendingRequest is null)
-        {
-            return;
-        }
-
-        await RunBusyAsync(async () =>
-        {
-            editStatus = await apiClient.DecideTransferAsync(
-                ClientId,
-                editStatus.Generation,
-                editStatus.PendingRequest.RequestId,
-                release);
-            ApplyEditStatus(editStatus);
-        });
-    }
-
     private async Task RefreshCoreAsync()
     {
         var health = await apiClient!.GetHealthAsync();
-        editStatus = await apiClient.GetEditModeAsync(ClientId);
         HealthLevel = string.Equals(health.Status, "healthy", StringComparison.OrdinalIgnoreCase)
             ? "healthy"
             : "attention";
         HealthHeadline = $"Connected — {health.Status}";
         HealthDetail = $"{health.Service} {health.Version} • Server UTC {health.ServerTimeUtc:yyyy-MM-dd HH:mm:ss}";
         Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
-        ApplyEditStatus(editStatus);
         await CheckClientUpdateAsync();
+        if (account is null)
+        {
+            if (signInRequested) return;
+            NeedsFirstAdministrator = !(await apiClient.GetAuthStateAsync()).HasAccounts;
+            ModeLevel = "offline";
+            ModeHeadline = "Not signed in";
+            ModeDetail = NeedsFirstAdministrator
+                ? "The Server has no accounts yet: create the first administrator."
+                : "Sign in to continue.";
+            RequestSignIn();
+            return;
+        }
+
+        try
+        {
+            // Re-read the account: an administrator may have changed its user types meanwhile.
+            account = await apiClient.GetSignedInAccountAsync();
+        }
+        catch (PlannerApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            EndSession("Session ended", "Your session ended after 12 hours without use or was ended by an administrator. Sign in again.");
+            return;
+        }
+        catch (PlannerApiException exception) when (exception.Code == "password_change_required")
+        {
+            account = account with { MustChangePassword = true };
+        }
+
+        if (account.MustChangePassword)
+        {
+            RequestSignIn();
+            return;
+        }
+
+        ApplyAccount(account);
         await Setup.EnsureLoadedAsync();
         await CaseWorkspace.EnsureLoadedAsync();
         await MachinePlanningBoard.EnsureLoadedAsync();
@@ -397,17 +507,24 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private async Task SaveConnectionCoreAsync()
     {
         var settings = ClientSettings.Create(Setup.ServerAddress, Setup.LocalUserName, ClientId);
+        var serverChanged = activeSettings is null || settings.ServerBaseUri != activeSettings.ServerBaseUri;
         await settingsStore.SaveAsync(settings);
         ApplySettings(settings);
-        ReplaceApiClient(settings.ServerBaseUri);
         HealthLevel = "attention";
         HealthHeadline = "Connection not verified";
         HealthDetail = "Settings saved. Connect or refresh to verify the configured Server.";
-        ModeLevel = "offline";
-        ModeHeadline = "View Mode unavailable";
-        ModeDetail = "Planning changes remain disabled until the Server confirms Edit Mode.";
-        editStatus = null;
         Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
+        if (serverChanged)
+        {
+            // Another Server knows other accounts: sign in there.
+            account = null;
+            ReplaceApiClient(settings.ServerBaseUri);
+            ModeLevel = "offline";
+            ModeHeadline = "Not signed in";
+            ModeDetail = "Connect to the Server and sign in.";
+            OnPropertyChanged(nameof(IsSignedIn));
+            OnPropertyChanged(nameof(CanManageUsers));
+        }
         RaiseCommandStates();
     }
 
@@ -426,48 +543,65 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Setup.ApplyConnectionStatus(HealthHeadline, HealthDetail);
     }
 
-    private void ApplyEditStatus(EditModeStatus status)
+    private static readonly (string Permission, string Name)[] PermissionNames =
+    [
+        (PlannerPermissions.EditCases, "Cases"),
+        (PlannerPermissions.ManageWorkOrders, "Work Orders"),
+        (PlannerPermissions.ReleaseNc, "NC release"),
+        (PlannerPermissions.PlanMachines, "Planning Board"),
+        (PlannerPermissions.RunOperations, "Production"),
+        (PlannerPermissions.VerifyMaterials, "Materials"),
+        (PlannerPermissions.DecideQc, "QC"),
+        (PlannerPermissions.PrepareTools, "Tool Room"),
+        (PlannerPermissions.EditToolLibrary, "Tool library"),
+        (PlannerPermissions.ManageSetup, "Setup"),
+        (PlannerPermissions.ManageUsers, "Users")
+    ];
+
+    /// <summary>Shows who is signed in and gives each screen the rights of the account's user types.</summary>
+    private void ApplyAccount(SignedInAccount signedIn)
     {
-        HasPendingTransfer = status.PendingRequest is not null
-            && status.State == ClientEditState.Editor;
-        PendingTransferText = HasPendingTransfer
-            ? $"Client {status.PendingRequest!.RequesterClientId} requests Edit Mode. Decision deadline: {status.PendingRequest.DecisionDeadline.ToLocalTime():HH:mm:ss}."
-            : string.Empty;
-
-        switch (status.State)
-        {
-            case ClientEditState.Editor:
-                ModeLevel = "editor";
-                ModeHeadline = "🔓 Edit Mode — you are the editor";
-                ModeDetail = $"Generation {status.Generation}. All planning changes are authorized by the Server.";
-                break;
-            case ClientEditState.RequestingEdit:
-                ModeLevel = "requesting";
-                ModeHeadline = "⏳ Requesting Edit Mode";
-                ModeDetail = status.PendingRequest is null
-                    ? "Waiting for the current editor."
-                    : $"Waiting for {status.Holder?.UserId ?? "the current editor"} until {status.PendingRequest.DecisionDeadline.ToLocalTime():HH:mm:ss}.";
-                break;
-            default:
-                ModeLevel = "viewer";
-                ModeHeadline = "🔒 View Mode — read only";
-                ModeDetail = status.Holder is null
-                    ? "No editor currently holds the token. Request Edit Mode to make changes."
-                    : $"Edit Mode held by: {DisplayHolder(status.Holder)}. Request Edit Mode to ask for transfer.";
-                break;
-        }
-
+        var allowed = PermissionNames.Where(item => signedIn.Has(item.Permission)).Select(item => item.Name).ToArray();
+        ModeLevel = allowed.Length > 0 ? "editor" : "viewer";
+        ModeHeadline = $"👤 {signedIn.DisplayName}";
+        ModeDetail = signedIn.IsAdministrator
+            ? $"{signedIn.UserName} • Administrator: may change everything."
+            : allowed.Length == 0
+                ? $"{signedIn.UserName} • May view; no changes."
+                : $"{signedIn.UserName} • May change: {string.Join(", ", allowed)}.";
+        AttachSessions(signedIn);
+        OnPropertyChanged(nameof(IsSignedIn));
+        OnPropertyChanged(nameof(CanManageUsers));
         RaiseCommandStates();
-        CaseWorkspace.AttachSession(apiClient, ClientId, status);
-        MachinePlanningBoard.AttachSession(apiClient, ClientId, status);
-        Timeline.AttachSession(apiClient, ClientId, status);
-        Setup.AttachSession(apiClient, ClientId, status);
-        UserTerminals.AttachSession(apiClient, ClientId, status);
-        QcQueue.AttachSession(
-            apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, status);
+    }
+
+    /// <summary>
+    /// The screens predate accounts and take an Edit Mode status; each now gets "editor" when the
+    /// account holds a permission of that screen. The Server checks every change again.
+    /// </summary>
+    private void AttachSessions(SignedInAccount? signedIn)
+    {
+        EditModeStatus? For(params string[] permissions) => signedIn is null
+            ? null
+            : new EditModeStatus(
+                permissions.Any(signedIn.Has) ? ClientEditState.Editor : ClientEditState.Viewer,
+                1, null, null, DateTimeOffset.UtcNow, 0);
+
+        var userId = signedIn?.UserName ?? string.Empty;
+        CaseWorkspace.AttachSession(apiClient, ClientId, For(
+            PlannerPermissions.EditCases, PlannerPermissions.ManageWorkOrders,
+            PlannerPermissions.ReleaseNc, PlannerPermissions.VerifyMaterials));
+        MachinePlanningBoard.AttachSession(apiClient, ClientId, For(
+            PlannerPermissions.PlanMachines, PlannerPermissions.RunOperations));
+        Timeline.AttachSession(apiClient, ClientId, For(PlannerPermissions.PlanMachines));
+        Setup.AttachSession(apiClient, ClientId, For(PlannerPermissions.ManageSetup));
+        UserTerminals.AttachSession(apiClient, ClientId, For(PlannerPermissions.ManageSetup));
+        QcQueue.AttachSession(apiClient, ClientId, userId, For(PlannerPermissions.DecideQc));
         MaterialOrders.AttachSession(apiClient);
         ToolRequirements.AttachSession(apiClient);
-        AttachPreparationQueues(apiClient);
+        UserAdministration.AttachSession(
+            signedIn?.Has(PlannerPermissions.ManageUsers) == true ? apiClient : null, userId);
+        AttachPreparationQueues(apiClient, userId);
     }
 
     private void SetOffline(string headline, string detail)
@@ -475,67 +609,39 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         HealthLevel = "offline";
         HealthHeadline = headline;
         HealthDetail = detail;
-        ModeLevel = "offline";
-        ModeHeadline = "⚠ View Mode unavailable";
-        ModeDetail = "Planning changes are disabled until the Server confirms Edit Mode.";
-        HasPendingTransfer = false;
-        PendingTransferText = string.Empty;
-        editStatus = null;
         Setup.ApplyConnectionStatus(headline, detail);
-        CaseWorkspace.AttachSession(apiClient, ClientId, null);
-        MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
-        Timeline.AttachSession(apiClient, ClientId, null);
-        Setup.AttachSession(apiClient, ClientId, null);
-        UserTerminals.AttachSession(apiClient, ClientId, null);
-        QcQueue.AttachSession(
-            apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
-        MaterialOrders.AttachSession(apiClient);
-        ToolRequirements.AttachSession(apiClient);
-        AttachPreparationQueues(apiClient);
+        if (account is null)
+        {
+            ModeLevel = "offline";
+            ModeHeadline = "Not signed in";
+            ModeDetail = "Connect to the Server and sign in.";
+        }
+        // A signed-in session survives a short Server outage; the next refresh re-reads the account.
+        AttachSessions(account);
         RaiseCommandStates();
     }
-
-    private string DisplayHolder(EditModeHolder holder) =>
-        string.Equals(holder.ClientId, ClientId, StringComparison.Ordinal)
-            ? activeSettings?.LocalUserName ?? holder.UserId
-            : holder.UserId;
 
     private void ReplaceApiClient(Uri serverBaseUri)
     {
         apiClient?.Dispose();
         apiClient = apiClientFactory.Create(serverBaseUri);
-        CaseWorkspace.AttachSession(apiClient, ClientId, null);
-        MachinePlanningBoard.AttachSession(apiClient, ClientId, null);
-        Timeline.AttachSession(apiClient, ClientId, null);
-        Setup.AttachSession(apiClient, ClientId, null);
-        UserTerminals.AttachSession(apiClient, ClientId, null);
-        QcQueue.AttachSession(
-            apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
-        MaterialOrders.AttachSession(apiClient);
-        ToolRequirements.AttachSession(apiClient);
-        AttachPreparationQueues(apiClient);
+        account = null;
+        AttachSessions(null);
         RaiseCommandStates();
     }
 
-    private void AttachPreparationQueues(IPlannerApiClient? client)
+    private void AttachPreparationQueues(IPlannerApiClient? client, string userId)
     {
-        var userId = activeSettings?.LocalUserId ?? string.Empty;
         NcCreatorQueue.AttachSession(client, ClientId, userId);
         ToolRoomQueue.AttachSession(client, ClientId, userId);
         SetupQueue.AttachSession(client, ClientId, userId);
         ToolCatalog.AttachSession(client, ClientId, userId);
     }
 
-    private bool CanDecideTransfer() => !IsBusy
-        && editStatus?.State == ClientEditState.Editor
-        && editStatus.PendingRequest is not null;
-
     private void RaiseCommandStates()
     {
-        RequestEditCommand.RaiseCanExecuteChanged();
-        ReleaseEditCommand.RaiseCanExecuteChanged();
-        ApproveTransferCommand.RaiseCanExecuteChanged();
-        RejectTransferCommand.RaiseCanExecuteChanged();
+        SignOutCommand.RaiseCanExecuteChanged();
+        SignInCommand.RaiseCanExecuteChanged();
         UndoCommand.RaiseCanExecuteChanged();
         RedoCommand.RaiseCanExecuteChanged();
         Setup.UpdateConnectionCommandStates();
@@ -557,6 +663,9 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         PlannerApiException api => $"{api.Message} ({api.Code})",
         _ => exception.Message
     };
+
+    private void OnPropertyChanged(string propertyName) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
     private bool SetField<T>(
         ref T field,

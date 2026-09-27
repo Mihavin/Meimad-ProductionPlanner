@@ -1,6 +1,7 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Domain.GCode;
+using Meimad.Planner.Server.Application.Accounts;
 
 namespace Meimad.Planner.Server.Api.GCode;
 
@@ -91,7 +92,7 @@ internal static class GCodeEndpoints
         GCodeService service,
         CancellationToken token)
     {
-        if (!PlanningHttpSupport.TryReadEditAuthority(context, out var authority, out var error))
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ReleaseNc, out var authority, out var error))
         {
             return error!;
         }
@@ -116,7 +117,8 @@ internal static class GCodeEndpoints
                 Boolean(form, "reuseActiveToolTable"),
                 Boolean(form, "confirmToolTable"),
                 Upload(form.Files.GetFile("gcodeFile")),
-                Upload(form.Files.GetFile("toolTableFile"))), authority!, token);
+                Upload(form.Files.GetFile("toolTableFile")),
+                ExpectedLatestReleaseId: Text(form, "expectedLatestReleaseId")), authority!, token);
             return Results.Created(
                 $"/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode-releases/{release.GCodeReleaseId}",
                 GCodeReleaseResponse.FromDomain(release));
