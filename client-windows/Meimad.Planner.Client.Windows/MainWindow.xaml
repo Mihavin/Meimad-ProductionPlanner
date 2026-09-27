@@ -205,6 +205,9 @@
             <TabItem Header="Tool Catalog" ToolTip="Search and describe the factory's tools: internal id, type, hand, dimensions and external ids">
                 <views:ToolCatalogView DataContext="{Binding ToolCatalog}" Margin="5" />
             </TabItem>
+            <TabItem Header="Tool Requirements" ToolTip="The tools the planned operations of a period need, by material, type, size and name, with the copies and their moves between machines">
+                <views:ToolRequirementsView DataContext="{Binding ToolRequirements}" Margin="5" />
+            </TabItem>
             <TabItem Header="Setup Queue" ToolTip="View operations whose NC and Tool Room gates are complete">
                 <views:PreparationQueueView DataContext="{Binding SetupQueue}" Margin="5" />
             </TabItem>

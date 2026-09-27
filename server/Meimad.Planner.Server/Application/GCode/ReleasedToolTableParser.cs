@@ -35,6 +35,146 @@ internal static class ReleasedToolTableParser
         return new ReleasedToolTableDefinition(tools, requiredToolCount);
     }
 
+    /// <summary>
+    /// The size and holder of each tool row, when the released file carries them: the Cimatron tool
+    /// report's Name, Dia, LENGTH (stick-out), CUT and Holder columns, or diameter, length, cutLength and
+    /// holder columns or properties of a CSV or JSON table. The release itself stores only the name, so
+    /// the immutable stored file is read again. Rows without these values come back without them.
+    /// </summary>
+    internal static async Task<IReadOnlyList<ReleasedToolGeometry>> ReadGeometryAsync(
+        string absolutePath,
+        string originalFileName,
+        CancellationToken cancellationToken) =>
+        Path.GetExtension(originalFileName).ToLowerInvariant() switch
+        {
+            ".json" => await ReadJsonGeometryAsync(absolutePath, cancellationToken),
+            ".csv" or ".txt" => await ReadCsvGeometryAsync(absolutePath, cancellationToken),
+            ".mht" or ".mhtml" => await ReadCimatronGeometryAsync(absolutePath, cancellationToken),
+            _ => []
+        };
+
+    private static async Task<IReadOnlyList<ReleasedToolGeometry>> ReadCimatronGeometryAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var html = ExtractHtmlPart(await File.ReadAllTextAsync(path, cancellationToken));
+        Dictionary<string, int>? columns = null;
+        var result = new List<ReleasedToolGeometry>();
+        foreach (Match row in Regex.Matches(
+                     html, @"<tr\b[^>]*>(?<content>.*?)</tr\s*>",
+                     RegexOptions.IgnoreCase | RegexOptions.Singleline, PatternTimeout))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var cells = Regex.Matches(
+                    row.Groups["content"].Value, @"<t[dh]\b[^>]*>(?<content>.*?)</t[dh]\s*>",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline, PatternTimeout)
+                .Select(cell => HtmlText(cell.Groups["content"].Value))
+                .ToArray();
+            if (cells.Length < 2) continue;
+            // Cimatron writes "Number | Name | Dia | LENGTH | CUT | Shank | Holder" or, in its other
+            // report template, "Tool number | Tool name | Tool Diameter | Clear Length | ...".
+            if (columns is null && NormalizeName(cells[0]) is "number" or "toolnumber")
+            {
+                columns = cells
+                    .Select((value, index) => (Name: NormalizeName(value), Index: index))
+                    .Where(value => value.Name.Length > 0)
+                    .GroupBy(value => value.Name, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.Ordinal);
+                continue;
+            }
+            if (!Regex.IsMatch(cells[0], @"^T\s*\d+[\p{L}\p{N}._/-]*$", RegexOptions.IgnoreCase, PatternTimeout)) continue;
+            if (result.Count >= MaximumRows) break;
+
+            string? Column(params string[] names) =>
+                columns is not null && FindIndex(columns, names) is { } index && index < cells.Length ? cells[index] : null;
+            result.Add(new ReleasedToolGeometry(
+                cells[0],
+                Optional(Column("name", "toolname") ?? cells[1], 240) ?? cells[0],
+                Size(Column("dia", "diameter", "tooldiameter")),
+                Size(Column("length", "stickout", "clearlength")),
+                Size(Column("cut", "cutlength", "flutelength", "cuttinglength")),
+                Optional(Column("holder"), 240)));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<ReleasedToolGeometry>> ReadCsvGeometryAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var lines = (await File.ReadAllLinesAsync(path, cancellationToken))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToArray();
+        if (lines.Length == 0) return [];
+        var headers = ParseCsvLine(lines[0])
+            .Select((value, index) => (Name: NormalizeName(value), Index: index))
+            .Where(value => value.Name.Length > 0)
+            .GroupBy(value => value.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.Ordinal);
+        var identifierIndex = FindIndex(headers, "toolidentifier", "toolid", "tool", "identifier");
+        if (identifierIndex is null) return [];
+        var nameIndex = FindIndex(headers, "description", "tooldescription", "desc", "name");
+        var diameterIndex = FindIndex(headers, "diameter", "dia");
+        var lengthIndex = FindIndex(headers, "length", "stickout", "overhang");
+        var cutIndex = FindIndex(headers, "cutlength", "cut", "flutelength");
+        var holderIndex = FindIndex(headers, "holder");
+        var result = new List<ReleasedToolGeometry>();
+        foreach (var line in lines.Skip(1).Take(MaximumRows))
+        {
+            var columns = ParseCsvLine(line);
+            if (Optional(Value(columns, identifierIndex), 80) is not { } identifier) continue;
+            result.Add(new ReleasedToolGeometry(
+                identifier,
+                Optional(Value(columns, nameIndex), 240) ?? identifier,
+                Size(Value(columns, diameterIndex)),
+                Size(Value(columns, lengthIndex)),
+                Size(Value(columns, cutIndex)),
+                Optional(Value(columns, holderIndex), 240)));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<ReleasedToolGeometry>> ReadJsonGeometryAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        await using var input = File.OpenRead(path);
+        using var document = await JsonDocument.ParseAsync(
+            input, new JsonDocumentOptions { MaxDepth = 32, AllowTrailingCommas = true }, cancellationToken);
+        var array = document.RootElement.ValueKind switch
+        {
+            JsonValueKind.Array => document.RootElement,
+            JsonValueKind.Object when TryProperty(document.RootElement, out var tools, "tools", "toolTable")
+                                      && tools.ValueKind == JsonValueKind.Array => tools,
+            _ => default
+        };
+        if (array.ValueKind != JsonValueKind.Array) return [];
+        var result = new List<ReleasedToolGeometry>();
+        foreach (var item in array.EnumerateArray().Take(MaximumRows))
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || Optional(Text(item, "toolIdentifier", "toolId", "tool", "identifier"), 80) is not { } identifier)
+            {
+                continue;
+            }
+            result.Add(new ReleasedToolGeometry(
+                identifier,
+                Optional(Text(item, "description", "toolDescription", "desc", "name"), 240) ?? identifier,
+                Size(Text(item, "diameter", "dia")),
+                Size(Text(item, "length", "stickOut", "overhang")),
+                Size(Text(item, "cutLength", "cut", "fluteLength")),
+                Optional(Text(item, "holder"), 240)));
+        }
+        return result;
+    }
+
+    /// <summary>A positive length in millimetres, as the CAM writes it ("13." or "2.5").</summary>
+    private static double? Size(string? value) =>
+        double.TryParse(value?.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number)
+        && double.IsFinite(number) && number > 0
+            ? number
+            : null;
+
     private static async Task<IReadOnlyList<ReleasedTool>> ParseCimatronMhtAsync(
         string path,
         CancellationToken cancellationToken)

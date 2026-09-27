@@ -386,6 +386,17 @@ The Tool Room deliberately creates the Server-owned immutable package without a 
 - **Saving.** Tools are saved one at a time under the client identity, like a manual save; no Edit Mode is needed. A tool someone saved meanwhile is skipped and reported, and the other tools stay saved.
 - **Export.** *Export to Cimatron…* fills a copy of Cimatron 2026's empty External Cutters workbook, which the Server carries, so Cimatron's Menu > Import reads it like its own export. The cutter name is the tool's Cimatron id, else its name. Turning tools and "other" have no Cimatron cutter and are left out and counted. The catalog keeps no shank cone or holder geometry, so holders are referenced by name only.
 
+**Tool requirements for a period (2026-09-27).** The *Tool Requirements* tab lists the tools the planned operations of a chosen period need, for the Tool Room, presetting and purchasing. It is read-only and recalculated on request.
+
+- **Operations.** The Server takes the operations the Timeline places on a Machine in the period; the part of an operation outside the period is ignored.
+- **Tools.** Each operation's released tool table gives its tools: the active process revision's table for an operation that has not started, the pinned table for a started one. The size and holder come from the stored Cimatron tool report (both Cimatron report templates) or the CSV/JSON table columns. When a file carries no size, the size written in the name is used ("DRILL_2.5").
+- **Families.** Tools are organized by material group, then type, then diameter, then name. The type comes from the tool catalog when the catalog knows the tool by its Cimatron id or name, otherwise from the factory's name prefixes: FIN, MERASEK and RESEK are end mills (with "_R" a bull-nose mill), CADURI is a ball mill, DRILL a drill, MECADED and MERKUZ spot drills, KERNER a center drill, FAZA a chamfer mill, FLYCUTTER a face mill, MAVR a tap, and SAKIN_AVRAGA and KARS_AVR thread mills. The list shows which source gave the type.
+- **Same tool.** A tool is the same tool when its name (upper case, spaces and underscores alike) and diameter match. The holder does not count, so a cutter may be re-clamped (owner decision).
+- **Material.** The part material separates tools (owner decision): Aluminum, Titanium, Stainless steel, Nickel alloy, Steel, Copper alloy, Plastic or Unknown material. It comes from the Case material, else from the description of the Kitaron raw material of the Work Order. A tool used on titanium is counted apart from the same tool on aluminum.
+- **Copies and migration.** The copies needed is the largest number of uses at the same moment: on different Machines, or the same tool listed twice in one tool table. One copy serves several Machines when their uses do not overlap in time. It then moves from the Machine that finished with it to the next one, and the list shows each copy's route and the number of machine changes. A copy stays on its Machine for consecutive uses there.
+- **Gaps.** Planned operations without a released tool table are listed separately, because their tools are unknown.
+- **Export.** The period exports to an Excel workbook with three sheets: tools (with the copies' routes), uses, and operations without a tool table. Times are in the factory time zone.
+
 ## 11. E-Ink integration
 
 - MVP uses one unified Color E-Ink Work Tablet, normally one per Machine plus one or two spares.

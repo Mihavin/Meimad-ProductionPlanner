@@ -2376,6 +2376,32 @@ internal sealed record PlannerCimatronImport(
 /// <summary>The catalog as a Cimatron cutter workbook, with how many tools went in and how many Cimatron cannot hold.</summary>
 internal sealed record PlannerCimatronExport(byte[] Workbook, int ExportedCount, int SkippedCount);
 
+/// <summary>Where one physical copy of a tool is needed.</summary>
+internal sealed record PlannerToolCopyStop(string MachineId, string MachineLabel, DateTimeOffset From, DateTimeOffset To);
+
+internal sealed record PlannerToolCopyRoute(int CopyNumber, IReadOnlyList<PlannerToolCopyStop> Stops);
+
+/// <summary>One planned operation that uses a tool in the period.</summary>
+internal sealed record PlannerToolUse(
+    string OperationId, string WorkOrderNumber, string PartNumber, int OperationNumber, string OperationName,
+    string MachineId, string MachineLabel, IReadOnlyList<string> ToolNumbers, int Copies, string? Holder,
+    double? Length, string? Material, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
+
+/// <summary>A tool the plan needs in the period for one material group, with its copies and their route.</summary>
+internal sealed record PlannerToolRequirement(
+    string MaterialGroup, string ToolType, string ToolTypeSource, double? Diameter, string ToolName,
+    int CopiesNeeded, IReadOnlyList<string> Machines, int MachineChanges, DateTimeOffset FirstNeed,
+    DateTimeOffset LastNeed, IReadOnlyList<PlannerToolCopyRoute> Routes, IReadOnlyList<PlannerToolUse> Uses);
+
+/// <summary>A planned operation whose tools are unknown because it has no released tool table.</summary>
+internal sealed record PlannerOperationWithoutTools(
+    string OperationId, string WorkOrderNumber, string PartNumber, int OperationNumber, string OperationName,
+    string MachineLabel, string MaterialGroup, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
+
+internal sealed record PlannerToolRequirementReport(
+    DateTimeOffset From, DateTimeOffset To, DateTimeOffset CalculatedAt, string TimeZoneId, int PlannedOperationCount,
+    IReadOnlyList<PlannerToolRequirement> Tools, IReadOnlyList<PlannerOperationWithoutTools> OperationsWithoutToolTable);
+
 /// <summary>One id of a catalog tool in another system (supplier, ERP, CAM library, presetter, ...).</summary>
 internal sealed record PlannerCatalogToolExternalId(string System, string Value);
 

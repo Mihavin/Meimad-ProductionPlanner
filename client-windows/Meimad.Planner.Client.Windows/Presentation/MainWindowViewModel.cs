@@ -41,6 +41,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UserTerminals = new UserTerminalsViewModel();
         QcQueue = new QcQueueViewModel();
         MaterialOrders = new MaterialOrdersViewModel();
+        ToolRequirements = new ToolRequirementsViewModel();
         NcCreatorQueue = new PreparationQueueViewModel(
             "PROGRAMMING_PENDING", "NC Creator — Programming Pending",
             "Assigned operations that do not yet have one current Machine-compatible NC release selection.");
@@ -127,6 +128,8 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public QcQueueViewModel QcQueue { get; }
 
     public MaterialOrdersViewModel MaterialOrders { get; }
+
+    public ToolRequirementsViewModel ToolRequirements { get; }
 
     public PreparationQueueViewModel NcCreatorQueue { get; }
 
@@ -463,6 +466,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, status);
         MaterialOrders.AttachSession(apiClient);
+        ToolRequirements.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
     }
 
@@ -486,6 +490,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
         MaterialOrders.AttachSession(apiClient);
+        ToolRequirements.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }
@@ -507,6 +512,7 @@ internal sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         QcQueue.AttachSession(
             apiClient, ClientId, activeSettings?.LocalUserId ?? string.Empty, null);
         MaterialOrders.AttachSession(apiClient);
+        ToolRequirements.AttachSession(apiClient);
         AttachPreparationQueues(apiClient);
         RaiseCommandStates();
     }

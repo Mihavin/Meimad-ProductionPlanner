@@ -1001,3 +1001,30 @@ Implemented in `SqliteWorkOrderRouteRefresh`, which updates rows in place so mac
 Tests: `WorkOrderRouteReleaseTests` (pending follows every change and keeps placement; release freezes and unrelease refreshes; a started Work Order cannot go back) and `KitaronRouteSyncTests.A_pending_work_order_follows_the_route_and_lets_a_removed_operation_go`. Rewritten for the new rule: `CaseServicePersistenceTests`, `CaseOperationCreateApiTests`, and the released Work Orders in `PlanningDeletionApiTests`, `KitaronRouteSyncTests` and `PlanningBoardEnrichmentTests`.
 
 After the upgrade, the first Kitaron synchronization refreshes every pending Work Order. The two released ones (41508, 41512) stay as they are until they are set back to pending.
+
+### Tool requirements for a period - 2026-09-27
+
+Owner request: a list of the tools needed in a defined period, taken from the tool tables of the operations planned on the Timeline and organized in families by type, size and name. It takes the part material into account, and whether the same tool works on several machines or can migrate from machine to machine.
+
+Owner decisions:
+
+- A tool is the same when name and diameter match; the holder is ignored.
+- Tools are counted separately per material group.
+- The list is a client tab with Excel export.
+
+**Data found (read-only):** 27 tool table releases (24 Cimatron `.TOOLS.mht`, 3 CSV) with 207 rows. The release stored only the tool name. The stored Cimatron reports also carry Dia, LENGTH, CUT, Shank and Holder, or, in a second template, Tool Diameter and Clear Length. Only 1 of 6,375 Cases has a material; 191 of 199 Kitaron work orders name a raw material whose description ("AL 7050-T7451…", "TI-6AL-4V…", "15-5PH…") classifies it.
+
+**Implemented:**
+
+- `ReleasedToolTableParser.ReadGeometryAsync` re-reads the immutable stored file. The service caches it per release.
+- `MaterialGroups`, `ToolNaming` (identity key, size from the name, type from the name prefix) and `ToolRequirementCalculator` (interval partitioning; a free copy already in the Machine stays, otherwise the longest-free copy moves).
+- `ToolRequirementService` with `SqliteToolRequirementSourceRepository`.
+- `GET /api/v1/tool-requirements` and `/export`, with the `ToolRequirementWorkbookWriter` producing an `.xlsx` with shared strings.
+- The client Tool Requirements tab.
+
+A check of all 24 stored Cimatron reports gave sizes for every row, and the name prefixes typed every tool. Tests: `ToolRequirementCalculatorTests`, `ToolRequirementApiTests` (Timeline, tool tables, Kitaron material, two copies, missing tool table, Excel read back) and `ToolRequirementsViewModelTests`.
+
+**Open points:**
+
+- No transfer or presetting time is added between two uses of a migrating copy.
+- A copy's holder is ignored, per the decision.

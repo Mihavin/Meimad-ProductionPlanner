@@ -33,6 +33,15 @@ internal sealed record ReleasedTool(
     bool IsActive,
     string? MagazinePosition);
 
+/// <summary>A released tool row's name, size (millimetres) and holder, when the tool table carries them.</summary>
+internal sealed record ReleasedToolGeometry(
+    string ToolIdentifier,
+    string Name,
+    double? Diameter,
+    double? Length,
+    double? CutLength,
+    string? Holder);
+
 internal sealed record ReleasedToolTableDefinition(
     IReadOnlyList<ReleasedTool> Tools,
     int RequiredToolCount);

@@ -325,6 +325,16 @@ internal interface IPlannerApiClient : IDisposable
     Task<PlannerCimatronExport> ExportCimatronCutterWorkbookAsync(
         bool includeInactive, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>The tools the planned operations of a period need, by material group, type, size and name.</summary>
+    Task<PlannerToolRequirementReport> GetToolRequirementsAsync(
+        DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    /// <summary>The same tool requirements as an Excel workbook (.xlsx).</summary>
+    Task<byte[]> ExportToolRequirementsAsync(
+        DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     /// <summary>The immutable released NC file exactly as stored (encoding and line endings kept).</summary>
     Task<byte[]> ReadGCodeFileBytesAsync(
         string caseId, string caseOperationId, string releaseId,
@@ -1990,6 +2000,25 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             Count(response, "X-Meimad-Exported-Tools"),
             Count(response, "X-Meimad-Skipped-Tools"));
     }
+
+    public async Task<PlannerToolRequirementReport> GetToolRequirementsAsync(
+        DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/tool-requirements?{PeriodQuery(from, to)}", cancellationToken);
+        return await ReadSuccessAsync<PlannerToolRequirementReport>(response, cancellationToken);
+    }
+
+    public async Task<byte[]> ExportToolRequirementsAsync(
+        DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync($"api/v1/tool-requirements/export?{PeriodQuery(from, to)}", cancellationToken);
+        await EnsureSuccessWithoutBodyAsync(response, cancellationToken);
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
+    private static string PeriodQuery(DateTimeOffset from, DateTimeOffset to) =>
+        $"from={Uri.EscapeDataString(from.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}" +
+        $"&to={Uri.EscapeDataString(to.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}";
 
     public async Task<QcDecisionResult> DecideQcAsync(
         string productionRunId, QcDecisionRequest value,

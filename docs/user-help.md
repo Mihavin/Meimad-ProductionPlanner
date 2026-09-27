@@ -127,6 +127,18 @@ The **Tool Catalog** tab lists the factory's tool definitions. Each tool has a M
 
 **Cimatron.** In Cimatron, export the cutters with NC-Process > Cutters > Menu > Export (XLS). Then choose **Import from Cimatron…** in the Tool Catalog and pick the file. The Planner first tells you how many tools would be new, updated, unchanged or skipped, and why a cutter is skipped; nothing is saved until you answer **Yes**. A cutter updates the tool that already carries its Cimatron name, or the one tool with the same name. It changes only the cutter's dimensions, holder, thread and comment; your tool names, other dimensions and attributes stay. A face mill, counterbore, boring head, engraver, T-slot mill or spot drill keeps its type, even though Cimatron stores it as a plain flat, slot or center-drill cutter. **Export to Cimatron…** saves the catalog as a workbook for Cimatron's Menu > Import; turning tools are left out.
 
+### Tool requirements
+
+The **Tool Requirements** tab tells the Tool Room which tools the plan needs. Pick the first and last day and press **Calculate**.
+
+- **Source.** The Planner reads the operations the Timeline has on machines in those days and their released tool tables (the Cimatron tool reports). Only operations on a machine in the Timeline count, so assign and release Work Orders first.
+- **Grouping.** Tools are grouped by the part material, then by type. Each line shows the diameter, the tool name, how many **copies** are needed, whether one copy **moves between machines** or each machine needs its own, the machines, and the first and last time it is needed.
+- **Same tool.** Tools are the same when the name and diameter match; the holder does not matter.
+- **Materials.** A tool that cuts titanium is listed apart from the same tool cutting aluminum.
+- **Details.** Select a tool to see each copy's route between machines and the operations that use it (work order, part, operation, tool numbers, holder and stick-out).
+- **Missing tool tables.** **Planned operations without a released tool table** lists operations whose tools cannot be known yet.
+- **Excel.** **Export to Excel…** saves everything as a workbook for presetting or purchasing.
+
 ## 5. CNC connection: type, telemetry, and part identity
 
 The CNC Connection panel in Setup starts with one **Connection type** picker: **Haas MDC**, **Haas MTConnect**, **DPRNT only** (no machine telemetry, for example Mazak), or **FANUC FOCAS**. Pick the one protocol the Machine actually uses; the panel below then shows only the fields for that type, and a Machine-side identity/DPRNT section shared by every type sits underneath (see [DPRNT: shared by every connection type](#dprnt-shared-by-every-connection-type)). This replaced an earlier two-step "Adapter Type" plus "Machine telemetry source" pair that made it unclear which combination configured a given machine.

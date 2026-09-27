@@ -86,6 +86,8 @@ using Meimad.Planner.Server.Infrastructure.Fanuc;
 using Meimad.Planner.Server.Infrastructure.Haas;
 using Meimad.Planner.Server.Infrastructure.Cnc;
 using Meimad.Planner.Server.Infrastructure.MtConnect;
+using Meimad.Planner.Server.Application.ToolRequirements;
+using Meimad.Planner.Server.Api.ToolRequirements;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
@@ -217,6 +219,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<IToolCatalogRepository, SqliteToolCatalogRepository>();
         builder.Services.AddSingleton<ToolCatalogService>();
         builder.Services.AddSingleton<CimatronToolTransferService>();
+        builder.Services.AddSingleton<IToolRequirementSourceRepository, SqliteToolRequirementSourceRepository>();
+        builder.Services.AddSingleton<ToolRequirementService>();
         builder.Services.AddSingleton<IResourceMasterDataRepository, SqliteResourceMasterDataRepository>();
         builder.Services.AddSingleton<ResourceMasterDataService>();
         builder.Services.AddSingleton<AutomaticResourceScheduler>();
@@ -409,6 +413,7 @@ public static class ServerApplication
         application.MapProductionPackageEndpoints();
         application.MapToolPreparationEndpoints();
         application.MapToolCatalogEndpoints();
+        application.MapToolRequirementEndpoints();
         application.MapResourcePlanningEndpoints();
         application.MapMaterialReconciliationEndpoints();
         application.MapServerMaintenanceEndpoints();

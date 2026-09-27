@@ -2461,6 +2461,24 @@ rises from the cutter diameter over a length equal to the diameter step and
 holders are referenced by name only.
 
 
+#### Tool requirements
+
+```http
+GET /api/v1/tool-requirements?from=&to=
+GET /api/v1/tool-requirements/export?from=&to=
+```
+
+Read-only; no identity headers. `from` and `to` are RFC 3339 instants, `to` after `from`, and at most 92 days apart (`400 invalid_tool_requirement_period` or `tool_requirement_period_too_long`). The Server calculates the Timeline for the period and takes every `operation` interval, clipped to the period. Each operation's tools are the active rows of its released tool table: the active process revision's table while not started, otherwise the pinned `production_tool_table_release_id` or pinned process revision. Size (`Dia`/`Tool Diameter`), stick-out (`LENGTH`/`Clear Length`) and holder are read from the stored Cimatron report, or from CSV/JSON `diameter`, `length`, `cutLength` and `holder`. Otherwise the size comes from the catalog or the tool name.
+
+The response has `from`, `to`, `calculatedAt`, `timeZoneId`, `plannedOperationCount`, `tools` and `operationsWithoutToolTable`.
+
+- **`tools`:** one entry per material group, tool name key and diameter. Each has `materialGroup` (`ALUMINUM`, `TITANIUM`, `STAINLESS`, `NICKEL`, `STEEL`, `COPPER`, `PLASTIC`, `UNKNOWN`), `toolType` (a catalog type code), `toolTypeSource` (`catalog` or `name`), `diameter`, `toolName`, `copiesNeeded`, `machines`, `machineChanges`, `firstNeed`, `lastNeed`, `routes` and `uses`.
+  - `routes` is one entry per copy: `copyNumber` and `stops` (`machineId`, `machineLabel`, `from`, `to`).
+  - `uses` gives `operationId`, `workOrderNumber`, `partNumber`, `operationNumber`, `operationName`, `machineId`, `machineLabel`, `toolNumbers`, `copies`, `holder`, `length`, `material`, `startsAt` and `endsAt`.
+- **`operationsWithoutToolTable`:** planned operations that have no released tool table.
+
+`copiesNeeded` is the peak number of simultaneous uses, and a copy migrates between Machines when uses do not overlap. `/export` returns the same report as `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` with the sheets Tools, Uses and No tool table.
+
 ### 8.13 Windows QC Queue and decision contract
 
 ```http
