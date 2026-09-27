@@ -242,25 +242,8 @@ internal static class CimatronCutterLibrary
     /// </summary>
     internal static IReadOnlyDictionary<int, object>? ToCimatron(CatalogTool tool)
     {
-        var (technology, tip) = tool.ToolType switch
-        {
-            "END_MILL" or "FACE_MILL" or "ENGRAVER" or "COUNTERBORE" or "BORING_HEAD" => ("Milling", "Flat"),
-            "CHAMFER_MILL" => ("Milling", "Flat"),
-            "BALL_END_MILL" => ("Milling", "Ball"),
-            "BULL_NOSE_END_MILL" => ("Milling", "Bull"),
-            "SLOT_MILL" or "T_SLOT_MILL" => ("Special Slot Mill", (string?)null),
-            "DOVETAIL_MILL" => ("Special Dove Mill", null),
-            "LOLLIPOP_MILL" => ("Special Lollipop", null),
-            "THREAD_MILL" => ("Thread mill", null),
-            "COUNTERSINK" => ("Special Counter Sink", null),
-            "DRILL" => ("Drilling", "Drilling"),
-            "SPOT_DRILL" or "CENTER_DRILL" => ("Drilling", "Center"),
-            "REAMER" => ("Drilling", "Ream"),
-            "TAP" => ("Drilling", "Tap"),
-            "PROBE" => ("Probe", null),
-            _ => (null, null)
-        };
-        if (technology is null) return null;
+        if (CutterKind(tool.ToolType) is not { } kind) return null;
+        var (technology, tip, chamfer) = kind;
 
         double? Value(string key) => tool.Shape.TryGetValue(key, out var value) && value > 0 ? value : null;
         var name = tool.ExternalIds.FirstOrDefault(entry => entry.System.Equals(ExternalSystem, StringComparison.OrdinalIgnoreCase))?.Value ?? tool.Name;
@@ -278,7 +261,6 @@ internal static class CimatronCutterLibrary
         if (tool.Description is { } description) row[CommentId] = description;
 
         var cutting = Value("cuttingDiameter");
-        var chamfer = tool.ToolType is "CHAMFER_MILL" or "ENGRAVER";
         if (chamfer)
         {
             // Cimatron's tapered flat cutter; a tool without a tip diameter gets Cimatron's own 0.1 mm point.
@@ -327,6 +309,39 @@ internal static class CimatronCutterLibrary
         }
         return row;
     }
+
+    /// <summary>
+    /// The type a Cimatron cutter gives the catalog tool it updates. Cimatron has one cutter kind
+    /// for several catalog types (a face mill, counterbore or boring head is a flat mill, an
+    /// engraver a tapered flat mill, a T-slot mill a slot mill, a spot drill a center drill), so a
+    /// cutter of the kind the tool already exports as keeps the tool's own type; a cutter of another
+    /// kind (a ball tip for an end mill) sets the type Cimatron describes.
+    /// </summary>
+    internal static string MergedToolType(string existingToolType, string cutterToolType) =>
+        CutterKind(existingToolType) is { } kind && kind == CutterKind(cutterToolType) ? existingToolType : cutterToolType;
+
+    /// <summary>
+    /// Cimatron's technology, tip and taper for a catalog type; null for types Cimatron's milling
+    /// cutter table cannot hold (turning tools and "other").
+    /// </summary>
+    private static (string Technology, string? Tip, bool Chamfer)? CutterKind(string toolType) => toolType switch
+    {
+        "END_MILL" or "FACE_MILL" or "COUNTERBORE" or "BORING_HEAD" => ("Milling", "Flat", false),
+        "CHAMFER_MILL" or "ENGRAVER" => ("Milling", "Flat", true),
+        "BALL_END_MILL" => ("Milling", "Ball", false),
+        "BULL_NOSE_END_MILL" => ("Milling", "Bull", false),
+        "SLOT_MILL" or "T_SLOT_MILL" => ("Special Slot Mill", null, false),
+        "DOVETAIL_MILL" => ("Special Dove Mill", null, false),
+        "LOLLIPOP_MILL" => ("Special Lollipop", null, false),
+        "THREAD_MILL" => ("Thread mill", null, false),
+        "COUNTERSINK" => ("Special Counter Sink", null, false),
+        "DRILL" => ("Drilling", "Drilling", false),
+        "SPOT_DRILL" or "CENTER_DRILL" => ("Drilling", "Center", false),
+        "REAMER" => ("Drilling", "Ream", false),
+        "TAP" => ("Drilling", "Tap", false),
+        "PROBE" => ("Probe", null, false),
+        _ => null
+    };
 
     /// <summary>Cimatron's thread catalog of a thread designation: "M6" is metric, "#0-80 UNF" is UNF.</summary>
     private static string? ThreadCatalog(string thread)

@@ -171,10 +171,71 @@ public sealed class CimatronToolTransferApiTests
         Assert.Equal(6, cutters["RESEK 3"].ShankTopDiameter);
 
         // Imported tools come back unchanged; the hand-made spot drill is matched by name and
-        // gains its Cimatron id (and Cimatron's center-drill type).
+        // gains its Cimatron id but stays a spot drill (Cimatron's center drill is the same kind).
         using var roundTrip = await ImportAsync(client, bytes, apply: false);
         Assert.Equal(30, roundTrip.RootElement.GetProperty("unchanged").GetInt32());
         Assert.Equal(1, roundTrip.RootElement.GetProperty("updated").GetInt32());
+        Assert.Equal("SPOT_DRILL", roundTrip.RootElement.GetProperty("rows").EnumerateArray()
+            .Single(row => row.GetProperty("cutterName").GetString() == "Spot drill D6").GetProperty("toolType").GetString());
+    }
+
+    [Fact]
+    public async Task A_reimport_keeps_catalog_types_Cimatron_folds_into_one_cutter_kind()
+    {
+        await using var server = await ToolPreparationApiTests.TestServer.StartAsync(verificationEnabled: false);
+        var client = server.Client;
+        var source = await File.ReadAllBytesAsync(SamplePath("FLAYCAT_80.xlsm"));
+        using (await ImportAsync(client, source, apply: true)) { }
+
+        // Cimatron writes these as a flat, tapered flat, slot or center-drill cutter.
+        var folded = new Dictionary<string, (string Type, Dictionary<string, double> Shape)>
+        {
+            ["Face mill D50"] = ("FACE_MILL", new() { ["cuttingDiameter"] = 50, ["fluteLength"] = 6 }),
+            ["Counterbore D11"] = ("COUNTERBORE", new() { ["cuttingDiameter"] = 11, ["fluteLength"] = 8 }),
+            ["Boring head 30-40"] = ("BORING_HEAD", new() { ["cuttingDiameter"] = 30 }),
+            ["Engraver 0.2 x 30"] = ("ENGRAVER", new() { ["cuttingDiameter"] = 3, ["tipDiameter"] = 0.2, ["taperAngle"] = 30 }),
+            ["T-slot D20"] = ("T_SLOT_MILL", new() { ["cuttingDiameter"] = 20, ["fluteLength"] = 4 }),
+            ["Spot drill D6"] = ("SPOT_DRILL", new() { ["cuttingDiameter"] = 6, ["pointAngle"] = 90 })
+        };
+        foreach (var (name, (type, shape)) in folded)
+        {
+            using var created = await client.PostAsJsonAsync(Route, new { name, toolType = type, shape });
+            Assert.True(created.StatusCode == HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
+        }
+
+        using var export = await client.GetAsync(ExportRoute);
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        var bytes = await export.Content.ReadAsByteArrayAsync();
+        using (var applied = await ImportAsync(client, bytes, apply: true))
+        {
+            Assert.Equal(folded.Count, applied.RootElement.GetProperty("updated").GetInt32());   // each gains its Cimatron id
+        }
+        var tools = await ToolsAsync(client);
+        foreach (var (name, (type, _)) in folded)
+        {
+            Assert.Equal(type, tools[name].GetProperty("toolType").GetString());
+            Assert.Equal(("Cimatron", name), ExternalId(tools[name]));
+        }
+        using (var again = await ImportAsync(client, bytes, apply: false))
+        {
+            Assert.Equal(30 + folded.Count, again.RootElement.GetProperty("unchanged").GetInt32());
+        }
+
+        // A cutter of another kind still sets Cimatron's type: the workbook's ball tip wins over an end mill.
+        var ball = tools["BALL 1.5"];
+        using var retyped = await client.PutAsJsonAsync($"{Route}/{ball.GetProperty("catalogToolId").GetString()}", new
+        {
+            name = "BALL 1.5",
+            toolType = "END_MILL",
+            shape = ball.GetProperty("shape").EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble()),
+            attributes = ball.GetProperty("attributes").EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetString()),
+            externalIds = new[] { new { system = "Cimatron", value = "BALL 1.5" } },
+            isActive = true,
+            expectedVersion = ball.GetProperty("version").GetInt32()
+        });
+        Assert.Equal(HttpStatusCode.OK, retyped.StatusCode);
+        using (await ImportAsync(client, source, apply: true)) { }
+        Assert.Equal("BALL_END_MILL", (await ToolsAsync(client))["BALL 1.5"].GetProperty("toolType").GetString());
     }
 
     [Fact]

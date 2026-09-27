@@ -32,9 +32,9 @@ internal sealed record CimatronExportResult(byte[] Workbook, int ExportedCount, 
 /// Moves tools between the catalog and Cimatron's cutter workbook. A cutter is matched to the
 /// catalog tool that keeps its name under the "Cimatron" external id, else to the one tool with
 /// that name; it creates a tool when neither exists. An update replaces only what Cimatron
-/// describes (type, the cutter dimensions, holder, thread, comment) and keeps the catalog's own
-/// name, other dimensions, attributes and external ids. A preview reports the same rows without
-/// saving anything.
+/// describes (the cutter dimensions, holder, thread, comment, and the type when Cimatron's cutter
+/// kind differs from the tool's) and keeps the catalog's own name, other dimensions, attributes
+/// and external ids. A preview reports the same rows without saving anything.
 /// </summary>
 internal sealed class CimatronToolTransferService(
     IToolCatalogRepository repository,
@@ -172,8 +172,8 @@ internal sealed class CimatronToolTransferService(
         if (!externalIds.Any(entry => entry.System.Equals(CimatronCutterLibrary.ExternalSystem, StringComparison.OrdinalIgnoreCase)))
             externalIds.Add(new CatalogToolExternalId(CimatronCutterLibrary.ExternalSystem, cutter.Name));
         return new CatalogToolUpdate(
-            existing.Name, values.ToolType, existing.Hand, values.Description ?? existing.Description,
-            shape, attributes, externalIds, existing.IsActive);
+            existing.Name, CimatronCutterLibrary.MergedToolType(existing.ToolType, values.ToolType), existing.Hand,
+            values.Description ?? existing.Description, shape, attributes, externalIds, existing.IsActive);
     }
 
     private static bool Same(CatalogTool existing, ValidatedCatalogTool values) =>

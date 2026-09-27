@@ -2436,7 +2436,13 @@ A cutter is matched to the tool that keeps its name under the `Cimatron`
 external id, else to the one tool of that name without a Cimatron id, and
 creates a tool otherwise (named after the cutter, with that external id). An
 update replaces only what Cimatron describes and keeps the tool's name, other
-dimensions, attributes, external ids and active state. Without `apply=true`
+dimensions, attributes, external ids and active state. It keeps the tool's type
+when that type exports as the same Cimatron technology, tip and taper as the
+cutter (`FACE_MILL`, `COUNTERBORE` and `BORING_HEAD` as a flat mill,
+`ENGRAVER` as a tapered flat mill, `T_SLOT_MILL` as a slot mill, `SPOT_DRILL`
+as a center drill); otherwise the cutter's type replaces it. With `apply=true`
+each tool is saved on its own; a version conflict makes that row `SKIP` and
+the others stay saved. Without `apply=true`
 the response only previews; `apply=true` saves and needs the client identity
 headers. The response has `created`, `updated`, `unchanged`, `skipped` and one
 row per cutter (`action` `CREATE`, `UPDATE`, `UNCHANGED` or `SKIP` with a
