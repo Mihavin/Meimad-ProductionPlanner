@@ -695,6 +695,8 @@ Creation copies every current Case Operation's identity, route position, name, M
 | `GET` | `/api/v1/tool-catalog/{toolId}` | Read one catalog tool. |
 | `PUT` | `/api/v1/tool-catalog/{toolId}` | Replace a catalog tool at its `expectedVersion`. |
 | `DELETE` | `/api/v1/tool-catalog/{toolId}` | Delete an unreferenced catalog tool (`409 tool_catalog_in_use` otherwise). |
+| `POST` | `/api/v1/tool-catalog/import/cimatron` | Preview or apply (`apply=true`, client identity headers) a Cimatron cutter workbook. |
+| `GET` | `/api/v1/tool-catalog/export/cimatron` | The catalog as a Cimatron cutter workbook (`.xlsm`). |
 | `GET` | `/api/v1/postprocessors` | List managed Postprocessors. |
 | `POST` | `/api/v1/postprocessors` | Create a Postprocessor configuration. |
 | `GET` | `/api/v1/postprocessors/{postprocessorId}` | Read one Postprocessor and its version. |
@@ -2403,7 +2405,55 @@ tool_catalog_in_use` and is deactivated instead. Unknown tools are `404`.
 
 The Windows Tool Catalog tab edits the catalog, and the Tool Room window picks
 a catalog tool for a released tool row, which copies its type, hand and
-dimensions into the prepared tool and records `catalogToolId`.
+dimensions into the prepared tool and records `catalogToolId`. Its Import from Cimatron… and Export to Cimatron…
+buttons use the two Cimatron endpoints below (preview, confirm, apply).
+
+#### Cimatron cutter workbooks
+
+```http
+POST   /api/v1/tool-catalog/import/cimatron     (multipart: workbook, apply)
+GET    /api/v1/tool-catalog/export/cimatron?includeInactive=
+```
+
+The import reads the workbook Cimatron writes with NC-Process > Cutters >
+Menu > Export in XLS format (`.xlsm`/`.xlsx`). Columns are found by the
+Cimatron parameter ids in row 6 of the `Cutters` sheet (1101 Cutter Name, 2101
+Technology, 2102 Tip/Type, 2105 Diameter, 2106 Corner Radius, 2109 Clear Length,
+2110 Cut Length, 2111/2112 Taper, 2113 Tip Angle, 2118 Shaft Diameter, 2202
+Shank Top Diameter, 3101 Holder Name, 4106 Teeth, ...); cutters start in row 8
+and an inch workbook is converted to millimetres. Technology and tip give the
+type (Milling Flat `END_MILL`, or `CHAMFER_MILL` with a taper; Ball, Bull;
+Drilling `DRILL`, Ream, Tap, Center; the Special lollipop, slot, dovetail and
+countersink cutters; Thread mill; Probe; the rest `OTHER`). The dimensions map
+to `cuttingDiameter` (a chamfer mill's shaft diameter, with the tip in
+`tipDiameter`), `cornerRadius`, `fluteLength` (Cut Length), `neckLength`
+(Clear Length), `shankDiameter`, `pointAngle`, `taperAngle` (Cimatron's
+per-side angle), `pitch` and `fluteCount`; the holder name goes to
+`holderCode`, a tap's thread to `threadProfile` and a comment other than
+Cimatron's "No comment" to `description`.
+
+A cutter is matched to the tool that keeps its name under the `Cimatron`
+external id, else to the one tool of that name without a Cimatron id, and
+creates a tool otherwise (named after the cutter, with that external id). An
+update replaces only what Cimatron describes and keeps the tool's name, other
+dimensions, attributes, external ids and active state. Without `apply=true`
+the response only previews; `apply=true` saves and needs the client identity
+headers. The response has `created`, `updated`, `unchanged`, `skipped` and one
+row per cutter (`action` `CREATE`, `UPDATE`, `UNCHANGED` or `SKIP` with a
+`message`: a name listed twice, a name shared by several tools, or a value the
+catalog rejects). A workbook without a Cutters sheet, id row or cutters is a
+`422`.
+
+The export fills a copy of Cimatron 2026's empty External Cutters workbook
+(embedded in the Server) and returns it as
+`application/vnd.ms-excel.sheet.macroEnabled.12`, ready for Cimatron's
+Menu > Import. The cutter name is the tool's Cimatron id or else its name.
+Turning tools and `OTHER` have no Cimatron cutter and are left out;
+`X-Meimad-Exported-Tools` and `X-Meimad-Skipped-Tools` give the counts. The
+catalog keeps no shank cone, gauge or holder geometry, so an exported shank
+rises from the cutter diameter over a length equal to the diameter step and
+holders are referenced by name only.
+
 
 ### 8.13 Windows QC Queue and decision contract
 

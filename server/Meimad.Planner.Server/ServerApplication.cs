@@ -216,6 +216,7 @@ public static class ServerApplication
         builder.Services.AddSingleton<ToolPreparationService>();
         builder.Services.AddSingleton<IToolCatalogRepository, SqliteToolCatalogRepository>();
         builder.Services.AddSingleton<ToolCatalogService>();
+        builder.Services.AddSingleton<CimatronToolTransferService>();
         builder.Services.AddSingleton<IResourceMasterDataRepository, SqliteResourceMasterDataRepository>();
         builder.Services.AddSingleton<ResourceMasterDataService>();
         builder.Services.AddSingleton<AutomaticResourceScheduler>();

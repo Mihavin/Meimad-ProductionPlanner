@@ -37,6 +37,10 @@
         <DockPanel Margin="0,0,0,8">
           <Button DockPanel.Dock="Right" Content="New" Command="{Binding NewCommand}" Margin="8,0,0,0" />
           <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
+          <Button DockPanel.Dock="Right" Content="Export to Cimatron…" Click="ExportCimatron_Click" IsEnabled="{Binding IsConnected}" Margin="8,0,0,0"
+                  ToolTip="Save the catalog as a Cimatron cutter workbook (NC-Process &gt; Cutters, Menu &gt; Import)" />
+          <Button DockPanel.Dock="Right" Content="Import from Cimatron…" Click="ImportCimatron_Click" IsEnabled="{Binding IsConnected}" Margin="8,0,0,0"
+                  ToolTip="Read a cutter workbook exported from Cimatron (NC-Process &gt; Cutters, Menu &gt; Export, XLS)" />
           <TextBlock Text="TOOL CATALOG" FontWeight="Bold" VerticalAlignment="Center" />
         </DockPanel>
         <Grid Grid.Row="1" Margin="0,0,0,8">

@@ -2364,6 +2364,18 @@ internal sealed record ToolPreparationUpdate(
     string? Comment,
     IReadOnlyList<ToolPreparationToolUpdate> Tools);
 
+/// <summary>What a Cimatron import does (preview) or did (applied) with one cutter: CREATE, UPDATE, UNCHANGED or SKIP.</summary>
+internal sealed record PlannerCimatronImportRow(
+    int RowNumber, string CutterName, string Action, string? ToolType, string? CatalogToolId, string? InternalCode, string? Message);
+
+/// <summary>A Cimatron cutter workbook read into the tool catalog, previewed or applied.</summary>
+internal sealed record PlannerCimatronImport(
+    string FileName, string Units, bool Applied, int Created, int Updated, int Unchanged, int Skipped,
+    IReadOnlyList<PlannerCimatronImportRow> Rows);
+
+/// <summary>The catalog as a Cimatron cutter workbook, with how many tools went in and how many Cimatron cannot hold.</summary>
+internal sealed record PlannerCimatronExport(byte[] Workbook, int ExportedCount, int SkippedCount);
+
 /// <summary>One id of a catalog tool in another system (supplier, ERP, CAM library, presetter, ...).</summary>
 internal sealed record PlannerCatalogToolExternalId(string System, string Value);
 
