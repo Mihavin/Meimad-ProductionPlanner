@@ -958,8 +958,8 @@ public sealed class MachineApiTests
             VALUES ('case-1', 'PN-API-M', 'Machine API', 'C:\Cases\PN-API-M');
 
             INSERT INTO production_batches (
-                id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-API-M', 'waiting', 1);
+                id, case_id, batch_number, status, planned_quantity, release_state)
+            VALUES ('batch-1', 'case-1', 'B-API-M', 'waiting', 1, 'released');
 
             INSERT INTO case_operations (
                 id, case_id, operation_number, route_position, name, required_machine_type)

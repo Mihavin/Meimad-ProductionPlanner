@@ -377,19 +377,19 @@ public sealed class MachineOperationExecutionApiTests
             VALUES ('machine-1', 'M-1', 'Mill 1', 'mill', 'calendar-1', 'active', 1);
             INSERT INTO cases (id, part_number, name, working_folder_path)
             VALUES ('case-1', 'PN-1', 'Part', 'C:\Cases\PN-1');
-            INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity)
-            VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 1),
-                   ('batch-2', 'case-1', 'B-2', 'waiting', 1);
+            INSERT INTO production_batches (id, case_id, batch_number, status, planned_quantity, release_state)
+            VALUES ('batch-1', 'case-1', 'B-1', 'waiting', 1, 'released'),
+                   ('batch-2', 'case-1', 'B-2', 'waiting', 1, 'released');
             INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
             VALUES ('case-op-1', 'case-1', 10, 0, 'First'),
                    ('case-op-2', 'case-1', 20, 1, 'Second'),
                    ('case-op-3', 'case-1', 30, 2, 'Unassigned');
             INSERT INTO batch_operations (
                 id, production_batch_id, source_case_operation_id,
-                operation_number, route_position, name, status)
-            VALUES ('op-1', 'batch-1', 'case-op-1', 10, 0, 'First', 'not_started'),
-                   ('op-2', 'batch-1', 'case-op-2', 20, 1, 'Second', 'not_started'),
-                   ('op-3', 'batch-2', 'case-op-3', 30, 0, 'Unassigned', 'not_started');
+                operation_number, route_position, name, required_machine_type, status)
+            VALUES ('op-1', 'batch-1', 'case-op-1', 10, 0, 'First', NULL, 'not_started'),
+                   ('op-2', 'batch-1', 'case-op-2', 20, 1, 'Second', NULL, 'not_started'),
+                   ('op-3', 'batch-2', 'case-op-3', 30, 0, 'Unassigned', 'mill', 'not_started');
             INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
             VALUES ('assignment-1', 'op-1', 'machine-1', 0),
                    ('assignment-2', 'op-2', 'machine-1', 1);

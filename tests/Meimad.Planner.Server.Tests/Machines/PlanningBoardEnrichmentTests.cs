@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Meimad.Planner.Server.Persistence;
 using Microsoft.AspNetCore.Builder;
@@ -42,8 +43,8 @@ public sealed class PlanningBoardEnrichmentTests
                         ('board-order-z', 'board-case', 'SO-Z', 2, '2026-09-01', 'active'),
                         ('board-order-a', 'board-case', 'SO-A', 2, '2026-09-01', 'active');
                     INSERT INTO production_batches (
-                        id, case_id, batch_number, status, planned_quantity)
-                    VALUES ('board-batch', 'board-case', 'B-BOARD', 'waiting', 4);
+                        id, case_id, batch_number, status, planned_quantity, release_state)
+                    VALUES ('board-batch', 'board-case', 'B-BOARD', 'waiting', 4, 'released');
                     INSERT INTO batch_allocations (
                         id, production_batch_id, allocation_type, order_id, quantity)
                     VALUES
@@ -51,10 +52,10 @@ public sealed class PlanningBoardEnrichmentTests
                         ('board-allocation-a', 'board-batch', 'order', 'board-order-a', 2);
                     INSERT INTO batch_operations (
                         id, production_batch_id, source_case_operation_id,
-                        operation_number, route_position, name,
+                        operation_number, route_position, name, required_machine_type,
                         setup_seconds, cycle_seconds, status)
                     VALUES ('board-op', 'board-batch', 'board-case-op',
-                            10, 0, 'Mill', 60, 30, 'not_started');
+                            10, 0, 'Mill', 'Mill', 60, 30, 'not_started');
                     """;
                 await command.ExecuteNonQueryAsync();
             }
@@ -80,6 +81,84 @@ public sealed class PlanningBoardEnrichmentTests
             Assert.DoesNotContain(
                 document.RootElement.GetProperty("conflicts").EnumerateArray(),
                 conflict => conflict.GetProperty("code").GetString() == "unassigned_operation");
+        });
+    }
+
+    [Fact]
+    public async Task Planning_board_pool_lists_only_machine_operations_of_released_work_orders()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var connection = await database.OpenConnectionAsync())
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    INSERT INTO working_calendars (id, name, time_zone_id, calendar_json)
+                    VALUES ('board-calendar', 'Board calendar', 'UTC', '{}');
+                    INSERT INTO machines (
+                        id, number, name, machine_type, capabilities_json,
+                        working_calendar_id, display_configuration_json, status, is_active)
+                    VALUES (
+                        'board-machine', 'M-BOARD', 'Board machine', 'Mill', '[]',
+                        'board-calendar', '{}', 'available', 1);
+                    INSERT INTO cases (id, part_number, name, working_folder_path)
+                    VALUES ('board-case', 'PN-BOARD', 'Board case', 'C:\Cases\PN-BOARD');
+                    INSERT INTO production_batches (
+                        id, case_id, batch_number, status, planned_quantity, release_state)
+                    VALUES
+                        ('released-batch', 'board-case', 'B-RELEASED', 'waiting', 4, 'released'),
+                        ('pending-batch', 'board-case', 'B-PENDING', 'waiting', 4, 'pending');
+                    INSERT INTO case_operations (id, case_id, operation_number, route_position, name)
+                    VALUES
+                        ('case-op-10', 'board-case', 10, 0, 'Op 10'),
+                        ('case-op-20', 'board-case', 20, 1, 'Op 20'),
+                        ('case-op-30', 'board-case', 30, 2, 'Op 30'),
+                        ('case-op-40', 'board-case', 40, 3, 'Op 40'),
+                        ('case-op-50', 'board-case', 50, 4, 'Op 50'),
+                        ('case-op-60', 'board-case', 60, 5, 'Op 60');
+                    INSERT INTO batch_operations (
+                        id, production_batch_id, source_case_operation_id, operation_number,
+                        route_position, name, required_machine_type, setup_seconds, cycle_seconds, status)
+                    VALUES
+                        ('typed-op', 'released-batch', 'case-op-10', 10, 0, 'Mill', 'Mill', 60, 30, 'not_started'),
+                        ('foreign-type-op', 'released-batch', 'case-op-20', 20, 1, 'Laser', 'laser', 60, 30, 'not_started'),
+                        ('untyped-op', 'released-batch', 'case-op-30', 30, 2, 'MACHINE FINISH PER PS551170', NULL, NULL, NULL, 'not_started'),
+                        ('blank-type-op', 'released-batch', 'case-op-40', 40, 3, 'Blank type', '  ', NULL, NULL, 'not_started'),
+                        ('note-op', 'released-batch', 'case-op-50', 50, 4, 'FOR CONTOUR SEE REPORT', 'Production Note', 0, 0, 'not_started'),
+                        ('assigned-untyped-op', 'released-batch', 'case-op-60', 60, 5, 'Assigned text step', NULL, 60, 30, 'not_started'),
+                        ('pending-op', 'pending-batch', 'case-op-10', 10, 0, 'Mill', 'Mill', 60, 30, 'not_started'),
+                        ('pending-assigned-op', 'pending-batch', 'case-op-20', 20, 1, 'Mill', 'Mill', 60, 30, 'not_started');
+                    INSERT INTO machine_assignments (id, batch_operation_id, machine_id, backlog_position)
+                    VALUES
+                        ('assigned-untyped', 'assigned-untyped-op', 'board-machine', 0),
+                        ('pending-assigned', 'pending-assigned-op', 'board-machine', 1);
+                    UPDATE edit_tokens
+                    SET holder_client_id = 'board-client', holder_user_id = 'planner', generation = 1,
+                        acquired_at = '2026-09-27T00:00:00Z', version = version + 1
+                    WHERE id = 1;
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            Assert.Equal(["foreign-type-op", "typed-op"], await PoolIdsAsync(client));
+            // Machine backlogs are not filtered by Machine Type or Work Order release state.
+            Assert.Equal(["assigned-untyped-op", "pending-assigned-op"], await BacklogIdsAsync(client));
+
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "board-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            using (var release = await client.PostAsync("/api/v1/batches/pending-batch/release", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, release.StatusCode);
+            }
+            Assert.Equal(["foreign-type-op", "pending-op", "typed-op"], await PoolIdsAsync(client));
+
+            using (var unrelease = await client.PostAsync("/api/v1/batches/released-batch/unrelease", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, unrelease.StatusCode);
+            }
+            Assert.Equal(["pending-op"], await PoolIdsAsync(client));
+            Assert.Equal(["assigned-untyped-op", "pending-assigned-op"], await BacklogIdsAsync(client));
         });
     }
 
@@ -214,6 +293,31 @@ public sealed class PlanningBoardEnrichmentTests
             Assert.Equal(20, operations["op-a"].GetProperty("availableToolPositions").GetInt32());
             Assert.Equal(30, operations["op-b"].GetProperty("availableToolPositions").GetInt32());
         });
+    }
+
+    private static async Task<string[]> PoolIdsAsync(HttpClient client)
+    {
+        using var document = await ReadBoardAsync(client);
+        return document.RootElement.GetProperty("pool").EnumerateArray()
+            .Select(operation => operation.GetProperty("batchOperationId").GetString()!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static async Task<string[]> BacklogIdsAsync(HttpClient client)
+    {
+        using var document = await ReadBoardAsync(client);
+        return Assert.Single(document.RootElement.GetProperty("machines").EnumerateArray())
+            .GetProperty("backlog").EnumerateArray()
+            .Select(operation => operation.GetProperty("batchOperationId").GetString()!)
+            .ToArray();
+    }
+
+    private static async Task<JsonDocument> ReadBoardAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync("/api/v1/planning-board");
+        response.EnsureSuccessStatusCode();
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
     }
 
     private static async Task<string[]> ReadConflictEventsAsync(HttpClient client)

@@ -351,19 +351,29 @@ public sealed class KitaronBatchSyncTests
                     acquired_at = '2026-09-25T00:00:00Z', version = version + 1 WHERE id = 1;
                 """);
             string noteOperationId;
+            string machiningOperationId;
+            string batchId;
             await using (var connection = await database.OpenConnectionAsync())
             {
                 Assert.Equal("30:Mill 3x|50:Production Note", await ScalarAsync(connection,
                     "SELECT group_concat(operation_number || ':' || required_machine_type, '|') FROM (SELECT * FROM batch_operations ORDER BY operation_number);"));
                 noteOperationId = (string)(await ScalarAsync(connection, "SELECT id FROM batch_operations WHERE operation_number = 50;"))!;
+                machiningOperationId = (string)(await ScalarAsync(connection, "SELECT id FROM batch_operations WHERE operation_number = 30;"))!;
+                batchId = (string)(await ScalarAsync(connection, "SELECT id FROM production_batches;"))!;
             }
 
             var client = application.GetTestClient();
             client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "batch-editor");
             client.DefaultRequestHeaders.Add("X-Meimad-Edit-Generation", "1");
+            // The pool lists only released Work Orders; release it so the note's absence is meaningful.
+            using (var release = await client.PostAsync($"/api/v1/batches/{batchId}/release", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, release.StatusCode);
+            }
             using (var board = await client.GetAsync("/api/v1/planning-board"))
             {
                 var text = await board.Content.ReadAsStringAsync();
+                Assert.Contains(machiningOperationId, text);
                 Assert.DoesNotContain(noteOperationId, text);
             }
             using var assign = await client.PutAsJsonAsync($"/api/v1/batch-operations/{noteOperationId}/assignment",

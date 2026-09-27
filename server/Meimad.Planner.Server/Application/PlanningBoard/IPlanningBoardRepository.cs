@@ -110,7 +110,25 @@ internal sealed record PlanningBoardOperation(
     IReadOnlyList<string>? SetupEstimateWarnings = null,
     bool UsesSetupOccupancyEstimate = false,
     string? CaseOperationId = null,
-    int? ManualPriority = null);
+    int? ManualPriority = null,
+    bool IsWorkOrderReleased = false);
+
+/// <summary>
+/// The unassigned pool of the Machines tab lists only Machine work that is released for production
+/// (owner decision 2026-09-27): the operation has a Machine Type, and its Work Order (Production
+/// Batch) release state is <c>released</c>. Operations without a Machine Type, such as the text
+/// steps of Kitaron's general production station, and operations of pending Work Orders stay out
+/// of the pool until the planner sets the Machine Type or releases the Work Order. Production
+/// Notes never reach the board. Machine backlogs are not filtered: an assigned operation stays in
+/// its Machine column whatever its Work Order release state.
+/// </summary>
+internal static class PlanningBoardPool
+{
+    internal static bool Admits(PlanningBoardOperation operation) =>
+        operation.MachineId is null
+        && operation.IsWorkOrderReleased
+        && !string.IsNullOrWhiteSpace(operation.RequiredMachineType);
+}
 
 internal sealed record PlanningBoardMachine(
     string MachineId,

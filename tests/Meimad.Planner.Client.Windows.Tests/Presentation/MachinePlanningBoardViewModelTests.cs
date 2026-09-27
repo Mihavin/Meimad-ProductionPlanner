@@ -167,6 +167,37 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public async Task Unassigned_operation_hidden_from_pool_is_explained_and_undoable()
+    {
+        // The Server pool lists only released Work Orders' typed operations, so an unassigned
+        // operation can drop out of the board entirely.
+        var assigned = Operation("machine-1", 0);
+        var before = BoardBefore() with { Pool = [], Machines = [Machine([assigned])] };
+        var api = new FakeApiClient(before)
+        {
+            SnapshotAfterUnassignment = before with { Pool = [], Machines = [Machine([])] }
+        };
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(5));
+        await viewModel.EnsureLoadedAsync();
+
+        await viewModel.UnassignAsync(viewModel.Machines.Single().Backlog.Single());
+
+        Assert.Equal("operation-1", api.UnassignedOperationId);
+        Assert.Empty(viewModel.Pool);
+        Assert.Empty(viewModel.Machines.Single().Backlog);
+        Assert.Equal("attention", viewModel.Feedback[0].Severity);
+        Assert.Equal("Unassigned operation not listed", viewModel.Feedback[0].Title);
+        Assert.True(viewModel.CanUndo);
+
+        await viewModel.UndoAsync();
+
+        Assert.Equal("operation-1", api.AssignedOperationId);
+        Assert.Equal("machine-1", api.TargetMachineId);
+        Assert.Equal(0, api.TargetPosition);
+    }
+
+    [Fact]
     public async Task Incompatible_drop_without_confirmed_reason_keeps_board_unchanged()
     {
         var api = new FakeApiClient(BoardBefore())
@@ -708,6 +739,8 @@ public sealed class MachinePlanningBoardViewModelTests
         internal PlannerProductionReadiness? UpdatedReadinessResult { get; init; }
         internal string? ReadinessOperationId { get; private set; }
         internal ProductionReadinessInputUpdate? ReadinessUpdate { get; private set; }
+        internal PlanningBoardSnapshot? SnapshotAfterUnassignment { get; init; }
+        internal string? UnassignedOperationId { get; private set; }
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
             CancellationToken cancellationToken = default) =>
@@ -827,7 +860,16 @@ public sealed class MachinePlanningBoardViewModelTests
             string batchOperationId,
             string clientId,
             long editGeneration,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
+            CancellationToken cancellationToken = default)
+        {
+            UnassignedOperationId = batchOperationId;
+            if (SnapshotAfterUnassignment is not null)
+            {
+                snapshot = SnapshotAfterUnassignment;
+            }
+
+            return Task.CompletedTask;
+        }
 
         public Task<MachineAssignment> ChangeMachineAssignmentPlanningModeAsync(
             string machineAssignmentId,

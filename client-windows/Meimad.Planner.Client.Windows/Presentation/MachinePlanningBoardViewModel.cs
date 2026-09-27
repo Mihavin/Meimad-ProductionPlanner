@@ -685,7 +685,19 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         }
 
         await RefreshAsync();
-        RecordPlacementChange(operation.BatchOperationId, before, PlacementFor(operation.BatchOperationId));
+        // The pool lists only operations with a Machine Type whose Work Order is released, so an
+        // unassigned operation may not be listed; it is still unassigned, and Undo restores it.
+        if (FindOperation(operation.BatchOperationId) is null)
+        {
+            AddFeedback(
+                "attention",
+                "Unassigned operation not listed",
+                $"{operation.DisplayTitle} is unassigned but not shown in the pool, because its Work Order is not released or it has no Machine Type.");
+        }
+        RecordPlacementChange(
+            operation.BatchOperationId,
+            before,
+            PlacementFor(operation.BatchOperationId) ?? new ManualOperationPlacement(null, null));
         PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 

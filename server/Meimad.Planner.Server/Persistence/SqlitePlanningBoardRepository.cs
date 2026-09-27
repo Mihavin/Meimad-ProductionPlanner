@@ -43,8 +43,10 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
         {
             Backlog = byMachine.GetValueOrDefault(machine.MachineId, [])
         }).ToArray();
+        // ReadOperationsAsync computes Latest Start over each Work Order's full route, so the pool
+        // rule is applied only after it.
         var pool = operations
-            .Where(operation => operation.MachineId is null)
+            .Where(PlanningBoardPool.Admits)
             .OrderBy(operation => operation.PartNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(operation => operation.BatchNumber, StringComparer.OrdinalIgnoreCase)
             .ThenBy(operation => operation.OperationNumber)
@@ -166,7 +168,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                    nc_estimate.confidence,
                    nc_estimate.warnings_json,
                    batch_operations.source_case_operation_id,
-                   machine_assignments.manual_priority AS manual_priority
+                   machine_assignments.manual_priority AS manual_priority,
+                   production_batches.release_state AS release_state
             FROM batch_operations
             JOIN production_batches
               ON production_batches.id = batch_operations.production_batch_id
@@ -300,7 +303,8 @@ internal sealed class SqlitePlanningBoardRepository : IPlanningBoardRepository
                 SetupEstimateWarnings: occupancy?.Warnings ?? [],
                 UsesSetupOccupancyEstimate: occupancy is not null,
                 CaseOperationId: GetNullableString(reader, 42),
-                ManualPriority: GetNullableInt32(reader, reader.GetOrdinal("manual_priority"))));
+                ManualPriority: GetNullableInt32(reader, reader.GetOrdinal("manual_priority")),
+                IsWorkOrderReleased: reader.GetString(reader.GetOrdinal("release_state")) == "released"));
         }
 
         await reader.DisposeAsync();
