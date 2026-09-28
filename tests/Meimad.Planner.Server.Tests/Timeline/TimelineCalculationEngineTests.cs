@@ -202,7 +202,7 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
-    public void Locked_simultaneous_operations_share_start_finish_and_reserve_shorter_machine()
+    public void Locked_simultaneous_part_goes_to_the_next_operation_when_finished_and_machines_stay_reserved()
     {
         var input = Input(
             [
@@ -224,21 +224,108 @@ public sealed class TimelineCalculationEngineTests
 
         var result = new TimelineCalculationEngine().Calculate(input);
 
+        // Both set up from 08:00; op-short takes the part when op-long finishes it at 11:00.
         Assert.Empty(result.Conflicts);
         var longOperation = result.Operations.Single(operation => operation.OperationId == "op-long");
         var shortOperation = result.Operations.Single(operation => operation.OperationId == "op-short");
         Assert.Equal(Utc(8), longOperation.StartsAt);
         Assert.Equal(longOperation.StartsAt, shortOperation.StartsAt);
-        Assert.Equal(Utc(11), longOperation.FinishesAt);
+        AssertIntervals(longOperation.ProductionIntervals, (TimelineIntervalType.Production, Utc(9), Utc(11)));
+        AssertIntervals(shortOperation.ProductionIntervals, (TimelineIntervalType.Production, Utc(11), Utc(12)));
+        var waiting = Assert.Single(shortOperation.WaitingIntervals);
+        Assert.Equal((Utc(8, 30), Utc(11)), (waiting.StartsAt, waiting.EndsAt));
+        Assert.Contains("part 1 from the previous operation", waiting.Detail, StringComparison.Ordinal);
+        Assert.Equal(Utc(12), longOperation.FinishesAt);
         Assert.Equal(longOperation.FinishesAt, shortOperation.FinishesAt);
-        Assert.Empty(longOperation.ReservedIntervals);
+        Assert.Empty(shortOperation.ReservedIntervals);
         AssertIntervals(
-            shortOperation.ReservedIntervals,
-            (TimelineIntervalType.Reserved, Utc(9, 30), Utc(11)));
+            longOperation.ReservedIntervals,
+            (TimelineIntervalType.Reserved, Utc(11), Utc(12)));
+    }
+
+    [Theory]
+    // Like operations 80 and 100: the slower first operation paces the second, which waits for each part.
+    [InlineData(2, 1, new[] { 8, 14 }, new[] { 10, 11, 12, 13, 14, 15 }, 10)]
+    // A slower second operation: finished parts wait for it and it works without a break.
+    [InlineData(1, 2, new[] { 8, 11 }, new[] { 9, 15 }, 9)]
+    public void Locked_simultaneous_parts_flow_in_route_order_at_each_machines_own_cycle(
+        int firstCycleHours, int secondCycleHours, int[] firstProduction, int[] secondProduction, int firstPartDone)
+    {
+        // Operation ids sort the other way round; the route order comes from the dependency.
+        var first = new TimelineOperationInput(
+            "op-80", TimeSpan.Zero, TimeSpan.FromHours(firstCycleHours), PlannedQuantity: 3);
+        var second = new TimelineOperationInput(
+            "op-100", TimeSpan.Zero, TimeSpan.FromHours(secondCycleHours), PlannedQuantity: 3);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-80", [first]), Backlog("machine-100", [second])],
+            [Calendar("machine-80", Window(8, 17)), Calendar("machine-100", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [],
+            [new TimelineDependency("group:1", TimelineDependencyType.LockedSimultaneous,
+                "op-80", "op-100", "group", SimultaneousPosition: 1)]));
+
+        Assert.Empty(result.Conflicts);
+        var firstResult = result.Operations.Single(operation => operation.OperationId == "op-80");
+        var secondResult = result.Operations.Single(operation => operation.OperationId == "op-100");
+        Assert.Equal(firstProduction, Hours(firstResult.ProductionIntervals));
+        Assert.Equal(secondProduction, Hours(secondResult.ProductionIntervals));
+        Assert.All([firstResult, secondResult], operation =>
+        {
+            Assert.Equal(Utc(8), operation.StartsAt);
+            Assert.Equal(Utc(15), operation.FinishesAt);
+        });
+        // The second Machine is held until the first part arrives, the first after its last part.
+        Assert.Equal(Utc(8), secondResult.ReservedIntervals[0].StartsAt);
+        Assert.Equal(Utc(firstPartDone), secondResult.ReservedIntervals[0].EndsAt);
+        Assert.Equal((Utc(firstProduction[^1]), Utc(15)),
+            (firstResult.ReservedIntervals[^1].StartsAt, firstResult.ReservedIntervals[^1].EndsAt));
+
+        static int[] Hours(IReadOnlyList<TimelineInterval> intervals) => intervals
+            .SelectMany(interval => new[] { interval.StartsAt.Hour, interval.EndsAt.Hour })
+            .ToArray();
     }
 
     [Fact]
-    public void Locked_group_keeps_periodic_loads_and_reserves_the_shorter_member()
+    public void Locked_simultaneous_manual_load_waits_for_the_part_and_the_one_worker()
+    {
+        // Like 30P450171100-001: each part is loaded by a regular worker; one worker serves both Machines.
+        var first = new TimelineOperationInput(
+            "op-80", TimeSpan.Zero, TimeSpan.FromHours(2),
+            LoadUnloadDuration: TimeSpan.FromMinutes(20), LoadUnloadRequiresWorker: true, PlannedQuantity: 2);
+        var second = new TimelineOperationInput(
+            "op-100", TimeSpan.Zero, TimeSpan.FromHours(1),
+            LoadUnloadDuration: TimeSpan.FromMinutes(10), LoadUnloadRequiresWorker: true, PlannedQuantity: 2);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-80", [first]), Backlog("machine-100", [second])],
+            [Calendar("machine-80", Window(8, 17)), Calendar("machine-100", Window(8, 17))],
+            SetupCalendar(Window(8, 17)), [],
+            [new TimelineDependency("group:1", TimelineDependencyType.LockedSimultaneous,
+                "op-80", "op-100", "group", SimultaneousPosition: 1)],
+            [new TimelineResourceCalendar("worker", TimelineResourceRole.RegularWorker, [Window(8, 17)])]));
+
+        Assert.Empty(result.Conflicts);
+        var firstResult = result.Operations.Single(operation => operation.OperationId == "op-80");
+        var secondResult = result.Operations.Single(operation => operation.OperationId == "op-100");
+        AssertIntervals(firstResult.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(8), Utc(8, 20)),
+            (TimelineIntervalType.LoadUnload, Utc(10, 20), Utc(10, 40)));
+        AssertIntervals(firstResult.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 20), Utc(10, 20)),
+            (TimelineIntervalType.Production, Utc(10, 40), Utc(12, 40)));
+        // Part 1 is ready at 10:20, but the worker loads op-80 until 10:40.
+        AssertIntervals(secondResult.LoadUnloadIntervals!,
+            (TimelineIntervalType.LoadUnload, Utc(10, 40), Utc(10, 50)),
+            (TimelineIntervalType.LoadUnload, Utc(12, 40), Utc(12, 50)));
+        AssertIntervals(secondResult.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(10, 50), Utc(11, 50)),
+            (TimelineIntervalType.Production, Utc(12, 50), Utc(13, 50)));
+        var waitForPart2 = Assert.Single(secondResult.WaitingIntervals);
+        Assert.Equal((Utc(11, 50), Utc(12, 40)), (waitForPart2.StartsAt, waitForPart2.EndsAt));
+        Assert.Contains("part 2", waitForPart2.Detail, StringComparison.Ordinal);
+        Assert.All([firstResult, secondResult], operation => Assert.Equal(Utc(13, 50), operation.FinishesAt));
+    }
+
+    [Fact]
+    public void Locked_group_keeps_periodic_loads_and_flows_the_first_part_to_the_next_member()
     {
         var periodic = new TimelineOperationInput(
             "op-periodic", TimeSpan.Zero, TimeSpan.FromMinutes(10),
@@ -272,8 +359,15 @@ public sealed class TimelineCalculationEngineTests
         Assert.Equal(Utc(8, 50), periodicResult.FinishesAt);
         Assert.Equal(periodicResult.FinishesAt, shorterResult.FinishesAt);
         Assert.Equal(2, periodicResult.LoadUnloadIntervals!.Count);
+        AssertIntervals(periodicResult.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 5), Utc(8, 25)),
+            (TimelineIntervalType.Production, Utc(8, 30), Utc(8, 50)));
+        // Part 1 is done at 08:15; the shorter member makes it from then on.
+        AssertIntervals(shorterResult.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(8, 15), Utc(8, 45)));
         AssertIntervals(shorterResult.ReservedIntervals,
-            (TimelineIntervalType.Reserved, Utc(8, 30), Utc(8, 50)));
+            (TimelineIntervalType.Reserved, Utc(8), Utc(8, 15)),
+            (TimelineIntervalType.Reserved, Utc(8, 45), Utc(8, 50)));
     }
 
     [Fact]
@@ -298,9 +392,10 @@ public sealed class TimelineCalculationEngineTests
                     [Window(10, 17)], ["milling"])
             ]));
 
+        // Setup starts together at 10:00; op-b takes op-a's part at 12:00 and makes it until 14:00.
         Assert.Empty(result.Conflicts);
         Assert.All(result.Operations, operation => Assert.Equal(Utc(10), operation.StartsAt));
-        Assert.All(result.Operations, operation => Assert.Equal(Utc(13), operation.FinishesAt));
+        Assert.All(result.Operations, operation => Assert.Equal(Utc(14), operation.FinishesAt));
     }
 
     [Fact]

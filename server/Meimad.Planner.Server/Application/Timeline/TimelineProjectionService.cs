@@ -1291,7 +1291,8 @@ internal sealed class TimelineProjectionService
                         TimelineDependencyType.LockedSimultaneous,
                         members[0],
                         members[index],
-                        group.Key));
+                        group.Key,
+                        index));
                 }
             }
         }
@@ -1304,13 +1305,15 @@ internal sealed class TimelineProjectionService
         TimelineDependencyType type,
         TimelineSourceOperation from,
         TimelineSourceOperation to,
-        string? groupKey) => new(
+        string? groupKey,
+        int? simultaneousPosition = null) => new(
         new TimelineDependency(
             dependencyId,
             type,
             from.OperationId,
             to.OperationId,
-            groupKey),
+            groupKey,
+            simultaneousPosition),
         new TimelineProjectionDependency(
             dependencyId,
             to.BatchId,

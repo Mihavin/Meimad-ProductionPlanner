@@ -128,6 +128,7 @@ internal sealed class TimelineCalculationEngine
         var nodes = BuildNodes(
             operationEntries,
             dependencyModel.LockedGroupByOperation,
+            dependencyModel.LockedPositionByOperation,
             invalidOperations);
         var predecessors = nodes.Keys.ToDictionary(
             key => key,
@@ -408,6 +409,16 @@ internal sealed class TimelineCalculationEngine
         ConflictCollector conflicts)
     {
         var lockedGroupByOperation = new Dictionary<string, string>(StringComparer.Ordinal);
+        var lockedPositionByOperation = new Dictionary<string, int>(StringComparer.Ordinal);
+        var listedPosition = 0;
+        foreach (var dependency in dependencies)
+        {
+            if (dependency.Type != TimelineDependencyType.LockedSimultaneous) continue;
+            listedPosition++;
+            lockedPositionByOperation.TryAdd(dependency.FromOperationId, 0);
+            lockedPositionByOperation.TryAdd(
+                dependency.ToOperationId, dependency.SimultaneousPosition ?? listedPosition);
+        }
         foreach (var dependency in dependencies.OrderBy(value => value.DependencyId, StringComparer.Ordinal))
         {
             if (!operations.ContainsKey(dependency.FromOperationId)
@@ -487,12 +498,13 @@ internal sealed class TimelineCalculationEngine
             lockedGroupByOperation.Remove(operationId);
         }
 
-        return new DependencyModel(lockedGroupByOperation);
+        return new DependencyModel(lockedGroupByOperation, lockedPositionByOperation);
     }
 
     private static IReadOnlyDictionary<string, ScheduleNode> BuildNodes(
         IReadOnlyDictionary<string, BacklogEntry> operations,
         IReadOnlyDictionary<string, string> lockedGroupByOperation,
+        IReadOnlyDictionary<string, int> lockedPositionByOperation,
         ISet<string> invalidOperations)
     {
         var nodes = new Dictionary<string, ScheduleNode>(StringComparer.Ordinal);
@@ -517,7 +529,13 @@ internal sealed class TimelineCalculationEngine
 
         foreach (var node in nodes.Values)
         {
-            node.Members.Sort(StringComparer.Ordinal);
+            // A locked-simultaneous group lists its members in flow order: a part goes from each to the next.
+            node.Members.Sort((left, right) =>
+            {
+                var comparison = lockedPositionByOperation.GetValueOrDefault(left)
+                    .CompareTo(lockedPositionByOperation.GetValueOrDefault(right));
+                return comparison != 0 ? comparison : StringComparer.Ordinal.Compare(left, right);
+            });
         }
 
         return nodes;
@@ -1534,14 +1552,36 @@ internal sealed class TimelineCalculationEngine
                 resources, machineSkills, occupiedResources, dayShiftWindows, downtimes);
             if (forward is not null && forward.FinishesAt <= latest)
             {
+                // Earlier tries may have moved back further than needed: start later while it still fits.
+                for (var refinement = 0; refinement < 16; refinement++)
+                {
+                    var slack = latest - forward.FinishesAt;
+                    if (slack <= TimeSpan.Zero) break;
+                    var start = forward.Results.Min(result => result.StartsAt);
+                    var later = ScheduleLockedGroup(
+                        node, operations, start + slack, machineWindows, setupWindows,
+                        resources, machineSkills, occupiedResources, dayShiftWindows, downtimes);
+                    if (later is null
+                        || later.FinishesAt > latest
+                        || later.Results.Min(result => result.StartsAt) <= start)
+                    {
+                        break;
+                    }
+                    forward = later;
+                }
                 return forward;
             }
 
-            if (candidateStart >= commonFinish)
+            // The parts flow from member to member, so the group takes longer than its longest
+            // member alone: move the finish back by the forward overshoot and try again.
+            var nextFinish = forward is not null
+                ? commonFinish - (forward.FinishesAt - latest)
+                : candidateStart;
+            if (nextFinish >= commonFinish)
             {
                 return null;
             }
-            commonFinish = candidateStart;
+            commonFinish = nextFinish;
         }
 
         return null;
@@ -1771,12 +1811,17 @@ internal sealed class TimelineCalculationEngine
             return null;
         }
 
+        // Owner decision 2026-09-28: the members start together and run as a flow line in route
+        // order. A part starts on a member once the previous member has finished that part and this
+        // member has finished its previous part; each machine keeps its own cycle time.
         List<TimelineOperationResult>? results = null;
         List<ResourceReservation>? reservations = null;
         for (var attempt = 0; attempt < 64; attempt++)
         {
             results = [];
             reservations = [];
+            var preparationStarts = new List<DateTimeOffset>();
+            IReadOnlyDictionary<int, DateTimeOffset>? partsReady = null;
             var localOccupied = occupiedResources.ToDictionary(
                 pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
             foreach (var member in members)
@@ -1790,13 +1835,16 @@ internal sealed class TimelineCalculationEngine
                     machineSkills.GetValueOrDefault(member.MachineId, []),
                     localOccupied,
                     dayShiftWindows,
-                    downtimes);
+                    downtimes,
+                    flowPartsReady: partsReady ?? new Dictionary<int, DateTimeOffset>());
                 if (scheduled is null)
                 {
                     return null;
                 }
 
                 results.Add(scheduled.Result);
+                preparationStarts.Add(scheduled.PreparationStart ?? scheduled.Result.StartsAt);
+                partsReady = scheduled.PartFinishes;
                 reservations.AddRange(scheduled.ResourceReservations);
                 foreach (var reservation in scheduled.ResourceReservations)
                 {
@@ -1809,8 +1857,8 @@ internal sealed class TimelineCalculationEngine
                 }
             }
 
-            var nextStart = results.Max(result => result.StartsAt);
-            if (results.All(result => result.StartsAt == commonStart.Value))
+            var nextStart = preparationStarts.Max();
+            if (preparationStarts.All(start => start == commonStart.Value))
             {
                 break;
             }
@@ -1829,30 +1877,60 @@ internal sealed class TimelineCalculationEngine
             return null;
         }
 
+        // Every member's Machine is held from the group start to the group end: before its first
+        // work (a member without setup waits for its first part) and after its last part.
+        var groupStart = commonStart!.Value;
         var groupFinish = results.Max(result => result.FinishesAt);
         var final = results.Select(result =>
         {
-            var reserved = result.FinishesAt < groupFinish
-                ? new[]
-                {
-                    new TimelineInterval(
-                        TimelineIntervalType.Reserved,
-                        result.MachineId,
-                        result.OperationId,
-                        result.FinishesAt,
-                        groupFinish,
-                        "Locked-simultaneous reservation")
-                }
-                : [];
+            var firstWork = result.SetupIntervals
+                .Concat(result.QaIntervals ?? [])
+                .Concat(result.LoadUnloadIntervals ?? [])
+                .Concat(result.ProductionIntervals)
+                .Select(interval => interval.StartsAt)
+                .DefaultIfEmpty(groupFinish)
+                .Min();
+            var reserved = new List<TimelineInterval>();
+            if (firstWork > groupStart)
+            {
+                reserved.Add(new TimelineInterval(
+                    TimelineIntervalType.Reserved,
+                    result.MachineId,
+                    result.OperationId,
+                    groupStart,
+                    firstWork,
+                    "Locked-simultaneous reservation until the first part arrives"));
+            }
+            if (result.FinishesAt < groupFinish)
+            {
+                reserved.Add(new TimelineInterval(
+                    TimelineIntervalType.Reserved,
+                    result.MachineId,
+                    result.OperationId,
+                    result.FinishesAt,
+                    groupFinish,
+                    "Locked-simultaneous reservation"));
+            }
             return result with
             {
+                StartsAt = groupStart,
                 FinishesAt = groupFinish,
-                ReservedIntervals = reserved
+                ReservedIntervals = reserved,
+                WaitingIntervals = result.WaitingIntervals
+                    .Where(interval => interval.EndsAt > firstWork || interval.StartsAt < groupStart)
+                    .ToArray()
             };
         }).ToArray();
         return new ScheduledNode(final, groupFinish, reservations);
     }
 
+    /// <summary>
+    /// Places one operation: setup, first-part QA, then its parts with their load/unload. With
+    /// <paramref name="flowPartsReady"/> the operation is a member of a locked-simultaneous flow: part
+    /// number k (1-based over the planned quantity) starts no earlier than the time given for it (the
+    /// previous member's finish of that part; a load of several parts waits for all of them), and the
+    /// finish of every part is returned for the next member.
+    /// </summary>
     private static ScheduledMember? ScheduleMember(
         BacklogEntry entry,
         DateTimeOffset earliest,
@@ -1862,7 +1940,8 @@ internal sealed class TimelineCalculationEngine
         IReadOnlyList<string> machineSkills,
         IReadOnlyDictionary<string, List<ResourceReservation>> occupiedResources,
         IReadOnlyDictionary<string, IReadOnlyList<InstantWindow>> dayShiftWindows,
-        IReadOnlyList<TimelineDowntime> downtimes)
+        IReadOnlyList<TimelineDowntime> downtimes,
+        IReadOnlyDictionary<int, DateTimeOffset>? flowPartsReady = null)
     {
         var productionAvailability = entry.Operation.DayShiftOnly
             ? dayShiftWindows.TryGetValue(entry.MachineId, out var dayWindows)
@@ -1905,33 +1984,41 @@ internal sealed class TimelineCalculationEngine
         var phaseEarliest = qaPhase.Allocation.FinishesAt;
         var productionRuns = ProductionRuns(entry.Operation);
         var loadOccurrenceCount = LoadUnloadOccurrenceCount(entry.Operation);
+        // Parts already made are the first ones, so the parts still to make are numbered after them.
+        var nextPart = Math.Max(0, entry.Operation.PlannedQuantity - ProductionCycleQuantity(entry.Operation)) + 1;
+        var partFinishes = flowPartsReady is null ? null : new Dictionary<int, DateTimeOffset>();
         for (var runIndex = 0; runIndex < productionRuns.Count; runIndex++)
         {
             var run = productionRuns[runIndex];
             if (run.RequiresLoadUnload)
             {
+                // A load of several parts needs all of them from the previous member.
+                var loadRequestedAt = phaseEarliest;
+                var loadEarliest = FlowReady(flowPartsReady, nextPart, run.PartCount, phaseEarliest);
                 ResourcePhase? loadPhase = null;
                 Allocation? loadUnload;
                 if (entry.Operation.LoadUnloadRequiresWorker)
                 {
                     loadPhase = AllocateResourcePhase(
-                        entry.Operation.LoadUnloadDuration, phaseEarliest, machineAvailability,
+                        entry.Operation.LoadUnloadDuration, loadEarliest, machineAvailability,
                         TimelineResourceRole.RegularWorker, resources, occupiedResources, [], entry.Operation);
                     loadUnload = loadPhase?.Allocation;
                     if (loadPhase is not null)
                     {
                         AddReservation(reservations, loadPhase, entry.Operation);
                         waitingIntervals.AddRange(PhaseWaiting(
-                            entry, phaseEarliest, loadPhase.Allocation,
+                            entry, loadRequestedAt, loadPhase.Allocation,
                             machineAvailability, machineAvailability, null, downtimes,
-                            loadPhase.WaitingDetail ?? "Waiting for a regular worker for load/unload."));
+                            loadEarliest > loadRequestedAt
+                                ? FlowWaitingDetail(nextPart)
+                                : loadPhase.WaitingDetail ?? "Waiting for a regular worker for load/unload."));
                     }
                 }
                 else
                 {
                     loadUnload = Allocate(
                         entry.Operation.LoadUnloadDuration,
-                        phaseEarliest,
+                        loadEarliest,
                         machineAvailability);
                 }
                 if (loadUnload is null)
@@ -1941,9 +2028,11 @@ internal sealed class TimelineCalculationEngine
                 if (!entry.Operation.LoadUnloadRequiresWorker)
                 {
                     waitingIntervals.AddRange(PhaseWaiting(
-                        entry, phaseEarliest, loadUnload,
+                        entry, loadRequestedAt, loadUnload,
                         machineAvailability, machineAvailability, null, downtimes,
-                        "Waiting for Machine availability for load/unload."));
+                        loadEarliest > loadRequestedAt
+                            ? FlowWaitingDetail(nextPart)
+                            : "Waiting for Machine availability for load/unload."));
                 }
                 loadAllocations.Add(new ScheduledLoad(
                     loadUnload,
@@ -1953,20 +2042,44 @@ internal sealed class TimelineCalculationEngine
                 phaseEarliest = loadUnload.FinishesAt;
             }
 
-            var production = Allocate(
-                ProductionRunDuration(entry.Operation, run),
-                phaseEarliest,
-                productionAvailability);
-            if (production is null)
+            if (partFinishes is null)
             {
-                return null;
+                var production = Allocate(
+                    ProductionRunDuration(entry.Operation, run),
+                    phaseEarliest,
+                    productionAvailability);
+                if (production is null)
+                {
+                    return null;
+                }
+                waitingIntervals.AddRange(PhaseWaiting(
+                    entry, phaseEarliest, production,
+                    machineAvailability, productionAvailability, null, downtimes,
+                    "Waiting for Machine availability for production."));
+                productionAllocations.Add(production);
+                phaseEarliest = production.FinishesAt;
+                continue;
             }
-            waitingIntervals.AddRange(PhaseWaiting(
-                entry, phaseEarliest, production,
-                machineAvailability, productionAvailability, null, downtimes,
-                "Waiting for Machine availability for production."));
-            productionAllocations.Add(production);
-            phaseEarliest = production.FinishesAt;
+
+            // In a flow, each part waits for the previous member to finish that same part.
+            for (var index = 0; index < run.PartCount; index++, nextPart++)
+            {
+                var partEarliest = FlowReady(flowPartsReady, nextPart, 1, phaseEarliest);
+                var production = Allocate(entry.Operation.ProductionDuration, partEarliest, productionAvailability);
+                if (production is null)
+                {
+                    return null;
+                }
+                waitingIntervals.AddRange(PhaseWaiting(
+                    entry, phaseEarliest, production,
+                    machineAvailability, productionAvailability, null, downtimes,
+                    partEarliest > phaseEarliest
+                        ? FlowWaitingDetail(nextPart)
+                        : "Waiting for Machine availability for production."));
+                productionAllocations.Add(production);
+                partFinishes[nextPart] = production.FinishesAt;
+                phaseEarliest = production.FinishesAt;
+            }
         }
 
         var startsAt = setupPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
@@ -1983,8 +2096,8 @@ internal sealed class TimelineCalculationEngine
             window.StartsAt,
             window.EndsAt,
             $"Setup worker: {setupPhase.ResourceId}")).ToArray();
-        var productionIntervals = productionAllocations
-            .SelectMany(production => production.Intervals)
+        var productionWindows = productionAllocations.SelectMany(production => production.Intervals);
+        var productionIntervals = (partFinishes is null ? productionWindows : Merge(productionWindows))
             .Select(window => new TimelineInterval(
             TimelineIntervalType.Production,
             entry.MachineId,
@@ -2010,8 +2123,34 @@ internal sealed class TimelineCalculationEngine
             waitingIntervals,
             qaIntervals,
             loadUnloadIntervals);
-        return new ScheduledMember(result, reservations);
+        var preparationStart = setupPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
+            ?? qaPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
+            ?? earliest;
+        return new ScheduledMember(result, reservations, preparationStart, partFinishes);
     }
+
+    /// <summary>
+    /// The earliest a flow member may take parts first..first+count-1: when the previous member
+    /// has finished all of them, and never before <paramref name="earliest"/>. A part the previous
+    /// member does not make (already made, or beyond its quantity) is available at once.
+    /// </summary>
+    private static DateTimeOffset FlowReady(
+        IReadOnlyDictionary<int, DateTimeOffset>? partsReady,
+        int first,
+        int count,
+        DateTimeOffset earliest)
+    {
+        if (partsReady is null) return earliest;
+        var ready = earliest;
+        for (var part = first; part < first + count; part++)
+        {
+            if (partsReady.TryGetValue(part, out var finish) && finish > ready) ready = finish;
+        }
+        return ready;
+    }
+
+    private static string FlowWaitingDetail(int part) =>
+        $"Waiting for part {part} from the previous operation of the locked-simultaneous group.";
 
     private static ResourcePhase? AllocateResourcePhase(
         TimeSpan duration,
@@ -2654,7 +2793,8 @@ internal sealed class TimelineCalculationEngine
         TimelineOperationInput Operation);
 
     private sealed record DependencyModel(
-        IReadOnlyDictionary<string, string> LockedGroupByOperation);
+        IReadOnlyDictionary<string, string> LockedGroupByOperation,
+        IReadOnlyDictionary<string, int> LockedPositionByOperation);
 
     private static DateTimeOffset FinishAfterExternalDelay(
         TimelineOperationInput operation,
@@ -2712,9 +2852,15 @@ internal sealed class TimelineCalculationEngine
         DateTimeOffset FinishesAt,
         IReadOnlyList<ResourceReservation> ResourceReservations);
 
+    /// <summary>
+    /// One placed operation. `PreparationStart` is when its setup (or QA) starts, or the requested
+    /// start without either; `PartFinishes` holds the finish of each part number in a flow.
+    /// </summary>
     private sealed record ScheduledMember(
         TimelineOperationResult Result,
-        IReadOnlyList<ResourceReservation> ResourceReservations);
+        IReadOnlyList<ResourceReservation> ResourceReservations,
+        DateTimeOffset? PreparationStart = null,
+        IReadOnlyDictionary<int, DateTimeOffset>? PartFinishes = null);
 
     private sealed record ResourceAvailability(
         string ResourceId,

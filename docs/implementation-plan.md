@@ -1083,3 +1083,21 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 **Owner decision (2026-09-28), replacing the same day's decision to keep them out:** every open Kitaron Work Order (route open, not stopped) is imported, also when its sales-order line is closed or stopped or it has none (production for stock and the like). On the live data this adds 164 Work Orders with a closed line (none stopped, none without a line; 1 opened in 2023, 2 in 2025, 161 in 2026), for 362 in all, for example 41448 of `30P450171100-001`.
 
 **Implemented:** `SqlServerKitaronSourceReader` reads work orders, their links and material lines by the work order's own state and reports whether the line is open (`KitaronSourceWorkOrder.OrderLineOpen`). `BuildBatches` allocates work orders with an open line first and the others after them, each group oldest first, so existing Batch allocations do not change and a work order for stock only takes demand the others leave; what no Order needs is stock. A child part's work order still allocates only to Orders of its own Case, so work orders like 41448 (whose Case has only demand derived from its parent) become stock. Tests: `KitaronBatchPlanTests.A_work_order_whose_order_line_is_closed_is_imported_and_takes_only_demand_the_others_leave`, `Work_orders_are_read_by_their_own_state_whatever_their_sales_order_line`; the three queries were run read-only against Kitaron (362 work orders, 362 links, 291 material lines).
+
+## Locked-simultaneous groups as a flow line (2026-09-28)
+
+**Owner decision (2026-09-28), replacing AGENTS.md rule 10's "same start and finish; group duration is the longest member duration":** the operations of a locked-simultaneous group run as a flow line. "Operation 80 finishes part 1 - operation 100 starts part 1." An intermediate request the same day (all cycles start together in lockstep, one step apart) was withdrawn by the owner.
+
+**Implemented (Timeline engine only; no schema or API change):**
+
+- Members are ordered by operation number (`TimelineDependency.SimultaneousPosition`, set by the projection from the group's route order).
+- The members still start together at the common start (setup, first-part QA), as before. Part k starts on a member no earlier than the previous member's finish of part k and this member's finish of part k-1; each member keeps its own cycle time. A manual load waits for its part, an automatic load of N parts waits for all N, and a worker-required load still reserves a regular worker (the first member's loads are placed first).
+- Parts already made are the first ones (`PlannedQuantity` minus the remaining cycle quantity), so a member's remaining parts keep their numbers; a part the previous member does not make counts as available.
+- All members finish at the group finish (the last member's last part). A member's Machine is shown reserved from the group start until its first work (a member without setup waits for its first part) and from its last part to the group finish; waits between parts are waiting intervals "Waiting for part k from the previous operation of the locked-simultaneous group."
+- Backward placement moves the group's finish back by the forward overshoot and then later by the remaining slack, so the flow ends as late as it fits.
+
+**Choices made without a separate decision (reversible):** setups start together at the group start, as before, rather than each member setting up just in time for its first part; the group finish, not each member's last part, ends every member's reservation; a group already in progress keeps the existing actual/hold handling.
+
+**Tests:** `TimelineCalculationEngineTests` (`Locked_simultaneous_part_goes_to_the_next_operation_when_finished_and_machines_stay_reserved`, `Locked_simultaneous_parts_flow_in_route_order_at_each_machines_own_cycle` for a slower first and a slower second operation, `Locked_simultaneous_manual_load_waits_for_the_part_and_the_one_worker`, periodic loads, worker retry), `TimelineBackwardCalculationTests` (latest flow placement), `TimelineApiTests.Missed_all_backward_locked_group_falls_forward_together`.
+
+**Live data:** the only locked group is `30P450171100-001` operations 80 (cycle 7 h) and 100 (cycle 3 h), group 1; its first batch arrives with Work Order 41448.

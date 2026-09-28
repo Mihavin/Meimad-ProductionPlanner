@@ -113,7 +113,7 @@ Each Production Run Output is forecast-complete when its parent program reaches 
 
 - Sequential successors may start after their required predecessor output completes.
 - Parallel-capable and independent meanings remain unchanged.
-- Locked-simultaneous links remain start/end locked; a participating run reserves its Machine through the locked group end.
+- Locked-simultaneous links remain start/end locked and run as a flow line (each part moves to the next member when the previous one finishes it; owner decision 2026-09-28); a participating run reserves its Machine through the locked group end.
 - A downstream operation on another Machine may be forecast after its upstream output completes even while other programs continue in the source run.
 - A downstream operation queued on the same Machine cannot overlap the still-active run's continuous occupancy.
 

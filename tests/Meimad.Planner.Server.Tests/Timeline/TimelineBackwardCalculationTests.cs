@@ -338,7 +338,7 @@ public sealed class TimelineBackwardCalculationTests
     }
 
     [Fact]
-    public void Backward_locked_group_shares_start_and_finish_and_reserves_shorter_machine()
+    public void Backward_locked_group_flows_the_part_and_finishes_together_as_late_as_possible()
     {
         var result = Calculate(
             [
@@ -352,10 +352,12 @@ public sealed class TimelineBackwardCalculationTests
 
         var shortOperation = Result(result, "short");
         var longOperation = Result(result, "long");
+        Assert.Equal(Utc(14), shortOperation.StartsAt);
         Assert.Equal(longOperation.StartsAt, shortOperation.StartsAt);
+        Assert.Equal(End, longOperation.FinishesAt);
         Assert.Equal(longOperation.FinishesAt, shortOperation.FinishesAt);
         Assert.Equal(shortOperation.StartsAt, shortOperation.ProductionIntervals[0].StartsAt);
-        Assert.Equal(longOperation.StartsAt, longOperation.ProductionIntervals[0].StartsAt);
+        Assert.Equal(shortOperation.ProductionIntervals[^1].EndsAt, longOperation.ProductionIntervals[0].StartsAt);
         var reservation = Assert.Single(shortOperation.ReservedIntervals);
         Assert.Equal(shortOperation.ProductionIntervals[^1].EndsAt, reservation.StartsAt);
         Assert.Equal(shortOperation.FinishesAt, reservation.EndsAt);
@@ -378,15 +380,16 @@ public sealed class TimelineBackwardCalculationTests
                 "locked", TimelineDependencyType.LockedSimultaneous,
                 "short", "long", "group-1")]);
 
+        // At 16:00 the long member could not take the part and finish by 17:00, so the group starts at 14:00.
         var shortOperation = Result(result, "short");
         var longOperation = Result(result, "long");
         Assert.Equal(Utc(14), shortOperation.StartsAt);
         Assert.Equal(shortOperation.StartsAt, longOperation.StartsAt);
-        Assert.Equal(Utc(16), shortOperation.FinishesAt);
+        Assert.Equal(Utc(17), shortOperation.FinishesAt);
         Assert.Equal(shortOperation.FinishesAt, longOperation.FinishesAt);
         var reservation = Assert.Single(shortOperation.ReservedIntervals);
         Assert.Equal(Utc(15), reservation.StartsAt);
-        Assert.Equal(Utc(16), reservation.EndsAt);
+        Assert.Equal(Utc(17), reservation.EndsAt);
     }
 
     [Fact]

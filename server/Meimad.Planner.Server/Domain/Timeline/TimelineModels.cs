@@ -121,12 +121,18 @@ internal enum TimelineDependencyType
     LockedSimultaneous
 }
 
+/// <summary>
+/// A dependency between two operations. For a locked-simultaneous group, `SimultaneousPosition` is
+/// the To operation's place in the group's flow (the From operation is first, position 0); without
+/// it the group keeps the order in which its dependencies are listed.
+/// </summary>
 internal sealed record TimelineDependency(
     string DependencyId,
     TimelineDependencyType Type,
     string FromOperationId,
     string ToOperationId,
-    string? SimultaneousGroupKey = null);
+    string? SimultaneousGroupKey = null,
+    int? SimultaneousPosition = null);
 
 internal sealed record TimelineCalculationResult(
     DateTimeOffset HorizonStart,
