@@ -52,6 +52,7 @@ using Meimad.Planner.Server.Application.GCode;
 using Meimad.Planner.Server.Application.Fanuc;
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Application.Kitaron;
+using Meimad.Planner.Server.Application.Kitaron.Push;
 using Meimad.Planner.Server.Application.LegacyImport;
 using Meimad.Planner.Server.Application.MachineAssignments;
 using Meimad.Planner.Server.Application.Materials;
@@ -312,6 +313,11 @@ public static class ServerApplication
         builder.Services.AddSingleton<KitaronStationService>();
         builder.Services.AddHostedService<KitaronConnectionMonitorService>();
         builder.Services.AddHostedService<KitaronSyncHostedService>();
+        builder.Services.AddSingleton<IKitaronPushRepository, SqliteKitaronPushRepository>();
+        builder.Services.AddSingleton<IKitaronPushTarget, SqlServerKitaronPushTarget>();
+        builder.Services.AddSingleton<IKitaronPushForecast, TimelineKitaronPushForecast>();
+        builder.Services.AddSingleton<KitaronPushService>();
+        builder.Services.AddHostedService<KitaronPushHostedService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
         builder.Services.AddSingleton<IMaterialReportEmailSender, SmtpMaterialReportEmailSender>();
         builder.Services.AddSingleton<WeeklyMaterialReportService>();
@@ -443,6 +449,7 @@ public static class ServerApplication
         application.MapLegacyImportEndpoints();
         application.MapKitaronConnectionEndpoints();
         application.MapKitaronStationEndpoints();
+        application.MapKitaronPushEndpoints();
         application.MapKitaronMaterialOrderEndpoints();
         application.MapNetworkFolderEndpoints();
         application.MapWorkOrderMaterialOrderEndpoints();

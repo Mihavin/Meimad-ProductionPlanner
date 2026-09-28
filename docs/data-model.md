@@ -709,3 +709,11 @@ Owner decision 2026-09-27 replaces Single Edit Mode; `edit_tokens` remains in th
 - `machine_backlog_changes` (`machine_id`, `stamp_after`, `changed_by`, `changed_at`): the last manual backlog change per Machine, so a refused move can name the planner whose change produced the current order.
 
 Actors recorded on planning rows (`released_by`, `user_id`, `confirmed_by_user_id`, `changed_by`, …) are now the signed-in account's user name.
+
+## Kitaron push (schema v87)
+
+- `kitaron_push_settings` (singleton): `enabled` (automatic push), `interval_minutes` (5–1440), `mappings_json` (`[ { kitaronColumn, plannerValue, enabled } ]`), `version`, `updated_at`, `updated_by`. Starts switched off with the four default mappings.
+- `kitaron_push_runs`: `id`, `trigger` (`automatic` / `manual`), `requested_by`, `started_at`, `finished_at`, `status` (`running` / `succeeded` / `failed`), `operations_matched`, `values_written`, `operations_skipped`, `message`. Rows older than 90 days are removed when a run starts.
+- `kitaron_push_changes`: per run, the Kitaron row (`kitaron_row_id` = `TSubRootCard.auto`), `work_order_number`, `action_number`, `kitaron_column`, `old_value` and `new_value` as written.
+
+Planner sources: Work Orders linked through `kitaron_sync_links` (`production_batch`, `wo:<NUMBER>`), `batch_operations.actual_start/actual_end`, the first `QC_PASS` in `production_run_workflow_events` of a Production Run with an output for the operation at or after its start, `production_run_outputs.produced_quantity`, and `production_batches.planned_quantity`.

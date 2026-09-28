@@ -292,6 +292,8 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public KitaronStationsViewModel KitaronStations { get; } = new();
 
+    public KitaronPushViewModel KitaronPush { get; } = new();
+
     public NetworkFolderViewModel NetworkFolder { get; } = new();
 
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
@@ -888,6 +890,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             newApiClient, newClientId, LocalUserName, nextGeneration, nextIsEditor, ServerAddress);
         ResourceMasterData.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         KitaronStations.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
+        KitaronPush.AttachSession(newApiClient, nextIsEditor);
         NetworkFolder.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)
@@ -953,9 +956,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             var reportSettingsTask = apiClient.GetReportEmailSettingsAsync();
             var resourceMasterDataTask = ResourceMasterData.RefreshAsync();
             var kitaronStationsTask = KitaronStations.RefreshAsync();
+            var kitaronPushTask = KitaronPush.RefreshAsync();
             await Task.WhenAll(calendarsTask, machinesTask, downtimesTask, machineTypesTask, postprocessorsTask,
                 clientPortalCustomersTask, knownCustomerNamesTask, setupCalendarTask, masterCalendarTask,
-                resourcesTask, holidaysTask, reportSettingsTask, resourceMasterDataTask, kitaronStationsTask);
+                resourcesTask, holidaysTask, reportSettingsTask, resourceMasterDataTask, kitaronStationsTask, kitaronPushTask);
 
             Replace(WorkingCalendars, await calendarsTask);
             OnPropertyChanged(nameof(MachineWorkingCalendars));

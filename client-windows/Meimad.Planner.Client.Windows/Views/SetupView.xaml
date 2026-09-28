@@ -815,6 +815,81 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Kitaron Push" ToolTip="Choose which Planner values the Server writes into Kitaron's Work Order operations, preview them and push">
+                <Grid Margin="8" DataContext="{Binding KitaronPush}">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="2,0,2,8">
+                        <TextBlock Text="PUSH TO KITARON" FontSize="17" FontWeight="Bold"/>
+                        <TextBlock Text="The Server writes the chosen Planner values into Kitaron's Work Order operations (TSubRootCard). An operation matches by Work Order number and operation number; Work Orders closed or stopped in Kitaron are left alone. The Planner's value replaces Kitaron's, but a value the Planner does not have yet never clears Kitaron's. Times are written in factory time." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    </StackPanel>
+                    <Border Grid.Row="1" Style="{StaticResource SetupSection}" Margin="0,0,0,8">
+                        <StackPanel IsEnabled="{Binding IsEditor}">
+                            <DataGrid ItemsSource="{Binding Columns}" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" AutomationProperties.Name="Pushed Kitaron columns">
+                                <DataGrid.Columns>
+                                    <DataGridCheckBoxColumn Header="Push" Binding="{Binding Push, UpdateSourceTrigger=PropertyChanged}" Width="55"/>
+                                    <DataGridTextColumn Header="Kitaron column" Binding="{Binding ColumnName}" IsReadOnly="True" Width="130"/>
+                                    <DataGridTextColumn Header="Meaning" Binding="{Binding ColumnTitle}" IsReadOnly="True" Width="170"/>
+                                    <DataGridTemplateColumn Header="Planner value" Width="230">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate><TextBlock Text="{Binding SelectedValue.Name}" VerticalAlignment="Center" Margin="4,0"/></DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate><ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedValue, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name"/></DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="In Kitaron" Binding="{Binding ColumnNote}" IsReadOnly="True" Width="*">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <WrapPanel Margin="0,8,0,0">
+                                <CheckBox Content="Push automatically every" IsChecked="{Binding Enabled}" VerticalAlignment="Center"/>
+                                <TextBox Text="{Binding IntervalMinutes, UpdateSourceTrigger=PropertyChanged}" Width="55" Margin="6,0" AutomationProperties.Name="Push interval in minutes"/>
+                                <TextBlock Text="minutes" VerticalAlignment="Center" Margin="0,0,18,0"/>
+                                <Button Content="Save" Command="{Binding SaveCommand}" ToolTip="Save the columns, their Planner values and the automatic push"/>
+                                <Button Content="Preview" Command="{Binding PreviewCommand}" ToolTip="Read Kitaron and list what a push would change, without writing anything"/>
+                                <Button Content="Push now" Command="{Binding PushNowCommand}" ToolTip="Write the changes into Kitaron now, in one transaction"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource SetupSection}">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="{Binding ResultTitle}" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Notes}" Margin="0,0,0,4">
+                                    <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></DataTemplate></ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <DataGrid ItemsSource="{Binding Changes}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.Name="Kitaron push changes">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Work Order" Binding="{Binding WorkOrderNumber}" Width="85"/>
+                                        <DataGridTextColumn Header="Op." Binding="{Binding ActionNumber}" Width="45"/>
+                                        <DataGridTextColumn Header="Part" Binding="{Binding PartNumber}" Width="*"/>
+                                        <DataGridTextColumn Header="Kitaron column" Binding="{Binding KitaronColumn}" Width="110"/>
+                                        <DataGridTextColumn Header="Was" Binding="{Binding OldValue}" Width="130"/>
+                                        <DataGridTextColumn Header="Becomes" Binding="{Binding NewValue}" Width="130"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                        <Border Grid.Column="2" Style="{StaticResource SetupSection}">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="Recent pushes" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <DataGrid ItemsSource="{Binding Runs}" SelectedItem="{Binding SelectedRun}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.Name="Recent Kitaron pushes">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Started" Binding="{Binding StartedText}" Width="110"/>
+                                        <DataGridTextColumn Header="Started by" Binding="{Binding TriggerText}" Width="90"/>
+                                        <DataGridTextColumn Header="Result" Binding="{Binding StatusText}" Width="60"/>
+                                        <DataGridTextColumn Header="Values" Binding="{Binding ValuesWritten}" Width="55"/>
+                                        <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                    <DockPanel Grid.Row="3" Margin="2,8,2,0"><Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshCommand}"/><TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/></DockPanel>
+                </Grid>
+            </TabItem>
+
             <TabItem ToolTip="Manage employees, roles, skills, and availability">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ResourcesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Employees / Resources" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
                 <Grid Margin="8">

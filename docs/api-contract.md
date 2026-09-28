@@ -1077,6 +1077,22 @@ If an absent/superseded Order is referenced by a Production Run with non-null `s
 
 Mapping responses mark `orders.status` and `orders.price` with `connectorManaged: true`. A mapping PUT must submit their fixed enabled/source/confidence/transform values unchanged; attempts to disable or remap either field return `422 validation_failed`.
 
+### 6.7 Kitaron push (schema v87)
+
+Owner decision 2026-09-28: the Server writes chosen Planner values into Kitaron's Work Order operations (`dbo.TSubRootCard`). Reading needs a signed-in account; changing the settings, previewing and pushing need `setup.manage`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/kitaron/push` | `{ enabled, intervalMinutes, mappings: [ { kitaronColumn, plannerValue, enabled } ], version, updatedAt, updatedBy, kitaronColumns, plannerValues, runs }`; `runs` are the 20 most recent pushes. |
+| `PUT` | `/api/v1/kitaron/push` | `{ enabled, intervalMinutes (5–1440), mappings, expectedVersion }`. An unknown or unpushable column, a value of the wrong kind, or a column mapped twice is `422 validation_failed`; a stale version is `409 edit_conflict`. |
+| `POST` | `/api/v1/kitaron/push/preview` | `{ runId: null, applied: false, at, operationsMatched, operationsSkipped, changes, notes }` without writing. |
+| `POST` | `/api/v1/kitaron/push/run` | The same shape with `applied: true` and the logged `runId`, after writing every change in one Kitaron transaction. A switched-off or unconfigured connector, a push already running, or a Kitaron refusal is `409 kitaron_push_blocked` with the reason; nothing is written then. |
+| `GET` | `/api/v1/kitaron/push/runs/{runId}/changes` | `{ items: [ { workOrderNumber, actionNumber, kitaronRowId, kitaronColumn, oldValue, newValue } ] }`. |
+
+Pushable columns (`kitaronColumns`): `OperationQty` and `SetupTimeReal` (numbers; setup in minutes), `StartDateReal` and `FinishDateCalc` (datetimes). Every other date/quantity column of `TSubRootCard` is rewritten by Kitaron's own automatic work planning or production reporting and is not offered. Planner values (`plannerValues`): `actual_start`, `actual_finish`, `forecast_start`, `forecast_finish` (the Timeline's current placement, from now over 180 days), `setup_minutes` (from the operation's start to the first QC PASS after it), `good_quantity` (sum of `produced_quantity` of the operation's Production Run outputs), `planned_quantity`. The initial mapping is `OperationQty ← good_quantity`, `StartDateReal ← actual_start`, `FinishDateCalc ← forecast_finish`, `SetupTimeReal ← setup_minutes`, with automatic pushing off.
+
+A Planner Work Order linked as `wo:<NUMBER>` matches Kitaron rows by `NUMBER`, and each operation by operation number = `ActionNumber`. An operation with no or several matching rows, or in a Work Order that is route-closed or stopped in Kitaron, is skipped and counted in `notes`. For each switched-on mapping the Planner value replaces Kitaron's when it differs (dates within 1 s and numbers within 0.005 count as equal); a value the Planner does not have never clears Kitaron's. Dates are written as factory-local wall-clock time (`Timeline:TimeZoneId`) truncated to whole seconds. Writes use the Kitaron connector's login with read-write intent, a 15-second lock timeout and `XACT_ABORT`; each `UPDATE ... WHERE [auto] = @row AND [NUMBER] = @number` must change exactly one row. Kitaron's own `TSubRootCard_UPDATE` trigger runs as for Kitaron's own edits. Runs and their written values are kept 90 days.
+
 ## 7. Planning projections
 
 | Method | Path | Purpose |

@@ -105,9 +105,13 @@ public sealed class ToolPreparationApiTests
         Assert.Equal(HttpStatusCode.OK, partial.StatusCode);
         using var stillRefused = await client.PostAsync($"{PackageRoute}?toolOffsetMode=MEASURED", Empty());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, stillRefused.StatusCode);
-        var stillRefusedBody = await stillRefused.Content.ReadAsStringAsync();
-        Assert.Contains("T2", stillRefusedBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("T3", stillRefusedBody, StringComparison.Ordinal);
+        using var stillRefusedJson = JsonDocument.Parse(await stillRefused.Content.ReadAsStringAsync());
+        var stillRefusedError = stillRefusedJson.RootElement.GetProperty("error");
+        // The random correlation id may itself contain "T3"; only the message and details count.
+        var stillRefusedText = stillRefusedError.GetProperty("message").GetString()
+            + stillRefusedError.GetProperty("details").GetRawText();
+        Assert.Contains("T2", stillRefusedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("T3", stillRefusedText, StringComparison.Ordinal);
 
         using var complete = await client.PutAsJsonAsync(Route, Update(1, MeasuredTools()));
         Assert.Equal(HttpStatusCode.OK, complete.StatusCode);

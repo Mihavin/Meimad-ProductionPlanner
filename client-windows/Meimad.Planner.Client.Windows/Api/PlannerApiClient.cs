@@ -689,6 +689,22 @@ internal interface IPlannerApiClient : IDisposable
     Task<PlannerOperationRequirement> CreateOperationRequirementAsync(string caseOperationId, OperationRequirementCreate create, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task<PlannerOperationRequirement> UpdateOperationRequirementAsync(string requirementId, OperationRequirementUpdate update, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     Task DeleteOperationRequirementAsync(string requirementId, int version, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    Task<KitaronPushSettingsResource> GetKitaronPushAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<KitaronPushSettingsResource> UpdateKitaronPushAsync(
+        bool enabled, int intervalMinutes, IReadOnlyList<KitaronPushMappingModel> mappings, int expectedVersion,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    Task<KitaronPushResultInfo> PreviewKitaronPushAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<KitaronPushChangeInfo>> ListKitaronPushChangesAsync(
+        string runId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerKitaronStation>> ListKitaronStationsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerKitaronStation>>([]);
     Task<PlannerKitaronStation> DecideKitaronStationAsync(int kitaronStationId, KitaronStationDecision decision, string clientId, long editGeneration, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -2883,6 +2899,38 @@ internal sealed class PlannerApiClient : IPlannerApiClient
 
     public Task DeleteOperationRequirementAsync(string requirementId, int version, string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         DeleteAsync($"api/v1/resource-requirements/{Uri.EscapeDataString(requirementId)}?version={version}", clientId, editGeneration, cancellationToken);
+
+    public async Task<KitaronPushSettingsResource> GetKitaronPushAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/kitaron/push", cancellationToken);
+        return await ReadSuccessAsync<KitaronPushSettingsResource>(response, cancellationToken);
+    }
+
+    public async Task<KitaronPushSettingsResource> UpdateKitaronPushAsync(
+        bool enabled, int intervalMinutes, IReadOnlyList<KitaronPushMappingModel> mappings, int expectedVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PutAsJsonAsync(
+            "api/v1/kitaron/push", new { enabled, intervalMinutes, mappings, expectedVersion }, cancellationToken);
+        return await ReadSuccessAsync<KitaronPushSettingsResource>(response, cancellationToken);
+    }
+
+    public async Task<KitaronPushResultInfo> PreviewKitaronPushAsync(CancellationToken cancellationToken = default)
+    {
+        // Reading Kitaron and calculating the Timeline can take longer than an ordinary request.
+        using var response = await importHttpClient.PostAsync("api/v1/kitaron/push/preview", null, cancellationToken);
+        return await ReadSuccessAsync<KitaronPushResultInfo>(response, cancellationToken);
+    }
+
+    public async Task<KitaronPushResultInfo> RunKitaronPushAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await importHttpClient.PostAsync("api/v1/kitaron/push/run", null, cancellationToken);
+        return await ReadSuccessAsync<KitaronPushResultInfo>(response, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<KitaronPushChangeInfo>> ListKitaronPushChangesAsync(
+        string runId, CancellationToken cancellationToken = default) =>
+        ReadListAsync<KitaronPushChangeInfo>($"api/v1/kitaron/push/runs/{Uri.EscapeDataString(runId)}/changes", cancellationToken);
 
     public async Task<IReadOnlyList<PlannerKitaronStation>> ListKitaronStationsAsync(CancellationToken cancellationToken = default)
     {

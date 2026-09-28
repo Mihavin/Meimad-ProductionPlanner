@@ -1055,3 +1055,19 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 - The change journal behind "changed by" for ordinary version conflicts is in memory and forgets on a Server restart.
 - The Windows client does not keep the session across restarts; each start signs in.
 - LAN transport security (HTTP) is unchanged (OD-017): passwords and tokens cross the factory LAN unencrypted.
+
+## Kitaron push (2026-09-28, schema v87)
+
+**Owner decisions (2026-09-28):** push `OperationQty`, `StartDateReal`, `FinishDateCalc`, `SetupTimeReal` ("maybe more") from a new Setup tab; `SetupTimeReal` = from the operation's start to QC PASS; `OperationQty` = good quantity made; the Planner's value overwrites Kitaron's; write with the existing `kit` login. This is the explicit scope decision AGENTS.md rule 26 requires for ERP write-back; synchronization itself stays read-only.
+
+**Findings (read-only, 2026-09-28):** `kit` is sysadmin/db_owner. `TSubRootCard` has INSERT/UPDATE/DELETE triggers. Kitaron's production and setup reporting triggers write `StartDateReal` (earliest reported start) and `SetupTimeReal` (minutes of setup reports), its update trigger copies `StartDateReal` into `StartDate`, and its automatic work planning treats an operation with `StartDateReal` as started and subtracts `SetupTimeReal` from the remaining setup; `PCopyOperDataToRoot` writes `OperationQty`; nothing writes `FinishDateCalc`. Every other date/quantity column (`FirstStartDate`, `StartDateIdeal`, `StartDate`, `FinishDate`, `MinStartDate`, `PriorityOper`, …) is rewritten by `AutoWorkPlanning` or reporting, so it is not offered. `TimeProductionP`, `DirectionTimeP` and `SetupTimeReal` are minutes (this settles the unit question in `kitaron-initial-mapping.yaml`). On the live data 659 of 667 Kitaron-linked Planner operations match exactly one `TSubRootCard` row; the 8 others carry an operation number of the Case route that the Work Order's route card lacks.
+
+**Implemented:** `SchemaV87KitaronPushMigration`; `KitaronPushCatalog`, `KitaronPushPlanner` (matching, overwrite rule, factory-local times, skip reasons), `KitaronPushService` (settings validation, preview, logged run), `KitaronPushHostedService` (automatic interval), `SqlServerKitaronPushTarget` (catalog-only columns, parameters, one transaction, exactly-one-row updates), `TimelineKitaronPushForecast`, `SqliteKitaronPushRepository`; `/api/v1/kitaron/push` routes; the Windows Setup → Kitaron Push tab with Preview, Push now and the run log; he/ru texts.
+
+**Tests:** `KitaronPushPlannerTests`, `KitaronPushServiceTests` (real Planner database, fake Kitaron), `KitaronPushApiTests`, client `KitaronPushViewModelTests`; a temporary read-only probe against the live Planner snapshot and Kitaron (no writes).
+
+**Open points:**
+
+- The first real push has not been made; start with Preview, then Push now once, and check the operations in Kitaron.
+- Kitaron records no Planner user for a pushed value; the Planner's push log (who, when, old and new value) is the record.
+- Operations whose number exists only in the Case route (not on the Work Order's route card) are not pushed.

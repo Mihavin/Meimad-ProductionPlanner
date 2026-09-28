@@ -368,3 +368,16 @@ Several people work at the same time. When you save something another user chang
 - **Two programmers release G-code for the same Operation:** the second release is refused and names the first; open the Operation again, compare the programs, and release yours only if it should replace theirs.
 - **Two planners reorder the same Machine:** a move based on an older order of that Machine is refused; refresh the Planning Board and move again. Your own consecutive moves are never refused, and a refused card returns to its place.
 - **Two people edit the same Case, Work Order, tool or user:** the second save is refused; refresh, check the change, and apply yours again.
+
+## Pushing values to Kitaron
+
+**Setup → Kitaron Push** decides which Planner values the Server writes into Kitaron's Work Order operations. Each row is one Kitaron column: tick **Push** and choose the Planner value.
+
+- `OperationQty`: good quantity made (counted CNC cycles), or the planned quantity.
+- `StartDateReal`: the operation's actual start in the Planner.
+- `FinishDateCalc`: the finish the Timeline calculates now.
+- `SetupTimeReal`: minutes from the operation's start until QC approved its first part.
+
+**Preview** shows what would change (Work Order, operation, old and new value) without writing. **Push now** writes everything at once, or nothing if Kitaron refuses. Tick **Push automatically every … minutes** and **Save** to push on a schedule. **Recent pushes** lists each push; select one to see what it wrote.
+
+The Planner's value replaces Kitaron's, but a value the Planner does not have yet (for example an operation not started) never erases Kitaron's. Kitaron itself may write `StartDateReal` and `SetupTimeReal` again when someone reports production or setup in Kitaron. Operations whose number is not in the Work Order's route card in Kitaron, and Work Orders closed or stopped in Kitaron, are skipped and counted. Pushing needs the Setup permission and the Kitaron connector switched on at `/kitaron-setup/` on the Server PC.

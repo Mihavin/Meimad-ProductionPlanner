@@ -2694,3 +2694,52 @@ internal sealed record OperationRequirementUpdate(
     int DurationPerUnitSeconds,
     bool IsActive,
     int ExpectedVersion);
+
+/// <summary>Setup → Kitaron Push: what the Planner writes into Kitaron's Work Order operations.</summary>
+internal sealed record KitaronPushSettingsResource(
+    bool Enabled,
+    int IntervalMinutes,
+    IReadOnlyList<KitaronPushMappingModel> Mappings,
+    int Version,
+    DateTimeOffset UpdatedAt,
+    string? UpdatedBy,
+    IReadOnlyList<KitaronPushColumnInfo> KitaronColumns,
+    IReadOnlyList<KitaronPushValueInfo> PlannerValues,
+    IReadOnlyList<KitaronPushRunInfo> Runs);
+
+internal sealed record KitaronPushMappingModel(string KitaronColumn, string PlannerValue, bool Enabled);
+
+internal sealed record KitaronPushColumnInfo(string Column, string Kind, string Name, string Description);
+
+internal sealed record KitaronPushValueInfo(string Code, string Kind, string Name, string Description);
+
+internal sealed record KitaronPushRunInfo(
+    string RunId,
+    string Trigger,
+    string? RequestedBy,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? FinishedAt,
+    string Status,
+    int OperationsMatched,
+    int ValuesWritten,
+    int OperationsSkipped,
+    string? Message);
+
+internal sealed record KitaronPushChangeInfo(
+    int WorkOrderNumber,
+    string ActionNumber,
+    long KitaronRowId,
+    string PartNumber,
+    string OperationName,
+    string KitaronColumn,
+    string? OldValue,
+    string NewValue);
+
+internal sealed record KitaronPushResultInfo(
+    string? RunId,
+    bool Applied,
+    DateTimeOffset At,
+    int OperationsMatched,
+    int OperationsSkipped,
+    IReadOnlyList<KitaronPushChangeInfo> Changes,
+    IReadOnlyList<string> Notes);
