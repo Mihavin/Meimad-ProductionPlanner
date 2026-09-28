@@ -417,6 +417,7 @@
   "Blocked — waiting": "חסום — ממתין",
   "Blocking conflict": "התנגשות חוסמת",
   "Board loaded from the Server at {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.": "הלוח נטען מהשרת בשעה {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.",
+  "Not connected to the Server.": "אין חיבור לשרת.",
   "Bore diameter": "קוטר קדח",
   "Boring bar": "מוט קידוח פנימי",
   "Boring bar (internal turning)": "מוט קידוח (חריטה פנימית)",

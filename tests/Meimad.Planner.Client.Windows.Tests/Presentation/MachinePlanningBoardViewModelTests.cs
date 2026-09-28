@@ -246,6 +246,36 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public async Task Refresh_is_always_available_and_one_asked_for_during_a_save_runs_after_it()
+    {
+        var gate = new TaskCompletionSource();
+        var api = new FakeApiClient(BoardBefore())
+        {
+            SnapshotAfterAssignment = BoardAfterAssignment(),
+            AssignmentGate = gate
+        };
+        var viewModel = new MachinePlanningBoardViewModel();
+        Assert.True(viewModel.RefreshCommand.CanExecute(null));
+
+        viewModel.AttachSession(api, "windows-1", EditorStatus(9));
+        Assert.True(viewModel.RefreshCommand.CanExecute(null));
+        await viewModel.EnsureLoadedAsync();
+        var drop = viewModel.AssignOrMoveAsync(viewModel.Pool.Single(), viewModel.Machines.Single(), 0);
+
+        // Reading now would show the board from before the move and put the card back.
+        Assert.True(viewModel.IsBusy);
+        Assert.True(viewModel.RefreshCommand.CanExecute(null));
+        viewModel.RefreshCommand.Execute(null);
+        Assert.Equal(1, api.BoardReadCount);
+
+        gate.SetResult();
+        await drop;
+        Assert.Equal(3, api.BoardReadCount);
+        Assert.Equal("operation-1", viewModel.Machines.Single().Backlog.Single().BatchOperationId);
+        Assert.True(viewModel.RefreshCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Cross_type_drop_prompts_then_resubmits_confirmation_and_reason()
     {
         AssignmentOverridePrompt? shownPrompt = null;

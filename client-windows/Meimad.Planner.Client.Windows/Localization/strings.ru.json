@@ -417,6 +417,7 @@
   "Blocked — waiting": "Заблокировано — ожидание",
   "Blocking conflict": "Блокирующий конфликт",
   "Board loaded from the Server at {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.": "Доска загружена с сервера в {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.",
+  "Not connected to the Server.": "Нет подключения к серверу.",
   "Bore diameter": "Диаметр отверстия",
   "Boring bar": "Расточная оправка",
   "Boring bar (internal turning)": "Расточная оправка (внутренняя обработка)",

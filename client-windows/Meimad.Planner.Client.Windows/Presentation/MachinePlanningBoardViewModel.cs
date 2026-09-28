@@ -46,7 +46,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         this.requestOverrideReason = requestOverrideReason;
         selectedCalendarWorkweek = CalendarWorkweeks[0];
         selectedCalendarShift = CalendarShifts[0];
-        RefreshCommand = new AsyncCommand(RefreshAsync, () => apiClient is not null && !IsBusy);
+        RefreshCommand = new AsyncCommand(RequestRefreshAsync);
         BeginAddMachineCommand = new AsyncCommand(BeginAddMachineAsync, () => CanAddMachine);
         CancelAddMachineCommand = new AsyncCommand(CancelAddMachineAsync, () => IsAddingMachine && !IsBusy);
         SaveMachineCommand = new AsyncCommand(
@@ -141,8 +141,12 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanRedo));
                 OnPropertyChanged(nameof(CanAddMachine));
                 OnPropertyChanged(nameof(CanAddCalendar));
-                RefreshCommand.RaiseCanExecuteChanged();
                 RaiseMachineCommandStates();
+                if (!value && refreshWhenIdle)
+                {
+                    refreshWhenIdle = false;
+                    _ = RefreshAsync();
+                }
             }
         }
     }
@@ -359,6 +363,29 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         return refreshInFlight;
     }
 
+    /// <summary>
+    /// The Refresh button, always available. The refresh runs in the background, so the button
+    /// never waits for it; one asked for while a change is being saved runs when the save ends,
+    /// so it cannot show the board from before the change.
+    /// </summary>
+    private Task RequestRefreshAsync()
+    {
+        if (apiClient is null)
+        {
+            StatusMessage = "Not connected to the Server.";
+        }
+        else if (IsBusy)
+        {
+            refreshWhenIdle = true;
+        }
+        else
+        {
+            _ = RefreshAsync();
+        }
+
+        return Task.CompletedTask;
+    }
+
     private async Task RefreshUntilCurrentAsync()
     {
         IsRefreshing = true;
@@ -410,6 +437,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
 
     private Task? refreshInFlight;
     private bool refreshQueued;
+    private bool refreshWhenIdle;
     private int localChangeVersion;
     private bool isRefreshing;
 
