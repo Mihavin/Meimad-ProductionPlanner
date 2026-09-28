@@ -119,10 +119,32 @@ internal sealed class ProductionPackageService(
                         sourceLines, transformOptions, out ncId);
                     placeholderProtocolVersion = 1;
                 }
+                var runnablePath = $"nc/{SafeFileName(context.GCodeOriginalFileName!)}";
                 artifacts.Add(await WriteAsync(
                     staging, packageId, ProductionPackageArtifactTypes.RunnableNc,
-                    $"nc/{SafeFileName(context.GCodeOriginalFileName!)}", transformed,
+                    runnablePath, transformed,
                     context.GCodeReleaseId, cancellationToken));
+                // The release's subprograms go to the machine exactly as released, beside the program.
+                var ncPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { runnablePath };
+                foreach (var subprogram in context.Subprograms ?? [])
+                {
+                    var subprogramPath = $"nc/{SafeFileName(subprogram.OriginalFileName)}";
+                    if (!ncPaths.Add(subprogramPath))
+                        throw new ProductionPackageBuildException(
+                            "production_package_subprogram_name_conflict",
+                            $"Subprogram '{subprogram.OriginalFileName}' has the same package file name as another NC file of the release; no package was activated.");
+                    var subprogramSource = releaseStore.ResolveStoredPath(subprogram.StoredRelativePath);
+                    if (!File.Exists(subprogramSource))
+                        throw new ProductionPackageBuildException(
+                            "production_package_source_missing",
+                            $"The immutable subprogram '{subprogram.OriginalFileName}' is missing; no package was activated.");
+                    artifacts.Add(await WriteAsync(
+                        staging, packageId, ProductionPackageArtifactTypes.NcSubprogram, subprogramPath,
+                        await ReadVerifiedSourceAsync(
+                            subprogramSource, subprogram.FileHash, $"subprogram '{subprogram.OriginalFileName}'",
+                            cancellationToken),
+                        context.GCodeReleaseId, cancellationToken));
+                }
 
                 var identityComments = new List<string>
                 {

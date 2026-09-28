@@ -129,6 +129,36 @@ public sealed class NcProgramFoldersTests : IDisposable
         Assert.True(File.Exists(outside));
     }
 
+    [Fact]
+    public async Task Released_subprograms_follow_the_program_and_shared_ones_are_copied()
+    {
+        var folders = Folders(Catalog(), "post-haas");
+        var predicted = (await folders.NextReleaseAsync(null, null)).Path;
+        var program = Path.Combine(predicted, "O1500.nc");
+        File.WriteAllText(program, "O1500\nM98 P1001\nM98 P9000\nM30\n");
+        var beside = Path.Combine(predicted, "O1001.nc");
+        File.WriteAllText(beside, "O1001\nM99\n");
+        // A library of the Operation other programs may also call: copied, not moved.
+        var library = Path.Combine(workingFolder, "Gcode", "Bearing housing", "10", "library");
+        Directory.CreateDirectory(library);
+        var shared = Path.Combine(library, "O9000.nc");
+        File.WriteAllText(shared, "O9000\nM99\n");
+        // A file outside the Case Working Folder stays where it is.
+        var outside = Path.Combine(Path.GetDirectoryName(workingFolder)!, "O7000.nc");
+        File.WriteAllText(outside, "O7000\nM99\n");
+
+        var placement = await folders.PlaceReleasedProgramAsync(
+            program, new NcProgramRevision(2, "post-haas", "Haas NGC", 4), [beside, shared, outside]);
+
+        var released = Path.GetDirectoryName(placement.Path)!;
+        Assert.True(File.Exists(Path.Combine(released, "O1001.nc")));
+        Assert.False(File.Exists(beside));
+        Assert.True(File.Exists(Path.Combine(released, "O9000.nc")));
+        Assert.True(File.Exists(shared));
+        Assert.False(File.Exists(Path.Combine(released, "O7000.nc")));
+        Assert.False(Directory.Exists(predicted));
+    }
+
     public void Dispose()
     {
         var root = Path.GetDirectoryName(workingFolder)!;

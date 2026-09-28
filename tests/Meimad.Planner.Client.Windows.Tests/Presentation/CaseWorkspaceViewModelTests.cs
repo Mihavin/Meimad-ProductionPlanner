@@ -163,6 +163,67 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task Choosing_a_program_ticks_the_subprograms_it_calls_and_the_release_sends_the_ticked_ones()
+    {
+        var tools = new PlannerToolTableRelease(
+            "tools-1", 1, "tools.csv", 10, new string('a', 64),
+            DateTimeOffset.UtcNow, "planner", "Initial tools");
+        var process = new PlannerProcessRevision(
+            "process-1", 1, true, DateTimeOffset.UtcNow,
+            "planner", "Initial process", 1, tools);
+        var api = new FakeApiClient(CreateCase());
+        api.GCodeCatalog = api.GCodeCatalog with
+        {
+            ActiveProcessRevision = process,
+            ProcessRevisions = [process],
+            Postprocessors = [new PlannerPostprocessorReleaseStatus("post-haas", "HAAS_4X", true, "missing", null, null)]
+        };
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedOperation = viewModel.Operations.Single();
+        await viewModel.RefreshGCodeAsync();
+
+        var folder = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ReleaseSubprograms", Guid.NewGuid().ToString("N"));
+        var elsewhere = Path.Combine(folder, "library");
+        Directory.CreateDirectory(elsewhere);
+        try
+        {
+            var main = Path.Combine(folder, "part-OP10.nc");
+            File.WriteAllText(main, "%\nO1234\nM98 P1001\nG65 P9810\nM30\n%\n");
+            File.WriteAllText(Path.Combine(folder, "O1001.nc"), "O1001\nM98 P1002\nM99\n");
+            File.WriteAllText(Path.Combine(folder, "finish.nc"), "%\nO1002 (FINISH)\nM99\n");
+            var probe = Path.Combine(elsewhere, "probe.nc");
+            File.WriteAllText(probe, "O9810\nM99\n");
+
+            viewModel.SelectedReleasePostprocessor = viewModel.GCodePostprocessors.Single();
+            viewModel.GCodeFilePath = main;
+
+            Assert.Equal(["O1001.nc (O1001)", "finish.nc (O1002)"], viewModel.ReleaseSubprograms.Select(row => row.Label));
+            Assert.All(viewModel.ReleaseSubprograms, row => Assert.True(row.IsIncluded));
+            Assert.Contains("O9810", viewModel.ReleaseSubprogramNote, StringComparison.Ordinal);
+
+            viewModel.ReleaseSubprograms[1].IsIncluded = false;
+            Assert.Contains("O9810, O1002", viewModel.ReleaseSubprogramNote, StringComparison.Ordinal);
+            viewModel.AddReleaseSubprogramFiles([probe, main]);
+            Assert.Equal(3, viewModel.ReleaseSubprograms.Count);
+            Assert.Contains("O1002.", viewModel.ReleaseSubprogramNote, StringComparison.Ordinal);
+            Assert.DoesNotContain("O9810", viewModel.ReleaseSubprogramNote, StringComparison.Ordinal);
+
+            viewModel.GCodeReleaseComment = "With subprograms";
+            viewModel.ConfirmToolTable = true;
+            await viewModel.ReleaseGCodeAsync();
+
+            Assert.Equal([Path.Combine(folder, "O1001.nc"), probe], api.LastGCodeReleaseCreate?.SubprogramFilePaths);
+            Assert.Empty(viewModel.ReleaseSubprograms);
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public async Task Release_from_the_nc_viewer_uses_the_form_rules_and_the_same_release_command()
     {
         var tools = new PlannerToolTableRelease(

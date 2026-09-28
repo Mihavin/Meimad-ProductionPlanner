@@ -13,6 +13,8 @@ internal static class GCodeEndpoints
         operations.MapGet("/gcode", ReadCatalogAsync);
         operations.MapPost("/gcode-releases", ReleaseAsync).DisableAntiforgery();
         operations.MapGet("/gcode-releases/{releaseId}/file", DownloadReleaseAsync);
+        operations.MapGet(
+            "/gcode-releases/{releaseId}/subprograms/{subprogramId}/file", DownloadSubprogramAsync);
         operations.MapGet("/tool-table-releases/{toolTableReleaseId}/file", DownloadToolTableAsync);
         // Stateless text transformation and check for the NC viewer; they store nothing, so they
         // need no Edit Mode.
@@ -118,7 +120,8 @@ internal static class GCodeEndpoints
                 Boolean(form, "confirmToolTable"),
                 Upload(form.Files.GetFile("gcodeFile")),
                 Upload(form.Files.GetFile("toolTableFile")),
-                ExpectedLatestReleaseId: Text(form, "expectedLatestReleaseId")), authority!, token);
+                ExpectedLatestReleaseId: Text(form, "expectedLatestReleaseId"),
+                SubprogramFiles: Subprograms(form)), authority!, token);
             return Results.Created(
                 $"/api/v1/cases/{caseId}/operations/{caseOperationId}/gcode-releases/{release.GCodeReleaseId}",
                 GCodeReleaseResponse.FromDomain(release));
@@ -139,6 +142,30 @@ internal static class GCodeEndpoints
         try
         {
             var file = await service.OpenReleaseFileAsync(caseOperationId, releaseId, token);
+            context.Response.Headers["X-Meimad-Checksum-SHA256"] = file.FileHash;
+            return Results.File(
+                file.AbsolutePath,
+                "application/octet-stream",
+                file.OriginalFileName,
+                enableRangeProcessing: true);
+        }
+        catch (Exception exception) when (TryMap(exception, context, out var mapped))
+        {
+            return mapped!;
+        }
+    }
+
+    private static async Task<IResult> DownloadSubprogramAsync(
+        string caseOperationId,
+        string releaseId,
+        string subprogramId,
+        HttpContext context,
+        GCodeService service,
+        CancellationToken token)
+    {
+        try
+        {
+            var file = await service.OpenSubprogramFileAsync(caseOperationId, releaseId, subprogramId, token);
             context.Response.Headers["X-Meimad-Checksum-SHA256"] = file.FileHash;
             return Results.File(
                 file.AbsolutePath,
@@ -209,6 +236,12 @@ internal static class GCodeEndpoints
     private static UploadedReleaseFile? Upload(IFormFile? value) => value is null
         ? null
         : new UploadedReleaseFile(value.FileName, value.OpenReadStream(), value.Length);
+
+    /// <summary>The release's subprogram files: every multipart file named <c>subprogramFiles</c>, in order.</summary>
+    internal static IReadOnlyList<UploadedReleaseFile> Subprograms(IFormCollection form) => form.Files
+        .GetFiles("subprogramFiles")
+        .Select(value => new UploadedReleaseFile(value.FileName, value.OpenReadStream(), value.Length))
+        .ToArray();
 }
 
 internal sealed record ToolTableReleaseResponse(
@@ -282,7 +315,9 @@ internal sealed record GCodeReleaseResponse(
     NcProgramAnalysisResponse? NcAnalysis,
     IReadOnlyList<NcMachineCycleEstimateResponse> MachineCycleEstimates,
     NcHeaderMetadataResponse? HeaderMetadata,
-    NcVerificationHookResponse? VerificationHook)
+    NcVerificationHookResponse? VerificationHook,
+    IReadOnlyList<GCodeReleaseSubprogramResponse> Subprograms,
+    IReadOnlyList<int> MissingSubprogramCalls)
 {
     internal static GCodeReleaseResponse FromDomain(GCodeRelease value) => new(
         value.GCodeReleaseId, value.ProcessRevisionId, value.ProcessRevisionNumber,
@@ -294,7 +329,22 @@ internal sealed record GCodeReleaseResponse(
         value.NcAnalysis is null ? null : NcProgramAnalysisResponse.FromDomain(value.NcAnalysis),
         (value.MachineCycleEstimates ?? []).Select(NcMachineCycleEstimateResponse.FromDomain).ToArray(),
         value.HeaderMetadata is null ? null : NcHeaderMetadataResponse.FromDomain(value.HeaderMetadata),
-        value.VerificationHook is null ? null : NcVerificationHookResponse.FromDomain(value.VerificationHook));
+        value.VerificationHook is null ? null : NcVerificationHookResponse.FromDomain(value.VerificationHook),
+        (value.Subprograms ?? []).Select(GCodeReleaseSubprogramResponse.FromDomain).ToArray(),
+        value.MissingSubprogramCalls ?? []);
+}
+
+internal sealed record GCodeReleaseSubprogramResponse(
+    string SubprogramId,
+    int Position,
+    string OriginalFileName,
+    int? ProgramNumber,
+    long FileSize,
+    string FileHash)
+{
+    internal static GCodeReleaseSubprogramResponse FromDomain(GCodeReleaseSubprogram value) => new(
+        value.SubprogramId, value.Position, value.OriginalFileName, value.ProgramNumber,
+        value.FileSize, value.FileHash);
 }
 
 internal sealed record NcVerificationHookResponse(

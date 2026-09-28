@@ -158,6 +158,9 @@
       editCopy: () => invoke("meimadEditCopy"),
       release: (text, options) => invoke("meimadRelease", text, options),
       chooseToolTable: () => invoke("meimadChooseToolTable"),
+      releaseSubprograms: (text) => invoke("meimadReleaseSubprograms", text),
+      releaseSubprogramNote: (text, paths) => invoke("meimadReleaseSubprogramNote", text, paths),
+      chooseSubprograms: () => invoke("meimadChooseSubprograms"),
       stock: Object.freeze({
         load: () => invoke("meimadStock"),
         save: (stock) => invoke("meimadStockSave", stock),

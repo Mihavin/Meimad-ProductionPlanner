@@ -62,6 +62,8 @@ All identity/context values in the canonical NC are placeholders, including Part
 
 A release is invalid for Production Package creation if required placeholders are missing, malformed, ambiguous, or duplicated where uniqueness is required.
 
+**Subprogram files (schema v88).** A release may also carry the subprogram files its program calls (`M98 P` / `G65 P`). Only the main program is a template: a subprogram may not contain `[[MEIMAD:...]]` placeholders or `(MEIMAD PACKAGE ...)` markers, keeps its own program number, and is copied byte for byte into every Production Package (`NC_SUBPROGRAM`, `nc/<file name>`). The verification hook, event context and cycle markers belong in the main program only. Called programs that the release does not include are recorded as programs that must already be on the machine.
+
 ## 3. Placeholder grammar
 
 Use explicit machine-readable tokens. Canonical grammar:

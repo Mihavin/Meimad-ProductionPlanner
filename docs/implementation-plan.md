@@ -1101,3 +1101,18 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 **Tests:** `TimelineCalculationEngineTests` (`Locked_simultaneous_part_goes_to_the_next_operation_when_finished_and_machines_stay_reserved`, `Locked_simultaneous_parts_flow_in_route_order_at_each_machines_own_cycle` for a slower first and a slower second operation, `Locked_simultaneous_manual_load_waits_for_the_part_and_the_one_worker`, periodic loads, worker retry), `TimelineBackwardCalculationTests` (latest flow placement), `TimelineApiTests.Missed_all_backward_locked_group_falls_forward_together`.
 
 **Live data:** the only locked group is `30P450171100-001` operations 80 (cycle 7 h) and 100 (cycle 3 h), group 1; its first batch arrives with Work Order 41448.
+
+## Several NC files per operation: subprograms (2026-09-28, schema v88)
+
+**Owner decisions (2026-09-28):** "Need an option to add several gcode files for one operation (subprograms etc)." Files are chosen by detection, then edit (the called subprograms found next to the program are ticked; the programmer may untick or add files); a called program that is not included is reported and the release goes ahead; subprograms keep their own program numbers (no renumbering).
+
+**Implemented:**
+
+- Shared `NcSubprogramCalls` (in `Meimad.Planner.NcEngine`, used by Server and client): `M98 P` / `G65 P` calls (FANUC eight-digit `P`), a file's program number (first code line `O` / `:`, else a leading number in its name), missing calls through nested files, and the file for a number in a folder (engine file names, then declared numbers).
+- Server: `SchemaV88NcSubprogramsMigration` (`gcode_release_subprograms`, `gcode_releases.missing_subprogram_calls_json`, `NC_SUBPROGRAM` package artifacts); multipart `subprogramFiles` on both release routes; `GCodeArtifactStore` stores them in the release folder (numbered files as `O<number>`, so the NC engine analysis follows the calls); `GCodeService` refuses placeholders and duplicate numbers and records missing calls; catalog/response fields and a subprogram download route; `ProductionPackageService` copies them unchanged and verified.
+- NC engine wrapper: the program's folder is also searched by declared `O` number (after the engine's file names), so the NC viewer finds a subprogram released as `pocket.nc` the way the release detection does.
+- Client: the Release G-code form's subprogram list (ticked detection, **Add subprogram files…**, note of calls not included) and a Subprograms column in the release history; the NC viewer's Release to Server dialog has the same list; placement after a release moves subprograms from the program's folder and copies others of the Operation's Gcode folder; a release opened in the viewer writes its missing subprogram files into its revision folder. he/ru texts.
+
+**Tests:** Server `GCodeReleaseApiTests` (subprograms stored, numbered, downloadable, analysed, missing calls reported; placeholder and duplicate-number refusals leave nothing), `ProductionPackageApiTests.Package_copies_the_release_subprograms_unchanged_beside_the_runnable_program`, `NcSubprogramCallsTests`, migration version 88; client `CaseWorkspaceViewModelTests.Choosing_a_program_ticks_the_subprograms_it_calls_and_the_release_sends_the_ticked_ones`, `NcProgramFoldersTests.Released_subprograms_follow_the_program_and_shared_ones_are_copied`.
+
+**Open points:** Okuma `CALL O<name>` and Siemens-style named subprogram calls are not detected (they are not numbered `M98`/`G65` calls); such files can still be added by hand. The Offset Loader and verification macros (O9001–O9003) are commissioned on the machine and appear as calls not included only if a legacy template names them literally.

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Meimad.Planner.NcEngine;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Haas;
 using Meimad.Planner.Server.Application.ProductionPackages;
@@ -95,7 +96,7 @@ internal sealed class GCodeService
         var releaseId = Guid.NewGuid().ToString("N");
         var candidateProcessId = Guid.NewGuid().ToString("N");
         var gcodePublication = await artifactStore.PublishGCodeAsync(
-            operationId, releaseId, command.GCodeFile, cancellationToken);
+            operationId, releaseId, command.GCodeFile, command.SubprogramFiles ?? [], cancellationToken);
         StoredArtifactPublication? toolPublication = null;
         ReleasedToolTableDefinition? toolDefinition = null;
         try
@@ -116,6 +117,7 @@ internal sealed class GCodeService
             var releasedAt = timeProvider.GetUtcNow();
             var storedGCodePath = artifactStore.ResolveStoredPath(gcodePublication.File.StoredRelativePath);
             var sourceLines = File.ReadLines(storedGCodePath).ToArray();
+            var (subprograms, missingCalls) = CheckSubprograms(gcodePublication, sourceLines);
             NcVerificationHook verificationHook;
             if (NcPackagePlaceholderSchema.IsCanonical(sourceLines))
             {
@@ -194,7 +196,9 @@ internal sealed class GCodeService
                 releasedAt,
                 command.ManufacturingProgramId,
                 command.Outputs,
-                command.ExpectedLatestReleaseId), authority, cancellationToken);
+                command.ExpectedLatestReleaseId,
+                subprograms,
+                missingCalls), authority, cancellationToken);
             logger.LogInformation(
                 "Released G-code {ReleaseId} for Operation {OperationId}, Process Revision {ProcessRevisionNumber}, Postprocessor {PostprocessorId}, Post Revision {PostRevision}.",
                 release.GCodeReleaseId,
@@ -210,6 +214,51 @@ internal sealed class GCodeService
             artifactStore.DeletePublication(toolPublication);
             throw;
         }
+    }
+
+    /// <summary>
+    /// The release's subprogram files and the called programs it does not include. Only the main
+    /// program is a package template: a subprogram goes to the machine unchanged, so it may not hold
+    /// Meimad placeholders or package markers, and its number may not be the main program's.
+    /// Called programs that are not included (probing macros kept on the machine, for example) are
+    /// reported, not refused (owner decision 2026-09-28).
+    /// </summary>
+    private (IReadOnlyList<GCodeReleaseSubprogram> Subprograms, IReadOnlyList<int> MissingCalls) CheckSubprograms(
+        StoredArtifactPublication publication,
+        IReadOnlyList<string> mainLines)
+    {
+        var stored = publication.Subprograms ?? [];
+        var mainNumber = NcSubprogramCalls.ProgramNumber(publication.File.OriginalFileName, mainLines.Take(20));
+        var included = new List<(int? Number, IReadOnlyList<string> Lines)>();
+        var subprograms = new List<GCodeReleaseSubprogram>();
+        for (var index = 0; index < stored.Count; index++)
+        {
+            var file = stored[index];
+            var lines = File.ReadLines(artifactStore.ResolveStoredPath(file.File.StoredRelativePath)).ToArray();
+            if (lines.Any(line => line.Contains("[[MEIMAD:", StringComparison.OrdinalIgnoreCase)
+                    || line.Contains("(MEIMAD PACKAGE", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new GCodeValidationException(
+                    "subprogramFiles",
+                    "subprogram_placeholder_not_allowed",
+                    $"Subprogram '{file.File.OriginalFileName}' contains Meimad package placeholders or markers. Only the main program is a package template; subprograms go to the machine unchanged.");
+            }
+
+            if (file.ProgramNumber is int number && number == mainNumber)
+            {
+                throw new GCodeValidationException(
+                    "subprogramFiles",
+                    "duplicate_program_number",
+                    $"Subprogram '{file.File.OriginalFileName}' has the main program's number O{number}.");
+            }
+
+            included.Add((file.ProgramNumber, lines));
+            subprograms.Add(new GCodeReleaseSubprogram(
+                file.File.ArtifactId, index, file.File.OriginalFileName, file.ProgramNumber,
+                file.File.StoredRelativePath, file.File.FileSize, file.File.FileHash));
+        }
+
+        return (subprograms, NcSubprogramCalls.MissingPrograms(mainLines, included));
     }
 
     internal async Task<GCodeRelease> ReleaseForProgramAsync(
@@ -259,6 +308,20 @@ internal sealed class GCodeService
             RequiredId(operationId, "caseOperationId"),
             RequiredId(releaseId, "releaseId"),
             cancellationToken) ?? throw new GCodeReleaseNotFoundException(releaseId);
+        return await ResolveDownloadAsync(file, cancellationToken);
+    }
+
+    internal async Task<ReleasedFileDownload> OpenSubprogramFileAsync(
+        string operationId,
+        string releaseId,
+        string subprogramId,
+        CancellationToken cancellationToken = default)
+    {
+        var file = await repository.ReadSubprogramFileAsync(
+            RequiredId(operationId, "caseOperationId"),
+            RequiredId(releaseId, "releaseId"),
+            RequiredId(subprogramId, "subprogramId"),
+            cancellationToken) ?? throw new GCodeReleaseNotFoundException($"{releaseId}/{subprogramId}");
         return await ResolveDownloadAsync(file, cancellationToken);
     }
 

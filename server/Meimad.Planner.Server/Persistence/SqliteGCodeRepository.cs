@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Meimad.Planner.Server.Application.Concurrency;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.GCode;
@@ -197,10 +198,13 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
             toolTable.ToolTableReleaseId,
             true,
             process.IsActive,
-            VerificationHook: command.VerificationHook);
+            VerificationHook: command.VerificationHook,
+            Subprograms: command.Subprograms ?? [],
+            MissingSubprogramCalls: command.MissingSubprogramCalls ?? []);
         await EnsureVerificationTokenAvailableAsync(
             connection, transaction, command.VerificationHook.NcIdentityToken, cancellationToken);
         await InsertReleaseAsync(connection, transaction, release, cancellationToken);
+        await InsertSubprogramsAsync(connection, transaction, release, cancellationToken);
         await InsertVerificationHookAsync(
             connection, transaction, release.GCodeReleaseId, command.VerificationHook,
             command.ReleasedAt, cancellationToken);
@@ -239,6 +243,31 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         CancellationToken cancellationToken) =>
         ReadStoredFileAsync(
             "gcode_releases", "id", releaseId, caseOperationId, cancellationToken);
+
+    public async Task<StoredReleaseFile?> ReadSubprogramFileAsync(
+        string caseOperationId,
+        string releaseId,
+        string subprogramId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT sub.id, sub.original_file_name, sub.stored_relative_path, sub.file_size, sub.file_hash
+            FROM gcode_release_subprograms sub
+            JOIN gcode_releases release ON release.id = sub.gcode_release_id
+            WHERE sub.id = $subprogramId AND release.id = $releaseId
+              AND release.case_operation_id = $operationId;
+            """;
+        command.Parameters.AddWithValue("$subprogramId", subprogramId);
+        command.Parameters.AddWithValue("$releaseId", releaseId);
+        command.Parameters.AddWithValue("$operationId", caseOperationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new StoredReleaseFile(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetInt64(3), reader.GetString(4))
+            : null;
+    }
 
     public async Task<StoredReleaseFile?> ReadProgramGCodeFileAsync(
         string manufacturingProgramId,
@@ -425,7 +454,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                        WHERE newer.process_revision_id = gr.process_revision_id
                          AND newer.postprocessor_id = gr.postprocessor_id
                          AND newer.post_specific_revision > gr.post_specific_revision),
-                   pr.is_active
+                   pr.is_active, gr.missing_subprogram_calls_json
             FROM gcode_releases gr
             JOIN process_revisions pr ON pr.id = gr.process_revision_id
             JOIN postprocessors pp ON pp.id = gr.postprocessor_id
@@ -434,6 +463,7 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                      gr.post_specific_revision DESC, gr.id;
             """;
         command.Parameters.AddWithValue("$operationId", operationId);
+        var subprograms = await ReadSubprogramsAsync(connection, operationId, token);
         var values = new List<GCodeRelease>();
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
@@ -444,7 +474,9 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                 NcAnalysis = analyses.GetValueOrDefault(release.GCodeReleaseId),
                 MachineCycleEstimates = estimates.GetValueOrDefault(release.GCodeReleaseId, []),
                 HeaderMetadata = headers.GetValueOrDefault(release.GCodeReleaseId),
-                VerificationHook = hooks.GetValueOrDefault(release.GCodeReleaseId)
+                VerificationHook = hooks.GetValueOrDefault(release.GCodeReleaseId),
+                Subprograms = subprograms.TryGetValue(release.GCodeReleaseId, out var files) ? files : [],
+                MissingSubprogramCalls = ReadMissingCalls(reader.GetString(18))
             });
         }
 
@@ -824,10 +856,11 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
                 id, case_operation_id, process_revision_id, postprocessor_id,
                 post_specific_revision, original_file_name, stored_relative_path,
                 file_size, file_hash, released_at, released_by, change_scope,
-                release_comment, tool_table_release_id, created_at, updated_at)
+                release_comment, tool_table_release_id, created_at, updated_at,
+                missing_subprogram_calls_json)
             VALUES ($id, $operationId, $processId, $postprocessorId, $postRevision,
                     $name, $path, $size, $hash, $at, $by, $scope, $comment,
-                    $toolTableId, $at, $at);
+                    $toolTableId, $at, $at, $missingCalls);
             """;
         command.Parameters.AddWithValue("$id", value.GCodeReleaseId);
         command.Parameters.AddWithValue("$operationId", value.CaseOperationId);
@@ -843,7 +876,80 @@ internal sealed class SqliteGCodeRepository : IGCodeRepository
         command.Parameters.AddWithValue("$scope", value.ChangeScope);
         command.Parameters.AddWithValue("$comment", value.ReleaseComment);
         command.Parameters.AddWithValue("$toolTableId", value.ToolTableReleaseId);
+        command.Parameters.AddWithValue(
+            "$missingCalls", JsonSerializer.Serialize(value.MissingSubprogramCalls ?? []));
         await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task InsertSubprogramsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        GCodeRelease value,
+        CancellationToken token)
+    {
+        foreach (var subprogram in value.Subprograms ?? [])
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO gcode_release_subprograms (
+                    id, gcode_release_id, position, original_file_name, program_number,
+                    stored_relative_path, file_size, file_hash)
+                VALUES ($id, $releaseId, $position, $name, $number, $path, $size, $hash);
+                """;
+            command.Parameters.AddWithValue("$id", subprogram.SubprogramId);
+            command.Parameters.AddWithValue("$releaseId", value.GCodeReleaseId);
+            command.Parameters.AddWithValue("$position", subprogram.Position);
+            command.Parameters.AddWithValue("$name", subprogram.OriginalFileName);
+            command.Parameters.AddWithValue("$number", (object?)subprogram.ProgramNumber ?? DBNull.Value);
+            command.Parameters.AddWithValue("$path", subprogram.StoredRelativePath);
+            command.Parameters.AddWithValue("$size", subprogram.FileSize);
+            command.Parameters.AddWithValue("$hash", subprogram.FileHash);
+            await command.ExecuteNonQueryAsync(token);
+        }
+    }
+
+    /// <summary>The subprogram files of every release of the Operation, by release id, in position order.</summary>
+    private static async Task<IReadOnlyDictionary<string, List<GCodeReleaseSubprogram>>> ReadSubprogramsAsync(
+        SqliteConnection connection, string operationId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT sub.gcode_release_id, sub.id, sub.position, sub.original_file_name, sub.program_number,
+                   sub.stored_relative_path, sub.file_size, sub.file_hash
+            FROM gcode_release_subprograms sub
+            JOIN gcode_releases release ON release.id = sub.gcode_release_id
+            WHERE release.case_operation_id = $operationId
+            ORDER BY sub.gcode_release_id, sub.position;
+            """;
+        command.Parameters.AddWithValue("$operationId", operationId);
+        var values = new Dictionary<string, List<GCodeReleaseSubprogram>>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+        {
+            if (!values.TryGetValue(reader.GetString(0), out var list))
+            {
+                list = [];
+                values.Add(reader.GetString(0), list);
+            }
+            list.Add(new GCodeReleaseSubprogram(
+                reader.GetString(1), reader.GetInt32(2), reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                reader.GetString(5), reader.GetInt64(6), reader.GetString(7)));
+        }
+        return values;
+    }
+
+    private static IReadOnlyList<int> ReadMissingCalls(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<int[]>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static async Task EnsureVerificationTokenAvailableAsync(

@@ -139,6 +139,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     }
     private PlannerPostprocessorReleaseStatus? selectedReleasePostprocessor;
     private string gcodeFilePath = string.Empty;
+    private string releaseSubprogramNote = string.Empty;
     private string toolTableFilePath = string.Empty;
     private string gcodeChangeScope = "LOCAL_POST_REVISION";
     private string gcodeReleaseComment = string.Empty;
@@ -239,6 +240,16 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public ObservableCollection<PlannerPostprocessorReleaseStatus> GCodePostprocessors { get; } = [];
 
     public ObservableCollection<PlannerGCodeRelease> GCodeReleases { get; } = [];
+
+    /// <summary>Subprogram files released with the selected program; only ticked ones go.</summary>
+    public ObservableCollection<ReleaseSubprogramRow> ReleaseSubprograms { get; } = [];
+
+    /// <summary>Called programs no ticked file provides (they must be on the machine).</summary>
+    public string ReleaseSubprogramNote
+    {
+        get => releaseSubprogramNote;
+        private set => SetField(ref releaseSubprogramNote, value);
+    }
 
     public IReadOnlyList<string> ActiveFilters { get; } = ["All", "Active", "Inactive"];
 
@@ -530,6 +541,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanReleaseGCode));
                 ReleaseGCodeCommand.RaiseCanExecuteChanged();
+                DetectReleaseSubprograms();
             }
         }
     }
@@ -1740,6 +1752,58 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     internal void SetGCodeFileSelection(string path) => GCodeFilePath = path;
 
     /// <summary>
+    /// The subprograms the selected program calls that are next to it, ticked (owner decision
+    /// 2026-09-28: detect, then edit). Files added by hand are dropped when another program is chosen.
+    /// </summary>
+    private void DetectReleaseSubprograms()
+    {
+        foreach (var row in ReleaseSubprograms) row.PropertyChanged -= OnReleaseSubprogramChanged;
+        ReleaseSubprograms.Clear();
+        if (string.IsNullOrWhiteSpace(GCodeFilePath) || !File.Exists(GCodeFilePath))
+        {
+            ReleaseSubprogramNote = string.Empty;
+            return;
+        }
+        var (found, _) = ReleaseSubprogramDetection.Detect(GCodeFilePath);
+        foreach (var row in found) AddReleaseSubprogramRow(row);
+        UpdateReleaseSubprogramNote();
+    }
+
+    /// <summary>Adds files chosen with "Add subprogram files…"; the program itself and files already listed are skipped.</summary>
+    internal void AddReleaseSubprogramFiles(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            if (NcViewer.NcProgramFolders.SamePath(path, GCodeFilePath)) continue;
+            var existing = ReleaseSubprograms.FirstOrDefault(row => NcViewer.NcProgramFolders.SamePath(row.Path, path));
+            if (existing is not null)
+            {
+                existing.IsIncluded = true;
+                continue;
+            }
+            AddReleaseSubprogramRow(new ReleaseSubprogramRow(path, ReleaseSubprogramDetection.ProgramNumber(path), detected: false));
+        }
+        UpdateReleaseSubprogramNote();
+    }
+
+    private void AddReleaseSubprogramRow(ReleaseSubprogramRow row)
+    {
+        row.PropertyChanged += OnReleaseSubprogramChanged;
+        ReleaseSubprograms.Add(row);
+    }
+
+    private void OnReleaseSubprogramChanged(object? sender, PropertyChangedEventArgs e) => UpdateReleaseSubprogramNote();
+
+    private IReadOnlyList<string> IncludedSubprogramPaths() =>
+        ReleaseSubprograms.Where(row => row.IsIncluded).Select(row => row.Path).ToArray();
+
+    private void UpdateReleaseSubprogramNote() =>
+        ReleaseSubprogramNote = string.IsNullOrWhiteSpace(GCodeFilePath)
+            ? string.Empty
+            : ReleaseSubprogramDetection.MissingNote(
+                ReleaseSubprogramDetection.Missing(GCodeFilePath, IncludedSubprogramPaths()));
+
+    /// <summary>
     /// A release from the history grid, read-only in the NC viewer. "Edit copy" continues on a
     /// local copy that can be saved (a local version) or released as a new revision.
     /// </summary>
@@ -1815,13 +1879,15 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     command.ConfirmToolTable,
                     command.FilePath,
                     !newRevision || string.IsNullOrWhiteSpace(command.ToolTableFilePath) ? null : command.ToolTableFilePath,
-                    ExpectedLatestReleaseId(caseOperationId)),
+                    ExpectedLatestReleaseId(caseOperationId),
+                    command.SubprogramFilePaths),
                 clientId,
                 editGeneration);
-            var placed = await PlaceReleasedProgramAsync(caseId, caseOperationId, command.FilePath, released);
+            var placed = await PlaceReleasedProgramAsync(
+                caseId, caseOperationId, command.FilePath, released, command.SubprogramFilePaths ?? []);
             outcome = new(
                 true,
-                $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{placed.Note}",
+                $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{SubprogramReleaseNote(released)}{placed.Note}",
                 released.GCodeReleaseId,
                 released.ProcessRevisionNumber,
                 released.PostSpecificRevision,
@@ -1918,15 +1984,30 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     /// Folder moves to the folder of the numbers the Server assigned; a file from anywhere else
     /// stays where it is. A placement problem never undoes the release: the note reports it.
     /// </summary>
+    private static string SubprogramReleaseNote(PlannerGCodeRelease released)
+    {
+        var count = released.Subprograms?.Count ?? 0;
+        var parts = new List<string>();
+        if (count > 0) parts.Add($"{count} subprogram file(s) released with it.");
+        if (released.MissingSubprogramCalls is { Count: > 0 } missing)
+        {
+            var programs = string.Join(", ", missing.Select(number => $"O{number}"));
+            parts.Add($"Must be on the machine: {programs}.");
+        }
+        return parts.Count == 0 ? string.Empty : " " + string.Join(" ", parts);
+    }
+
     private async Task<(string? Path, string Note)> PlaceReleasedProgramAsync(
-        string caseId, string caseOperationId, string filePath, PlannerGCodeRelease released)
+        string caseId, string caseOperationId, string filePath, PlannerGCodeRelease released,
+        IReadOnlyList<string>? subprogramPaths = null)
     {
         if (apiClient is null || string.IsNullOrWhiteSpace(filePath)) return (null, string.Empty);
         try
         {
             var folders = NcViewer.NcProgramFolders.ForOperation(apiClient, caseId, caseOperationId, released.PostprocessorId);
             var placement = await folders.PlaceReleasedProgramAsync(filePath, new NcViewer.NcProgramRevision(
-                released.ProcessRevisionNumber, released.PostprocessorId, released.PostprocessorName, released.PostSpecificRevision));
+                released.ProcessRevisionNumber, released.PostprocessorId, released.PostprocessorName, released.PostSpecificRevision),
+                subprogramPaths ?? []);
             return placement.InOperationFolder
                 ? (placement.Path, $" The program is saved in {Path.GetDirectoryName(placement.Path)}.")
                 : (placement.Path, string.Empty);
@@ -2081,12 +2162,13 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                     !IsNewProcessRevisionRelease || string.IsNullOrWhiteSpace(ToolTableFilePath)
                         ? null
                         : ToolTableFilePath,
-                    ExpectedLatestReleaseId(SelectedOperation.CaseOperationId)),
+                    ExpectedLatestReleaseId(SelectedOperation.CaseOperationId),
+                    IncludedSubprogramPaths()),
                 clientId,
                 editGeneration);
             var placed = await PlaceReleasedProgramAsync(
-                SelectedCase.CaseId, SelectedOperation.CaseOperationId, GCodeFilePath, released);
-            releasedMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{placed.Note}";
+                SelectedCase.CaseId, SelectedOperation.CaseOperationId, GCodeFilePath, released, IncludedSubprogramPaths());
+            releasedMessage = $"Released {released.OriginalFileName}: process r{released.ProcessRevisionNumber}, {released.PostprocessorName} post r{released.PostSpecificRevision}.{SubprogramReleaseNote(released)}{placed.Note}";
             StatusMessage = releasedMessage;
             GCodeFilePath = string.Empty;
             ToolTableFilePath = string.Empty;

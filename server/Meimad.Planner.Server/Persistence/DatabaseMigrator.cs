@@ -92,7 +92,8 @@ internal sealed class DatabaseMigrator
         new SchemaV84WorkOrderMaterialOrderVerificationMigration(),
         new SchemaV85KitaronWorkOrderStartDateMigration(),
         new SchemaV86UserAccountsMigration(),
-        new SchemaV87KitaronPushMigration()
+        new SchemaV87KitaronPushMigration(),
+        new SchemaV88NcSubprogramsMigration()
     ];
 
     private readonly SqliteDatabase database;

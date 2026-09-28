@@ -4448,5 +4448,19 @@
   "📌 Pinned": "📌 ננעץ",
   "🔒 READ-ONLY RELEASE": "🔒 שחרור לקריאה בלבד",
   "🔒 View Mode — read only": "🔒 מצב צפייה — קריאה בלבד",
-  "🔓 Edit Mode — you are the editor": "🔓 מצב עריכה — העריכה אצלך"
+  "🔓 Edit Mode — you are the editor": "🔓 מצב עריכה — העריכה אצלך",
+  "Add subprogram files…": "הוסף קבצי תת-תוכנית…",
+  "Add NC files the program uses that were not found next to it, for example subprograms in another folder.": "הוסף קבצי NC שהתוכנית משתמשת בהם ולא נמצאו לידה, למשל תת-תוכניות בתיקייה אחרת.",
+  "Add subprogram files to the release": "הוסף קבצי תת-תוכנית לשחרור",
+  "Subprogram files": "קבצי תת-תוכנית",
+  "The subprograms the program calls (M98 / G65) that are next to it are ticked. Ticked files are released with the program and go to the machine unchanged.": "תת-התוכניות שהתוכנית קוראת להן (M98 / G65) ונמצאות לידה מסומנות. הקבצים המסומנים משוחררים עם התוכנית ועוברים למכונה ללא שינוי.",
+  "Subprograms": "תת-תוכניות",
+  "Add subprogram files": "הוספת קבצי תת-תוכנית",
+  "No subprogram files": "אין קבצי תת-תוכנית",
+  "Add files...": "הוסף קבצים...",
+  "{FileName} (no program number)": "{FileName} (ללא מספר תוכנית)",
+  "Called but not included: {programs}. The release goes ahead; these programs must already be on the machine.": "נקראות אך לא נכללו: {programs}. השחרור ממשיך; תוכניות אלה חייבות כבר להיות במכונה.",
+  "{included}. Must be on the machine: {programs}": "{included}. חייבות להיות במכונה: {programs}",
+  "{count} subprogram file(s) released with it.": "{count} קבצי תת-תוכנית שוחררו איתה.",
+  "Must be on the machine: {programs}.": "חייבות להיות במכונה: {programs}."
 }

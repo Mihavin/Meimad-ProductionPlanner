@@ -135,7 +135,7 @@ internal static class ManufacturingProgramEndpoints
                 Boolean(form, "confirmNewProcessRevision"), Boolean(form, "reuseActiveToolTable"),
                 Boolean(form, "confirmToolTable"), Upload(form.Files.GetFile("gcodeFile")),
                 Upload(form.Files.GetFile("toolTableFile")), programId, outputs,
-                Text(form, "expectedLatestReleaseId")), authority!, token);
+                Text(form, "expectedLatestReleaseId"), GCodeEndpoints.Subprograms(form)), authority!, token);
             return Results.Created(
                 $"/api/v1/manufacturing-programs/{programId}/gcode-releases/{release.GCodeReleaseId}",
                 GCodeReleaseResponse.FromDomain(release));

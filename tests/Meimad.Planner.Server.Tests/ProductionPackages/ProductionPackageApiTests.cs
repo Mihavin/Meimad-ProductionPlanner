@@ -286,6 +286,66 @@ public sealed class ProductionPackageApiTests
     }
 
     [Fact]
+    public async Task Package_copies_the_release_subprograms_unchanged_beside_the_runnable_program()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.SubprogramPackage.Tests", Guid.NewGuid().ToString("N"));
+        var releaseRoot = Path.Combine(root, "releases");
+        var packageRoot = Path.Combine(root, "packages");
+        Directory.CreateDirectory(root);
+        await using var application = ServerApplication.Build(
+            ["--Server:Host=127.0.0.1", "--Server:Port=5098", $"--Database:Path={Path.Combine(root, "test.db")}",
+             $"--GCode:ReleaseRoot={releaseRoot}", $"--ProductionPackages:PackageRoot={packageRoot}"],
+            webHost => webHost.UseSignedInTestServer());
+        try
+        {
+            await application.StartAsync();
+            await SeedAsync(application.Services, releaseRoot, true);
+            // Stored as O1001.nc beside main.nc; released as pocket.nc.
+            var subprogram = Encoding.ASCII.GetBytes("%\r\nO1001 (POCKET)\r\nG1 X10. F100.\r\nM99\r\n%\r\n");
+            var relative = "operations/case-operation-package/gcode/gcode-1/O1001.nc";
+            await File.WriteAllBytesAsync(Path.Combine(releaseRoot, relative.Replace('/', Path.DirectorySeparatorChar)), subprogram);
+            await using (var connection = await application.Services.GetRequiredService<SqliteDatabase>().OpenConnectionAsync())
+            await using (var insert = connection.CreateCommand())
+            {
+                insert.CommandText = """
+                    INSERT INTO gcode_release_subprograms(
+                        id,gcode_release_id,position,original_file_name,program_number,stored_relative_path,file_size,file_hash)
+                    VALUES('sub-1','gcode-1',0,'pocket.nc',1001,$path,$size,$hash);
+                    """;
+                insert.Parameters.AddWithValue("$path", relative);
+                insert.Parameters.AddWithValue("$size", subprogram.Length);
+                insert.Parameters.AddWithValue("$hash", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(subprogram)));
+                await insert.ExecuteNonQueryAsync();
+            }
+            using var client = application.GetTestClient();
+            client.DefaultRequestHeaders.Add("X-Meimad-Client-Id", "tool-room-client");
+            client.DefaultRequestHeaders.Add("X-Meimad-User-Id", "tool-room-user");
+            using var create = await client.PostAsync(
+                "/api/v1/batch-operations/operation-package/production-package",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+            using var document = JsonDocument.Parse(await create.Content.ReadAsStringAsync());
+            var artifacts = document.RootElement.GetProperty("artifacts").EnumerateArray().ToArray();
+            var sub = Assert.Single(artifacts, value => value.GetProperty("artifactType").GetString() == "NC_SUBPROGRAM");
+            Assert.Equal("nc/pocket.nc", sub.GetProperty("logicalPath").GetString());
+            Assert.Equal(subprogram, await client.GetByteArrayAsync(
+                $"/api/v1/batch-operations/operation-package/production-package/artifacts/{sub.GetProperty("artifactId").GetString()}"));
+            Assert.Single(artifacts, value => value.GetProperty("artifactType").GetString() == "RUNNABLE_NC");
+
+            var manifest = artifacts.Single(value => value.GetProperty("artifactType").GetString() == "MANIFEST");
+            var manifestText = Encoding.UTF8.GetString(await client.GetByteArrayAsync(
+                $"/api/v1/batch-operations/operation-package/production-package/artifacts/{manifest.GetProperty("artifactId").GetString()}"));
+            Assert.Contains("nc/pocket.nc", manifestText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await application.StopAsync();
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public async Task Manual_machine_package_contains_only_applicable_non_executable_artifacts()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeimadPlanner.ManualPackage.Tests", Guid.NewGuid().ToString("N"));

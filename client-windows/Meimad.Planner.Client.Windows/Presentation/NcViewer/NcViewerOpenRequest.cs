@@ -58,7 +58,9 @@ internal sealed record NcViewerOpenRequest(
     NcViewerReleaseContext? ReleaseContext = null,
     Func<NcViewerReleaseCommand, CancellationToken, Task<NcViewerReleaseOutcome>>? ReleaseToServer = null,
     NcProgramFolders? ProgramFolders = null,
-    NcViewerOperationToolTable? OperationToolTable = null)
+    NcViewerOperationToolTable? OperationToolTable = null,
+    // Where a program without a file of its own (a Server release) finds its subprograms.
+    string? SubprogramFolder = null)
 {
     /// <summary>The upstream viewer's blank program.</summary>
     internal const string BlankProgram = "%\nO0001\n\nM30\n%\n";
@@ -93,7 +95,8 @@ internal sealed record NcViewerReleaseCommand(
     bool ReuseActiveToolTable,
     bool ConfirmToolTable,
     string? ToolTableFilePath,
-    bool HasActiveProcessRevision);
+    bool HasActiveProcessRevision,
+    IReadOnlyList<string>? SubprogramFilePaths = null);
 
 /// <summary>
 /// Result of a viewer release; <see cref="Message"/> is shown in the viewer either way.
@@ -195,6 +198,8 @@ internal interface INcViewerHostUi
     string? ChooseFolder(string title, string? initialDirectory);
     /// <summary>A tool-table file (CSV, JSON or Cimatron MHT) for a release.</summary>
     string? ChooseToolTableFile(string? initialDirectory);
+    /// <summary>NC files to release as subprograms of the program; empty when canceled.</summary>
+    IReadOnlyList<string> ChooseSubprogramFiles(string? initialDirectory) => [];
     /// <summary>An STL file to use as the stock of the simulation.</summary>
     string? ChooseStlFile(string? initialDirectory);
     bool ConfirmDiscardChanges(string documentName);

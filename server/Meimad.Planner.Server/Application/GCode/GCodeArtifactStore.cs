@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Meimad.Planner.NcEngine;
 using Meimad.Planner.Server.Configuration;
 using Meimad.Planner.Server.Domain.GCode;
 
@@ -13,6 +14,9 @@ internal sealed class GCodeArtifactStore
         [".json", ".csv", ".txt", ".mht", ".mhtml"],
         StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Most subprogram files one release may carry.</summary>
+    internal const int MaximumSubprogramFiles = 50;
+
     private readonly GCodeOptions options;
 
     public GCodeArtifactStore(GCodeOptions options) => this.options = options;
@@ -22,6 +26,20 @@ internal sealed class GCodeArtifactStore
         string releaseId,
         UploadedReleaseFile file,
         CancellationToken cancellationToken) =>
+        PublishGCodeAsync(operationId, releaseId, file, [], cancellationToken);
+
+    /// <summary>
+    /// Stores the main program and its subprogram files in one immutable release folder. A
+    /// subprogram with a program number is stored as <c>O&lt;number&gt;</c> with its extension, the
+    /// name the NC engine looks for in the program's folder, so the Server's analysis follows the
+    /// calls; its original name is kept for downloads and packages.
+    /// </summary>
+    internal Task<StoredArtifactPublication> PublishGCodeAsync(
+        string operationId,
+        string releaseId,
+        UploadedReleaseFile file,
+        IReadOnlyList<UploadedReleaseFile> subprograms,
+        CancellationToken cancellationToken) =>
         PublishAsync(
             operationId,
             "gcode",
@@ -29,7 +47,8 @@ internal sealed class GCodeArtifactStore
             file,
             options.MaximumGCodeFileBytes,
             GCodeExtensions,
-            cancellationToken);
+            cancellationToken,
+            subprograms);
 
     internal Task<StoredArtifactPublication> PublishToolTableAsync(
         string operationId,
@@ -78,8 +97,17 @@ internal sealed class GCodeArtifactStore
         UploadedReleaseFile file,
         long maximumBytes,
         IReadOnlySet<string> allowedExtensions,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<UploadedReleaseFile>? subprograms = null)
     {
+        if (subprograms is { Count: > MaximumSubprogramFiles })
+        {
+            throw new GCodeValidationException(
+                "subprogramFiles",
+                "too_many_subprograms",
+                $"A release may carry at most {MaximumSubprogramFiles} subprogram files.");
+        }
+
         if (file.Content is null || !file.Content.CanRead)
         {
             throw new GCodeValidationException("file", "required", "A readable release file is required.");
@@ -121,58 +149,29 @@ internal sealed class GCodeArtifactStore
         try
         {
             var outputPath = ResolveChild(stagingDirectory, safeName);
-            long length = 0;
-            await using (var output = new FileStream(
-                outputPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                81920,
-                FileOptions.Asynchronous | FileOptions.WriteThrough))
-            {
-                var buffer = new byte[81920];
-                int read;
-                while ((read = await file.Content.ReadAsync(buffer, cancellationToken)) > 0)
-                {
-                    length = checked(length + read);
-                    if (length > maximumBytes)
-                    {
-                        throw new GCodeValidationException(
-                            "file", "file_too_large", $"Release file exceeds {maximumBytes} bytes.");
-                    }
-
-                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                }
-
-                await output.FlushAsync(cancellationToken);
-            }
-
-            if (length == 0)
-            {
-                throw new GCodeValidationException("file", "file_empty", "Release file cannot be empty.");
-            }
-
-            string hash;
-            await using (var input = File.OpenRead(outputPath))
-            {
-                hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(input, cancellationToken));
-            }
+            var (length, hash) = await WriteUploadAsync(file, outputPath, maximumBytes, "file", cancellationToken);
+            var storedSubprograms = await WriteSubprogramsAsync(
+                subprograms ?? [], stagingDirectory, originalName, safeName, maximumBytes, cancellationToken);
 
             await File.WriteAllTextAsync(
                 ResolveChild(stagingDirectory, ".meimad-release-id"),
                 artifactId,
                 cancellationToken);
             Directory.Move(stagingDirectory, finalDirectory);
-            var relativePath = Path.GetRelativePath(root, ResolveChild(finalDirectory, safeName))
+            string Relative(string name) => Path.GetRelativePath(root, ResolveChild(finalDirectory, name))
                 .Replace(Path.DirectorySeparatorChar, '/');
             return new StoredArtifactPublication(
                 new StoredReleaseFile(
                     artifactId,
                     originalName,
-                    relativePath,
+                    Relative(safeName),
                     length,
                     hash),
-                finalDirectory);
+                finalDirectory,
+                storedSubprograms.Select(value => new StoredSubprogramFile(
+                    new StoredReleaseFile(
+                        value.SubprogramId, value.OriginalName, Relative(value.StoredName), value.Length, value.Hash),
+                    value.ProgramNumber)).ToArray());
         }
         catch
         {
@@ -180,6 +179,143 @@ internal sealed class GCodeArtifactStore
             throw;
         }
     }
+
+    private static async Task<IReadOnlyList<WrittenSubprogram>> WriteSubprogramsAsync(
+        IReadOnlyList<UploadedReleaseFile> subprograms,
+        string stagingDirectory,
+        string mainOriginalName,
+        string mainStoredName,
+        long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var written = new List<WrittenSubprogram>();
+        var originalNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { mainOriginalName };
+        var storedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { mainStoredName };
+        var numbers = new Dictionary<int, string>();
+        for (var index = 0; index < subprograms.Count; index++)
+        {
+            var subprogram = subprograms[index];
+            if (subprogram.Content is null || !subprogram.Content.CanRead)
+            {
+                throw new GCodeValidationException("subprogramFiles", "required", "A readable subprogram file is required.");
+            }
+
+            var originalName = RequiredFileName(subprogram.OriginalFileName, "subprogramFiles");
+            var extension = Path.GetExtension(originalName);
+            if (!NcSubprogramCalls.FileExtensions.Contains(extension))
+            {
+                throw new GCodeValidationException(
+                    "subprogramFiles",
+                    "unsupported_extension",
+                    $"Subprogram file '{originalName}' has an extension that is not allowed for NC programs.");
+            }
+
+            if (!originalNames.Add(originalName))
+            {
+                throw new GCodeValidationException(
+                    "subprogramFiles",
+                    "duplicate_file_name",
+                    $"'{originalName}' is included twice, or has the main program's name.");
+            }
+
+            if (subprogram.DeclaredLength is <= 0 || subprogram.DeclaredLength > maximumBytes)
+            {
+                throw new GCodeValidationException(
+                    "subprogramFiles",
+                    "file_size_invalid",
+                    $"Subprogram file '{originalName}' must be between 1 and {maximumBytes} bytes.");
+            }
+
+            var temporary = ResolveChild(stagingDirectory, $".subprogram-{index}");
+            var (length, hash) = await WriteUploadAsync(
+                subprogram, temporary, maximumBytes, "subprogramFiles", cancellationToken);
+            var number = NcSubprogramCalls.ProgramNumber(originalName, File.ReadLines(temporary).Take(20).ToArray());
+            if (number is int programNumber && !numbers.TryAdd(programNumber, originalName))
+            {
+                throw new GCodeValidationException(
+                    "subprogramFiles",
+                    "duplicate_program_number",
+                    $"'{numbers[programNumber]}' and '{originalName}' are both program O{programNumber}.");
+            }
+
+            var storedName = number is int value
+                ? StoredSubprogramName(value, extension)
+                : SanitizeStoredFileName(originalName, extension);
+            if (!storedNames.Add(storedName))
+            {
+                storedName = SanitizeStoredFileName(originalName, extension);
+                if (!storedNames.Add(storedName))
+                {
+                    throw new GCodeValidationException(
+                        "subprogramFiles",
+                        "file_name_conflict",
+                        $"'{originalName}' cannot be stored beside a file with a similar name; rename one of them.");
+                }
+            }
+
+            File.Move(temporary, ResolveChild(stagingDirectory, storedName));
+            written.Add(new(Guid.NewGuid().ToString("N"), originalName, storedName, number, length, hash));
+        }
+
+        return written;
+    }
+
+    private static string StoredSubprogramName(int number, string extension)
+    {
+        var lower = extension.ToLowerInvariant();
+        return FormattableString.Invariant(
+            $"O{number}{(NcSubprogramCalls.FolderExtensions.Contains(lower) ? lower : ".nc")}");
+    }
+
+    private static async Task<(long Length, string Hash)> WriteUploadAsync(
+        UploadedReleaseFile file,
+        string outputPath,
+        long maximumBytes,
+        string field,
+        CancellationToken cancellationToken)
+    {
+        long length = 0;
+        await using (var output = new FileStream(
+            outputPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            81920,
+            FileOptions.Asynchronous | FileOptions.WriteThrough))
+        {
+            var buffer = new byte[81920];
+            int read;
+            while ((read = await file.Content.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                length = checked(length + read);
+                if (length > maximumBytes)
+                {
+                    throw new GCodeValidationException(
+                        field, "file_too_large", $"Release file exceeds {maximumBytes} bytes.");
+                }
+
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            }
+
+            await output.FlushAsync(cancellationToken);
+        }
+
+        if (length == 0)
+        {
+            throw new GCodeValidationException(field, "file_empty", "Release file cannot be empty.");
+        }
+
+        await using var input = File.OpenRead(outputPath);
+        return (length, Convert.ToHexStringLower(await SHA256.HashDataAsync(input, cancellationToken)));
+    }
+
+    private sealed record WrittenSubprogram(
+        string SubprogramId,
+        string OriginalName,
+        string StoredName,
+        int? ProgramNumber,
+        long Length,
+        string Hash);
 
     private static string RequiredFileName(string value, string field)
     {
@@ -264,6 +400,12 @@ internal sealed class GCodeArtifactStore
     }
 }
 
-internal sealed record StoredArtifactPublication(StoredReleaseFile File, string DirectoryPath);
+internal sealed record StoredArtifactPublication(
+    StoredReleaseFile File,
+    string DirectoryPath,
+    IReadOnlyList<StoredSubprogramFile>? Subprograms = null);
+
+/// <summary>A stored subprogram file; its ArtifactId is the subprogram's id.</summary>
+internal sealed record StoredSubprogramFile(StoredReleaseFile File, int? ProgramNumber);
 
 internal sealed class GCodeStorageException(string message) : Exception(message);

@@ -132,12 +132,16 @@ function machineFor(text, selection) {
   return machines.get(detectMachineForSource(text, registry()).id);
 }
 
+// The program's folder is searched by file name (O1001.nc, 1001.nc, ...) and then, like a memory
+// folder, by the O number each file declares, so a subprogram released as "pocket.nc" with O1001
+// is found the way the Planner's release detection finds it; the machine's memory folder follows.
 function subprogramResolverFor(request) {
   return (machine) => {
     const memory = machine && request.programMemory ? request.programMemory[machine.id] : undefined;
-    return createSubprogramResolver(request.documentDirectory || undefined, {
-      memoryFolders: typeof memory === "string" && memory.trim() ? [memory] : []
-    });
+    const folders = [];
+    if (typeof request.documentDirectory === "string" && request.documentDirectory.trim()) folders.push(request.documentDirectory);
+    if (typeof memory === "string" && memory.trim()) folders.push(memory);
+    return createSubprogramResolver(request.documentDirectory || undefined, { memoryFolders: folders });
   };
 }
 

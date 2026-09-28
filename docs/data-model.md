@@ -717,3 +717,9 @@ Actors recorded on planning rows (`released_by`, `user_id`, `confirmed_by_user_i
 - `kitaron_push_changes`: per run, the Kitaron row (`kitaron_row_id` = `TSubRootCard.auto`), `work_order_number`, `action_number`, `kitaron_column`, `old_value` and `new_value` as written.
 
 Planner sources: Work Orders linked through `kitaron_sync_links` (`production_batch`, `wo:<NUMBER>`), `batch_operations.actual_start/actual_end`, the first `QC_PASS` in `production_run_workflow_events` of a Production Run with an output for the operation at or after its start, `production_run_outputs.produced_quantity`, and `production_batches.planned_quantity`.
+
+## NC release subprograms (schema v88)
+
+- `gcode_release_subprograms`: `id`, `gcode_release_id`, `position`, `original_file_name`, `program_number` (nullable), `stored_relative_path` (unique, in the release's folder), `file_size`, `file_hash` (SHA-256). Unique per release: position, file name (case-insensitive) and program number. Immutable (update/delete triggers), like `gcode_releases`.
+- `gcode_releases.missing_subprogram_calls_json`: JSON array of the program numbers the release's programs call that it does not include (default `[]` for earlier releases).
+- `production_package_artifacts.artifact_type` admits `NC_SUBPROGRAM` (table rebuilt with the same columns and immutability triggers).

@@ -229,6 +229,20 @@ internal sealed class NcViewerSession : IDisposable
                 return EditCopy();
             case "meimadRelease":
                 return await ReleaseToServerAsync(Text(args, 0), args.Length > 1 ? args[1] : default);
+            case "meimadReleaseSubprograms":
+                return await ReleaseSubprogramsAsync(Text(args, 0));
+            case "meimadReleaseSubprogramNote":
+                return new { note = ReleaseSubprogramNote(Text(args, 0), args.Length > 1 ? args[1] : default) };
+            case "meimadChooseSubprograms":
+                var chosen = ui.ChooseSubprogramFiles(await SubprogramFolderAsync());
+                return new
+                {
+                    files = chosen.Select(path => new
+                    {
+                        path,
+                        label = new ReleaseSubprogramRow(path, ReleaseSubprogramDetection.ProgramNumber(path), detected: false).Label
+                    }).ToArray()
+                };
             case "meimadChooseToolTable":
                 var toolTableFile = ui.ChooseToolTableFile(request.ReleaseContext?.ToolTableFilePath is { } known ? Path.GetDirectoryName(known) : null);
                 return toolTableFile is null ? new { canceled = true, path = (string?)null } : new { canceled = false, path = (string?)toolTableFile };
@@ -582,7 +596,8 @@ internal sealed class NcViewerSession : IDisposable
             OptionFlag(options, "reuseActiveToolTable"),
             OptionFlag(options, "confirmToolTable"),
             OptionText(options, "toolTableFilePath"),
-            request.ReleaseContext.HasActiveProcessRevision);
+            request.ReleaseContext.HasActiveProcessRevision,
+            options.TryGetProperty("subprogramFilePaths", out var subprogramPaths) ? StringList(subprogramPaths) : []);
         var outcome = await request.ReleaseToServer(command, CancellationToken.None);
         if (outcome.FilePath is { } releasedPath && !NcProgramFolders.SamePath(releasedPath, path))
         {
@@ -603,6 +618,49 @@ internal sealed class NcViewerSession : IDisposable
             path
         };
     }
+
+    /// <summary>
+    /// The subprograms the program calls that are in its folder (the saved file's folder, or the
+    /// source release's folder for a copy of a release), for the release dialog: ticked, editable.
+    /// </summary>
+    private async Task<object> ReleaseSubprogramsAsync(string editorText)
+    {
+        var lines = NcTextFile.Normalize(editorText).Split('\n');
+        var folder = await SubprogramFolderAsync();
+        if (folder is null || !Directory.Exists(folder))
+        {
+            var called = NcSubprogramCalls.CalledPrograms(lines);
+            return new
+            {
+                folder,
+                files = Array.Empty<object>(),
+                note = ReleaseSubprogramDetection.MissingNote(called)
+            };
+        }
+        var (found, missing) = ReleaseSubprogramDetection.Detect(lines, folder, filePath);
+        return new
+        {
+            folder,
+            files = found.Select(row => new { path = row.Path, label = row.Label }).ToArray(),
+            note = ReleaseSubprogramDetection.MissingNote(missing)
+        };
+    }
+
+    private string ReleaseSubprogramNote(string editorText, JsonElement paths) =>
+        ReleaseSubprogramDetection.MissingNote(ReleaseSubprogramDetection.Missing(
+            NcTextFile.Normalize(editorText).Split('\n'), StringList(paths)));
+
+    private async Task<string?> SubprogramFolderAsync() =>
+        filePath is not null
+            ? Path.GetDirectoryName(filePath)
+            : request.SubprogramFolder ?? (readOnly ? await SourceReleaseFolderAsync() : null);
+
+    private static IReadOnlyList<string> StringList(JsonElement value) => value.ValueKind == JsonValueKind.Array
+        ? value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+            .Select(item => item.GetString()!)
+            .ToArray()
+        : [];
 
     /// <summary>Writes the program the release uses and makes it the saved document.</summary>
     private void SaveReleasedCopy(string path)
@@ -922,7 +980,7 @@ internal sealed class NcViewerSession : IDisposable
 
     private ParseSnapshot CreateSnapshot()
     {
-        var directory = filePath is null ? null : Path.GetDirectoryName(filePath);
+        var directory = filePath is null ? request.SubprogramFolder : Path.GetDirectoryName(filePath);
         var selection = machineOverride ?? (string.IsNullOrWhiteSpace(settings.Machine) ? NcEngineInfo.AutoMachine : settings.Machine);
         var readable = new List<string?> { directory };
         readable.AddRange(settings.ProgramMemory.Values);

@@ -278,6 +278,88 @@ public sealed class GCodeReleaseApiTests
     }
 
     [Fact]
+    public async Task A_release_carries_its_subprogram_files_and_reports_the_calls_it_does_not_include()
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            var main = CanonicalProgram("M98 P1001", "G65 P9810 Z1.");
+            // pocket.nc is O1001 by its first line and calls O1002; O1002.nc is found by its name.
+            var pocket = Encoding.ASCII.GetBytes("%\nO1001 (POCKET)\nM98 P1002\nM99\n%\n");
+            var finish = Encoding.ASCII.GetBytes("%\n(FINISH)\nG1 X10. F100.\nM99\n%\n");
+            using var response = await SendReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "With subprograms", main,
+                Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false, confirmTools: true,
+                includeVerificationHook: false,
+                subprograms: [("pocket.nc", pocket), ("O1002.nc", finish)]);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var release = document.RootElement;
+            var files = release.GetProperty("subprograms").EnumerateArray().ToArray();
+            Assert.Equal(
+                [("pocket.nc", 1001), ("O1002.nc", 1002)],
+                files.Select(file => (file.GetProperty("originalFileName").GetString()!, file.GetProperty("programNumber").GetInt32())));
+            // O9810 is a probing macro kept on the machine: reported, not refused.
+            Assert.Equal([9810], release.GetProperty("missingSubprogramCalls").EnumerateArray().Select(value => value.GetInt32()));
+            var releaseId = release.GetProperty("gCodeReleaseId").GetString();
+            Assert.Equal(pocket, await client.GetByteArrayAsync(
+                $"/api/v1/cases/case-1/operations/case-op-1/gcode-releases/{releaseId}/subprograms/{files[0].GetProperty("subprogramId").GetString()}/file"));
+            // The Server's analysis follows M98 P1001 -> M98 P1002 into the stored files.
+            Assert.Contains(
+                "Subprograms inlined from the release folder: O1001.nc, O1002.nc.",
+                release.GetProperty("ncAnalysis").GetProperty("warnings").EnumerateArray().Select(value => value.GetString()));
+
+            using var catalog = JsonDocument.Parse(await client.GetStringAsync("/api/v1/cases/case-1/operations/case-op-1/gcode"));
+            var listed = catalog.RootElement.GetProperty("releases").EnumerateArray()
+                .Single(value => value.GetProperty("gCodeReleaseId").GetString() == releaseId);
+            Assert.Equal(2, listed.GetProperty("subprograms").GetArrayLength());
+            Assert.Equal(9810, listed.GetProperty("missingSubprogramCalls")[0].GetInt32());
+        });
+    }
+
+    [Theory]
+    [InlineData("(PART [[MEIMAD:PART_NAME]])", "subprogram_placeholder_not_allowed")]
+    [InlineData("O1001", "duplicate_program_number")]
+    public async Task A_subprogram_is_refused_when_it_is_a_template_or_repeats_a_program_number(
+        string secondLine, string expectedCode)
+    {
+        await RunAsync(async (application, client, _) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditorHeaders(client);
+            using var response = await SendReleaseAsync(
+                client, "post-a", "NEW_PROCESS_REVISION", "Refused", CanonicalProgram("M98 P1001"),
+                Encoding.UTF8.GetBytes("tool,position\nT1,1\n"),
+                confirmNewProcess: true, reuseActiveTools: false, confirmTools: true,
+                includeVerificationHook: false,
+                subprograms:
+                [
+                    ("O1001.nc", Encoding.ASCII.GetBytes("O1001\nG1 X1.\nM99\n")),
+                    ("second.nc", Encoding.ASCII.GetBytes($"{(secondLine.StartsWith('O') ? secondLine : "O1003")}\n{secondLine}\nM99\n"))
+                ]);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Contains(expectedCode, await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            using var catalog = JsonDocument.Parse(await client.GetStringAsync("/api/v1/cases/case-1/operations/case-op-1/gcode"));
+            Assert.Equal(0, catalog.RootElement.GetProperty("releases").GetArrayLength());
+        });
+    }
+
+    private static byte[] CanonicalProgram(params string[] cycle) => Encoding.UTF8.GetBytes(string.Join("\n", new[]
+        {
+            "%", "O1234", "(PART: [[MEIMAD:PART_NAME]])",
+            "(OPERATION: [[MEIMAD:OPERATION_NAME]])",
+            "(RUN: [[MEIMAD:PRODUCTION_RUN_ID]])",
+            "(PACKAGE: [[MEIMAD:PRODUCTION_PACKAGE_ID]])",
+            "(MACHINE: [[MEIMAD:MACHINE_ID]])",
+            "(NC RELEASE: [[MEIMAD:NC_RELEASE_ID]])",
+            "(OFFSET LOADER: [[MEIMAD:OFFSET_LOADER_RELEASE_ID]])",
+            "[[MEIMAD:VERIFICATION_HOOK]]", "[[MEIMAD:EVENT_CONTEXT]]",
+            "[[MEIMAD:CYCLE_START]]", "G90"
+        }.Concat(cycle).Concat(["[[MEIMAD:CYCLE_END]]", "M30", "%", ""])));
+
+    [Fact]
     public async Task Canonical_release_checks_only_verification_placeholder_not_ordinary_g65_or_package_metadata()
     {
         await RunAsync(async (application, client, _) =>
@@ -1497,7 +1579,8 @@ public sealed class GCodeReleaseApiTests
         string toolFileName = "tools.csv",
         bool includeVerificationHook = true,
         int? verificationIdentity = null,
-        string? expectedLatestReleaseId = null)
+        string? expectedLatestReleaseId = null,
+        IReadOnlyList<(string Name, byte[] Bytes)>? subprograms = null)
     {
         var content = new MultipartFormDataContent();
         if (expectedLatestReleaseId is not null)
@@ -1517,6 +1600,10 @@ public sealed class GCodeReleaseApiTests
         if (tools is not null)
         {
             content.Add(new ByteArrayContent(tools), "toolTableFile", toolFileName);
+        }
+        foreach (var (name, bytes) in subprograms ?? [])
+        {
+            content.Add(new ByteArrayContent(bytes), "subprogramFiles", name);
         }
 
         return client.PostAsync(

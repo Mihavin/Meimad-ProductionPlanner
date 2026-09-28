@@ -4448,5 +4448,19 @@
   "📌 Pinned": "📌 Закреплено",
   "🔒 READ-ONLY RELEASE": "🔒 ВЫПУСК ТОЛЬКО ДЛЯ ЧТЕНИЯ",
   "🔒 View Mode — read only": "🔒 Режим просмотра — только чтение",
-  "🔓 Edit Mode — you are the editor": "🔓 Режим редактирования — редактор вы"
+  "🔓 Edit Mode — you are the editor": "🔓 Режим редактирования — редактор вы",
+  "Add subprogram files…": "Добавить файлы подпрограмм…",
+  "Add NC files the program uses that were not found next to it, for example subprograms in another folder.": "Добавьте NC-файлы, которые использует программа и которые не найдены рядом с ней, например подпрограммы в другой папке.",
+  "Add subprogram files to the release": "Добавить файлы подпрограмм в выпуск",
+  "Subprogram files": "Файлы подпрограмм",
+  "The subprograms the program calls (M98 / G65) that are next to it are ticked. Ticked files are released with the program and go to the machine unchanged.": "Отмечены подпрограммы, которые вызывает программа (M98 / G65) и которые лежат рядом с ней. Отмеченные файлы выпускаются вместе с программой и передаются на станок без изменений.",
+  "Subprograms": "Подпрограммы",
+  "Add subprogram files": "Добавление файлов подпрограмм",
+  "No subprogram files": "Нет файлов подпрограмм",
+  "Add files...": "Добавить файлы...",
+  "{FileName} (no program number)": "{FileName} (без номера программы)",
+  "Called but not included: {programs}. The release goes ahead; these programs must already be on the machine.": "Вызываются, но не включены: {programs}. Выпуск выполняется; эти программы уже должны быть на станке.",
+  "{included}. Must be on the machine: {programs}": "{included}. Должны быть на станке: {programs}",
+  "{count} subprogram file(s) released with it.": "Вместе с ней выпущено файлов подпрограмм: {count}.",
+  "Must be on the machine: {programs}.": "Должны быть на станке: {programs}."
 }

@@ -25,6 +25,12 @@ internal interface IGCodeRepository
         string releaseId,
         CancellationToken cancellationToken);
 
+    Task<StoredReleaseFile?> ReadSubprogramFileAsync(
+        string caseOperationId,
+        string releaseId,
+        string subprogramId,
+        CancellationToken cancellationToken);
+
     Task<StoredReleaseFile?> ReadProgramGCodeFileAsync(
         string manufacturingProgramId,
         string releaseId,

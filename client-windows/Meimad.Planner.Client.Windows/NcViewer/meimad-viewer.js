@@ -45,6 +45,9 @@
     releaseReuseTools: byId("meimadReleaseReuseTools"),
     releaseConfirmTools: byId("meimadReleaseConfirmTools"),
     releaseConfirmRevision: byId("meimadReleaseConfirmRevision"),
+    releaseSubprograms: byId("meimadReleaseSubprograms"),
+    releaseSubprogramAdd: byId("meimadReleaseSubprogramAdd"),
+    releaseSubprogramNote: byId("meimadReleaseSubprogramNote"),
     releaseReport: byId("meimadReleaseReport"),
     releaseValidation: byId("meimadReleaseValidation"),
     releaseFeedback: byId("meimadReleaseFeedback"),
@@ -264,9 +267,69 @@
     elements.releaseSubmit.disabled = false;
     elements.releaseSubmit.textContent = "Release";
     refreshReleaseFields();
+    loadSubprograms();
     if (typeof elements.releaseModal.showModal === "function") elements.releaseModal.showModal();
     else elements.releaseModal.setAttribute("open", "");
     window.setTimeout(() => elements.releaseComment.focus(), 0);
+  }
+
+  // Subprogram files of the release: those the program calls that are next to it arrive ticked;
+  // "Add files..." adds others. Only ticked files are released.
+  function subprogramRow(file) {
+    const label = document.createElement("label");
+    label.className = "checkbox-row";
+    label.title = file.path;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.dataset.path = file.path;
+    box.addEventListener("change", refreshSubprogramNote);
+    label.append(box, ` ${file.label}`);
+    return label;
+  }
+
+  function subprogramPaths() {
+    return [...elements.releaseSubprograms.querySelectorAll("input[type=checkbox]")]
+      .filter((box) => box.checked)
+      .map((box) => box.dataset.path);
+  }
+
+  function hasSubprogram(path) {
+    return [...elements.releaseSubprograms.querySelectorAll("input[type=checkbox]")]
+      .some((box) => box.dataset.path.toLowerCase() === String(path).toLowerCase());
+  }
+
+  async function loadSubprograms() {
+    elements.releaseSubprograms.replaceChildren();
+    elements.releaseSubprogramNote.textContent = "";
+    try {
+      const result = await meimad.releaseSubprograms(editorText());
+      for (const file of result?.files || []) elements.releaseSubprograms.appendChild(subprogramRow(file));
+      elements.releaseSubprogramNote.textContent = result?.note || "";
+    } catch (error) {
+      elements.releaseSubprogramNote.textContent = message(error);
+    }
+  }
+
+  async function refreshSubprogramNote() {
+    try {
+      const result = await meimad.releaseSubprogramNote(editorText(), subprogramPaths());
+      elements.releaseSubprogramNote.textContent = result?.note || "";
+    } catch (error) {
+      elements.releaseSubprogramNote.textContent = message(error);
+    }
+  }
+
+  async function addSubprograms() {
+    try {
+      const result = await meimad.chooseSubprograms();
+      for (const file of result?.files || []) {
+        if (!hasSubprogram(file.path)) elements.releaseSubprograms.appendChild(subprogramRow(file));
+      }
+      await refreshSubprogramNote();
+    } catch (error) {
+      elements.releaseFeedback.textContent = message(error);
+    }
   }
 
   function closeReleaseDialog() {
@@ -298,7 +361,8 @@
       confirmNewProcessRevision: elements.releaseConfirmRevision.checked,
       reuseActiveToolTable: elements.releaseReuseTools.checked,
       confirmToolTable: elements.releaseConfirmTools.checked,
-      toolTableFilePath: elements.releaseToolTable.value.trim()
+      toolTableFilePath: elements.releaseToolTable.value.trim(),
+      subprogramFilePaths: subprogramPaths()
     };
   }
 
@@ -365,6 +429,7 @@
   elements.releaseClose.addEventListener("click", closeReleaseDialog);
   elements.releaseScope.addEventListener("change", refreshReleaseFields);
   elements.releaseReuseTools.addEventListener("change", refreshReleaseFields);
+  elements.releaseSubprogramAdd.addEventListener("click", addSubprograms);
   elements.releaseToolTableBrowse.addEventListener("click", async () => {
     try {
       const result = await meimad.chooseToolTable();

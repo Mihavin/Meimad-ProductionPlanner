@@ -6,6 +6,8 @@ namespace Meimad.Planner.Server.Application.ProductionPackages;
 internal static class ProductionPackageArtifactTypes
 {
     internal const string RunnableNc = "RUNNABLE_NC";
+    /// <summary>A subprogram file of the NC release, copied unchanged beside the runnable program.</summary>
+    internal const string NcSubprogram = "NC_SUBPROGRAM";
     internal const string ToolTable = "TOOL_TABLE";
     internal const string OffsetLoader = "OFFSET_LOADER";
     /// <summary>The Tool Room's measured tools, offsets, shapes and components as JSON.</summary>
@@ -66,7 +68,15 @@ internal sealed record ProductionPackageBuildContext(
     string ToolDiameterOffsetKind = ToolDiameterOffsetKinds.Radius,
     IReadOnlyList<ToolPreparationReleasedTool>? ReleasedTools = null,
     ToolPreparation? ToolPreparation = null,
-    ProductionPackagePartCounting? PartCounting = null);
+    ProductionPackagePartCounting? PartCounting = null,
+    IReadOnlyList<ProductionPackageSubprogramSource>? Subprograms = null);
+
+/// <summary>A subprogram file of the package's NC release (schema v88).</summary>
+internal sealed record ProductionPackageSubprogramSource(
+    string SubprogramId,
+    string OriginalFileName,
+    string StoredRelativePath,
+    string FileHash);
 
 internal sealed record ProductionPackageArtifact(
     string ArtifactId,

@@ -507,6 +507,15 @@
           </label>
           <p id="meimadReleaseScopeNote" class="settings-note meimad-release-wide"></p>
         </section>
+        <section class="settings-section meimad-release-subprograms">
+          <div class="secret-input-row">
+            <strong>Subprogram files</strong>
+            <button id="meimadReleaseSubprogramAdd" class="field-button" type="button">Add files...</button>
+          </div>
+          <p class="settings-note">The subprograms the program calls (M98 / G65) that are next to it are ticked. Ticked files are released with the program and go to the machine unchanged.</p>
+          <div id="meimadReleaseSubprograms"></div>
+          <p id="meimadReleaseSubprogramNote" class="settings-note"></p>
+        </section>
         <section class="settings-section meimad-release-checks">
           <label class="checkbox-row"><input id="meimadReleaseReuseTools" type="checkbox"> Reuse the active physical tool table</label>
           <label class="checkbox-row"><input id="meimadReleaseConfirmTools" type="checkbox"> I confirm this exact physical tool table</label>

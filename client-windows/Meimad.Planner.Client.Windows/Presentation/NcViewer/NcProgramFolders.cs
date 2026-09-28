@@ -173,24 +173,39 @@ internal sealed class NcProgramFolders
     /// After a release: a program saved under this Operation's G-code folder is moved to the
     /// folder of the numbers the Server assigned. A file from anywhere else (for example CAM
     /// output chosen in the Release G-code form) stays where it is, and an existing file is never
-    /// replaced. Returns where the program is afterwards.
+    /// replaced. Its released subprograms follow it: those in the program's own folder move with
+    /// it, others under the Operation's G-code folder are copied (another program may still call
+    /// them there). Returns where the program is afterwards.
     /// </summary>
     internal async Task<NcProgramPlacement> PlaceReleasedProgramAsync(
         string filePath,
         NcProgramRevision released,
+        IReadOnlyList<string>? subprogramPaths = null,
         CancellationToken cancellationToken = default)
     {
         var location = await load(cancellationToken);
         var fullPath = Path.GetFullPath(filePath);
         if (!IsInside(fullPath, OperationFolder(location))) return new(fullPath, false);
         var folder = Create(location, released);
+        var sourceFolder = Path.GetDirectoryName(fullPath);
+        foreach (var subprogram in subprogramPaths ?? [])
+        {
+            var subprogramPath = Path.GetFullPath(subprogram);
+            if (!IsInside(subprogramPath, OperationFolder(location)) || !File.Exists(subprogramPath)) continue;
+            var target = Path.Combine(folder.Path, Path.GetFileName(subprogramPath));
+            if (SamePath(target, subprogramPath) || File.Exists(target)) continue;
+            if (sourceFolder is not null && SamePath(Path.GetDirectoryName(subprogramPath)!, sourceFolder))
+                File.Move(subprogramPath, target);
+            else
+                File.Copy(subprogramPath, target);
+        }
         var destination = Path.Combine(folder.Path, Path.GetFileName(fullPath));
         if (SamePath(destination, fullPath) || File.Exists(destination) || !File.Exists(fullPath))
         {
             return new(fullPath, true);
         }
         File.Move(fullPath, destination);
-        TryRemoveEmptyFolder(Path.GetDirectoryName(fullPath));
+        TryRemoveEmptyFolder(sourceFolder);
         return new(destination, true);
     }
 

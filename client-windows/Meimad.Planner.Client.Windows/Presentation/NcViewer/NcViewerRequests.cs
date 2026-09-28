@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
 using Meimad.Planner.Client.Windows.Api;
 using Meimad.Planner.NcEngine;
@@ -53,6 +54,17 @@ internal static class NcViewerRequests
         }
         operationToolTable ??= NcViewerOperationToolTable.FromCatalog(catalog, release?.ToolTableReleaseId);
         var machines = await MachinesAsync(api, cancellationToken);
+        var programFolders = NcProgramFolders.ForOperation(
+            api,
+            caseId,
+            caseOperationId,
+            release?.PostprocessorId,
+            source: release is null
+                ? null
+                : new NcProgramRevision(release.ProcessRevisionNumber, release.PostprocessorId,
+                    release.PostprocessorName, release.PostSpecificRevision));
+        var subprogramFolder = await PlaceSubprogramsAsync(
+            api, caseId, caseOperationId, release, programFolders, cancellationToken);
         return new NcViewerOpenRequest(
             contextTitle,
             release?.OriginalFileName ?? $"release-{releaseId[..Math.Min(8, releaseId.Length)]}.nc",
@@ -62,16 +74,45 @@ internal static class NcViewerRequests
             NcDialect: NcViewerDialects.Resolve(machines, machineId, release?.PostprocessorId),
             FormatService: FormatService(api),
             MachineSelection: NcViewerMachines.Resolve(machines, machineId, release?.PostprocessorId),
-            ProgramFolders: NcProgramFolders.ForOperation(
-                api,
-                caseId,
-                caseOperationId,
-                release?.PostprocessorId,
-                source: release is null
-                    ? null
-                    : new NcProgramRevision(release.ProcessRevisionNumber, release.PostprocessorId,
-                        release.PostprocessorName, release.PostSpecificRevision)),
-            OperationToolTable: operationToolTable);
+            ProgramFolders: programFolders,
+            OperationToolTable: operationToolTable,
+            SubprogramFolder: subprogramFolder);
+    }
+
+    /// <summary>
+    /// A release with subprogram files is shown with them: they are written into the release's
+    /// revision folder in the Case Working Folder (where released NC programs belong) unless a file
+    /// of that name is already there, which is never replaced. Returns that folder, or null when the
+    /// release has no subprograms or the folder or the Server is unavailable (the preview then
+    /// notes the subprograms it cannot find).
+    /// </summary>
+    private static async Task<string?> PlaceSubprogramsAsync(
+        IPlannerApiClient api,
+        string caseId,
+        string caseOperationId,
+        PlannerGCodeRelease? release,
+        NcProgramFolders folders,
+        CancellationToken cancellationToken)
+    {
+        if (release?.Subprograms is not { Count: > 0 } subprograms || folders.Source is not { } source) return null;
+        try
+        {
+            var folder = (await folders.ReleaseFolderAsync(source, cancellationToken)).Path;
+            foreach (var subprogram in subprograms)
+            {
+                var target = Path.Combine(folder, Path.GetFileName(subprogram.OriginalFileName));
+                if (File.Exists(target)) continue;
+                var bytes = await api.ReadGCodeSubprogramBytesAsync(
+                    caseId, caseOperationId, release.GCodeReleaseId, subprogram.SubprogramId, cancellationToken);
+                await File.WriteAllBytesAsync(target, bytes, cancellationToken);
+            }
+            return folder;
+        }
+        catch (Exception exception) when (IsTransient(exception) || exception is IOException
+            or UnauthorizedAccessException or InvalidOperationException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The Server's stateless "Apply Meimad Planner Format".</summary>

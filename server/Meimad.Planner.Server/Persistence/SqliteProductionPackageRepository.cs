@@ -114,6 +114,8 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             connection, transaction, "gcode_releases", gcodeId, cancellationToken);
         var ncIdentityToken = gcodeId is null ? null : await ReadNcIdentityTokenAsync(
             connection, transaction, gcodeId, cancellationToken);
+        var subprograms = gcodeId is null ? [] : await ReadSubprogramsAsync(
+            connection, transaction, gcodeId, cancellationToken);
         var tool = await ReadReleaseFileAsync(connection, transaction, "tool_table_releases",
             readiness.ActiveToolTableReleaseId, cancellationToken)
             ?? throw new ProductionPackageBuildException(
@@ -131,7 +133,27 @@ internal sealed class SqliteProductionPackageRepository(SqliteDatabase database)
             gcodeId, gcode?.OriginalName, gcode?.StoredPath, gcode?.Hash, ncIdentityToken,
             readiness.ActiveToolTableReleaseId, tool.OriginalName, tool.StoredPath, tool.Hash,
             verification, directConfigured, directOnline, manualDummyAllowed, currentPackageId, readiness,
-            ncDialect, processType, toolDiameterOffsetKind, releasedTools, preparation, partCounting);
+            ncDialect, processType, toolDiameterOffsetKind, releasedTools, preparation, partCounting,
+            subprograms);
+    }
+
+    private static async Task<IReadOnlyList<ProductionPackageSubprogramSource>> ReadSubprogramsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string releaseId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, original_file_name, stored_relative_path, file_hash
+            FROM gcode_release_subprograms
+            WHERE gcode_release_id = $id
+            ORDER BY position;
+            """;
+        command.Parameters.AddWithValue("$id", releaseId);
+        var values = new List<ProductionPackageSubprogramSource>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            values.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+        return values;
     }
 
     /// <summary>The connection's DPRNT source (<c>dprnt.source</c> in its configuration JSON); TCP when the JSON predates the field.</summary>

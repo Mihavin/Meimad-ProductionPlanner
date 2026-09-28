@@ -399,6 +399,11 @@ internal interface IPlannerApiClient : IDisposable
         string caseId, string caseOperationId, string releaseId,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>A subprogram file of a release exactly as stored.</summary>
+    Task<byte[]> ReadGCodeSubprogramBytesAsync(
+        string caseId, string caseOperationId, string releaseId, string subprogramId,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     /// <summary>Server-side "Apply Meimad Planner Format"; stateless, needs no Edit Mode.</summary>
     Task<NcTemplateFormatResult> FormatNcTemplateAsync(
         string text, string ncDialect,
@@ -1531,8 +1536,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         content.Add(gcodeContent, "gcodeFile", Path.GetFileName(create.GCodeFilePath));
         FileStream? toolStream = null;
         StreamContent? toolContent = null;
+        var subprogramStreams = new List<FileStream>();
         try
         {
+            foreach (var path in create.SubprogramFilePaths ?? [])
+            {
+                var stream = File.OpenRead(path);
+                subprogramStreams.Add(stream);
+                content.Add(new StreamContent(stream), "subprogramFiles", Path.GetFileName(path));
+            }
+
             if (!string.IsNullOrWhiteSpace(create.ToolTableFilePath))
             {
                 toolStream = File.OpenRead(create.ToolTableFilePath);
@@ -1550,6 +1563,10 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             if (toolStream is not null)
             {
                 await toolStream.DisposeAsync();
+            }
+            foreach (var stream in subprogramStreams)
+            {
+                await stream.DisposeAsync();
             }
         }
     }
@@ -2040,6 +2057,16 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             cancellationToken);
         var bytes = await ReadBytesSuccessAsync(response, cancellationToken);
         return Encoding.UTF8.GetString(bytes);
+    }
+
+    public async Task<byte[]> ReadGCodeSubprogramBytesAsync(
+        string caseId, string caseOperationId, string releaseId, string subprogramId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/cases/{Uri.EscapeDataString(caseId)}/operations/{Uri.EscapeDataString(caseOperationId)}/gcode-releases/{Uri.EscapeDataString(releaseId)}/subprograms/{Uri.EscapeDataString(subprogramId)}/file",
+            cancellationToken);
+        return await ReadBytesSuccessAsync(response, cancellationToken);
     }
 
     public async Task<byte[]> ReadGCodeFileBytesAsync(

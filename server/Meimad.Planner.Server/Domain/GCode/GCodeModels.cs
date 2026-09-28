@@ -115,7 +115,24 @@ internal sealed record GCodeRelease(
     NcProgramAnalysis? NcAnalysis = null,
     IReadOnlyList<NcMachineCycleEstimate>? MachineCycleEstimates = null,
     Meimad.Planner.Server.Domain.Haas.NcHeaderMetadata? HeaderMetadata = null,
-    Meimad.Planner.Server.Application.GCode.NcVerificationHook? VerificationHook = null);
+    Meimad.Planner.Server.Application.GCode.NcVerificationHook? VerificationHook = null,
+    IReadOnlyList<GCodeReleaseSubprogram>? Subprograms = null,
+    IReadOnlyList<int>? MissingSubprogramCalls = null);
+
+/// <summary>
+/// A subprogram file of an NC release (schema v88): stored beside the main program, immutable like
+/// it, and copied unchanged into every Production Package built from the release.
+/// <see cref="ProgramNumber"/> is the O number the file declares (or its file name's leading
+/// number); null when it has neither.
+/// </summary>
+internal sealed record GCodeReleaseSubprogram(
+    string SubprogramId,
+    int Position,
+    string OriginalFileName,
+    int? ProgramNumber,
+    string StoredRelativePath,
+    long FileSize,
+    string FileHash);
 
 internal static class NcAnalysisStatus
 {

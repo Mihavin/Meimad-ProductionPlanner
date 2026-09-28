@@ -233,6 +233,20 @@ public partial class NcViewerWindow : Window, INcViewerHostUi
         return dialog.ShowDialog(this) == true ? dialog.FileName : null;
     }
 
+    IReadOnlyList<string> INcViewerHostUi.ChooseSubprogramFiles(string? initialDirectory)
+    {
+        // Same file types as the Release G-code form's "Add subprogram files…".
+        var dialog = new OpenFileDialog
+        {
+            Title = "Add subprogram files",
+            Filter = "NC programs|*.nc;*.tap;*.cnc;*.txt;*.gcode;*.iso;*.mpf;*.spf;*.min;*.ngc|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        }.Localized();
+        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory)) dialog.InitialDirectory = initialDirectory;
+        return dialog.ShowDialog(this) == true ? dialog.FileNames : [];
+    }
+
     public bool ConfirmDiscardChanges(string documentName) =>
         LocalizedMessageBox.Show(this,
             $"{documentName} has unsaved changes. Discard them?",

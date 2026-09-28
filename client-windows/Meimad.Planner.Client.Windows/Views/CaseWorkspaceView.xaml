@@ -498,6 +498,24 @@
                                             <TextBox Text="{Binding ProcessChangeDescription}" AcceptsReturn="True" MinHeight="55"/>
                                         </StackPanel>
                                     </UniformGrid>
+                                    <StackPanel Style="{StaticResource FormField}">
+                                        <DockPanel>
+                                            <Button DockPanel.Dock="Right" Content="Add subprogram files…" Click="AddSubprogramFiles_Click"
+                                                    ToolTip="Add NC files the program uses that were not found next to it, for example subprograms in another folder."
+                                                    AutomationProperties.Name="Add subprogram files to the release"/>
+                                            <TextBlock Text="Subprogram files" Style="{StaticResource FieldLabel}" VerticalAlignment="Center"/>
+                                        </DockPanel>
+                                        <TextBlock Text="The subprograms the program calls (M98 / G65) that are next to it are ticked. Ticked files are released with the program and go to the machine unchanged."
+                                                   TextWrapping="Wrap" Margin="0,2,0,4"/>
+                                        <ItemsControl ItemsSource="{Binding ReleaseSubprograms}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding IsIncluded}" Content="{Binding Label}" ToolTip="{Binding Path}" Margin="0,1,0,1"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="{Binding ReleaseSubprogramNote}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,4,0,0"/>
+                                    </StackPanel>
                                     <TextBlock FontWeight="Bold" FontSize="16" Margin="0,4,0,8">
                                         <Run Text="Release target: "/><Run Text="{Binding SelectedReleasePostprocessor.PostprocessorName}"/>
                                     </TextBlock>
@@ -550,6 +568,7 @@
                                             <DataGridTextColumn Header="Postprocessor" Binding="{Binding PostprocessorName}" Width="130"/>
                                             <DataGridTextColumn Header="Post rev" Binding="{Binding PostSpecificRevision}" Width="70"/>
                                             <DataGridTextColumn Header="Original filename" Binding="{Binding OriginalFileName}" Width="180"/>
+                                            <DataGridTextColumn Header="Subprograms" Binding="{Binding SubprogramSummary}" Width="220"/>
                                             <DataGridTextColumn Header="Header Part" Binding="{Binding HeaderPartName}" Width="150"/>
                                             <DataGridTextColumn Header="Verification identity" Binding="{Binding VerificationHookSummary}" Width="260"/>
                                             <DataGridTextColumn Header="SHA-256" Binding="{Binding ShortHash}" Width="110"/>

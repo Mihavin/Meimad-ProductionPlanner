@@ -354,6 +354,29 @@ public partial class CaseWorkspaceView : UserControl
         }
     }
 
+    private void AddSubprogramFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not CaseWorkspaceViewModel viewModel)
+        {
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "Add subprogram files",
+            Filter = "NC programs|*.nc;*.tap;*.cnc;*.txt;*.gcode;*.iso;*.mpf;*.spf;*.min;*.ngc|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true,
+            InitialDirectory = string.IsNullOrWhiteSpace(viewModel.GCodeFilePath)
+                ? string.Empty
+                : Path.GetDirectoryName(viewModel.GCodeFilePath) ?? string.Empty
+        }.Localized();
+        if (dialog.ShowDialog() == true)
+        {
+            viewModel.AddReleaseSubprogramFiles(dialog.FileNames);
+        }
+    }
+
     /// <summary>
     /// The NC viewer in edit mode: the selected G-code file when one exists, otherwise a new
     /// program with the Meimad canonical block. Open, edit, save, format and release happen there.

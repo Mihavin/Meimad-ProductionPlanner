@@ -1172,9 +1172,26 @@ internal sealed record PlannerGCodeRelease(
     PlannerNcProgramAnalysis? NcAnalysis = null,
     IReadOnlyList<PlannerNcMachineCycleEstimate>? MachineCycleEstimates = null,
     PlannerNcHeaderMetadata? HeaderMetadata = null,
-    PlannerNcVerificationHook? VerificationHook = null)
+    PlannerNcVerificationHook? VerificationHook = null,
+    IReadOnlyList<PlannerGCodeReleaseSubprogram>? Subprograms = null,
+    IReadOnlyList<int>? MissingSubprogramCalls = null)
 {
     public string DisplayName => $"Process r{ProcessRevisionNumber} / {PostprocessorName} r{PostSpecificRevision} — {OriginalFileName}";
+
+    /// <summary>The subprogram files released with the program, and the called programs it does not include.</summary>
+    public string SubprogramSummary
+    {
+        get
+        {
+            var files = Subprograms ?? [];
+            var included = files.Count == 0
+                ? "No subprogram files"
+                : string.Join(", ", files.Select(file => file.DisplayName));
+            if (MissingSubprogramCalls is not { Count: > 0 } missing) return included;
+            var programs = string.Join(", ", missing.Select(number => $"O{number}"));
+            return $"{included}. Must be on the machine: {programs}";
+        }
+    }
     public string ShortHash => FileHash.Length > 12 ? FileHash[..12] : FileHash;
     public string NcEstimateSummary => NcAnalysis is null
         ? "Estimate unavailable"
@@ -1296,6 +1313,20 @@ internal sealed record PlannerGCodeCatalog(
     IReadOnlyList<PlannerPostprocessorReleaseStatus> Postprocessors,
     IReadOnlyList<PlannerGCodeRelease> Releases);
 
+/// <summary>A subprogram file of an NC release; it goes to the machine exactly as released.</summary>
+internal sealed record PlannerGCodeReleaseSubprogram(
+    string SubprogramId,
+    int Position,
+    string OriginalFileName,
+    int? ProgramNumber,
+    long FileSize,
+    string FileHash)
+{
+    public string DisplayName => ProgramNumber is int number
+        ? $"{OriginalFileName} (O{number})"
+        : OriginalFileName;
+}
+
 internal sealed record GCodeReleaseCreate(
     string PostprocessorId,
     string ChangeScope,
@@ -1308,7 +1339,9 @@ internal sealed record GCodeReleaseCreate(
     string? ToolTableFilePath,
     // The newest release of the Operation the programmer saw ("" = none); the Server refuses the
     // release when another programmer released in the meantime.
-    string? ExpectedLatestReleaseId = null);
+    string? ExpectedLatestReleaseId = null,
+    // Subprogram files released with the program (schema v88); they go to the machine unchanged.
+    IReadOnlyList<string>? SubprogramFilePaths = null);
 
 internal sealed record CaseComponent(
     string CaseComponentId,
