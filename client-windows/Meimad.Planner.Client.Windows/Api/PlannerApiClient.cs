@@ -841,6 +841,12 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    Task<ReportEmailTestResult> SendReportTestEmailAsync(
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<WeeklyEmployeeEfficiencyReport> SendWeeklyEmployeeEfficiencyReportAsync(
         string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
@@ -3247,6 +3253,17 @@ internal sealed class PlannerApiClient : IPlannerApiClient
         request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<WeeklyMaterialReport>(response, cancellationToken);
+    }
+
+    public async Task<ReportEmailTestResult> SendReportTestEmailAsync(
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/v1/report-email-settings/test", clientId);
+        request.Headers.Add(EditGenerationHeader, editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<ReportEmailTestResult>(response, cancellationToken);
     }
 
     public async Task<WeeklyEmployeeEfficiencyReport> SendWeeklyEmployeeEfficiencyReportAsync(

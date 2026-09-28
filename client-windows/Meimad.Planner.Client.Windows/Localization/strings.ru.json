@@ -4527,5 +4527,20 @@
   "Report opened: {path}. Print it from the browser, or save it as PDF.": "Отчёт открыт: {path}. Распечатайте его из браузера или сохраните в PDF.",
   "The report could not be opened: {exception.Message}": "Не удалось открыть отчёт: {exception.Message}",
   "The period may be at most 92 days.": "Период может составлять не более 92 дней.",
-  "The period ends before it starts.": "Период заканчивается раньше, чем начинается."
+  "The period ends before it starts.": "Период заканчивается раньше, чем начинается.",
+  "SMTP user name": "Имя пользователя SMTP",
+  "Usually the full email address of the mailbox that sends the reports. Leave empty for a mail server that needs no sign-in.": "Обычно полный адрес почтового ящика, с которого отправляются отчёты. Оставьте пустым для почтового сервера, не требующего входа.",
+  "SMTP password": "Пароль SMTP",
+  "Stored encrypted on the Server and never shown again. For Gmail, use an App Password, not the account password.": "Хранится на Сервере в зашифрованном виде и больше не показывается. Для Gmail используйте пароль приложения, а не пароль аккаунта.",
+  "Remove the saved password": "Удалить сохранённый пароль",
+  "A password is saved on the Server. Leave the field empty to keep it.": "Пароль сохранён на Сервере. Оставьте поле пустым, чтобы сохранить его.",
+  "No password is saved: the Server sends without signing in.": "Пароль не сохранён: Сервер отправляет почту без входа.",
+  "Send test email": "Отправить тестовое письмо",
+  "Send a short email with the saved settings to the recipients, or to the sender when there are none": "Отправить короткое письмо с сохранёнными настройками получателям или отправителю, если получателей нет",
+  "Gmail: SMTP host smtp.gmail.com, port 587, Use SSL on, your Gmail address as the sender and the user name, and an App Password as the password (Google Account, Security, 2-Step Verification, App passwords). Save, then press Send test email.": "Gmail: SMTP-сервер smtp.gmail.com, порт 587, Use SSL включён, ваш адрес Gmail как отправитель и имя пользователя, пароль приложения как пароль (Аккаунт Google, Безопасность, Двухэтапная аутентификация, Пароли приложений). Сохраните и нажмите «Отправить тестовое письмо».",
+  "Either type a new email password or remove the saved one, not both.": "Либо введите новый пароль почты, либо удалите сохранённый, но не то и другое.",
+  "Test email sent to {recipients}. The Server signed in to the mail server.": "Тестовое письмо отправлено: {recipients}. Сервер вошёл на почтовый сервер.",
+  "Test email sent to {recipients} without signing in.": "Тестовое письмо отправлено: {recipients}, без входа.",
+  "Save the sender address, SMTP host and SMTP port before sending a test email.": "Сохраните адрес отправителя, SMTP-сервер и порт SMTP перед отправкой тестового письма.",
+  "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS.": "Порт 465 (неявный TLS) не поддерживается. Используйте порт 587 с Use SSL; соединение тогда шифруется через STARTTLS."
 }

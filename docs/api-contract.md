@@ -2669,6 +2669,26 @@ Windows Setup exposes these master-data routes in **Resource Types & Skills**, w
 
 `GET /api/v1/cases` also accepts `workOrders=with|without`, `release=pending|released`, `orders=active|none`, `operations=with|without`, `materialOrders=verified|toVerify`, and `supplyFrom`, `supplyTo`, `startFrom`, `startTo` (`yyyy-MM-dd`, inclusive). All given filters must match; an unknown token returns 400 `invalid_case_filter`.
 
+### Report email sign-in and test email (schema v89)
+
+Owner decision 2026-09-28: the Server signs in to the mail server with a mailbox user name and password, for example a Gmail account with an App Password.
+
+- `GET /api/v1/report-email-settings` adds `smtpUserName` (string or null) and `smtpPasswordConfigured` (boolean). The password itself is never returned.
+- `PUT /api/v1/report-email-settings` accepts three optional members:
+  - `smtpUserName`: absent or null keeps the saved user name; `""` removes it.
+  - `smtpPassword`: a non-empty value replaces the saved password, which is stored encrypted with the Server's Data Protection keys; absent, null or empty keeps it.
+  - `clearSmtpPassword`: `true` removes the saved password.
+- `PUT` returns `422 validation_failed` when:
+  - both `smtpPassword` and `clearSmtpPassword` are sent;
+  - a password is saved or sent without a user name;
+  - the user name is longer than 320 characters or the password longer than 512;
+  - `smtpPort` is 465. The Server's mail client supports only STARTTLS (RFC 3207), so implicit TLS on port 465 is refused; use 587 with `useSsl`.
+- `POST /api/v1/report-email-settings/test` (Setup permission) sends a short test email with the saved settings to the recipients, or to the sender when there are none. It returns `{ sentTo, sentAt, signedIn }`.
+  - Incomplete settings return `422 report_delivery_not_configured`.
+  - A mail server failure returns `502 report_delivery_failed`, whose message includes the mail server's reply (for example `5.7.8 Username and Password not accepted`).
+  - The weekly report `send` routes return the same fuller message on `502`.
+- The weekly reports sign in the same way.
+
 ### G-code release subprograms (schema v88)
 
 Owner decisions 2026-09-28: a release may carry the subprogram files its program calls; the client offers the files it finds next to the program (ticked, editable); a called program that is not included is reported, not refused; subprograms keep their own program numbers.

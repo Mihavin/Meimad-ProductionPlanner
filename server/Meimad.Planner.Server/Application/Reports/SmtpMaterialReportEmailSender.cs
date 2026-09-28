@@ -4,7 +4,7 @@ using Meimad.Planner.Server.Domain.AdministrativeSetup;
 
 namespace Meimad.Planner.Server.Application.Reports;
 
-internal sealed class SmtpMaterialReportEmailSender : IMaterialReportEmailSender
+internal sealed class SmtpMaterialReportEmailSender(ReportEmailSmtp smtp) : IMaterialReportEmailSender
 {
     public async Task SendAsync(
         ReportEmailSettings settings,
@@ -23,11 +23,7 @@ internal sealed class SmtpMaterialReportEmailSender : IMaterialReportEmailSender
             message.To.Add(recipient);
         }
 
-        using var client = new SmtpClient(settings.SmtpHost!, settings.SmtpPort!.Value)
-        {
-            EnableSsl = settings.UseSsl,
-            UseDefaultCredentials = false
-        };
+        using var client = smtp.CreateClient(settings);
         await client.SendMailAsync(message, token);
     }
 

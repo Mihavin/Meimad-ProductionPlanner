@@ -1017,7 +1017,9 @@ internal sealed record ReportEmailSettings(
     string WeeklyMaterialReportTimeLocal = "08:00",
     bool WeeklyEmployeeEfficiencyEnabled = false,
     string WeeklyEmployeeEfficiencySendDay = "sunday",
-    string WeeklyEmployeeEfficiencyTimeLocal = "08:00");
+    string WeeklyEmployeeEfficiencyTimeLocal = "08:00",
+    string? SmtpUserName = null,
+    bool SmtpPasswordConfigured = false);
 
 internal sealed record ReportEmailSettingsResource(ReportEmailSettings Value, string EntityTag);
 
@@ -1035,7 +1037,13 @@ internal sealed record ReportEmailSettingsUpdate(
     string WeeklyMaterialReportTimeLocal = "08:00",
     bool WeeklyEmployeeEfficiencyEnabled = false,
     string WeeklyEmployeeEfficiencySendDay = "sunday",
-    string WeeklyEmployeeEfficiencyTimeLocal = "08:00");
+    string WeeklyEmployeeEfficiencyTimeLocal = "08:00",
+    string? SmtpUserName = null,
+    string? SmtpPassword = null,
+    bool ClearSmtpPassword = false);
+
+/// <summary>Result of POST /api/v1/report-email-settings/test.</summary>
+internal sealed record ReportEmailTestResult(IReadOnlyList<string> SentTo, DateTimeOffset SentAt, bool SignedIn);
 
 internal sealed record WeeklyMaterialReportItem(
     string CasePartNumber,

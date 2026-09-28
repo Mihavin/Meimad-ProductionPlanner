@@ -5,7 +5,7 @@ using Meimad.Planner.Server.Domain.AdministrativeSetup;
 
 namespace Meimad.Planner.Server.Application.Reports;
 
-internal sealed class SmtpEmployeeEfficiencyEmailSender : IEmployeeEfficiencyEmailSender
+internal sealed class SmtpEmployeeEfficiencyEmailSender(ReportEmailSmtp smtp) : IEmployeeEfficiencyEmailSender
 {
     public async Task SendAsync(ReportEmailSettings settings, WeeklyEmployeeEfficiencyReport report, CancellationToken token)
     {
@@ -16,8 +16,7 @@ internal sealed class SmtpEmployeeEfficiencyEmailSender : IEmployeeEfficiencyEma
             Body = Body(report), IsBodyHtml = false
         };
         foreach (var recipient in settings.Recipients) message.To.Add(recipient);
-        using var client = new SmtpClient(settings.SmtpHost!, settings.SmtpPort!.Value)
-        { EnableSsl = settings.UseSsl, UseDefaultCredentials = false };
+        using var client = smtp.CreateClient(settings);
         await client.SendMailAsync(message, token);
     }
 

@@ -1,5 +1,6 @@
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Application.Machines;
+using Meimad.Planner.Server.Application.Reports;
 using Meimad.Planner.Server.Application.WorkingCalendars;
 using Meimad.Planner.Server.Domain.AdministrativeSetup;
 
@@ -12,9 +13,10 @@ internal sealed class AdministrativeSetupService
     private readonly IMachineRepository machines;
     private readonly IIsraeliHolidaySource holidaySource;
     private readonly TimeProvider timeProvider;
+    private readonly ReportEmailSmtp reportEmailSmtp;
 
-    public AdministrativeSetupService(IAdministrativeSetupRepository repository, IWorkingCalendarRepository workingCalendars, IMachineRepository machines, IIsraeliHolidaySource holidaySource, TimeProvider timeProvider)
-    { this.repository = repository; this.workingCalendars = workingCalendars; this.machines = machines; this.holidaySource = holidaySource; this.timeProvider = timeProvider; }
+    public AdministrativeSetupService(IAdministrativeSetupRepository repository, IWorkingCalendarRepository workingCalendars, IMachineRepository machines, IIsraeliHolidaySource holidaySource, TimeProvider timeProvider, ReportEmailSmtp reportEmailSmtp)
+    { this.repository = repository; this.workingCalendars = workingCalendars; this.machines = machines; this.holidaySource = holidaySource; this.timeProvider = timeProvider; this.reportEmailSmtp = reportEmailSmtp; }
 
     internal Task<IReadOnlyList<EmployeeResource>> ListResourcesAsync(CancellationToken token = default) => repository.ListResourcesAsync(token);
     internal async Task<IReadOnlyList<EmployeeResource>> ListAvailableResourcesAsync(CancellationToken token = default) =>
@@ -182,7 +184,15 @@ internal sealed class AdministrativeSetupService
     internal async Task<ReportEmailSettings> UpdateReportEmailSettingsAsync(int expectedVersion, UpdateReportEmailSettingsCommand command, EditAuthority authority, CancellationToken token = default)
     {
         var values = AdministrativeSetupValidator.Validate(command.Values);
-        var candidate = new ReportEmailSettings(values.SenderAddress, values.Recipients!.Select(value => value!).ToArray(), values.SmtpHost, values.SmtpPort, values.UseSsl, values.DailyReportEnabled, values.DailyReportTimeLocal, values.TimeZoneId, expectedVersion + 1, timeProvider.GetUtcNow(), values.WeeklyMaterialReportEnabled, values.WeeklyMaterialReportSendDay!, values.WeeklyMaterialReportTimeLocal!, values.WeeklyEmployeeEfficiencyEnabled, values.WeeklyEmployeeEfficiencySendDay!, values.WeeklyEmployeeEfficiencyTimeLocal!);
+        // The mailbox sign-in: an absent user name or password keeps the saved one (schema v89).
+        var current = await repository.GetReportEmailSettingsAsync(token);
+        var userName = values.SmtpUserName is null ? current.SmtpUserName : values.SmtpUserName.Length == 0 ? null : values.SmtpUserName;
+        var protectedPassword = values.ClearSmtpPassword ? null
+            : !string.IsNullOrEmpty(values.SmtpPassword) ? reportEmailSmtp.Protect(values.SmtpPassword)
+            : current.ProtectedSmtpPassword;
+        if (protectedPassword is not null && userName is null)
+            throw new AdministrativeSetupValidationException([new("smtpUserName", "required", "smtpUserName is required while an email password is saved.")]);
+        var candidate = new ReportEmailSettings(values.SenderAddress, values.Recipients!.Select(value => value!).ToArray(), values.SmtpHost, values.SmtpPort, values.UseSsl, values.DailyReportEnabled, values.DailyReportTimeLocal, values.TimeZoneId, expectedVersion + 1, timeProvider.GetUtcNow(), values.WeeklyMaterialReportEnabled, values.WeeklyMaterialReportSendDay!, values.WeeklyMaterialReportTimeLocal!, values.WeeklyEmployeeEfficiencyEnabled, values.WeeklyEmployeeEfficiencySendDay!, values.WeeklyEmployeeEfficiencyTimeLocal!, userName, protectedPassword);
         return await repository.UpdateReportEmailSettingsAsync(candidate, expectedVersion, authority, token) ?? throw new AdministrativeVersionConflictException("Report Email Settings", "1", expectedVersion);
     }
 

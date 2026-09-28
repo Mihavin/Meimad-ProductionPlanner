@@ -320,6 +320,8 @@ public static class ServerApplication
         builder.Services.AddSingleton<KitaronPushService>();
         builder.Services.AddHostedService<KitaronPushHostedService>();
         builder.Services.AddSingleton<IWeeklyMaterialReportRepository, SqliteWeeklyMaterialReportRepository>();
+        builder.Services.AddSingleton<ReportEmailSmtp>();
+        builder.Services.AddSingleton<ReportEmailTestService>();
         builder.Services.AddSingleton<IMaterialReportEmailSender, SmtpMaterialReportEmailSender>();
         builder.Services.AddSingleton<WeeklyMaterialReportService>();
         builder.Services.AddHostedService<WeeklyMaterialReportScheduler>();

@@ -38,7 +38,7 @@ internal static class WeeklyMaterialReportEndpoints
         }
         catch (SmtpException exception)
         {
-            return PlanningHttpSupport.Error(502, "report_delivery_failed", exception.Message, context);
+            return PlanningHttpSupport.Error(502, "report_delivery_failed", ReportEmailSmtp.Describe(exception), context);
         }
     }
 

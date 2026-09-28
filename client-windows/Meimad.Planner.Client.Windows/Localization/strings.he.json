@@ -4527,5 +4527,20 @@
   "Report opened: {path}. Print it from the browser, or save it as PDF.": "הדוח נפתח: {path}. הדפס אותו מהדפדפן או שמור אותו כ-PDF.",
   "The report could not be opened: {exception.Message}": "לא ניתן לפתוח את הדוח: {exception.Message}",
   "The period may be at most 92 days.": "התקופה יכולה להיות 92 ימים לכל היותר.",
-  "The period ends before it starts.": "התקופה מסתיימת לפני שהיא מתחילה."
+  "The period ends before it starts.": "התקופה מסתיימת לפני שהיא מתחילה.",
+  "SMTP user name": "שם משתמש SMTP",
+  "Usually the full email address of the mailbox that sends the reports. Leave empty for a mail server that needs no sign-in.": "בדרך כלל כתובת הדוא\"ל המלאה של תיבת הדואר ששולחת את הדוחות. השאר ריק עבור שרת דואר שאינו דורש כניסה.",
+  "SMTP password": "סיסמת SMTP",
+  "Stored encrypted on the Server and never shown again. For Gmail, use an App Password, not the account password.": "נשמרת מוצפנת בשרת ולא מוצגת שוב. ב-Gmail יש להשתמש בסיסמת אפליקציה, לא בסיסמת החשבון.",
+  "Remove the saved password": "הסר את הסיסמה השמורה",
+  "A password is saved on the Server. Leave the field empty to keep it.": "סיסמה שמורה בשרת. השאר את השדה ריק כדי לשמור עליה.",
+  "No password is saved: the Server sends without signing in.": "לא נשמרה סיסמה: השרת שולח ללא כניסה.",
+  "Send test email": "שלח דוא\"ל בדיקה",
+  "Send a short email with the saved settings to the recipients, or to the sender when there are none": "שליחת הודעה קצרה עם ההגדרות השמורות לנמענים, או לשולח כשאין נמענים",
+  "Gmail: SMTP host smtp.gmail.com, port 587, Use SSL on, your Gmail address as the sender and the user name, and an App Password as the password (Google Account, Security, 2-Step Verification, App passwords). Save, then press Send test email.": "Gmail: שרת SMTP smtp.gmail.com, פורט 587, Use SSL מסומן, כתובת ה-Gmail שלך כשולח וכשם המשתמש, וסיסמת אפליקציה כסיסמה (חשבון Google, אבטחה, אימות דו-שלבי, סיסמאות לאפליקציות). שמור, ולאחר מכן לחץ על שלח דוא\"ל בדיקה.",
+  "Either type a new email password or remove the saved one, not both.": "יש להקליד סיסמת דוא\"ל חדשה או להסיר את השמורה, לא את שתיהן.",
+  "Test email sent to {recipients}. The Server signed in to the mail server.": "דוא\"ל בדיקה נשלח אל {recipients}. השרת נכנס לשרת הדואר.",
+  "Test email sent to {recipients} without signing in.": "דוא\"ל בדיקה נשלח אל {recipients} ללא כניסה.",
+  "Save the sender address, SMTP host and SMTP port before sending a test email.": "שמור את כתובת השולח, שרת ה-SMTP ופורט ה-SMTP לפני שליחת דוא\"ל בדיקה.",
+  "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS.": "פורט 465 (TLS מרומז) אינו נתמך. השתמש בפורט 587 עם Use SSL; החיבור מוצפן אז באמצעות STARTTLS."
 }

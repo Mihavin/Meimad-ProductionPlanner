@@ -44,7 +44,7 @@ internal static class WeeklyEmployeeEfficiencyReportEndpoints
         catch (EmployeeEfficiencyReportDeliveryException exception)
         { return PlanningHttpSupport.Error(422, "report_delivery_not_configured", exception.Message, context); }
         catch (SmtpException exception)
-        { return PlanningHttpSupport.Error(502, "report_delivery_failed", exception.Message, context); }
+        { return PlanningHttpSupport.Error(502, "report_delivery_failed", ReportEmailSmtp.Describe(exception), context); }
     }
 
     private static WeeklyEmployeeEfficiencyResponse Response(WeeklyEmployeeEfficiencyReport report) => new(

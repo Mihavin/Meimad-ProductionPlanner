@@ -29,6 +29,40 @@ public sealed class SetupViewModelTests
     }
 
     [Fact]
+    public async Task The_email_password_is_sent_once_forgotten_after_saving_and_the_test_email_names_the_recipients()
+    {
+        var api = new FakeApiClient();
+        var viewModel = CreateViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        await viewModel.EnsureLoadedAsync();
+        Assert.Equal("No password is saved: the Server sends without signing in.", viewModel.ReportSmtpPasswordStatus);
+
+        viewModel.ReportSenderAddress = "planner@example.com";
+        viewModel.ReportSmtpHost = "smtp.gmail.com";
+        viewModel.ReportSmtpPort = "587";
+        viewModel.ReportSmtpUserName = " planner@example.com ";
+        viewModel.ReportSmtpPassword = "abcdefghijklmnop";
+        await viewModel.SaveReportEmailSettingsAsync();
+
+        Assert.Equal(("planner@example.com", "abcdefghijklmnop", false),
+            (api.LastReportEmailUpdate?.SmtpUserName, api.LastReportEmailUpdate?.SmtpPassword, api.LastReportEmailUpdate?.ClearSmtpPassword));
+        Assert.Equal(string.Empty, viewModel.ReportSmtpPassword);
+        Assert.Equal("A password is saved on the Server. Leave the field empty to keep it.", viewModel.ReportSmtpPasswordStatus);
+
+        await viewModel.SaveReportEmailSettingsAsync();   // nothing typed: the saved password stays
+        Assert.Null(api.LastReportEmailUpdate?.SmtpPassword);
+
+        viewModel.ReportClearSmtpPassword = true;
+        viewModel.ReportSmtpPassword = "other";
+        await viewModel.SaveReportEmailSettingsAsync();
+        Assert.Equal("Either type a new email password or remove the saved one, not both.", viewModel.StatusMessage);
+        Assert.Null(api.LastReportEmailUpdate?.SmtpPassword);
+
+        await viewModel.SendReportTestEmailAsync();
+        Assert.Equal("Test email sent to manager@example.com. The Server signed in to the mail server.", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public async Task Editor_can_create_update_select_and_delete_working_calendar()
     {
         var api = new FakeApiClient();
@@ -499,6 +533,26 @@ public sealed class SetupViewModelTests
         ];
         private readonly List<PlannerResource> resources = [];
         private readonly List<EmployeeCalendarException> resourceExceptions = [];
+        private bool reportPasswordSaved;
+
+        internal ReportEmailSettingsUpdate? LastReportEmailUpdate { get; private set; }
+
+        public Task<ReportEmailSettingsResource> UpdateReportEmailSettingsAsync(
+            ReportEmailSettingsUpdate update, string entityTag, string clientId, long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastReportEmailUpdate = update;
+            reportPasswordSaved = !update.ClearSmtpPassword && (reportPasswordSaved || update.SmtpPassword is not null);
+            return Task.FromResult(new ReportEmailSettingsResource(
+                new ReportEmailSettings(update.SenderAddress, update.Recipients, update.SmtpHost, update.SmtpPort, update.UseSsl,
+                    update.DailyReportEnabled, update.DailyReportTimeLocal, update.TimeZoneId, 1, DateTimeOffset.UtcNow,
+                    SmtpUserName: update.SmtpUserName, SmtpPasswordConfigured: reportPasswordSaved),
+                "\"report-email-settings:1:v1\""));
+        }
+
+        public Task<ReportEmailTestResult> SendReportTestEmailAsync(
+            string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ReportEmailTestResult(["manager@example.com"], DateTimeOffset.UtcNow, reportPasswordSaved));
 
         internal WorkingCalendarCreate? LastCalendarCreate { get; private set; }
         internal WorkingCalendarUpdate? LastCalendarUpdate { get; private set; }

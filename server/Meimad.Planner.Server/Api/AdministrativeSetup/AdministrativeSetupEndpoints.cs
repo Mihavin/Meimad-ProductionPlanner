@@ -2,6 +2,8 @@ using Meimad.Planner.Server.Application.AdministrativeSetup;
 using Meimad.Planner.Server.Application.EditMode;
 using Meimad.Planner.Server.Domain.AdministrativeSetup;
 using Microsoft.Extensions.Primitives;
+using System.Net.Mail;
+using Meimad.Planner.Server.Application.Reports;
 using System.Globalization;
 using Meimad.Planner.Server.Application.Accounts;
 
@@ -26,6 +28,7 @@ internal static class AdministrativeSetupEndpoints
         holidays.MapPost(string.Empty,CreateHolidayAsync); holidays.MapPost("/sync",SynchronizeHolidaysAsync); holidays.MapGet("/{holidayId}",GetHolidayAsync); holidays.MapPatch("/{holidayId}",UpdateHolidayAsync); holidays.MapDelete("/{holidayId}",DeleteHolidayAsync);
         endpoints.MapGet("/api/v1/report-email-settings",GetReportSettingsAsync);
         endpoints.MapPut("/api/v1/report-email-settings",UpdateReportSettingsAsync);
+        endpoints.MapPost("/api/v1/report-email-settings/test",SendTestEmailAsync);
     }
 
     /// <summary>
@@ -105,6 +108,23 @@ internal static class AdministrativeSetupEndpoints
     {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;if(!Expected(context,"israeli-holiday",holidayId,out var version,out var etagError))return etagError!;try{var value=await service.UpdateHolidayAsync(holidayId,version,request.ToCommand(),authority!,token);SetTag(context.Response,"israeli-holiday",value.IsraeliHolidayId,value.Version);return Results.Ok(IsraeliHolidayResponse.FromDomain(value));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> DeleteHolidayAsync(string holidayId,HttpContext context,AdministrativeSetupService service,CancellationToken token)
     {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;try{return await service.DeleteHolidayAsync(holidayId,authority!,token)?Results.NoContent():NotFound(context,"Israeli Holiday");}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
+    private static async Task<IResult> SendTestEmailAsync(HttpContext context,ReportEmailTestService service,CancellationToken token)
+    {
+        if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out _,out var error))return error!;
+        try
+        {
+            var result=await service.SendAsync(token);
+            return Results.Ok(new ReportEmailTestResponse(result.SentTo,result.SentAt,result.SignedIn));
+        }
+        catch(ReportEmailNotConfiguredException exception)
+        {
+            return PlanningHttpSupport.Error(422,"report_delivery_not_configured",exception.Message,context);
+        }
+        catch(Exception exception)when(exception is SmtpException or InvalidOperationException)
+        {
+            return PlanningHttpSupport.Error(502,"report_delivery_failed",ReportEmailSmtp.Describe(exception),context);
+        }
+    }
     private static async Task<IResult> SynchronizeHolidaysAsync(SyncIsraeliHolidaysRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
     {if(!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.ManageSetup,out var authority,out var error))return error!;try{return Results.Ok(IsraeliHolidaySyncResponse.FromDomain(await service.SynchronizeHolidaysAsync(request.ToCommand(),authority!,token)));}catch(Exception exception)when(TryMap(exception,context,out var mapped)){return mapped!;}}
     private static async Task<IResult> GetReportSettingsAsync(HttpContext context,AdministrativeSetupService service,CancellationToken token)

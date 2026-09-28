@@ -80,7 +80,7 @@ Whether a formal append-only audit log is required is TBD. Hard-delete/archive b
 | Employee Resource | `employee_resources` | Administrative employee/resource catalog with normalized role, Machine qualification IDs in `skills_json`, optional photo/notes, and a restrictive assigned Working Calendar reference; active, calendar-assigned rows provide individual capacity to the read-only Timeline calculation. Legacy textual skill tokens remain readable and are normalized to Machine IDs on the next Setup save. |
 | Employee Calendar Exception | `employee_calendar_exceptions` | Employee-owned dated vacation, sick-day, personal-day, unavailable, or custom-note interval; full-day or same-day local partial interval, cascade-deleted only with its employee. |
 | Israeli Holiday | `israeli_holidays` | Local cached/manual dated availability policy, optionally applied by Working Calendars. |
-| Report Email Setting | `report_email_settings` | Singleton sender/recipient/SMTP plus separate weekly material and employee-efficiency schedules. No SMTP password is stored. |
+| Report Email Setting | `report_email_settings` | Singleton sender/recipient/SMTP plus separate weekly material and employee-efficiency schedules. Since schema v89 also the SMTP user name and the SMTP password, encrypted with the Server's Data Protection keys (`smtp_password_protected`); the plain password is never stored or returned. |
 | Employee Work Measurement | `employee_work_measurements` | Employee/date planned and actual seconds, optional source reference/notes, recorder identity, and timestamp. Reporting input only; not payroll. |
 | Structured Event | `structured_event_log` | Append-only planning decision/detection stream with event type/time/user, related IDs, reason/comment, and optional before/after JSON. |
 | Weekly Material Report Delivery | `weekly_material_report_deliveries` | Successful automatic-send marker keyed by target week, preventing repeat scheduled mail. Manual sends are not markers. |
@@ -717,6 +717,12 @@ Actors recorded on planning rows (`released_by`, `user_id`, `confirmed_by_user_i
 - `kitaron_push_changes`: per run, the Kitaron row (`kitaron_row_id` = `TSubRootCard.auto`), `work_order_number`, `action_number`, `kitaron_column`, `old_value` and `new_value` as written.
 
 Planner sources: Work Orders linked through `kitaron_sync_links` (`production_batch`, `wo:<NUMBER>`), `batch_operations.actual_start/actual_end`, the first `QC_PASS` in `production_run_workflow_events` of a Production Run with an output for the operation at or after its start, `production_run_outputs.produced_quantity`, and `production_batches.planned_quantity`.
+
+## Report email sign-in (schema v89)
+
+- `report_email_settings.smtp_user_name` (nullable, 1-320 characters) and `report_email_settings.smtp_password_protected` (nullable): the mailbox sign-in of report email (owner decision 2026-09-28).
+- The password is protected with ASP.NET Core Data Protection (purpose `Meimad.Planner.ReportEmail.SmtpPassword.v1`), as the Kitaron SQL password is. Only the Server that saved it can decrypt it. A database restored on another machine keeps the settings, but the password must be entered again, and sending explains this.
+- The Server signs in only when both columns are set; a saved password requires a user name.
 
 ## NC release subprograms (schema v88)
 

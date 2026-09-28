@@ -199,6 +199,10 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     private string weeklyEmployeeEfficiencySendDay = "sunday";
     private string weeklyEmployeeEfficiencyTimeLocal = "08:00";
     private string? reportEmailSettingsEntityTag;
+    private string reportSmtpUserName = string.Empty;
+    private string reportSmtpPassword = string.Empty;
+    private bool reportClearSmtpPassword;
+    private bool reportSmtpPasswordConfigured;
 
     internal SetupViewModel(
         Func<Task> connect,
@@ -278,6 +282,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveReportEmailSettingsCommand = new AsyncCommand(SaveReportEmailSettingsAsync, CanSaveReportEmailSettings);
         SendWeeklyMaterialReportNowCommand = new AsyncCommand(SendWeeklyMaterialReportNowAsync, CanSaveReportEmailSettings);
         SendWeeklyEmployeeEfficiencyReportNowCommand = new AsyncCommand(SendWeeklyEmployeeEfficiencyReportNowAsync, CanSaveReportEmailSettings);
+        SendReportTestEmailCommand = new AsyncCommand(SendReportTestEmailAsync, CanSaveReportEmailSettings);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -397,6 +402,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public AsyncCommand SaveReportEmailSettingsCommand { get; }
     public AsyncCommand SendWeeklyMaterialReportNowCommand { get; }
     public AsyncCommand SendWeeklyEmployeeEfficiencyReportNowCommand { get; }
+    public AsyncCommand SendReportTestEmailCommand { get; }
 
     public string ServerAddress
     {
@@ -850,6 +856,14 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
     public string ReportSmtpHost { get => reportSmtpHost; set => SetField(ref reportSmtpHost, value); }
     public string ReportSmtpPort { get => reportSmtpPort; set => SetField(ref reportSmtpPort, value); }
     public bool ReportUseSsl { get => reportUseSsl; set => SetField(ref reportUseSsl, value); }
+    public string ReportSmtpUserName { get => reportSmtpUserName; set => SetField(ref reportSmtpUserName, value); }
+
+    /// <summary>A new mailbox password typed in Setup; empty keeps the saved one. The Server never sends it back.</summary>
+    public string ReportSmtpPassword { get => reportSmtpPassword; set => SetField(ref reportSmtpPassword, value); }
+    public bool ReportClearSmtpPassword { get => reportClearSmtpPassword; set => SetField(ref reportClearSmtpPassword, value); }
+    public string ReportSmtpPasswordStatus => reportSmtpPasswordConfigured
+        ? "A password is saved on the Server. Leave the field empty to keep it."
+        : "No password is saved: the Server sends without signing in.";
     public bool DailyReportEnabled { get => dailyReportEnabled; set => SetField(ref dailyReportEnabled, value); }
     public string DailyReportTimeLocal { get => dailyReportTimeLocal; set => SetField(ref dailyReportTimeLocal, value); }
     public string ReportTimeZoneId { get => reportTimeZoneId; set => SetField(ref reportTimeZoneId, value); }
@@ -2294,6 +2308,11 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
             StatusMessage = "Weekly employee efficiency report time must be HH:mm.";
             return;
         }
+        if (ReportClearSmtpPassword && ReportSmtpPassword.Length > 0)
+        {
+            StatusMessage = "Either type a new email password or remove the saved one, not both.";
+            return;
+        }
 
         var saved = false;
         IsBusy = true;
@@ -2304,9 +2323,14 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
                     NullIfBlank(ReportSmtpHost), smtpPort, ReportUseSsl, DailyReportEnabled,
                     DailyReportEnabled ? DailyReportTimeLocal : null, NullIfBlank(ReportTimeZoneId),
                     WeeklyMaterialReportEnabled, WeeklyMaterialReportSendDay, WeeklyMaterialReportTimeLocal,
-                    WeeklyEmployeeEfficiencyEnabled, WeeklyEmployeeEfficiencySendDay, WeeklyEmployeeEfficiencyTimeLocal),
+                    WeeklyEmployeeEfficiencyEnabled, WeeklyEmployeeEfficiencySendDay, WeeklyEmployeeEfficiencyTimeLocal,
+                    SmtpUserName: ReportSmtpUserName.Trim(),
+                    SmtpPassword: ReportSmtpPassword.Length > 0 ? ReportSmtpPassword : null,
+                    ClearSmtpPassword: ReportClearSmtpPassword),
                 reportEmailSettingsEntityTag ?? "\"report-email-settings:1:v0\"", clientId, editGeneration);
             PopulateReportEmailSettings(resource);
+            ReportSmtpPassword = string.Empty;
+            ReportClearSmtpPassword = false;
             saved = true;
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
@@ -2326,6 +2350,23 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         {
             var report = await apiClient!.SendWeeklyMaterialReportAsync(clientId, editGeneration);
             StatusMessage = $"Weekly material report sent ({report.Items.Count} Case/Part rows).";
+        }
+        catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>Sends a short email with the saved settings, so a wrong password or port shows at once.</summary>
+    internal async Task SendReportTestEmailAsync()
+    {
+        if (!CanSaveReportEmailSettings()) return;
+        IsBusy = true;
+        try
+        {
+            var result = await apiClient!.SendReportTestEmailAsync(clientId, editGeneration);
+            var recipients = string.Join(", ", result.SentTo);
+            StatusMessage = result.SignedIn
+                ? $"Test email sent to {recipients}. The Server signed in to the mail server."
+                : $"Test email sent to {recipients} without signing in.";
         }
         catch (Exception exception) when (IsExpected(exception)) { StatusMessage = FriendlyMessage(exception); }
         finally { IsBusy = false; }
@@ -2573,6 +2614,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         WeeklyEmployeeEfficiencyEnabled = value.WeeklyEmployeeEfficiencyEnabled;
         WeeklyEmployeeEfficiencySendDay = value.WeeklyEmployeeEfficiencySendDay;
         WeeklyEmployeeEfficiencyTimeLocal = value.WeeklyEmployeeEfficiencyTimeLocal;
+        ReportSmtpUserName = value.SmtpUserName ?? string.Empty;
+        reportSmtpPasswordConfigured = value.SmtpPasswordConfigured;
+        OnPropertyChanged(nameof(ReportSmtpPasswordStatus));
         reportEmailSettingsEntityTag = resource.EntityTag;
     }
 
@@ -2853,6 +2897,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         SaveReportEmailSettingsCommand.RaiseCanExecuteChanged();
         SendWeeklyMaterialReportNowCommand.RaiseCanExecuteChanged();
         SendWeeklyEmployeeEfficiencyReportNowCommand.RaiseCanExecuteChanged();
+        SendReportTestEmailCommand.RaiseCanExecuteChanged();
     }
 
     private void ClearCollections()

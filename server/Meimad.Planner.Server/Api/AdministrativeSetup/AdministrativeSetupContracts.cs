@@ -48,12 +48,14 @@ internal sealed record UpdateReportEmailSettingsRequest(
     bool UseSsl, bool DailyReportEnabled, string? DailyReportTimeLocal, string? TimeZoneId,
     bool WeeklyMaterialReportEnabled, string? WeeklyMaterialReportSendDay,
     string? WeeklyMaterialReportTimeLocal, bool WeeklyEmployeeEfficiencyEnabled,
-    string? WeeklyEmployeeEfficiencySendDay, string? WeeklyEmployeeEfficiencyTimeLocal)
+    string? WeeklyEmployeeEfficiencySendDay, string? WeeklyEmployeeEfficiencyTimeLocal,
+    string? SmtpUserName = null, string? SmtpPassword = null, bool ClearSmtpPassword = false)
 {
     internal UpdateReportEmailSettingsCommand ToCommand() => new(new(
         SenderAddress, Recipients, SmtpHost, SmtpPort, UseSsl, DailyReportEnabled, DailyReportTimeLocal, TimeZoneId,
         WeeklyMaterialReportEnabled, WeeklyMaterialReportSendDay, WeeklyMaterialReportTimeLocal,
-        WeeklyEmployeeEfficiencyEnabled, WeeklyEmployeeEfficiencySendDay, WeeklyEmployeeEfficiencyTimeLocal));
+        WeeklyEmployeeEfficiencyEnabled, WeeklyEmployeeEfficiencySendDay, WeeklyEmployeeEfficiencyTimeLocal,
+        SmtpUserName, SmtpPassword, ClearSmtpPassword));
 }
 
 internal sealed record EmployeeResourceResponse(
@@ -129,8 +131,10 @@ internal sealed record IsraeliHolidaySyncResponse(
         value.Succeeded,value.Provider,value.FromYear,value.ToYear,value.Created,value.Updated,
         value.PreservedManual,value.LastAttemptAt,value.LastSuccessAt,value.Error);
 }
-internal sealed record ReportEmailSettingsResponse(string? SenderAddress, IReadOnlyList<string> Recipients, string? SmtpHost, int? SmtpPort, bool UseSsl, bool DailyReportEnabled, string? DailyReportTimeLocal, string? TimeZoneId, int Version, DateTimeOffset UpdatedAt, bool WeeklyMaterialReportEnabled, string WeeklyMaterialReportSendDay, string WeeklyMaterialReportTimeLocal, bool WeeklyEmployeeEfficiencyEnabled, string WeeklyEmployeeEfficiencySendDay, string WeeklyEmployeeEfficiencyTimeLocal)
-{ internal static ReportEmailSettingsResponse FromDomain(ReportEmailSettings value) => new(value.SenderAddress,value.Recipients,value.SmtpHost,value.SmtpPort,value.UseSsl,value.DailyReportEnabled,value.DailyReportTimeLocal,value.TimeZoneId,value.Version,value.UpdatedAt,value.WeeklyMaterialReportEnabled,value.WeeklyMaterialReportSendDay,value.WeeklyMaterialReportTimeLocal,value.WeeklyEmployeeEfficiencyEnabled,value.WeeklyEmployeeEfficiencySendDay,value.WeeklyEmployeeEfficiencyTimeLocal); }
+internal sealed record ReportEmailTestResponse(IReadOnlyList<string> SentTo, DateTimeOffset SentAt, bool SignedIn);
+
+internal sealed record ReportEmailSettingsResponse(string? SenderAddress, IReadOnlyList<string> Recipients, string? SmtpHost, int? SmtpPort, bool UseSsl, bool DailyReportEnabled, string? DailyReportTimeLocal, string? TimeZoneId, int Version, DateTimeOffset UpdatedAt, bool WeeklyMaterialReportEnabled, string WeeklyMaterialReportSendDay, string WeeklyMaterialReportTimeLocal, bool WeeklyEmployeeEfficiencyEnabled, string WeeklyEmployeeEfficiencySendDay, string WeeklyEmployeeEfficiencyTimeLocal, string? SmtpUserName, bool SmtpPasswordConfigured)
+{ internal static ReportEmailSettingsResponse FromDomain(ReportEmailSettings value) => new(value.SenderAddress,value.Recipients,value.SmtpHost,value.SmtpPort,value.UseSsl,value.DailyReportEnabled,value.DailyReportTimeLocal,value.TimeZoneId,value.Version,value.UpdatedAt,value.WeeklyMaterialReportEnabled,value.WeeklyMaterialReportSendDay,value.WeeklyMaterialReportTimeLocal,value.WeeklyEmployeeEfficiencyEnabled,value.WeeklyEmployeeEfficiencySendDay,value.WeeklyEmployeeEfficiencyTimeLocal,value.SmtpUserName,value.ProtectedSmtpPassword is not null); }
 
 internal sealed record AdministrativeRequestIssue(string Field, string Code, string Message);
 internal sealed class AdministrativeRequestException(IReadOnlyList<AdministrativeRequestIssue> issues) : Exception("Administrative Setup request is invalid.")

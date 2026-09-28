@@ -11,6 +11,28 @@ public partial class SetupView : UserControl
     public SetupView()
     {
         InitializeComponent();
+        DataContextChanged += (_, args) =>
+        {
+            if (args.OldValue is SetupViewModel previous) previous.PropertyChanged -= ViewModel_PropertyChanged;
+            if (args.NewValue is SetupViewModel current) current.PropertyChanged += ViewModel_PropertyChanged;
+        };
+    }
+
+    // A PasswordBox cannot be bound: the typed email password goes to the view model, and the box is
+    // emptied when the view model forgets it after saving.
+    private void ReportSmtpPassword_Changed(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SetupViewModel viewModel) viewModel.ReportSmtpPassword = ReportSmtpPasswordBox.Password;
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SetupViewModel.ReportSmtpPassword)
+            && sender is SetupViewModel { ReportSmtpPassword.Length: 0 }
+            && ReportSmtpPasswordBox.Password.Length > 0)
+        {
+            ReportSmtpPasswordBox.Clear();
+        }
     }
 
     private async void BrowseLegacyWorkbook_Click(object sender, RoutedEventArgs e)

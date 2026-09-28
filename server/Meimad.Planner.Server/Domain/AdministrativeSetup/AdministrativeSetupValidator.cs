@@ -89,6 +89,16 @@ internal static class AdministrativeSetupValidator
         if (sender is not null && !IsEmail(sender)) issues.Add(new("senderAddress", "invalid_email", "senderAddress must be a valid email address."));
         var host = Optional(values.SmtpHost, 255, "smtpHost", issues);
         if (values.SmtpPort is < 1 or > 65535) issues.Add(new("smtpPort", "out_of_range", "smtpPort must be between 1 and 65535."));
+        // The Server's mail client supports STARTTLS only (RFC 3207), not implicit TLS on port 465.
+        if (values.SmtpPort == 465) issues.Add(new("smtpPort", "implicit_tls_unsupported", "Port 465 (implicit TLS) is not supported. Use port 587 with Use SSL; the connection is then encrypted with STARTTLS."));
+        // Null keeps the saved user name; empty removes it.
+        var userName = values.SmtpUserName?.Trim();
+        if (userName is { Length: > 320 }) issues.Add(new("smtpUserName", "too_long", "smtpUserName must contain at most 320 characters."));
+        if (values.SmtpPassword is { Length: > 512 }) issues.Add(new("smtpPassword", "too_long", "smtpPassword must contain at most 512 characters."));
+        if (values.ClearSmtpPassword && !string.IsNullOrEmpty(values.SmtpPassword))
+            issues.Add(new("smtpPassword", "conflict", "smtpPassword cannot be supplied when clearSmtpPassword is true."));
+        if (!string.IsNullOrEmpty(values.SmtpPassword) && userName is { Length: 0 })
+            issues.Add(new("smtpUserName", "required", "smtpUserName is required with an email password."));
         var recipients = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (value, index) in (values.Recipients ?? []).Select((value, index) => (value, index)))
@@ -156,7 +166,8 @@ internal static class AdministrativeSetupValidator
         Throw(issues);
         return new(sender, recipients, host, values.SmtpPort, values.UseSsl, values.DailyReportEnabled, reportTime, zone,
             values.WeeklyMaterialReportEnabled, weeklyDay, weeklyTime,
-            values.WeeklyEmployeeEfficiencyEnabled, efficiencyDay, efficiencyTime);
+            values.WeeklyEmployeeEfficiencyEnabled, efficiencyDay, efficiencyTime,
+            userName, values.SmtpPassword, values.ClearSmtpPassword);
     }
 
     private static string? Required(string? value, string field, int maximum, ICollection<ValidationIssue> issues)

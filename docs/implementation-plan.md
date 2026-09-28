@@ -1167,3 +1167,31 @@ Nothing is stored. Windows **Setup → Employees / Resources** now has inner tab
 - Recorded (actual) work is not included; MVP timing holds only current values (AGENTS.md rule 12).
 - The load is the Timeline's prediction and changes with every planning change.
 - Station steps booked only on a Workstation, with no Employee, do not count for any Employee.
+
+## Report email sign-in (2026-09-28, schema v89)
+
+**Finding:** the report email sender connected to the SMTP server without signing in (`UseDefaultCredentials = false`, no credentials), so only an open factory relay worked; a personal mailbox such as Gmail refused it.
+
+**Owner decision (2026-09-28):** add the mailbox sign-in ("yes" to the proposal: user name and password in the email settings, the password stored encrypted on the Server and never sent back, and a Send test email button).
+
+**Implemented:**
+- Migration v89 adds `smtp_user_name` and `smtp_password_protected` to `report_email_settings`.
+- The password is protected with ASP.NET Core Data Protection, like the Kitaron SQL password. `ReportEmailSmtp` builds the SMTP client for both weekly reports and the test email, and signs in when a user name and a password are saved.
+- `PUT /api/v1/report-email-settings` keeps a saved user name or password that a client does not send.
+- `POST /api/v1/report-email-settings/test` sends a test email and reports the mail server's reply on failure.
+- Port 465 is refused because `System.Net.Mail` has no implicit TLS.
+- In Windows **Setup → Reports / Email**:
+  - SMTP user name, and an SMTP password box that is emptied after saving;
+  - a saved/not-saved note and **Remove the saved password**;
+  - **Send test email**;
+  - a Gmail hint.
+- he/ru texts are included.
+
+**Tests:**
+- `ReportEmailSignInApiTests`: encrypted storage, never returned, kept and removed, validation. The test email signs in to a loopback fake SMTP server with the exact password, and its refusal comes back as 502 with the server reply.
+- Client: `SetupViewModelTests.The_email_password_is_sent_once_forgotten_after_saving_and_the_test_email_names_the_recipients`.
+- The migration version tests move to 89.
+
+**Open points:**
+- A Microsoft personal account (Outlook.com / Hotmail) no longer accepts password sign-in from programs. It would need OAuth, which is not implemented; Gmail App Passwords or a company relay work.
+- A backup restored on another machine needs the password entered again.

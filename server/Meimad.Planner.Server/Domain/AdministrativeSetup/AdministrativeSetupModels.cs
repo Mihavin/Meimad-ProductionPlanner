@@ -119,8 +119,19 @@ internal sealed record ReportEmailSettings(
     string WeeklyMaterialReportTimeLocal = "08:00",
     bool WeeklyEmployeeEfficiencyEnabled = false,
     string WeeklyEmployeeEfficiencySendDay = "sunday",
-    string WeeklyEmployeeEfficiencyTimeLocal = "08:00");
+    string WeeklyEmployeeEfficiencyTimeLocal = "08:00",
+    string? SmtpUserName = null,
+    string? ProtectedSmtpPassword = null)
+{
+    /// <summary>The Server signs in to the mail server only with both a user name and a saved password.</summary>
+    internal bool SignsIn => SmtpUserName is not null && ProtectedSmtpPassword is not null;
+}
 
+/// <summary>
+/// Report email values from a client. <see cref="SmtpUserName"/> null keeps the saved user name and
+/// an empty one removes it; a non-empty <see cref="SmtpPassword"/> replaces the saved password, and
+/// <see cref="ClearSmtpPassword"/> removes it.
+/// </summary>
 internal sealed record ReportEmailSettingsValues(
     string? SenderAddress, IReadOnlyList<string?>? Recipients, string? SmtpHost, int? SmtpPort,
     bool UseSsl, bool DailyReportEnabled, string? DailyReportTimeLocal, string? TimeZoneId,
@@ -129,7 +140,10 @@ internal sealed record ReportEmailSettingsValues(
     string? WeeklyMaterialReportTimeLocal = null,
     bool WeeklyEmployeeEfficiencyEnabled = false,
     string? WeeklyEmployeeEfficiencySendDay = null,
-    string? WeeklyEmployeeEfficiencyTimeLocal = null);
+    string? WeeklyEmployeeEfficiencyTimeLocal = null,
+    string? SmtpUserName = null,
+    string? SmtpPassword = null,
+    bool ClearSmtpPassword = false);
 
 internal sealed record ValidationIssue(string Field, string Code, string Message);
 
