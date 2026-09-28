@@ -246,6 +246,27 @@ internal sealed class MachineAssignmentService
             cancellationToken);
     }
 
+    internal Task<IReadOnlyList<FinishedOperation>> ListFinishedOperationsAsync(
+        int? limit, CancellationToken cancellationToken = default) =>
+        repository.ListFinishedOperationsAsync(Math.Clamp(limit ?? 300, 1, 1000), cancellationToken);
+
+    /// <summary>
+    /// Redo (owner decision 2026-09-28): a finished operation returns to the unassigned backlog as
+    /// not started, and its Done quantity is reset to zero. The planner places it on a Machine again.
+    /// </summary>
+    internal Task<RedoOperationResult> RedoFinishedOperationAsync(
+        string batchOperationId, int expectedVersion, EditAuthority editAuthority,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(batchOperationId))
+        {
+            throw new MachineAssignmentValidationException(
+                "batchOperationId", "required", "batchOperationId is required.");
+        }
+        return repository.RedoFinishedOperationAsync(
+            batchOperationId.Trim(), expectedVersion, timeProvider.GetUtcNow(), editAuthority, cancellationToken);
+    }
+
     internal Task<ManualOperationReportResult> RecordManualReportAsync(
         string batchOperationId, string reportType, int? partTimeSeconds,
         EditAuthority editAuthority, CancellationToken cancellationToken = default)

@@ -56,6 +56,45 @@ internal interface IMachineAssignmentRepository
     Task<ManualOperationReportResult> RecordManualReportAsync(
         string batchOperationId, ManualOperationReportType reportType, int? partTimeSeconds,
         DateTimeOffset now, EditAuthority editAuthority, CancellationToken cancellationToken);
+
+    /// <summary>Finished operations of Work Orders that are not cancelled, newest finish first.</summary>
+    Task<IReadOnlyList<FinishedOperation>> ListFinishedOperationsAsync(int limit, CancellationToken cancellationToken);
+
+    /// <summary>Redo: a finished operation goes back to not started with its Done quantity reset.</summary>
+    Task<RedoOperationResult> RedoFinishedOperationAsync(
+        string batchOperationId, int expectedVersion, DateTimeOffset now,
+        EditAuthority editAuthority, CancellationToken cancellationToken);
+}
+
+/// <summary>A finished (completed) operation for the Planning Board's Finished tab.</summary>
+internal sealed record FinishedOperation(
+    string BatchOperationId,
+    int Version,
+    string BatchId,
+    string BatchNumber,
+    string CaseId,
+    string PartNumber,
+    string? CaseName,
+    int OperationNumber,
+    string OperationName,
+    int PlannedQuantity,
+    long ProducedQuantity,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? MachineId,
+    string? MachineName);
+
+internal sealed record RedoOperationResult(
+    string BatchOperationId,
+    string BatchId,
+    int OperationNumber,
+    string BatchNumber,
+    long PreviousProducedQuantity);
+
+/// <summary>Why a finished operation cannot be redone.</summary>
+internal sealed class OperationRedoException(string code, string message) : Exception(message)
+{
+    internal string Code { get; } = code;
 }
 
 internal sealed record AssignmentMutationResult(

@@ -1474,6 +1474,40 @@ internal sealed record OrderUpdate(
     string? Notes,
     decimal? Price = null);
 
+/// <summary>A finished production operation on the Planning Board's Finished tab.</summary>
+internal sealed record FinishedOperationInfo(
+    string BatchOperationId,
+    int Version,
+    string BatchId,
+    string BatchNumber,
+    string CaseId,
+    string PartNumber,
+    string? CaseName,
+    int OperationNumber,
+    string OperationName,
+    int PlannedQuantity,
+    long ProducedQuantity,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? MachineId,
+    string? MachineName)
+{
+    public string PartText => string.IsNullOrWhiteSpace(CaseName) ? PartNumber : $"{PartNumber} {CaseName}";
+    public string OperationText => $"OP{OperationNumber:00} {OperationName}";
+    public string QuantityText => $"{ProducedQuantity} / {PlannedQuantity}";
+    public string StartedText => ActualStart?.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture) ?? string.Empty;
+    public string FinishedText => ActualEnd?.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture) ?? string.Empty;
+}
+
+internal sealed record FinishedOperationList(IReadOnlyList<FinishedOperationInfo> Items);
+
+internal sealed record RedoOperationResultInfo(
+    string BatchOperationId,
+    string BatchId,
+    int OperationNumber,
+    string BatchNumber,
+    long PreviousProducedQuantity);
+
 /// <summary>The Work Order after "Refresh from Case" and what the refresh changed.</summary>
 internal sealed record WorkOrderRefreshResult(
     ProductionBatch Batch,

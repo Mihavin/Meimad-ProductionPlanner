@@ -1097,6 +1097,199 @@ internal sealed class SqliteMachineAssignmentRepository : IMachineAssignmentRepo
         _ => "production_not_ready"
     };
 
+    public async Task<IReadOnlyList<FinishedOperation>> ListFinishedOperationsAsync(
+        int limit, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT operation.id, operation.version, batch.id, batch.batch_number, case_record.id,
+                   case_record.part_number, case_record.name, operation.operation_number, operation.name,
+                   batch.planned_quantity,
+                   COALESCE((SELECT SUM(output.produced_quantity)
+                             FROM production_run_outputs output
+                             JOIN production_run_programs program ON program.id = output.production_run_program_id
+                             JOIN production_runs run ON run.id = program.production_run_id
+                             WHERE output.batch_operation_id = operation.id
+                               AND run.status NOT IN ('CANCELLED', 'ABORTED')), 0),
+                   operation.actual_start, operation.actual_end, machine.id,
+                   CASE WHEN machine.id IS NULL THEN NULL ELSE machine.number || ' ' || machine.name END
+            FROM batch_operations operation
+            JOIN production_batches batch ON batch.id = operation.production_batch_id
+            JOIN cases case_record ON case_record.id = batch.case_id
+            LEFT JOIN machines machine ON machine.id = COALESCE(operation.actual_machine_id, (
+                SELECT assignment.machine_id FROM machine_assignments assignment
+                WHERE assignment.batch_operation_id = operation.id
+                ORDER BY assignment.released_at IS NULL DESC, assignment.updated_at DESC LIMIT 1))
+            WHERE operation.status = 'completed' AND batch.status <> 'cancelled'
+            ORDER BY operation.actual_end IS NULL, operation.actual_end DESC, operation.updated_at DESC, operation.id
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$limit", limit);
+        var values = new List<FinishedOperation>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(new FinishedOperation(
+                reader.GetString(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetInt32(7), reader.GetString(8), reader.GetInt32(9), reader.GetInt64(10),
+                reader.IsDBNull(11) ? null : ParseInstant(reader.GetString(11)),
+                reader.IsDBNull(12) ? null : ParseInstant(reader.GetString(12)),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)));
+        }
+        return values;
+    }
+
+    /// <summary>
+    /// Redo (owner decision 2026-09-28): the finished operation becomes not started with its actual
+    /// start, finish and Machine cleared, its own Production Run returns to planned with every cycle
+    /// and Done part reset to zero (as Reset does for suspended work), and any Machine placement it
+    /// still holds is released, so it waits in the unassigned backlog until the planner places it.
+    /// CNC cycle observations and workflow events stay as history. An operation made by a Production
+    /// Run that is not its own (for example a multi-output run) is redone through that run instead.
+    /// </summary>
+    public async Task<RedoOperationResult> RedoFinishedOperationAsync(
+        string batchOperationId, int expectedVersion, DateTimeOffset now,
+        EditAuthority editAuthority, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: false);
+        var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+
+        string status, batchId, batchStatus, batchNumber, updatedAt;
+        int version, operationNumber;
+        string? actualStart, actualEnd, actualMachineId;
+        long produced;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT operation.status, operation.version, operation.production_batch_id, batch.status,
+                       batch.batch_number, operation.operation_number, operation.actual_start,
+                       operation.actual_end, operation.actual_machine_id, operation.updated_at,
+                       COALESCE((SELECT SUM(output.produced_quantity)
+                                 FROM production_run_outputs output
+                                 JOIN production_run_programs program ON program.id = output.production_run_program_id
+                                 JOIN production_runs run ON run.id = program.production_run_id
+                                 WHERE output.batch_operation_id = operation.id
+                                   AND run.status NOT IN ('CANCELLED', 'ABORTED')), 0)
+                FROM batch_operations operation
+                JOIN production_batches batch ON batch.id = operation.production_batch_id
+                WHERE operation.id = $id;
+                """;
+            read.Parameters.AddWithValue("$id", batchOperationId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) throw new BatchOperationNotFoundException(batchOperationId);
+            status = reader.GetString(0);
+            version = reader.GetInt32(1);
+            batchId = reader.GetString(2);
+            batchStatus = reader.GetString(3);
+            batchNumber = reader.GetString(4);
+            operationNumber = reader.GetInt32(5);
+            actualStart = reader.IsDBNull(6) ? null : reader.GetString(6);
+            actualEnd = reader.IsDBNull(7) ? null : reader.GetString(7);
+            actualMachineId = reader.IsDBNull(8) ? null : reader.GetString(8);
+            updatedAt = reader.GetString(9);
+            produced = reader.GetInt64(10);
+        }
+
+        var title = $"OP{operationNumber.ToString(CultureInfo.InvariantCulture)} of Work Order {batchNumber}";
+        if (version != expectedVersion)
+        {
+            throw new EditConflictException(
+                "operation",
+                $"{title} changed after you loaded the finished operations.",
+                "Refresh the Finished tab and redo it again if it is still needed.",
+                changedAt: ParseInstant(updatedAt));
+        }
+        if (status != "completed")
+        {
+            throw new OperationRedoException(
+                "operation_not_finished", $"{title} is not finished, so there is nothing to redo.");
+        }
+        if (batchStatus == "cancelled")
+        {
+            throw new OperationRedoException(
+                "work_order_cancelled", $"Work Order {batchNumber} is cancelled; its operations are not redone.");
+        }
+        await using (var shared = connection.CreateCommand())
+        {
+            shared.Transaction = transaction;
+            shared.CommandText = """
+                SELECT EXISTS(
+                    SELECT 1 FROM production_run_outputs output
+                    JOIN production_run_programs program ON program.id = output.production_run_program_id
+                    JOIN production_runs run ON run.id = program.production_run_id
+                    WHERE output.batch_operation_id = $id
+                      AND run.legacy_batch_operation_id IS NOT $id
+                      AND run.status NOT IN ('CANCELLED', 'ABORTED'));
+                """;
+            shared.Parameters.AddWithValue("$id", batchOperationId);
+            if (Convert.ToInt64(await shared.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1)
+            {
+                throw new OperationRedoException(
+                    "operation_made_by_production_run",
+                    $"{title} was made by a Production Run that is not its own (for example one that makes several operations at once); redo it through that Production Run.");
+            }
+        }
+
+        // A CNC-completed operation may still hold its Machine placement: release it.
+        var machines = new List<string>();
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT DISTINCT machine_id FROM machine_assignments WHERE batch_operation_id = $id AND released_at IS NULL;";
+            read.Parameters.AddWithValue("$id", batchOperationId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) machines.Add(reader.GetString(0));
+        }
+        var at = FormatInstant(now);
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE machine_assignments
+                SET released_at = $at, backlog_position = 1000000000 + rowid, production_run_id = NULL,
+                    version = version + 1, updated_at = $at
+                WHERE batch_operation_id = $id AND released_at IS NULL;
+
+                UPDATE batch_operations
+                SET status = 'not_started', actual_start = NULL, actual_end = NULL, actual_machine_id = NULL,
+                    production_process_revision_id = NULL, production_gcode_release_id = NULL,
+                    production_tool_table_release_id = NULL, production_gcode_file_hash = NULL,
+                    production_tool_table_file_hash = NULL,
+                    version = version + 1, updated_at = $at
+                WHERE id = $id;
+                """;
+            update.Parameters.AddWithValue("$id", batchOperationId);
+            update.Parameters.AddWithValue("$at", at);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var machineId in machines)
+        {
+            await SqlitePlanningDeletionRepository.CompactMachineBacklogAsync(
+                connection, transaction, machineId, cancellationToken);
+        }
+        await SyncCompatibilityRunExecutionAsync(
+            connection, transaction, batchOperationId, BatchOperationExecutionAction.Reset, null, now, cancellationToken);
+        await UpdateProductionBatchStatusAsync(connection, transaction, batchId, now, cancellationToken);
+        await SqliteOrderLifecycle.RecomputeForBatchAsync(connection, transaction, batchId, now, cancellationToken);
+        await SqliteStructuredEventLogRepository.AppendAsync(connection, transaction, new(
+            "operation_redone", now, actor,
+            new Dictionary<string, string>
+            {
+                ["batchOperationId"] = batchOperationId,
+                ["productionBatchId"] = batchId
+            },
+            "PLANNER_REDO", null,
+            new { status, actualStart, actualEnd, actualMachineId, producedQuantity = produced },
+            new { status = "not_started", producedQuantity = 0 }), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new RedoOperationResult(batchOperationId, batchId, operationNumber, batchNumber, produced);
+    }
+
     private static async Task UpdateProductionBatchStatusAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,

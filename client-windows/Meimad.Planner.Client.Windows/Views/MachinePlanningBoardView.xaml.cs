@@ -70,6 +70,17 @@ public partial class MachinePlanningBoardView : UserControl
             await viewModel.BeginEditMachineAsync(machine);
     }
 
+    private async void RedoFinished_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: Api.FinishedOperationInfo operation }
+            && DataContext is MachinePlanningBoardViewModel viewModel
+            && LocalizedMessageBox.Show(
+                $"Redo {operation.OperationText} of Work Order {operation.BatchNumber}? Its Done quantity ({operation.ProducedQuantity}) is reset to 0 and it goes back to the unassigned backlog, to be placed on a Machine again.",
+                "Redo operation", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                MessageBoxResult.No) == MessageBoxResult.Yes)
+            await viewModel.RedoFinishedOperationAsync(operation);
+    }
+
     private async void DeleteMachine_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: PlanningMachineColumnViewModel machine }

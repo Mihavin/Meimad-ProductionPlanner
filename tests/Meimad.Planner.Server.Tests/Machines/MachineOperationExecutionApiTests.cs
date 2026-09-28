@@ -140,6 +140,75 @@ public sealed class MachineOperationExecutionApiTests
     }
 
     [Fact]
+    public async Task A_finished_operation_is_listed_and_redo_returns_it_to_the_pool_with_its_quantity_reset()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedAsync(application.Services);
+            AddEditHeaders(client);
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await using (var typed = await database.OpenConnectionAsync())
+            await using (var command = typed.CreateCommand())
+            {
+                // The unassigned pool shows Machine work, which has a Machine Type.
+                command.CommandText = "UPDATE batch_operations SET required_machine_type = 'mill' WHERE id = 'op-1';";
+                await command.ExecuteNonQueryAsync();
+            }
+            Assert.Equal("in_progress", await PostActionAsync(client, "op-1", "start"));
+            Assert.Equal("completed", await PostActionAsync(client, "op-1", "finish"));
+
+            using var finished = JsonDocument.Parse(await client.GetStringAsync("/api/v1/planning-board/finished-operations"));
+            var row = Assert.Single(finished.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("op-1", row.GetProperty("batchOperationId").GetString());
+            Assert.Equal(1, row.GetProperty("producedQuantity").GetInt64());
+            Assert.Equal("M-1 Mill 1", row.GetProperty("machineName").GetString());
+            var version = row.GetProperty("version").GetInt32();
+
+            using (var stale = await client.PostAsJsonAsync("/api/v1/batch-operations/op-1/redo", new { expectedVersion = version - 1 }))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+                Assert.Equal("edit_conflict", await ErrorCodeAsync(stale));
+            }
+            using (var redo = await client.PostAsJsonAsync("/api/v1/batch-operations/op-1/redo", new { expectedVersion = version }))
+            {
+                redo.EnsureSuccessStatusCode();
+                using var body = JsonDocument.Parse(await redo.Content.ReadAsStringAsync());
+                Assert.Equal(1, body.RootElement.GetProperty("previousProducedQuantity").GetInt64());
+            }
+
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("not_started||", await ScalarAsync(connection,
+                    "SELECT status || '|' || COALESCE(actual_start, '') || '|' || COALESCE(actual_end, '') FROM batch_operations WHERE id = 'op-1';"));
+                Assert.Equal("PLANNED|0", await ScalarAsync(connection, """
+                    SELECT run.status || '|' || output.produced_quantity
+                    FROM production_runs run
+                    JOIN production_run_programs program ON program.production_run_id = run.id
+                    JOIN production_run_outputs output ON output.production_run_program_id = program.id
+                    WHERE run.legacy_batch_operation_id = 'op-1';
+                    """));
+                Assert.Equal(0L, await ScalarAsync(connection,
+                    "SELECT COUNT(*) FROM machine_assignments WHERE batch_operation_id = 'op-1' AND released_at IS NULL;"));
+                Assert.Equal("waiting", await ScalarAsync(connection, "SELECT status FROM production_batches WHERE id = 'batch-1';"));
+                Assert.Equal(1L, await ScalarAsync(connection,
+                    "SELECT COUNT(*) FROM structured_event_log WHERE event_type = 'operation_redone';"));
+            }
+
+            using var board = JsonDocument.Parse(await client.GetStringAsync("/api/v1/planning-board"));
+            Assert.Contains(board.RootElement.GetProperty("pool").EnumerateArray(),
+                operation => operation.GetProperty("batchOperationId").GetString() == "op-1");
+            using var empty = JsonDocument.Parse(await client.GetStringAsync("/api/v1/planning-board/finished-operations"));
+            Assert.Empty(empty.RootElement.GetProperty("items").EnumerateArray());
+
+            // Placed again, it runs like a new operation; a second redo has nothing to redo.
+            using (var again = await client.PostAsJsonAsync("/api/v1/batch-operations/op-1/redo", new { expectedVersion = version + 1 }))
+            {
+                Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+            }
+        });
+    }
+
+    [Fact]
     public async Task Invalid_execution_transitions_are_rejected_without_mutation()
     {
         await RunWithServerAsync(async (application, client) =>

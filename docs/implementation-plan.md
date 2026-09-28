@@ -1124,3 +1124,13 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 **Implemented:** `POST /api/v1/batches/{batchId}/refresh-operations` runs `SqliteWorkOrderRouteRefresh` for one pending or released Work Order (`RefreshOnRequestAsync`; complete and cancelled are refused with `409 work_order_closed`) and keeps its release state; the refresh rules are those of a pending Work Order, so started work, packages, bench sessions and locked production history are never changed. The Case form's Work Orders tab has **Refresh from Case**; the status line reports updated, added and removed operations and any number conflicts. he/ru texts.
 
 **Tests:** `WorkOrderRouteReleaseTests.Refresh_from_case_reloads_a_released_work_order_without_returning_it_to_pending`; client `CaseWorkspaceViewModelTests.Refresh_from_case_reloads_a_released_work_order_and_reports_what_changed`.
+
+## Finished operations and Redo on the Planning Board (2026-09-28)
+
+**Owner decision (2026-09-28):** "In planning board show the finished production operations with options in additional tab: Redo (reset quantity and back to production backlog)." "Production backlog" is taken as the unassigned backlog (pool): Machine selection stays manual (AGENTS.md rule 3), so a redone operation is not put back on a Machine automatically.
+
+**Implemented:** `GET /api/v1/planning-board/finished-operations` and `POST /api/v1/batch-operations/{id}/redo` (`planning.board`, expected version). Redo reuses the Reset path of suspended work for the operation's own Production Run (`PLANNED`, structure unlocked, cycles and produced quantity 0, outputs `ALLOCATED`), clears the operation's actual start/finish/Machine and production pin, releases any active Machine assignment (a CNC-completed operation may still hold one) and compacts that backlog, recomputes Batch and Order status and logs `operation_redone` with the previous values. Cycle observations and workflow events are kept as history. Refused for a cancelled Work Order and for an operation made by a run that is not its own. The Windows Planning Board has a Finished tab (Work Order, part, operation, Machine, start, finish, Done / planned, Redo with confirmation). he/ru texts.
+
+**Tests:** `MachineOperationExecutionApiTests.A_finished_operation_is_listed_and_redo_returns_it_to_the_pool_with_its_quantity_reset`; client `MachinePlanningBoardViewModelTests.The_finished_tab_lists_finished_operations_and_redo_sends_one_back_to_the_backlog`.
+
+**Open points:** the Production Run keeps its number and its earlier QC and setup-verification events; a new QC is recorded by the next SEND_TO_QC / QC decision. Redo of multi-output runs is not offered.

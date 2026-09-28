@@ -246,6 +246,35 @@ public sealed class MachinePlanningBoardViewModelTests
     }
 
     [Fact]
+    public async Task The_finished_tab_lists_finished_operations_and_redo_sends_one_back_to_the_backlog()
+    {
+        var api = new FakeApiClient(BoardBefore());
+        api.Finished.Add(new FinishedOperationInfo(
+            "operation-done", 4, "batch-1", "B-1", "case-1", "PN-1", "Bracket", 20, "Finish",
+            12, 12, DateTimeOffset.UtcNow.AddHours(-3), DateTimeOffset.UtcNow.AddHours(-1), "machine-1", "10 Haas"));
+        var viewModel = new MachinePlanningBoardViewModel();
+        viewModel.AttachSession(api, "windows-1", EditorStatus(9));
+        await viewModel.EnsureLoadedAsync();
+
+        viewModel.SelectedBoardTab = MachinePlanningBoardViewModel.FinishedTab;
+        await viewModel.LoadFinishedOperationsAsync();
+        var finished = Assert.Single(viewModel.FinishedOperations);
+        Assert.Equal("OP20 Finish", finished.OperationText);
+        Assert.Equal("12 / 12", finished.QuantityText);
+        Assert.True(viewModel.CanRedoFinished);
+
+        var reads = api.BoardReadCount;
+        await viewModel.RedoFinishedOperationAsync(finished);
+
+        Assert.Equal(("operation-done", 4), api.Redone);
+        Assert.Equal(9, api.Generation);
+        Assert.Empty(viewModel.FinishedOperations);
+        Assert.Contains("reset to 0", viewModel.Feedback[0].Message, StringComparison.Ordinal);
+        // The board is read again, so the operation shows in the unassigned backlog.
+        Assert.True(api.BoardReadCount > reads);
+    }
+
+    [Fact]
     public async Task Refresh_is_always_available_and_one_asked_for_during_a_save_runs_after_it()
     {
         var gate = new TaskCompletionSource();
@@ -799,6 +828,22 @@ public sealed class MachinePlanningBoardViewModelTests
         internal ProductionReadinessInputUpdate? ReadinessUpdate { get; private set; }
         internal PlanningBoardSnapshot? SnapshotAfterUnassignment { get; init; }
         internal string? UnassignedOperationId { get; private set; }
+        internal List<FinishedOperationInfo> Finished { get; } = [];
+        internal (string OperationId, int Version)? Redone { get; private set; }
+
+        public Task<FinishedOperationList> ListFinishedOperationsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new FinishedOperationList(Finished.ToArray()));
+
+        public Task<RedoOperationResultInfo> RedoFinishedOperationAsync(
+            string batchOperationId, int expectedVersion, string clientId,
+            long editGeneration, CancellationToken cancellationToken = default)
+        {
+            Redone = (batchOperationId, expectedVersion);
+            ClientId = clientId;
+            Generation = editGeneration;
+            Finished.RemoveAll(operation => operation.BatchOperationId == batchOperationId);
+            return Task.FromResult(new RedoOperationResultInfo(batchOperationId, "batch-1", 20, "B-1", 12));
+        }
 
         public Task<IReadOnlyList<WorkingCalendar>> ListWorkingCalendarsAsync(
             CancellationToken cancellationToken = default) =>

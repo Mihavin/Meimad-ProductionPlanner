@@ -557,6 +557,34 @@
                 <TabItem Header="External operations" ToolTip="Subcontracted operations (plating, heat treatment, ...): the steps the Server placed on each External Resource">
                     <ContentControl Content="{Binding ExternalOperationLanes}" ContentTemplate="{StaticResource ResourceLanesTemplate}" />
                 </TabItem>
+                <TabItem Header="Finished" ToolTip="Finished production operations, newest first. Redo sends one back to the unassigned backlog with its Done quantity reset to 0.">
+                    <DockPanel Margin="4">
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding FinishedStatus}" TextWrapping="Wrap"
+                                   Margin="0,0,0,6" Foreground="{StaticResource MutedTextBrush}" />
+                        <DataGrid ItemsSource="{Binding FinishedOperations}" AutoGenerateColumns="False" IsReadOnly="True"
+                                  CanUserAddRows="False" HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Work Order" Binding="{Binding BatchNumber}" Width="100" />
+                                <DataGridTextColumn Header="Part" Binding="{Binding PartText}" Width="200" />
+                                <DataGridTextColumn Header="Operation" Binding="{Binding OperationText}" Width="200" />
+                                <DataGridTextColumn Header="Machine" Binding="{Binding MachineName}" Width="150" />
+                                <DataGridTextColumn Header="Started at" Binding="{Binding StartedText}" Width="130" />
+                                <DataGridTextColumn Header="Finished at" Binding="{Binding FinishedText}" Width="130" />
+                                <DataGridTextColumn Header="Done / planned" Binding="{Binding QuantityText}" Width="110" />
+                                <DataGridTemplateColumn Header="Options" Width="90">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="Redo" Click="RedoFinished_Click" Padding="8,1"
+                                                    IsEnabled="{Binding DataContext.CanRedoFinished, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    ToolTip="Reset the Done quantity to 0 and send this operation back to the unassigned backlog, to be placed on a Machine and made again."
+                                                    AutomationProperties.Name="Redo the finished operation" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
             </TabControl>
 
             <Border Grid.Row="3" Background="#FFF8E1" BorderBrush="{StaticResource YellowBrush}"

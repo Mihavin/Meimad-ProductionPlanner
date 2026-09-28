@@ -981,6 +981,16 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>The finished production operations, newest finish first.</summary>
+    Task<FinishedOperationList> ListFinishedOperationsAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    /// <summary>Redo: the finished operation returns to the unassigned backlog with its Done quantity reset.</summary>
+    Task<RedoOperationResultInfo> RedoFinishedOperationAsync(
+        string batchOperationId, int expectedVersion, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<ManualOperationReport> RecordManualOperationReportAsync(
         string batchOperationId, string reportType, int? partTimeSeconds,
         string clientId, long editGeneration, CancellationToken cancellationToken = default) =>
@@ -3513,6 +3523,27 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<BatchOperationExecution>(response, cancellationToken);
+    }
+
+    public async Task<FinishedOperationList> ListFinishedOperationsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync("api/v1/planning-board/finished-operations", cancellationToken);
+        return await ReadSuccessAsync<FinishedOperationList>(response, cancellationToken);
+    }
+
+    public async Task<RedoOperationResultInfo> RedoFinishedOperationAsync(
+        string batchOperationId, int expectedVersion, string clientId,
+        long editGeneration, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/batch-operations/{Uri.EscapeDataString(batchOperationId)}/redo",
+            clientId);
+        request.Headers.Add(EditGenerationHeader,
+            editGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        request.Content = JsonContent.Create(new { expectedVersion }, options: JsonOptions);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<RedoOperationResultInfo>(response, cancellationToken);
     }
 
     public async Task<BatchOperationExecution> PauseOperationAsync(

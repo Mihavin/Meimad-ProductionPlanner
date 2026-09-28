@@ -21,6 +21,46 @@ internal static class MachineAssignmentEndpoints
         operations.MapPost("/{batchOperationId}/finish", FinishAsync);
         operations.MapPost("/{batchOperationId}/reset", ResetAsync);
         operations.MapPost("/{batchOperationId}/manual-report", ManualReportAsync);
+        operations.MapPost("/{batchOperationId}/redo", RedoAsync);
+        endpoints.MapGet("/api/v1/planning-board/finished-operations", ListFinishedAsync);
+    }
+
+    /// <summary>GET /api/v1/planning-board/finished-operations: the Planning Board's Finished tab.</summary>
+    private static async Task<IResult> ListFinishedAsync(
+        int? limit, MachineAssignmentService service, CancellationToken cancellationToken) =>
+        Results.Ok(new
+        {
+            items = (await service.ListFinishedOperationsAsync(limit, cancellationToken))
+                .Select(FinishedOperationResponse.FromApplication).ToArray()
+        });
+
+    /// <summary>
+    /// POST /api/v1/batch-operations/{id}/redo: a finished operation goes back to the unassigned
+    /// backlog with its Done quantity reset (Plan machines permission).
+    /// </summary>
+    private static async Task<IResult> RedoAsync(
+        string batchOperationId, RedoOperationRequest? request, HttpContext context,
+        MachineAssignmentService service, CancellationToken cancellationToken)
+    {
+        if (!PlanningHttpSupport.TryAuthorizeEdit(context, Permissions.PlanMachines, out var authority, out var accessError))
+            return accessError!;
+        if (request?.ExpectedVersion is not int expectedVersion)
+        {
+            return PlanningHttpSupport.Error(
+                StatusCodes.Status422UnprocessableEntity, "validation_failed",
+                "expectedVersion is required.", context,
+                [new { field = "expectedVersion", code = "required", message = "expectedVersion is required." }]);
+        }
+        try
+        {
+            var result = await service.RedoFinishedOperationAsync(batchOperationId, expectedVersion, authority!, cancellationToken);
+            return Results.Ok(result);
+        }
+        catch (OperationRedoException exception)
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, context);
+        }
+        catch (Exception exception) when (TryMapError(exception, context, out var error)) { return error!; }
     }
 
     private static async Task<IResult> AssignOrMoveAsync(

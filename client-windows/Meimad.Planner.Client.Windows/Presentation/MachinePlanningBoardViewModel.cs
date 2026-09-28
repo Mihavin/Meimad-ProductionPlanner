@@ -141,6 +141,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanRedo));
                 OnPropertyChanged(nameof(CanAddMachine));
                 OnPropertyChanged(nameof(CanAddCalendar));
+                OnPropertyChanged(nameof(CanRedoFinished));
                 RaiseMachineCommandStates();
                 if (!value && refreshWhenIdle)
                 {
@@ -239,16 +240,93 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         private set => SetField(ref auxiliaryStatus, value);
     }
 
-    /// <summary>0 = Machines, 1 = Internal stations, 2 = External operations; the station tabs
-    /// load the Server's provisional auxiliary placement from the Timeline when first opened.</summary>
+    /// <summary>0 = Machines, 1 = Internal stations, 2 = External operations, 3 = Finished; the
+    /// station tabs load the Server's provisional auxiliary placement from the Timeline when first
+    /// opened, the Finished tab loads the finished operations whenever it is opened.</summary>
     public int SelectedBoardTab
     {
         get => selectedBoardTab;
         set
         {
             if (!SetField(ref selectedBoardTab, value)) return;
-            if (value > 0 && !auxiliaryLoaded) _ = LoadAuxiliaryLanesAsync();
+            if (value is 1 or 2 && !auxiliaryLoaded) _ = LoadAuxiliaryLanesAsync();
+            else if (value == FinishedTab) _ = LoadFinishedOperationsAsync();
         }
+    }
+
+    internal const int FinishedTab = 3;
+
+    private string finishedStatus = "Open this tab to load the finished operations.";
+
+    /// <summary>Finished production operations, newest finish first (the Finished tab).</summary>
+    public ObservableCollection<FinishedOperationInfo> FinishedOperations { get; } = [];
+
+    public string FinishedStatus
+    {
+        get => finishedStatus;
+        private set => SetField(ref finishedStatus, value);
+    }
+
+    /// <summary>Redo needs the Planning Board permission and no save in progress.</summary>
+    public bool CanRedoFinished => isEditor && apiClient is not null && !IsBusy;
+
+    internal async Task LoadFinishedOperationsAsync()
+    {
+        if (apiClient is null) return;
+        FinishedStatus = "Loading the finished operations...";
+        try
+        {
+            var list = await apiClient.ListFinishedOperationsAsync();
+            FinishedOperations.Clear();
+            foreach (var operation in list.Items) FinishedOperations.Add(operation);
+            FinishedStatus = FinishedOperations.Count == 0
+                ? "No finished production operations."
+                : $"{FinishedOperations.Count} finished operation(s), newest first. Redo sends one back to the unassigned backlog with its Done quantity reset to 0.";
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            FinishedStatus = FriendlyMessage(exception);
+        }
+    }
+
+    /// <summary>
+    /// Redo (owner decision 2026-09-28): the Server returns the finished operation to not started,
+    /// resets its Done quantity and cycles to 0 and puts it in the unassigned backlog; the planner
+    /// then places it on a Machine.
+    /// </summary>
+    internal async Task RedoFinishedOperationAsync(FinishedOperationInfo operation)
+    {
+        if (apiClient is null || !CanRedoFinished) return;
+        IsBusy = true;
+        try
+        {
+            var result = await apiClient.RedoFinishedOperationAsync(
+                operation.BatchOperationId, operation.Version, clientId, editGeneration);
+            FinishedOperations.Remove(operation);
+            var title = $"OP{result.OperationNumber:00} of Work Order {result.BatchNumber}";
+            var reset = result.PreviousProducedQuantity;
+            AddFeedback(
+                "information",
+                "Operation back in the backlog",
+                $"{title} is in the unassigned backlog again; its Done quantity ({reset}) was reset to 0. Place it on a Machine.");
+            StatusMessage = $"{title} returned to the unassigned backlog for redo.";
+            localChangeVersion++;
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            AddFeedback("blocking", "Redo not done", FriendlyMessage(exception));
+            StatusMessage = FriendlyMessage(exception);
+            IsBusy = false;
+            await LoadFinishedOperationsAsync();
+            return;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        await RefreshAsync();
+        PlanChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -329,6 +407,7 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanDrag));
         OnPropertyChanged(nameof(CanAddMachine));
         OnPropertyChanged(nameof(CanAddCalendar));
+        OnPropertyChanged(nameof(CanRedoFinished));
         OnPropertyChanged(nameof(ModeInstruction));
         RaiseMachineCommandStates();
     }
@@ -426,7 +505,8 @@ internal sealed class MachinePlanningBoardViewModel : INotifyPropertyChanged
             await Task.WhenAll(LoadMachinePicturesAsync(), LoadOperationPreviewsAsync());
             hasLoaded = true;
             auxiliaryLoaded = false;
-            if (selectedBoardTab > 0) await LoadAuxiliaryLanesAsync();
+            if (selectedBoardTab is 1 or 2) await LoadAuxiliaryLanesAsync();
+            else if (selectedBoardTab == FinishedTab) await LoadFinishedOperationsAsync();
             StatusMessage = $"Board loaded from the Server at {snapshot.ReadAt.ToLocalTime():HH:mm:ss}.";
         }
         catch (Exception exception) when (IsExpected(exception))

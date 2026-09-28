@@ -15,6 +15,34 @@ internal sealed record AssignMachineRequest(
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record MachineAssignmentOverrideRequest(bool Confirmed, string? Reason);
 
+/// <summary>Redo of a finished operation: the operation version the planner saw.</summary>
+internal sealed record RedoOperationRequest(int? ExpectedVersion);
+
+/// <summary>A row of the Planning Board's Finished tab.</summary>
+internal sealed record FinishedOperationResponse(
+    string BatchOperationId,
+    int Version,
+    string BatchId,
+    string BatchNumber,
+    string CaseId,
+    string PartNumber,
+    string? CaseName,
+    int OperationNumber,
+    string OperationName,
+    int PlannedQuantity,
+    long ProducedQuantity,
+    DateTimeOffset? ActualStart,
+    DateTimeOffset? ActualEnd,
+    string? MachineId,
+    string? MachineName)
+{
+    internal static FinishedOperationResponse FromApplication(FinishedOperation value) => new(
+        value.BatchOperationId, value.Version, value.BatchId, value.BatchNumber, value.CaseId,
+        value.PartNumber, value.CaseName, value.OperationNumber, value.OperationName,
+        value.PlannedQuantity, value.ProducedQuantity, value.ActualStart, value.ActualEnd,
+        value.MachineId, value.MachineName);
+}
+
 // ManualPriority: lower wins ahead of any Work Finish Date when two Machines contend for the same
 // scarce worker. Omit it to leave the stored value alone; send ClearManualPriority to remove it.
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
