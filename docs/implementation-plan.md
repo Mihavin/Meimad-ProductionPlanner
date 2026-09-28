@@ -1134,3 +1134,13 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 **Tests:** `MachineOperationExecutionApiTests.A_finished_operation_is_listed_and_redo_returns_it_to_the_pool_with_its_quantity_reset`; client `MachinePlanningBoardViewModelTests.The_finished_tab_lists_finished_operations_and_redo_sends_one_back_to_the_backlog`.
 
 **Open points:** the Production Run keeps its number and its earlier QC and setup-verification events; a new QC is recorded by the next SEND_TO_QC / QC decision. Redo of multi-output runs is not offered.
+
+## Locked-simultaneous setups when a setup worker is free (2026-09-28)
+
+**Finding (live data, read-only):** Work Order 41448 (`30P450171100-001`) OP80 on Machine 07 and OP100 on Machine 05 form a locked group; the only active setup worker qualified for both Machines is Nadav Taizlend (Aria Goldberg is inactive). Because the group's setups had to start at the same moment, the group never found a common start (`insufficient_availability`), and after OP80 started OP100 stayed blocked (`dependency_unresolved`).
+
+**Owner decision (2026-09-28), replacing the reversible choice "setups start together at the group start" of the flow-line section above:** each member of a locked-simultaneous group is set up when a qualified setup worker is free; only the parts flow in order.
+
+**Implemented:** `ScheduleLockedGroup` places the members in route order from the group's earliest start, sharing the worker bookings, with no common-start retry (`FindCommonStart` removed). The group starts at its first member activity; each member's Machine is reserved from then until its own first work ("until a setup worker is free for this Machine" or "until the first part arrives") and after its last part until the group finish. A run on a copy of the live database places OP100 (Nadav sets it up while OP80 runs) and the group's blocking conflicts disappear.
+
+**Tests:** `TimelineCalculationEngineTests.Locked_simultaneous_members_are_set_up_one_after_the_other_by_the_one_qualified_setup_worker`; the other locked-group tests keep their results.

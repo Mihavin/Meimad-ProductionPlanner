@@ -325,6 +325,44 @@ public sealed class TimelineCalculationEngineTests
     }
 
     [Fact]
+    public void Locked_simultaneous_members_are_set_up_one_after_the_other_by_the_one_qualified_setup_worker()
+    {
+        // Like Machines 07 and 05 with only Nadav qualified: he sets up op-80, then op-100.
+        var first = new TimelineOperationInput("op-80", TimeSpan.FromHours(2), TimeSpan.FromHours(2), PlannedQuantity: 2);
+        var second = new TimelineOperationInput("op-100", TimeSpan.FromHours(1), TimeSpan.FromHours(1), PlannedQuantity: 2);
+        var result = new TimelineCalculationEngine().Calculate(Input(
+            [Backlog("machine-07", [first]), Backlog("machine-05", [second])],
+            [
+                new TimelineMachineCalendar("machine-07", [Window(8, 17)], ["milling"]),
+                new TimelineMachineCalendar("machine-05", [Window(8, 17)], ["milling"])
+            ],
+            SetupCalendar(Window(8, 17)), [],
+            [new TimelineDependency("group:1", TimelineDependencyType.LockedSimultaneous,
+                "op-80", "op-100", "group", SimultaneousPosition: 1)],
+            [new TimelineResourceCalendar("nadav", TimelineResourceRole.SetupWorker, [Window(8, 17)], ["milling"])]));
+
+        Assert.Empty(result.Conflicts);
+        var firstResult = result.Operations.Single(operation => operation.OperationId == "op-80");
+        var secondResult = result.Operations.Single(operation => operation.OperationId == "op-100");
+        AssertIntervals(firstResult.SetupIntervals, (TimelineIntervalType.Setup, Utc(8), Utc(10)));
+        AssertIntervals(secondResult.SetupIntervals, (TimelineIntervalType.Setup, Utc(10), Utc(11)));
+        AssertIntervals(firstResult.ProductionIntervals, (TimelineIntervalType.Production, Utc(10), Utc(14)));
+        AssertIntervals(secondResult.ProductionIntervals,
+            (TimelineIntervalType.Production, Utc(12), Utc(13)),
+            (TimelineIntervalType.Production, Utc(14), Utc(15)));
+        // Machine 05 is held for the group from its start until its setup; Machine 07 after its last part.
+        Assert.All([firstResult, secondResult], operation =>
+        {
+            Assert.Equal(Utc(8), operation.StartsAt);
+            Assert.Equal(Utc(15), operation.FinishesAt);
+        });
+        var held = secondResult.ReservedIntervals[0];
+        Assert.Equal((Utc(8), Utc(10)), (held.StartsAt, held.EndsAt));
+        Assert.Contains("setup worker", held.Detail, StringComparison.Ordinal);
+        AssertIntervals(firstResult.ReservedIntervals, (TimelineIntervalType.Reserved, Utc(14), Utc(15)));
+    }
+
+    [Fact]
     public void Locked_group_keeps_periodic_loads_and_flows_the_first_part_to_the_next_member()
     {
         var periodic = new TimelineOperationInput(

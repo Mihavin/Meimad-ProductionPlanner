@@ -1786,110 +1786,69 @@ internal sealed class TimelineCalculationEngine
             return null;
         }
 
-        var phaseWindows = new List<IReadOnlyList<InstantWindow>>();
+        if (members.Any(member => !machineWindows.ContainsKey(member.MachineId)))
+        {
+            return null;
+        }
+
+        // Owner decisions 2026-09-28: the members run as a flow line in route order - a part starts
+        // on a member once the previous member has finished that part and this member has finished
+        // its previous part, each machine at its own cycle time - and each member is set up when a
+        // qualified setup worker is free, so one setup worker can set up the group's Machines one
+        // after the other. Members are placed in route order and share the worker bookings.
+        var results = new List<TimelineOperationResult>();
+        var reservations = new List<ResourceReservation>();
+        IReadOnlyDictionary<int, DateTimeOffset>? partsReady = null;
+        var localOccupied = occupiedResources.ToDictionary(
+            pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
         foreach (var member in members)
         {
-            if (!machineWindows.TryGetValue(member.MachineId, out var availability))
+            var scheduled = ScheduleMember(
+                member,
+                earliest,
+                machineWindows[member.MachineId],
+                setupWindows,
+                resources,
+                machineSkills.GetValueOrDefault(member.MachineId, []),
+                localOccupied,
+                dayShiftWindows,
+                downtimes,
+                flowPartsReady: partsReady ?? new Dictionary<int, DateTimeOffset>());
+            if (scheduled is null)
             {
                 return null;
             }
 
-            if (member.Operation.SetupDuration > TimeSpan.Zero)
+            results.Add(scheduled.Result);
+            partsReady = scheduled.PartFinishes;
+            reservations.AddRange(scheduled.ResourceReservations);
+            foreach (var reservation in scheduled.ResourceReservations)
             {
-                phaseWindows.Add(Intersect(availability, setupWindows));
-            }
-            else if (member.Operation.ProductionDuration > TimeSpan.Zero
-                && member.Operation.PlannedQuantity > 0)
-            {
-                phaseWindows.Add(availability);
-            }
-        }
-
-        var commonStart = FindCommonStart(earliest, phaseWindows);
-        if (commonStart is null)
-        {
-            return null;
-        }
-
-        // Owner decision 2026-09-28: the members start together and run as a flow line in route
-        // order. A part starts on a member once the previous member has finished that part and this
-        // member has finished its previous part; each machine keeps its own cycle time.
-        List<TimelineOperationResult>? results = null;
-        List<ResourceReservation>? reservations = null;
-        for (var attempt = 0; attempt < 64; attempt++)
-        {
-            results = [];
-            reservations = [];
-            var preparationStarts = new List<DateTimeOffset>();
-            IReadOnlyDictionary<int, DateTimeOffset>? partsReady = null;
-            var localOccupied = occupiedResources.ToDictionary(
-                pair => pair.Key, pair => new List<ResourceReservation>(pair.Value), StringComparer.Ordinal);
-            foreach (var member in members)
-            {
-                var scheduled = ScheduleMember(
-                    member,
-                    commonStart.Value,
-                    machineWindows[member.MachineId],
-                    setupWindows,
-                    resources,
-                    machineSkills.GetValueOrDefault(member.MachineId, []),
-                    localOccupied,
-                    dayShiftWindows,
-                    downtimes,
-                    flowPartsReady: partsReady ?? new Dictionary<int, DateTimeOffset>());
-                if (scheduled is null)
+                if (!localOccupied.TryGetValue(reservation.ResourceId, out var occupied))
                 {
-                    return null;
+                    occupied = [];
+                    localOccupied.Add(reservation.ResourceId, occupied);
                 }
-
-                results.Add(scheduled.Result);
-                preparationStarts.Add(scheduled.PreparationStart ?? scheduled.Result.StartsAt);
-                partsReady = scheduled.PartFinishes;
-                reservations.AddRange(scheduled.ResourceReservations);
-                foreach (var reservation in scheduled.ResourceReservations)
-                {
-                    if (!localOccupied.TryGetValue(reservation.ResourceId, out var occupied))
-                    {
-                        occupied = [];
-                        localOccupied.Add(reservation.ResourceId, occupied);
-                    }
-                    occupied.Add(reservation);
-                }
+                occupied.Add(reservation);
             }
-
-            var nextStart = preparationStarts.Max();
-            if (preparationStarts.All(start => start == commonStart.Value))
-            {
-                break;
-            }
-
-            commonStart = FindCommonStart(nextStart, phaseWindows);
-            if (commonStart is null)
-            {
-                return null;
-            }
-            results = null;
-            reservations = null;
         }
 
-        if (results is null || reservations is null)
-        {
-            return null;
-        }
-
-        // Every member's Machine is held from the group start to the group end: before its first
-        // work (a member without setup waits for its first part) and after its last part.
-        var groupStart = commonStart!.Value;
-        var groupFinish = results.Max(result => result.FinishesAt);
-        var final = results.Select(result =>
-        {
-            var firstWork = result.SetupIntervals
+        // Every member's Machine is held for the group from its first activity to its end: before
+        // this member's own first work (its setup waits for a setup worker, or its first part) and
+        // after its last part.
+        static DateTimeOffset FirstWork(TimelineOperationResult result, DateTimeOffset fallback) =>
+            result.SetupIntervals
                 .Concat(result.QaIntervals ?? [])
                 .Concat(result.LoadUnloadIntervals ?? [])
                 .Concat(result.ProductionIntervals)
                 .Select(interval => interval.StartsAt)
-                .DefaultIfEmpty(groupFinish)
+                .DefaultIfEmpty(fallback)
                 .Min();
+        var groupFinish = results.Max(result => result.FinishesAt);
+        var groupStart = results.Min(result => FirstWork(result, groupFinish));
+        var final = results.Select(result =>
+        {
+            var firstWork = FirstWork(result, groupFinish);
             var reserved = new List<TimelineInterval>();
             if (firstWork > groupStart)
             {
@@ -1899,7 +1858,9 @@ internal sealed class TimelineCalculationEngine
                     result.OperationId,
                     groupStart,
                     firstWork,
-                    "Locked-simultaneous reservation until the first part arrives"));
+                    result.SetupIntervals.Count > 0 && result.SetupIntervals[0].StartsAt == firstWork
+                        ? "Locked-simultaneous reservation until a setup worker is free for this Machine"
+                        : "Locked-simultaneous reservation until the first part arrives"));
             }
             if (result.FinishesAt < groupFinish)
             {
@@ -2123,10 +2084,7 @@ internal sealed class TimelineCalculationEngine
             waitingIntervals,
             qaIntervals,
             loadUnloadIntervals);
-        var preparationStart = setupPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
-            ?? qaPhase.Allocation.Intervals.FirstOrDefault()?.StartsAt
-            ?? earliest;
-        return new ScheduledMember(result, reservations, preparationStart, partFinishes);
+        return new ScheduledMember(result, reservations, partFinishes);
     }
 
     /// <summary>
@@ -2579,59 +2537,6 @@ internal sealed class TimelineCalculationEngine
     private static DateTimeOffset AllocationStart(Allocation allocation, DateTimeOffset fallback) =>
         allocation.Intervals.Count == 0 ? fallback : allocation.Intervals[0].StartsAt;
 
-    private static DateTimeOffset? FindCommonStart(
-        DateTimeOffset earliest,
-        IReadOnlyList<IReadOnlyList<InstantWindow>> windowsByMember)
-    {
-        if (windowsByMember.Count == 0)
-        {
-            return earliest;
-        }
-
-        var candidate = earliest;
-        var maximumIterations = windowsByMember.Sum(windows => windows.Count) + 1;
-        for (var iteration = 0; iteration < maximumIterations; iteration++)
-        {
-            var nextValues = windowsByMember
-                .Select(windows => NextAvailableAtOrAfter(candidate, windows))
-                .ToArray();
-            if (nextValues.Any(value => value is null))
-            {
-                return null;
-            }
-
-            var nextCandidate = nextValues.Max(value => value!.Value);
-            if (windowsByMember.All(windows => Contains(windows, nextCandidate)))
-            {
-                return nextCandidate;
-            }
-
-            candidate = nextCandidate;
-        }
-
-        return null;
-    }
-
-    private static DateTimeOffset? NextAvailableAtOrAfter(
-        DateTimeOffset value,
-        IReadOnlyList<InstantWindow> windows)
-    {
-        foreach (var window in windows)
-        {
-            if (value >= window.StartsAt && value < window.EndsAt)
-            {
-                return value;
-            }
-
-            if (window.StartsAt > value)
-            {
-                return window.StartsAt;
-            }
-        }
-
-        return null;
-    }
-
     private static bool Contains(IReadOnlyList<InstantWindow> windows, DateTimeOffset value) =>
         windows.Any(window => value >= window.StartsAt && value < window.EndsAt);
 
@@ -2852,14 +2757,10 @@ internal sealed class TimelineCalculationEngine
         DateTimeOffset FinishesAt,
         IReadOnlyList<ResourceReservation> ResourceReservations);
 
-    /// <summary>
-    /// One placed operation. `PreparationStart` is when its setup (or QA) starts, or the requested
-    /// start without either; `PartFinishes` holds the finish of each part number in a flow.
-    /// </summary>
+    /// <summary>One placed operation; <c>PartFinishes</c> holds the finish of each part number in a flow.</summary>
     private sealed record ScheduledMember(
         TimelineOperationResult Result,
         IReadOnlyList<ResourceReservation> ResourceReservations,
-        DateTimeOffset? PreparationStart = null,
         IReadOnlyDictionary<int, DateTimeOffset>? PartFinishes = null);
 
     private sealed record ResourceAvailability(
