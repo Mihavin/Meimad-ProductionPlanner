@@ -417,6 +417,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         {
             if (SetField(ref isBusy, value))
             {
+                // The form's enabled flags depend on IsBusy too, not only the commands: a Case loaded
+                // after sign-in would otherwise keep the flags computed while it was loading.
+                RaiseBusyDependentProperties();
                 RaiseCommandStates();
             }
         }
@@ -2982,6 +2985,22 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         PlannerApiException api => $"{api.Message} ({api.Code})",
         _ => exception.Message
     };
+
+    private void RaiseBusyDependentProperties()
+    {
+        OnPropertyChanged(nameof(CanEditUnlockedFields));
+        OnPropertyChanged(nameof(IsUnlockedFieldsReadOnly));
+        OnPropertyChanged(nameof(CanSave));
+        OnPropertyChanged(nameof(CanBeginCreate));
+        OnPropertyChanged(nameof(CanEditForm));
+        OnPropertyChanged(nameof(IsFormReadOnly));
+        OnPropertyChanged(nameof(CanDelete));
+        OnPropertyChanged(nameof(CanDeleteCase));
+        OnPropertyChanged(nameof(CanDeleteOrder));
+        OnPropertyChanged(nameof(CanDeleteSelectedOperation));
+        OnPropertyChanged(nameof(CanDeleteSelectedBatch));
+        OnPropertyChanged(nameof(CanManageModelFiles));
+    }
 
     private void RaiseStateProperties()
     {

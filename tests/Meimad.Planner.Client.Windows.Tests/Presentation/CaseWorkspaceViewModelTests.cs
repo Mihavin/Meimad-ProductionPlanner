@@ -27,6 +27,30 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task A_case_loaded_after_sign_in_enables_the_browse_buttons_once_loading_ends()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        // Signed in with the right to edit Cases before any Case is loaded (no later Edit Mode change).
+        viewModel.AttachSession(api, "windows-1", EditorStatus(7));
+        var lastSeen = new Dictionary<string, bool>();
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(CaseWorkspaceViewModel.CanEditUnlockedFields))
+                lastSeen[e.PropertyName] = viewModel.CanEditUnlockedFields;
+        };
+
+        await viewModel.EnsureLoadedAsync();
+        lastSeen.Clear();
+        await viewModel.SelectCaseAsync(viewModel.Cases.Single());
+
+        Assert.False(viewModel.IsBusy);
+        Assert.True(viewModel.CanEditUnlockedFields);
+        // What a binding last read must be the current value, not the one from while the Case loaded.
+        Assert.True(lastSeen[nameof(CaseWorkspaceViewModel.CanEditUnlockedFields)]);
+    }
+
+    [Fact]
     public async Task Gcode_release_scope_follows_whether_an_active_process_exists()
     {
         var api = new FakeApiClient(CreateCase());
