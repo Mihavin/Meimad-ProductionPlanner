@@ -51,13 +51,14 @@ internal sealed record KitaronSourceRouteStep(
 
 /// <summary>
 /// One open Kitaron work order (`TRootCard`): the factory's actual production launch for one
-/// part against one sales-order line. `Amount` is the launched quantity (with cutting reserve),
-/// `ProductionAmount` the net ordered quantity.
+/// part, normally against one sales-order line. `Amount` is the launched quantity (with cutting
+/// reserve), `ProductionAmount` the net ordered quantity. `OrderLineOpen` is false when that line
+/// is closed or stopped or missing: the work order then produces for stock or later demand.
 /// </summary>
 internal sealed record KitaronSourceWorkOrder(
     int Number,
     string PartNumber,
-    string OrderRecordId,
+    string? OrderRecordId,
     double? Amount,
     double? ProductionAmount,
     DateTime? SupplyDate,
@@ -67,7 +68,8 @@ internal sealed record KitaronSourceWorkOrder(
     string? Customer = null,
     string? PartName = null,
     string? PartRevision = null,
-    DateTime? StartDate = null);
+    DateTime? StartDate = null,
+    bool OrderLineOpen = true);
 
 /// <summary>An order-line allocation of a work order (`TOrderLinkRoot`).</summary>
 internal sealed record KitaronSourceWorkOrderLink(

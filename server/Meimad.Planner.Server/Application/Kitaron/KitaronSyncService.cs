@@ -397,7 +397,9 @@ internal sealed class KitaronSyncService
     }
 
     /// <summary>
-    /// Builds the Production Batches from the open Kitaron work orders, oldest work order first.
+    /// Builds the Production Batches from the open Kitaron work orders: those whose sales-order
+    /// line is open first, then those whose line is closed (production for stock), each group
+    /// oldest work order first, so the latter never take demand from work orders launched for it.
     /// The net quantity fills the part's open Orders by earliest due date, each up to its open
     /// demand; the rest is stock, and the launched surplus above the net quantity is the cutting
     /// reserve and becomes the batch's scrap allowance. The material state mirrors Kitaron's own
@@ -438,7 +440,7 @@ internal sealed class KitaronSyncService
             .Where(item => !item.Closed)
             .ToLookup(item => item.MaterialNumber, StringComparer.OrdinalIgnoreCase);
         var result = new List<KitaronSyncBatch>();
-        foreach (var workOrder in workOrders.OrderBy(item => item.Number))
+        foreach (var workOrder in workOrders.OrderBy(item => item.OrderLineOpen ? 0 : 1).ThenBy(item => item.Number))
         {
             if (!partNumbers.Contains(workOrder.PartNumber))
             {

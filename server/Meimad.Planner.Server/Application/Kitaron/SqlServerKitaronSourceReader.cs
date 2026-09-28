@@ -108,7 +108,7 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
             result.Add(new KitaronSourceWorkOrder(
                 reader.GetInt32(0),
                 KitaronTextNormalization.CleanRequired(reader.GetString(1)),
-                Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture)
+                reader.IsDBNull(2) ? null : Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture)
                     .ToString(CultureInfo.InvariantCulture),
                 reader.IsDBNull(3) ? null : Convert.ToDouble(reader.GetValue(3), CultureInfo.InvariantCulture),
                 reader.IsDBNull(4) ? null : Convert.ToDouble(reader.GetValue(4), CultureInfo.InvariantCulture),
@@ -120,7 +120,8 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                 reader.IsDBNull(9) ? null : KitaronTextNormalization.Clean(reader.GetString(9)),
                 reader.IsDBNull(10) ? null : KitaronTextNormalization.Clean(reader.GetString(10)),
                 reader.IsDBNull(11) ? null : KitaronTextNormalization.Clean(reader.GetString(11)),
-                reader.IsDBNull(12) ? null : reader.GetDateTime(12)));
+                reader.IsDBNull(12) ? null : reader.GetDateTime(12),
+                reader.GetBoolean(13)));
         }
         return result;
     }
@@ -168,17 +169,20 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         return result;
     }
 
+    // Every open work order is imported by its own state (route open, not stopped), also when its
+    // sales-order line is closed or it has none - production for stock (owner decision 2026-09-28).
+    // The last column tells whether the line is still open; those work orders fill demand first.
     internal const string WorkOrderQuery = """
         SELECT rc.NUMBER, d.DetailNumber, rc.RecordID, rc.Amount, rc.ProductionAmount,
                rc.SupplyDate, rc.LotNumber, NULLIF(rc.RowMaterialID, 0), o.OrderNumber, c.CompanyName,
-               d.DetailName, d.REV, rc.StartDate
+               d.DetailName, d.REV, rc.StartDate,
+               CAST(CASE WHEN so.Closed = 0 AND so.StopProduction = 0 THEN 1 ELSE 0 END AS bit)
         FROM dbo.TRootCard rc
-        JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
+        LEFT JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
         JOIN dbo.TDetails d ON d.DetailID = rc.DetailID
         LEFT JOIN dbo.TOrder o ON o.OrderID = so.OrderID
         LEFT JOIN dbo.TCustomer c ON c.CustomerID = o.CustomerID
         WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
-          AND so.Closed = 0 AND so.StopProduction = 0
           AND NULLIF(LTRIM(RTRIM(d.DetailNumber)), N'') IS NOT NULL
         ORDER BY rc.NUMBER;
         """;
@@ -187,9 +191,7 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
         SELECT l.RootID, l.RecordID, l.ProdAmount
         FROM dbo.TOrderLinkRoot l
         JOIN dbo.TRootCard rc ON rc.NUMBER = l.RootID
-        JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
         WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
-          AND so.Closed = 0 AND so.StopProduction = 0
         ORDER BY l.RootID, l.RecordID;
         """;
 
@@ -198,10 +200,8 @@ internal sealed class SqlServerKitaronSourceReader : IKitaronSourceReader
                w.AmountInBuy, w.RunningSum_ForStartDate
         FROM dbo.TBOMWithdrawalByRoot w
         JOIN dbo.TRootCard rc ON rc.NUMBER = w.RootID
-        JOIN dbo.TSubOrder so ON so.RecordID = rc.RecordID
         JOIN dbo.TDetails m ON m.DetailID = w.MDetID
         WHERE rc.RauteClosed = 0 AND rc.Stoped = 0
-          AND so.Closed = 0 AND so.StopProduction = 0
           AND w.Amount IS NOT NULL AND w.Amount > 0
           AND NULLIF(LTRIM(RTRIM(m.DetailNumber)), N'') IS NOT NULL
         ORDER BY w.RootID, w.AutoID;

@@ -54,6 +54,36 @@ public sealed class KitaronBatchPlanTests
     }
 
     [Fact]
+    public void A_work_order_whose_order_line_is_closed_is_imported_and_takes_only_demand_the_others_leave()
+    {
+        // Like work order 41448: open in Kitaron although its sales-order line was supplied and closed.
+        var orders = new[] { Order("1", 8, new DateOnly(2026, 9, 1)) };
+        var batches = KitaronSyncService.BuildBatches(
+            [
+                new KitaronSourceWorkOrder(41448, "PN-1", "33193", 35, 35, null, null, OrderLineOpen: false),
+                new KitaronSourceWorkOrder(41500, "PN-1", "1", 5, 5, null, null)
+            ],
+            [], [], Parts, [], new List<string>(), orders);
+
+        Assert.Equal(["41500", "41448"], batches.Select(item => item.BatchNumber));
+        Assert.Equal([new KitaronSyncBatchAllocation("1", 5)], batches[0].Allocations);
+        Assert.Equal([new KitaronSyncBatchAllocation("1", 3), new KitaronSyncBatchAllocation(null, 32)], batches[1].Allocations);
+    }
+
+    [Theory]
+    [InlineData(SqlServerKitaronSourceReader.WorkOrderQuery)]
+    [InlineData(SqlServerKitaronSourceReader.WorkOrderLinkQuery)]
+    [InlineData(SqlServerKitaronSourceReader.WorkOrderMaterialQuery)]
+    public void Work_orders_are_read_by_their_own_state_whatever_their_sales_order_line(string query)
+    {
+        var filter = query[query.LastIndexOf("WHERE", StringComparison.Ordinal)..];
+        Assert.Contains("rc.RauteClosed = 0 AND rc.Stoped = 0", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain("so.", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain(" JOIN dbo.TSubOrder", query.Replace("LEFT JOIN dbo.TSubOrder", "", StringComparison.Ordinal),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_batch_is_offered_open_and_recently_received_purchase_lines_of_its_raw_material()
     {
         var open = new KitaronSyncMaterialOrder("buy-2", "76500", "1", "58", null, null, 10, 0, null,

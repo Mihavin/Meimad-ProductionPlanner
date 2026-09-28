@@ -328,7 +328,7 @@ For deployment and engineering details, see the repository [README](../README.md
 
 For a part whose route comes from Kitaron, the operation list always equals the Kitaron route. You can change an operation's times, Machine Type and dependencies, but you cannot add or delete operations there: remap the station on the Kitaron stations page or change the route in Kitaron, and the list follows within about a minute.
 
-Production Batches come from the open Kitaron work orders. The batch number is the work-order number, and the batch list shows the source and Kitaron's material check: Available, On order (hover to see the due date), Missing, or Unknown when Kitaron has no material lines for the part. When a work order closes in Kitaron, its batch disappears unless production on it has started. The upgrade to this version removes all earlier batches, Machine backlogs and assignments, so plan the imported batches from scratch.
+Production Batches come from the open Kitaron work orders, including work orders whose customer order line is already closed (production for stock); what no open order needs is stock. The batch number is the work-order number, and the batch list shows the source and Kitaron's material check: Available, On order (hover to see the due date), Missing, or Unknown when Kitaron has no material lines for the part. When a work order closes in Kitaron, its batch disappears unless production on it has started. The upgrade to this version removes all earlier batches, Machine backlogs and assignments, so plan the imported batches from scratch.
 
 ### Material Orders
 
