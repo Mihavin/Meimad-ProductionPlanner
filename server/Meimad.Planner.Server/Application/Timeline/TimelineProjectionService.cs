@@ -747,7 +747,8 @@ internal sealed class TimelineProjectionService
             options.DayShiftStartsAtLocal,
             options.DayShiftEndsAtLocal,
             runIntervals,
-            auxiliary.Lanes);
+            auxiliary.Lanes,
+            EmployeeBookings(calculation, auxiliary.Lanes, resourceCalendars, source, operationsById));
         total.Stop();
         logger.LogInformation(
             "Timeline performance: total {TotalMilliseconds} ms; source read {SourceReadMilliseconds} ms; engine {EngineMilliseconds} ms; baseline engine {BaselineMilliseconds} ms; backward fallbacks {BackwardFallbackCount}; scheduled {ScheduledOperationCount}; projected intervals {IntervalCount}; conflicts {ConflictCount}.",
@@ -863,6 +864,72 @@ internal sealed class TimelineProjectionService
         && interval.Detail is not null
         && (interval.Detail.Contains("worker", StringComparison.OrdinalIgnoreCase)
             || interval.Detail.StartsWith("resource", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Each Employee's working time and the work the calculation booked on them: the setup, QA and
+    /// load/unload spans of Machine operations and the station steps of the auxiliary allocator.
+    /// </summary>
+    private static IReadOnlyList<TimelineProjectionEmployee> EmployeeBookings(
+        TimelineCalculationResult calculation,
+        IReadOnlyList<TimelineProjectionResourceLane> lanes,
+        IReadOnlyList<TimelineResourceCalendar> calendars,
+        TimelineSourceSnapshot source,
+        IReadOnlyDictionary<string, TimelineSourceOperation> operationsById)
+    {
+        var bookings = new Dictionary<string, List<TimelineProjectionEmployeeBooking>>(StringComparer.Ordinal);
+        void Add(string employeeId, TimelineProjectionEmployeeBooking booking)
+        {
+            if (!bookings.TryGetValue(employeeId, out var list)) bookings[employeeId] = list = [];
+            list.Add(booking);
+        }
+
+        foreach (var result in calculation.Operations)
+        {
+            var operation = operationsById.GetValueOrDefault(result.OperationId);
+            foreach (var (kind, intervals) in new[]
+                     {
+                         ("setup", result.SetupIntervals),
+                         ("qa", result.QaIntervals ?? []),
+                         ("load_unload", result.LoadUnloadIntervals ?? [])
+                     })
+            {
+                foreach (var interval in intervals.Where(value => value.ResourceId is not null && value.EndsAt > value.StartsAt))
+                {
+                    Add(interval.ResourceId!, new TimelineProjectionEmployeeBooking(
+                        kind, result.OperationId, operation?.BatchNumber, operation?.PartNumber,
+                        operation?.OperationNumber, operation?.OperationName, interval.StartsAt, interval.EndsAt));
+                }
+            }
+        }
+        foreach (var lane in lanes.Where(value => value.ResourceClass == "employee"))
+        {
+            foreach (var interval in lane.Intervals.Where(value => value.EndsAt > value.StartsAt))
+            {
+                Add(lane.ResourceId, new TimelineProjectionEmployeeBooking(
+                    "station_step", interval.OperationId, interval.BatchNumber, interval.PartNumber,
+                    interval.OperationNumber, interval.Name, interval.StartsAt, interval.EndsAt));
+            }
+        }
+
+        var names = source.Resources.ToDictionary(resource => resource.ResourceId, resource => resource.Name, StringComparer.Ordinal);
+        return calendars
+            .GroupBy(calendar => calendar.ResourceId, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .Select(calendar => new TimelineProjectionEmployee(
+                calendar.ResourceId,
+                names.GetValueOrDefault(calendar.ResourceId),
+                calendar.Role switch
+                {
+                    TimelineResourceRole.SetupWorker => "setup_worker",
+                    TimelineResourceRole.QaWorker => "qa_worker",
+                    _ => "regular_worker"
+                },
+                calendar.Availability,
+                bookings.TryGetValue(calendar.ResourceId, out var list)
+                    ? list.OrderBy(value => value.StartsAt).ToArray()
+                    : []))
+            .ToArray();
+    }
 
     private static IReadOnlyList<TimelineWindow> DefaultSetupAvailability(
         DateTimeOffset horizonStart,

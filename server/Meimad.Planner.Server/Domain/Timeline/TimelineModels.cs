@@ -170,13 +170,18 @@ internal enum TimelineIntervalType
     Downtime
 }
 
+/// <summary>
+/// A span of Machine time. <c>ResourceId</c> names the Employee a setup, QA or load/unload span
+/// books (null when the phase needs no worker).
+/// </summary>
 internal sealed record TimelineInterval(
     TimelineIntervalType Type,
     string MachineId,
     string? OperationId,
     DateTimeOffset StartsAt,
     DateTimeOffset EndsAt,
-    string? Detail = null);
+    string? Detail = null,
+    string? ResourceId = null);
 
 internal enum TimelineConflictSeverity
 {

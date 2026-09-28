@@ -1174,6 +1174,40 @@ public sealed class TimelineApiTests
     }
 
     [Fact]
+    public async Task Employee_workload_totals_the_timeline_bookings_against_working_hours()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            await SeedTimelineAsync(application.Services);
+
+            using var response = await client.GetAsync("/api/v1/resources/workload?from=2026-08-11&to=2026-08-11");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var employees = document.RootElement.GetProperty("employees").EnumerateArray()
+                .ToDictionary(value => value.GetProperty("employeeNumber").GetString()!, value => value);
+
+            // The 30-minute setup of OP10 books the setup worker; the day has 08:00-18:00 of working time.
+            var setup = employees["E-SETUP"];
+            Assert.Equal(36000, setup.GetProperty("availableSeconds").GetInt64());
+            Assert.Equal(1800, setup.GetProperty("setupSeconds").GetInt64());
+            Assert.Equal(1800, setup.GetProperty("bookedSeconds").GetInt64());
+            Assert.Equal(5.0m, setup.GetProperty("loadPercent").GetDecimal());
+            Assert.Equal("low", setup.GetProperty("loadLevel").GetString());
+            var day = Assert.Single(setup.GetProperty("days").EnumerateArray());
+            Assert.Equal("2026-08-11", day.GetProperty("date").GetString());
+            Assert.Equal(1800, day.GetProperty("bookedSeconds").GetInt64());
+            var work = Assert.Single(setup.GetProperty("work").EnumerateArray());
+            Assert.Equal(("setup", "B-1", 10), (work.GetProperty("kind").GetString(), work.GetProperty("batchNumber").GetString(), work.GetProperty("operationNumber").GetInt32()));
+
+            Assert.Equal(0, employees["E-QA"].GetProperty("bookedSeconds").GetInt64());
+            Assert.Equal("low", employees["E-QA"].GetProperty("loadLevel").GetString());
+
+            using var backwards = await client.GetAsync("/api/v1/resources/workload?from=2026-08-12&to=2026-08-11");
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, backwards.StatusCode);
+        });
+    }
+
+    [Fact]
     public async Task Missed_all_backward_locked_group_falls_forward_together()
     {
         var serverNow = DateTimeOffset.Parse("2026-08-12T16:45:00Z");

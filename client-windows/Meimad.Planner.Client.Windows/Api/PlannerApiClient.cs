@@ -668,6 +668,11 @@ internal interface IPlannerApiClient : IDisposable
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    /// <summary>Planned Employee load from the Timeline for whole factory days.</summary>
+    Task<EmployeeWorkloadReportInfo> GetEmployeeWorkloadAsync(
+        DateOnly from, DateOnly to, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<PlannerResource>>([]);
@@ -2912,6 +2917,14 @@ internal sealed class PlannerApiClient : IPlannerApiClient
     public async Task<IReadOnlyList<PlannerResource>> ListResourcesAsync(
         CancellationToken cancellationToken = default) =>
         await ReadListAsync<PlannerResource>("api/v1/resources", cancellationToken);
+
+    public async Task<EmployeeWorkloadReportInfo> GetEmployeeWorkloadAsync(
+        DateOnly from, DateOnly to, CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/resources/workload?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", cancellationToken);
+        return await ReadSuccessAsync<EmployeeWorkloadReportInfo>(response, cancellationToken);
+    }
 
     public async Task<IReadOnlyList<PlannerSkill>> ListSkillsAsync(CancellationToken cancellationToken = default) =>
         await ReadArrayAsync<PlannerSkill>("api/v1/resources/skills", cancellationToken);

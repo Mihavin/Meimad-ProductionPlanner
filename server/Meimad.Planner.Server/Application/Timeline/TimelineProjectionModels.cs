@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using Meimad.Planner.Server.Domain.Timeline;
+
 namespace Meimad.Planner.Server.Application.Timeline;
 
 internal sealed record TimelineProjection(
@@ -12,7 +15,34 @@ internal sealed record TimelineProjection(
     string DayStartsAtLocal,
     string DayEndsAtLocal,
     IReadOnlyList<TimelineProductionRunProjection>? ProductionRuns = null,
-    IReadOnlyList<TimelineProjectionResourceLane>? Resources = null);
+    IReadOnlyList<TimelineProjectionResourceLane>? Resources = null,
+    // Each Employee's working time and bookings, for the workload calculation; not sent with the Timeline.
+    [property: JsonIgnore] IReadOnlyList<TimelineProjectionEmployee>? Employees = null);
+
+/// <summary>
+/// An Employee in the calculated Timeline: the working time the calculation used (their calendar,
+/// holidays, absences and the master calendar) and the work it booked on them.
+/// </summary>
+internal sealed record TimelineProjectionEmployee(
+    string EmployeeId,
+    string? Name,
+    string Role,
+    IReadOnlyList<TimelineWindow> Availability,
+    IReadOnlyList<TimelineProjectionEmployeeBooking> Bookings);
+
+/// <summary>
+/// Work booked on an Employee: <c>setup</c>, <c>qa</c> and <c>load_unload</c> of a Machine
+/// operation, or a <c>station_step</c> placed by the auxiliary allocator.
+/// </summary>
+internal sealed record TimelineProjectionEmployeeBooking(
+    string Kind,
+    string OperationId,
+    string? BatchNumber,
+    string? PartNumber,
+    int? OperationNumber,
+    string? Name,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt);
 
 /// <summary>
 /// One Workstation, External Resource or Employee with the provisional auxiliary work the

@@ -66,6 +66,7 @@ Setup contains the factory master data:
 - Working Calendars, breaks, holidays, and exceptions
 - Machine availability, maintenance, and breakdown/restore records
 - Employees/resources, roles, machine skills, photos, and availability
+- **Employees / Resources → Workload**: choose a period and press **Calculate** to see each active employee's planned load from the Timeline: working time, the setup, QA, load/unload and station-step hours booked on them, and the load percentage with a level (Low, Normal, High, Fully booked, Overbooked, No working time). Select an employee to see the load per day and the work booked on them. **Print report** opens the same report as a page in the browser; print it or save it as PDF. Only time from now on counts, and the figures change whenever the plan changes.
 - Material-order report and email settings
 - CNC connection settings and monitoring diagnostics
 - Per Machine: the **NC dialect** (control family of the Server-generated NC blocks) and the **NC viewer machine** (see below)

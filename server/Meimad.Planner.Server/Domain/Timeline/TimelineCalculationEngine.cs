@@ -1645,7 +1645,8 @@ internal sealed class TimelineCalculationEngine
                 loadUnload,
                 LoadUnloadDetail(
                     entry.Operation, runIndex + 1, loadOccurrenceCount,
-                    loadPhase?.ResourceId)));
+                    loadPhase?.ResourceId),
+                WorkerId(loadPhase?.ResourceId)));
             phaseLatest = AllocationStart(loadUnload, phaseLatest);
         }
 
@@ -1674,12 +1675,12 @@ internal sealed class TimelineCalculationEngine
 
         var setupIntervals = ProjectBackwardIntervals(
             setupPhase.Allocation, TimelineIntervalType.Setup, entry,
-            $"Setup worker: {setupPhase.ResourceId}");
+            $"Setup worker: {setupPhase.ResourceId}", WorkerId(setupPhase.ResourceId));
         var qaIntervals = ProjectBackwardIntervals(
             qaPhase.Allocation, TimelineIntervalType.Qa, entry,
-            $"QA worker: {qaPhase.ResourceId}");
+            $"QA worker: {qaPhase.ResourceId}", WorkerId(qaPhase.ResourceId));
         var loadIntervals = loadAllocations.SelectMany(load => ProjectBackwardIntervals(
-            load.Allocation, TimelineIntervalType.LoadUnload, entry, load.Detail)).ToArray();
+            load.Allocation, TimelineIntervalType.LoadUnload, entry, load.Detail, load.WorkerId)).ToArray();
         var productionIntervals = productionAllocations.SelectMany(production =>
             ProjectBackwardIntervals(
                 production, TimelineIntervalType.Production, entry, null)).ToArray();
@@ -1739,9 +1740,14 @@ internal sealed class TimelineCalculationEngine
         Allocation allocation,
         TimelineIntervalType type,
         BacklogEntry entry,
-        string? detail) => allocation.Intervals.Select(window => new TimelineInterval(
+        string? detail,
+        string? workerId = null) => allocation.Intervals.Select(window => new TimelineInterval(
             type, entry.MachineId, entry.Operation.OperationId,
-            window.StartsAt, window.EndsAt, detail)).ToArray();
+            window.StartsAt, window.EndsAt, detail, workerId)).ToArray();
+
+    /// <summary>The Employee a phase booked; an empty id means the phase needed no worker.</summary>
+    private static string? WorkerId(string? resourceId) =>
+        string.IsNullOrEmpty(resourceId) ? null : resourceId;
 
     private static IReadOnlyList<TimelineInterval> BackwardWaitingIntervals(
         BacklogEntry entry,
@@ -1999,7 +2005,8 @@ internal sealed class TimelineCalculationEngine
                     loadUnload,
                     LoadUnloadDetail(
                         entry.Operation, runIndex + 1, loadOccurrenceCount,
-                        loadPhase?.ResourceId)));
+                        loadPhase?.ResourceId),
+                    WorkerId(loadPhase?.ResourceId)));
                 phaseEarliest = loadUnload.FinishesAt;
             }
 
@@ -2056,7 +2063,8 @@ internal sealed class TimelineCalculationEngine
             entry.Operation.OperationId,
             window.StartsAt,
             window.EndsAt,
-            $"Setup worker: {setupPhase.ResourceId}")).ToArray();
+            $"Setup worker: {setupPhase.ResourceId}",
+            WorkerId(setupPhase.ResourceId))).ToArray();
         var productionWindows = productionAllocations.SelectMany(production => production.Intervals);
         var productionIntervals = (partFinishes is null ? productionWindows : Merge(productionWindows))
             .Select(window => new TimelineInterval(
@@ -2067,11 +2075,12 @@ internal sealed class TimelineCalculationEngine
             window.EndsAt)).ToArray();
         var qaIntervals = qaPhase.Allocation.Intervals.Select(window => new TimelineInterval(
             TimelineIntervalType.Qa, entry.MachineId, entry.Operation.OperationId,
-            window.StartsAt, window.EndsAt, $"QA worker: {qaPhase.ResourceId}")).ToArray();
+            window.StartsAt, window.EndsAt, $"QA worker: {qaPhase.ResourceId}",
+            WorkerId(qaPhase.ResourceId))).ToArray();
         var loadUnloadIntervals = loadAllocations.SelectMany(load =>
             load.Allocation.Intervals.Select(window => new TimelineInterval(
                 TimelineIntervalType.LoadUnload, entry.MachineId, entry.Operation.OperationId,
-                window.StartsAt, window.EndsAt, load.Detail))).ToArray();
+                window.StartsAt, window.EndsAt, load.Detail, load.WorkerId))).ToArray();
         var result = new TimelineOperationResult(
             entry.Operation.OperationId,
             entry.MachineId,
@@ -2776,7 +2785,7 @@ internal sealed class TimelineCalculationEngine
 
     private sealed record ProductionRun(int PartCount, bool RequiresLoadUnload);
 
-    private sealed record ScheduledLoad(Allocation Allocation, string Detail);
+    private sealed record ScheduledLoad(Allocation Allocation, string Detail, string? WorkerId = null);
 
     private sealed record ResourceReservation(
         string ResourceId,

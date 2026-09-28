@@ -1144,3 +1144,26 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 **Implemented:** `ScheduleLockedGroup` places the members in route order from the group's earliest start, sharing the worker bookings, with no common-start retry (`FindCommonStart` removed). The group starts at its first member activity; each member's Machine is reserved from then until its own first work ("until a setup worker is free for this Machine" or "until the first part arrives") and after its last part until the group finish. A run on a copy of the live database places OP100 (Nadav sets it up while OP80 runs) and the group's blocking conflicts disappear.
 
 **Tests:** `TimelineCalculationEngineTests.Locked_simultaneous_members_are_set_up_one_after_the_other_by_the_one_qualified_setup_worker`; the other locked-group tests keep their results.
+
+## Employee workload calculator (2026-09-28)
+
+**Owner decision (2026-09-28):** "Employees tabs in Setup. Add employee workload calculator with report." Chosen: **planned load** from the Timeline (not recorded work), shown **on screen and as a printable page**.
+
+**Implemented:** the Timeline engine now tags each worker interval (setup, first-part QA, load/unload) with the Employee that it books; the projection keeps a Server-internal list of Employee bookings and availability, including the station steps the auxiliary allocator places on Employees. It is not serialized on the Timeline response. `EmployeeWorkloadService` and `GET /api/v1/resources/workload?from=&to=` compute this for whole factory days (at most 92):
+- working time is the Timeline availability of each active Employee;
+- booked time is split by kind;
+- the load is given per period and per day, with a level and the work items;
+- only time from now on counts (`countedFrom`), because the Timeline plans forward from now;
+- overlapping bookings add up, so a double booking shows above 100 %.
+
+Nothing is stored. Windows **Setup → Employees / Resources** now has inner tabs **Employees** (the former page) and **Workload**:
+- **Workload** has a period (default today plus 13 days), **Calculate**, the Employee table with level text and colour, and the selected Employee's load per day and booked work;
+- **Print report** writes a self-contained HTML page (summary, day matrix, work per Employee; right-to-left in Hebrew) to `%TEMP%\MeimadPlanner\Reports` and opens it in the browser to print or save as PDF;
+- he/ru texts are included.
+
+**Tests:** `TimelineApiTests.Employee_workload_totals_the_timeline_bookings_against_working_hours`; client `EmployeeWorkloadViewModelTests` (calculation and selection, period validation and Server refusal, report content in both directions).
+
+**Open points:**
+- Recorded (actual) work is not included; MVP timing holds only current values (AGENTS.md rule 12).
+- The load is the Timeline's prediction and changes with every planning change.
+- Station steps booked only on a Workstation, with no Employee, do not count for any Employee.

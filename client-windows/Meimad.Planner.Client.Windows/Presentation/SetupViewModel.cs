@@ -294,6 +294,9 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
 
     public KitaronPushViewModel KitaronPush { get; } = new();
 
+    /// <summary>Setup → Employees → Workload: planned load per employee and the printable report.</summary>
+    public EmployeeWorkloadViewModel Workload { get; } = new();
+
     public NetworkFolderViewModel NetworkFolder { get; } = new();
 
     public ObservableCollection<WorkingCalendar> WorkingCalendars { get; } = [];
@@ -891,6 +894,7 @@ internal sealed class SetupViewModel : INotifyPropertyChanged
         ResourceMasterData.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         KitaronStations.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         KitaronPush.AttachSession(newApiClient, nextIsEditor);
+        Workload.AttachSession(newApiClient);
         NetworkFolder.AttachSession(newApiClient, newClientId, nextGeneration, nextIsEditor);
         if (!apiChanged
             && string.Equals(clientId, newClientId, StringComparison.Ordinal)

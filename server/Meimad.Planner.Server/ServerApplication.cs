@@ -177,6 +177,7 @@ public static class ServerApplication
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Meimad-Planner/0.1.10");
         });
         builder.Services.AddSingleton<AdministrativeSetupService>();
+        builder.Services.AddSingleton<Meimad.Planner.Server.Application.Reports.EmployeeWorkloadService>();
         builder.Services.AddSingleton<IPlanningDeletionRepository, SqlitePlanningDeletionRepository>();
         builder.Services.AddSingleton<PlanningDeletionService>();
         builder.Services.AddSingleton<ICaseModelFileRepository, SqliteCaseModelFileRepository>();

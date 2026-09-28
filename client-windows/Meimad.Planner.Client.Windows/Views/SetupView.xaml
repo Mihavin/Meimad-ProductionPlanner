@@ -892,6 +892,8 @@
 
             <TabItem ToolTip="Manage employees, roles, skills, and availability">
                 <TabItem.Header><StackPanel Orientation="Horizontal"><Image Source="{StaticResource ResourcesButtonIcon}" Width="20" Height="20" Margin="0,0,5,0" /><TextBlock Text="Employees / Resources" VerticalAlignment="Center" /></StackPanel></TabItem.Header>
+                <TabControl Margin="0,4,0,0">
+                    <TabItem Header="Employees">
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
                     <Border Grid.Column="0" Style="{StaticResource SetupSection}">
@@ -967,6 +969,84 @@
                         </StackPanel></ScrollViewer>
                     </Border>
                 </Grid>
+                    </TabItem>
+                    <TabItem Header="Workload" ToolTip="Planned load of every employee from the Timeline for a period, with a printable report">
+                        <Grid Margin="8" DataContext="{Binding Workload}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="2*"/>
+                                <RowDefinition Height="10"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <WrapPanel Margin="0,0,0,6">
+                                <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <DatePicker SelectedDate="{Binding From}" Width="130"/>
+                                <TextBlock Text="To" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                                <DatePicker SelectedDate="{Binding To}" Width="130"/>
+                                <Button Content="Calculate" Command="{Binding CalculateCommand}" Margin="12,0,0,0"
+                                        ToolTip="Calculate the Timeline and total the work booked on each employee in the period."/>
+                                <Button Content="Print report" Command="{Binding PrintReportCommand}" Margin="8,0,0,0"
+                                        ToolTip="Open the report as a printable page: print it, or save it as PDF."/>
+                            </WrapPanel>
+                            <TextBlock Grid.Row="1" Text="{Binding Status}" TextWrapping="Wrap" Margin="0,0,0,6"
+                                       Foreground="{StaticResource MutedTextBrush}"/>
+                            <DataGrid Grid.Row="2" ItemsSource="{Binding Employees}" SelectedItem="{Binding SelectedEmployee}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Employee #" Binding="{Binding EmployeeNumber}" Width="90"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                    <DataGridTextColumn Header="Role" Binding="{Binding RoleText}" Width="110"/>
+                                    <DataGridTextColumn Header="Working time" Binding="{Binding AvailableText}" Width="95"/>
+                                    <DataGridTextColumn Header="Setup time" Binding="{Binding SetupText}" Width="80"/>
+                                    <DataGridTextColumn Header="QA" Binding="{Binding QaText}" Width="70"/>
+                                    <DataGridTextColumn Header="Load/unload" Binding="{Binding LoadUnloadText}" Width="85"/>
+                                    <DataGridTextColumn Header="Station steps" Binding="{Binding StationStepText}" Width="90"/>
+                                    <DataGridTextColumn Header="Booked" Binding="{Binding BookedText}" Width="80"/>
+                                    <DataGridTextColumn Header="Load" Binding="{Binding LoadText}" Width="70"/>
+                                    <DataGridTextColumn Header="Level" Binding="{Binding LevelText}" Width="110">
+                                        <DataGridTextColumn.CellStyle>
+                                            <Style TargetType="DataGridCell">
+                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LoadLevel}" Value="over"><Setter Property="Background" Value="#FDE2E1"/></DataTrigger>
+                                                    <DataTrigger Binding="{Binding LoadLevel}" Value="full"><Setter Property="Background" Value="#FDE2E1"/></DataTrigger>
+                                                    <DataTrigger Binding="{Binding LoadLevel}" Value="high"><Setter Property="Background" Value="#FFF3CD"/></DataTrigger>
+                                                    <DataTrigger Binding="{Binding LoadLevel}" Value="normal"><Setter Property="Background" Value="#E3F4E6"/></DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </DataGridTextColumn.CellStyle>
+                                    </DataGridTextColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Grid Grid.Row="4">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="LOAD PER DAY" FontWeight="Bold" Margin="0,0,0,4"/>
+                                    <DataGrid ItemsSource="{Binding SelectedDays}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Day" Binding="{Binding DateText}" Width="*"/>
+                                            <DataGridTextColumn Header="Working time" Binding="{Binding AvailableText}" Width="95"/>
+                                            <DataGridTextColumn Header="Booked" Binding="{Binding BookedText}" Width="80"/>
+                                            <DataGridTextColumn Header="Load" Binding="{Binding LoadText}" Width="70"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                                <DockPanel Grid.Column="2">
+                                    <TextBlock DockPanel.Dock="Top" Text="WORK BOOKED ON THE EMPLOYEE" FontWeight="Bold" Margin="0,0,0,4"/>
+                                    <DataGrid ItemsSource="{Binding SelectedWork}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Kind" Binding="{Binding KindText}" Width="95"/>
+                                            <DataGridTextColumn Header="Work" Binding="{Binding WorkText}" Width="*"/>
+                                            <DataGridTextColumn Header="Hours" Binding="{Binding HoursText}" Width="70"/>
+                                            <DataGridTextColumn Header="When" Binding="{Binding WhenText}" Width="230"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </TabItem>
 
             <TabItem ToolTip="Manage holiday calendar availability">

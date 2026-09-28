@@ -15,6 +15,7 @@ internal static class AdministrativeSetupEndpoints
         resources.MapGet(string.Empty, async (AdministrativeSetupService service,CancellationToken token)=>Results.Ok(new EmployeeResourceListResponse((await service.ListResourcesAsync(token)).Select(EmployeeResourceResponse.FromDomain).ToArray(),null)));
         resources.MapGet("/available", async (AdministrativeSetupService service,CancellationToken token)=>Results.Ok(new EmployeeResourceListResponse((await service.ListAvailableResourcesAsync(token)).Select(EmployeeResourceResponse.FromDomain).ToArray(),null)));
         resources.MapPost(string.Empty, CreateResourceAsync); resources.MapGet("/{resourceId}",GetResourceAsync); resources.MapPatch("/{resourceId}",UpdateResourceAsync); resources.MapDelete("/{resourceId}",DeleteResourceAsync);
+        resources.MapGet("/workload", ReadWorkloadAsync);
         resources.MapGet("/{resourceId}/exceptions", ListEmployeeExceptionsAsync);
         resources.MapPost("/{resourceId}/exceptions", CreateEmployeeExceptionAsync);
         resources.MapPatch("/{resourceId}/exceptions/{exceptionId}", UpdateEmployeeExceptionAsync);
@@ -25,6 +26,36 @@ internal static class AdministrativeSetupEndpoints
         holidays.MapPost(string.Empty,CreateHolidayAsync); holidays.MapPost("/sync",SynchronizeHolidaysAsync); holidays.MapGet("/{holidayId}",GetHolidayAsync); holidays.MapPatch("/{holidayId}",UpdateHolidayAsync); holidays.MapDelete("/{holidayId}",DeleteHolidayAsync);
         endpoints.MapGet("/api/v1/report-email-settings",GetReportSettingsAsync);
         endpoints.MapPut("/api/v1/report-email-settings",UpdateReportSettingsAsync);
+    }
+
+    /// <summary>
+    /// GET /api/v1/resources/workload?from=yyyy-MM-dd&amp;to=yyyy-MM-dd: planned Employee load from the
+    /// Timeline for whole factory days (default: today and the next 13 days).
+    /// </summary>
+    private static async Task<IResult> ReadWorkloadAsync(
+        string? from, string? to, HttpContext context,
+        Meimad.Planner.Server.Application.Reports.EmployeeWorkloadService service,
+        Meimad.Planner.Server.Configuration.TimelineOptions options,
+        TimeProvider timeProvider, CancellationToken token)
+    {
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(
+            timeProvider.GetUtcNow(), TimeZoneInfo.FindSystemTimeZoneById(options.TimeZoneId)).DateTime);
+        DateOnly? Parse(string? value) => string.IsNullOrWhiteSpace(value) ? null
+            : DateOnly.TryParseExact(value.Trim(), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var date) ? date : DateOnly.MinValue;
+        var start = Parse(from) ?? today;
+        var end = Parse(to) ?? start.AddDays(13);
+        if (start == DateOnly.MinValue || end == DateOnly.MinValue)
+            return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed",
+                "from and to are dates in the form yyyy-MM-dd.", context);
+        try
+        {
+            return Results.Ok(await service.CalculateAsync(start, end, token));
+        }
+        catch (Meimad.Planner.Server.Application.Reports.EmployeeWorkloadValidationException exception)
+        {
+            return PlanningHttpSupport.Error(StatusCodes.Status422UnprocessableEntity, "validation_failed", exception.Message, context);
+        }
     }
 
     private static async Task<IResult> CreateResourceAsync(CreateEmployeeResourceRequest request,HttpContext context,AdministrativeSetupService service,CancellationToken token)
