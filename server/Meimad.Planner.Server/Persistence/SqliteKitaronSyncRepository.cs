@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Meimad.Planner.Server.Application.Kitaron;
+using Meimad.Planner.Server.Domain.Orders;
 using Microsoft.Data.Sqlite;
 
 namespace Meimad.Planner.Server.Persistence;
@@ -980,6 +981,7 @@ internal sealed class SqliteKitaronSyncRepository(
             }
             else
             {
+                var status = await PlannerOrderStatusAsync(connection, transaction, id, item, cancellationToken);
                 await using var update = connection.CreateCommand();
                 update.Transaction = transaction;
                 update.CommandText = """
@@ -989,7 +991,7 @@ internal sealed class SqliteKitaronSyncRepository(
                     """;
                 Add(update, "$number", item.OrderNumber); Add(update, "$quantity", item.Quantity);
                 Add(update, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
-                Add(update, "$status", item.Status); Add(update, "$price", item.Price);
+                Add(update, "$status", status); Add(update, "$price", item.Price);
                 Add(update, "$kitaronStatus", KitaronStatus(item.Status));
                 Add(update, "$now", now.ToString("O")); Add(update, "$id", id);
                 await update.ExecuteNonQueryAsync(cancellationToken);
@@ -999,7 +1001,9 @@ internal sealed class SqliteKitaronSyncRepository(
             return;
         }
         var orderNeedsUpdate = await OrderNeedsUpdateAsync(
-            connection, transaction, link.Value.TargetId, item, cancellationToken);
+            connection, transaction, link.Value.TargetId, item,
+            await PlannerOrderStatusAsync(connection, transaction, link.Value.TargetId, item, cancellationToken),
+            cancellationToken);
         if (orderNeedsUpdate)
         {
             if (await OrderRequiresBatchRemovalAsync(
@@ -1022,18 +1026,19 @@ internal sealed class SqliteKitaronSyncRepository(
                         counts.BatchesDeleted++;
                 }
             }
+            // Removing Batches above changes the production facts the status is derived from.
+            var status = await PlannerOrderStatusAsync(
+                connection, transaction, link.Value.TargetId, item, cancellationToken);
             await using var update = connection.CreateCommand();
             update.Transaction = transaction;
             update.CommandText = """
                 UPDATE orders SET order_reference=$number, quantity=$quantity, work_finish_date=$date,
-                    status=CASE WHEN $status='active' AND status IN ('in_production','complete')
-                                THEN status ELSE $status END,
-                    kitaron_status=$kitaronStatus, price=$price,
+                    status=$status, kitaron_status=$kitaronStatus, price=$price,
                     version=version+1, updated_at=$now WHERE id=$id;
                 """;
             Add(update, "$number", item.OrderNumber); Add(update, "$quantity", item.Quantity);
             Add(update, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
-            Add(update, "$status", item.Status); Add(update, "$kitaronStatus", KitaronStatus(item.Status));
+            Add(update, "$status", status); Add(update, "$kitaronStatus", KitaronStatus(item.Status));
             Add(update, "$price", item.Price); Add(update, "$now", now.ToString("O"));
             Add(update, "$id", link.Value.TargetId);
             await update.ExecuteNonQueryAsync(cancellationToken);
@@ -1068,6 +1073,27 @@ internal sealed class SqliteKitaronSyncRepository(
         "cancelled" => "cancelled",
         _ => "active"
     };
+
+    /// <summary>
+    /// The Planner status a Kitaron Order row gives an existing Order. Kitaron's closed
+    /// (complete) and stopped (cancelled) are authoritative. Kitaron's "active" only means
+    /// "not closed", so the Order's own production facts decide between active, in production
+    /// and complete, as they do after every Batch change. Keeping the stored status instead
+    /// left Orders an earlier Kitaron status reading had wrongly closed complete for good, so
+    /// they stopped counting as demand for their Case and its children.
+    /// </summary>
+    private static async Task<string> PlannerOrderStatusAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string orderId,
+        KitaronSyncOrder item,
+        CancellationToken cancellationToken)
+    {
+        if (item.Status != OrderStatuses.ActiveToken) return item.Status;
+        var facts = await SqliteOrderLifecycle.ReadFactsAsync(
+            connection, transaction, orderId, item.Quantity, cancellationToken);
+        return OrderLifecycle.Derive(facts).ToContractToken();
+    }
 
     /// <summary>
     /// Whether one of the Batch's operations has a Production Run whose structure is locked
@@ -1133,6 +1159,7 @@ internal sealed class SqliteKitaronSyncRepository(
         SqliteTransaction transaction,
         string orderId,
         KitaronSyncOrder item,
+        string plannerStatus,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -1143,12 +1170,12 @@ internal sealed class SqliteKitaronSyncRepository(
                 WHERE id=$id AND (
                     order_reference IS NOT $number OR quantity IS NOT $quantity
                     OR work_finish_date IS NOT $date
-                    OR ($status<>'active' AND status IS NOT $status)
+                    OR status IS NOT $status
                     OR kitaron_status IS NOT $kitaronStatus OR price IS NOT $price));
             """;
         Add(command, "$id", orderId); Add(command, "$number", item.OrderNumber);
         Add(command, "$quantity", item.Quantity); Add(command, "$date", item.WorkFinishDate.ToString("yyyy-MM-dd"));
-        Add(command, "$status", item.Status); Add(command, "$kitaronStatus", KitaronStatus(item.Status));
+        Add(command, "$status", plannerStatus); Add(command, "$kitaronStatus", KitaronStatus(item.Status));
         Add(command, "$price", item.Price);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
     }

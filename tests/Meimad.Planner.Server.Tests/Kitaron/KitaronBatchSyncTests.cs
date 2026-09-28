@@ -142,6 +142,43 @@ public sealed class KitaronBatchSyncTests
     }
 
     [Fact]
+    public async Task An_order_open_in_kitaron_takes_the_status_of_its_own_production_not_a_stale_complete()
+    {
+        await RunAsync(async application =>
+        {
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await SeedAuthorityAsync(database);
+            var repository = application.Services.GetRequiredService<IKitaronSyncRepository>();
+            await repository.ApplyAsync(Plan([Operation()], null), Now, CancellationToken.None);
+
+            // An earlier Kitaron status reading closed the open Order; Kitaron still reports it open.
+            await ExecuteAsync(database, "UPDATE orders SET status = 'complete', kitaron_status = 'active';");
+            await repository.ApplyAsync(Plan([Operation()], null), Now.AddMinutes(1), CancellationToken.None);
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("active|active", await ScalarAsync(connection,
+                    "SELECT status || '|' || kitaron_status FROM orders;"));
+            }
+
+            // Production the Planner saw started keeps the Order in production.
+            var batch = new KitaronSyncBatch(
+                "wo:4003", "PN-ROUTE", "4003", 5, [new KitaronSyncBatchAllocation("7001", 5)],
+                "unknown", null, "hash-c");
+            await repository.ApplyAsync(Plan([Operation()], [batch]), Now.AddMinutes(2), CancellationToken.None);
+            await ExecuteAsync(database, """
+                UPDATE batch_operations SET status = 'in_progress';
+                UPDATE production_batches SET status = 'in_production';
+                UPDATE orders SET status = 'complete';
+                """);
+            await repository.ApplyAsync(Plan([Operation()], [batch]), Now.AddMinutes(3), CancellationToken.None);
+            await using (var connection = await database.OpenConnectionAsync())
+            {
+                Assert.Equal("in_production", await ScalarAsync(connection, "SELECT status FROM orders;"));
+            }
+        });
+    }
+
+    [Fact]
     public async Task A_work_order_without_operations_is_imported_pending_and_gets_them_from_the_route()
     {
         await RunAsync(async application =>

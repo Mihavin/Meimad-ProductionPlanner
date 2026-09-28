@@ -1071,3 +1071,13 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 - The first real push has not been made; start with Preview, then Push now once, and check the operations in Kitaron.
 - Kitaron records no Planner user for a pushed value; the Planner's push log (who, when, old and new value) is the record.
 - Operations whose number exists only in the Case route (not on the Work Order's route card) are not pushed.
+
+## Kitaron-open Orders stuck complete (2026-09-28)
+
+**Finding (read-only, live data):** 746 Orders that Kitaron reports open (`kitaron_status = 'active'`) were stored `complete` without any Batch allocation, so they did not count as demand and child Cases derived nothing from them (for example `30P450171003-501` → `30P450171100-001`). An earlier Kitaron status reading had closed them; the sync then kept a stored `complete`/`in_production` whenever Kitaron said `active` and never compared the status again.
+
+**Implemented:** while Kitaron reports an Order `active`, the sync derives its Planner status from the Order's own production facts (`SqliteOrderLifecycle.ReadFactsAsync` + `OrderLifecycle.Derive`), also when first linking an existing Planner Order, and a differing stored status makes the Order update. The next sync repairs the 746 Orders; the 16 `in_production` ones have started operations and keep that status.
+
+**Tests:** `KitaronBatchSyncTests.An_order_open_in_kitaron_takes_the_status_of_its_own_production_not_a_stale_complete` (fails without the fix).
+
+**Owner decision (2026-09-28):** an open Kitaron Work Order whose sales-order line is closed or stopped stays out of the Planner (164 on the live data, for example 41448 of `30P450171100-001`), as in Kitaron's own planning (setting 242 = NO).
