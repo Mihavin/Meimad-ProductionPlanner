@@ -1474,6 +1474,14 @@ internal sealed record OrderUpdate(
     string? Notes,
     decimal? Price = null);
 
+/// <summary>The Work Order after "Refresh from Case" and what the refresh changed.</summary>
+internal sealed record WorkOrderRefreshResult(
+    ProductionBatch Batch,
+    int OperationsAdded,
+    int OperationsUpdated,
+    int OperationsRemoved,
+    IReadOnlyList<string> NumberConflicts);
+
 internal sealed record ProductionBatch(
     string BatchId,
     string CaseId,

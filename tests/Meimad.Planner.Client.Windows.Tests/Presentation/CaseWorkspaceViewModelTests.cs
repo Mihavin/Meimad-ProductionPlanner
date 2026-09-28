@@ -656,6 +656,33 @@ public sealed class CaseWorkspaceViewModelTests
     }
 
     [Fact]
+    public async Task Refresh_from_case_reloads_a_released_work_order_and_reports_what_changed()
+    {
+        var api = new FakeApiClient(CreateCase());
+        var viewModel = new CaseWorkspaceViewModel(new FakeFolderLauncher());
+        viewModel.AttachSession(api, "windows-1", EditorStatus(26));
+        await viewModel.EnsureLoadedAsync();
+        viewModel.SelectedBatch = viewModel.Batches.Single();
+        var planChanged = 0;
+        viewModel.PlanChanged += (_, _) => planChanged++;
+
+        Assert.True(viewModel.RefreshBatchOperationsCommand.CanExecute(null));
+        await viewModel.RefreshSelectedBatchOperationsAsync();
+
+        Assert.Equal("batch-1", api.LastRefreshedBatchId);
+        Assert.Equal(26, api.LastGeneration);
+        Assert.Equal("released", viewModel.SelectedBatch?.ReleaseState);
+        Assert.Equal(3, viewModel.SelectedBatch?.BatchOperationCount);
+        Assert.Contains("1 updated, 1 added, 0 removed", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("OP30", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Equal(1, planChanged);
+
+        // A cancelled Work Order is production history: nothing to reload.
+        await viewModel.CancelSelectedBatchProductionAsync();
+        Assert.False(viewModel.RefreshBatchOperationsCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Order_edit_omits_unchanged_status_so_server_can_rederive_it_after_quantity_changes()
     {
         var api = new FakeApiClient(CreateCase());
@@ -922,6 +949,8 @@ public sealed class CaseWorkspaceViewModelTests
         internal ProductionBatchCreate? LastBatchCreate { get; private set; }
         internal ProductionBatchUpdate? LastBatchUpdate { get; private set; }
         internal string? LastCancelledBatchId { get; private set; }
+
+        internal string? LastRefreshedBatchId { get; private set; }
         internal string? LastBatchEntityTag { get; private set; }
         internal CaseOperationCreate? LastOperationCreate { get; private set; }
         internal CaseOperationUpdate? LastOperationUpdate { get; private set; }
@@ -1251,6 +1280,21 @@ public sealed class CaseWorkspaceViewModelTests
             return Task.FromResult(new ProductionBatch(
                 batchId, plannerCase.CaseId, "B-1", "cancelled", 5, null, 1, 2,
                 [new("allocation-1", "order", "order-1", 5)]));
+        }
+
+        public Task<WorkOrderRefreshResult> RefreshBatchOperationsAsync(
+            string batchId,
+            string clientId,
+            long editGeneration,
+            CancellationToken cancellationToken = default)
+        {
+            LastRefreshedBatchId = batchId;
+            LastClientId = clientId;
+            LastGeneration = editGeneration;
+            return Task.FromResult(new WorkOrderRefreshResult(
+                new ProductionBatch(batchId, plannerCase.CaseId, "B-1", "in_production", 5, null, 3, 2,
+                    [new("allocation-1", "order", "order-1", 5)], ReleaseState: "released"),
+                1, 1, 0, ["OP30"]));
         }
 
         public Task<BatchMaterialReconciliation> GetBatchMaterialAsync(

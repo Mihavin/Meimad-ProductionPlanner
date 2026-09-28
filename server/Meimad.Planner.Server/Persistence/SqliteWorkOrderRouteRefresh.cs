@@ -10,12 +10,15 @@ namespace Meimad.Planner.Server.Persistence;
 /// Machine placement, a Case Operation the Work Order lacks is added, and an operation whose Case
 /// Operation is gone leaves the Work Order and its Machine. Started work is never changed, and an
 /// operation that an official package, a bench session or locked production history references stays.
-/// Released, complete and cancelled Work Orders are never touched.
+/// Released, complete and cancelled Work Orders are not touched automatically; a planner may refresh
+/// a released one on request (owner decision 2026-09-28), which applies the same rules and keeps it
+/// released. Complete and cancelled Work Orders are never touched.
 /// </summary>
 internal static class SqliteWorkOrderRouteRefresh
 {
-    private const string PendingWorkOrder =
-        "batch.release_state = 'pending' AND batch.status NOT IN ('complete', 'completed', 'cancelled')";
+    private const string OpenWorkOrder = "batch.status NOT IN ('complete', 'completed', 'cancelled')";
+
+    private const string PendingWorkOrder = "batch.release_state = 'pending' AND " + OpenWorkOrder;
 
     /// <summary>What a refresh changed; <see cref="NumberConflicts"/> lists Case Operations it could not add or renumber.</summary>
     internal sealed record Result(
@@ -48,6 +51,16 @@ internal static class SqliteWorkOrderRouteRefresh
         SqliteConnection connection, SqliteTransaction transaction, string actor,
         DateTimeOffset now, CancellationToken cancellationToken) =>
         RefreshAsync(connection, transaction, "$key IS NULL", null, actor, now, cancellationToken);
+
+    /// <summary>
+    /// A planner's "Refresh from Case": one pending or released Work Order takes its Case's
+    /// operations under the same rules, and a released one stays released.
+    /// </summary>
+    internal static Task<Result> RefreshOnRequestAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string batchId, string actor,
+        DateTimeOffset now, CancellationToken cancellationToken) =>
+        RefreshAsync(connection, transaction, "batch.id = $key", batchId, actor, now, cancellationToken,
+            OpenWorkOrder, "WORK_ORDER_REFRESHED_FROM_CASE_ON_REQUEST");
 
     /// <summary>
     /// Whether a Work Order holds a Case Operation: a released, complete or cancelled one keeps its
@@ -120,7 +133,9 @@ internal static class SqliteWorkOrderRouteRefresh
         string? key,
         string actor,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string condition = PendingWorkOrder,
+        string reason = "PENDING_WORK_ORDER_FOLLOWS_CASE")
     {
         var workOrders = new List<(string BatchId, string CaseId)>();
         await using (var read = connection.CreateCommand())
@@ -129,7 +144,7 @@ internal static class SqliteWorkOrderRouteRefresh
             read.CommandText = $"""
                 SELECT batch.id, batch.case_id
                 FROM production_batches batch
-                WHERE {PendingWorkOrder} AND {filter}
+                WHERE {condition} AND {filter}
                 ORDER BY batch.created_at, batch.id;
                 """;
             read.Parameters.AddWithValue("$key", (object?)key ?? DBNull.Value);
@@ -172,7 +187,7 @@ internal static class SqliteWorkOrderRouteRefresh
                     now,
                     actor,
                     new Dictionary<string, string> { ["productionBatchId"] = batchId, ["caseId"] = caseId },
-                    "PENDING_WORK_ORDER_FOLLOWS_CASE",
+                    reason,
                     null,
                     null,
                     new { added = batchAdded, updated = batchUpdated, removed = batchRemoved }),

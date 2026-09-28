@@ -35,6 +35,13 @@ internal interface IProductionBatchRepository
         EditAuthority editAuthority,
         CancellationToken cancellationToken);
 
+    /// <summary>Reloads a pending or released Work Order's operations from its Case, keeping its release state.</summary>
+    Task<(ProductionBatch Batch, WorkOrderRefreshSummary Summary)?> RefreshOperationsFromCaseAsync(
+        string batchId,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ProductionBatch>> ListByCaseAsync(
         string caseId,
         CancellationToken cancellationToken);

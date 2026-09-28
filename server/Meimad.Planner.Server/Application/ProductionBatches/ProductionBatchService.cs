@@ -77,6 +77,20 @@ internal sealed class ProductionBatchService
             batchId, released, timeProvider.GetUtcNow(), editAuthority, cancellationToken)
         ?? throw new ProductionBatchNotFoundException(batchId);
 
+    /// <summary>
+    /// "Refresh from Case" (owner decision 2026-09-28): the Work Order's not-started operations take
+    /// their Case Operations' current data, missing Case Operations are added and operations whose
+    /// Case Operation is gone leave, without returning a released Work Order to pending. Started work
+    /// is never changed.
+    /// </summary>
+    internal async Task<(ProductionBatch Batch, WorkOrderRefreshSummary Summary)> RefreshOperationsFromCaseAsync(
+        string batchId,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken = default) =>
+        await repository.RefreshOperationsFromCaseAsync(
+            batchId, timeProvider.GetUtcNow(), editAuthority, cancellationToken)
+        ?? throw new ProductionBatchNotFoundException(batchId);
+
     internal Task<ProductionBatch?> GetByIdAsync(
         string batchId,
         CancellationToken cancellationToken = default) =>
@@ -240,6 +254,13 @@ internal sealed class ProductionBatchVersionConflictException : Exception
 }
 
 /// <summary>A release the Work Order's state does not allow, e.g. no operations yet.</summary>
+/// <summary>What "Refresh from Case" changed; <see cref="NumberConflicts"/> names Case Operations it could not add or renumber.</summary>
+internal sealed record WorkOrderRefreshSummary(
+    int OperationsAdded,
+    int OperationsUpdated,
+    int OperationsRemoved,
+    IReadOnlyList<string> NumberConflicts);
+
 internal sealed class ProductionBatchReleaseException(string code, string message) : Exception(message)
 {
     internal string Code { get; } = code;

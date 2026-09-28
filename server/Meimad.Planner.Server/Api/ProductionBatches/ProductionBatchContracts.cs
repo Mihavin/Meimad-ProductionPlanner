@@ -4,6 +4,14 @@ using Meimad.Planner.Server.Domain.ProductionBatches;
 
 namespace Meimad.Planner.Server.Api.ProductionBatches;
 
+/// <summary>The refreshed Work Order and what "Refresh from Case" changed.</summary>
+internal sealed record WorkOrderRefreshResponse(
+    ProductionBatchResponse Batch,
+    int OperationsAdded,
+    int OperationsUpdated,
+    int OperationsRemoved,
+    IReadOnlyList<string> NumberConflicts);
+
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record CreateProductionBatchRequest(
     string? CaseId,

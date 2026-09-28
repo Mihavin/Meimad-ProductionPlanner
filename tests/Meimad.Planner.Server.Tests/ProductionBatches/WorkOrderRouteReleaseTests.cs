@@ -74,6 +74,55 @@ public sealed class WorkOrderRouteReleaseTests
     }
 
     [Fact]
+    public async Task Refresh_from_case_reloads_a_released_work_order_without_returning_it_to_pending()
+    {
+        await RunWithServerAsync(async (application, client) =>
+        {
+            var caseId = await CreateCaseAsync(client);
+            var mill = await CreateOperationAsync(client, caseId, 10, "Mill", "Mill 3x");
+            var batchId = await CreateWorkOrderAsync(client, caseId, "WO-REFRESH");
+            var database = application.Services.GetRequiredService<SqliteDatabase>();
+            await PlaceOnMachineAsync(database, batchId, 10);
+            await SetReleaseAsync(client, batchId, released: true);
+            await CreateOperationAsync(client, caseId, 20, "Deburr", "Mill 3x");
+            await PatchOperationAsync(client, caseId, mill, 1, new { setupTimeSeconds = 900 });
+            Assert.Equal(["10:Mill:Mill 3x:60"], await RouteAsync(database, batchId));
+
+            using (var refresh = await client.PostAsync($"/api/v1/batches/{batchId}/refresh-operations", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+                using var body = JsonDocument.Parse(await refresh.Content.ReadAsStringAsync());
+                Assert.Equal(1, body.RootElement.GetProperty("operationsAdded").GetInt32());
+                Assert.Equal(1, body.RootElement.GetProperty("operationsUpdated").GetInt32());
+                Assert.Equal("released", body.RootElement.GetProperty("batch").GetProperty("releaseState").GetString());
+            }
+            Assert.Equal(["10:Mill:Mill 3x:900", "20:Deburr:Mill 3x:60"], await RouteAsync(database, batchId));
+            Assert.Equal("released", await ScalarAsync(database,
+                $"SELECT release_state FROM production_batches WHERE id = '{batchId}';"));
+            // The placed operation kept its Machine.
+            Assert.Equal(1L, await ScalarAsync(database,
+                $"SELECT COUNT(*) FROM machine_assignments a JOIN batch_operations o ON o.id = a.batch_operation_id WHERE o.production_batch_id = '{batchId}' AND o.operation_number = 10 AND a.released_at IS NULL;"));
+
+            // Started work never changes; the rest still follows the Case.
+            await ExecuteAsync(database,
+                $"UPDATE batch_operations SET status = 'in_progress' WHERE production_batch_id = '{batchId}' AND operation_number = 10;");
+            await PatchOperationAsync(client, caseId, mill, 2, new { setupTimeSeconds = 1200 });
+            using (var refresh = await client.PostAsync($"/api/v1/batches/{batchId}/refresh-operations", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+            }
+            Assert.Equal(["10:Mill:Mill 3x:900", "20:Deburr:Mill 3x:60"], await RouteAsync(database, batchId));
+            Assert.Equal(1L, await ScalarAsync(database,
+                $"SELECT COUNT(*) FROM structured_event_log WHERE event_type = 'production_batch_route_refreshed' AND related_entity_ids_json LIKE '%{batchId}%';"));
+
+            await ExecuteAsync(database, $"UPDATE production_batches SET status = 'complete' WHERE id = '{batchId}';");
+            using var closed = await client.PostAsync($"/api/v1/batches/{batchId}/refresh-operations", null);
+            Assert.Equal(HttpStatusCode.Conflict, closed.StatusCode);
+            Assert.Contains("work_order_closed", await closed.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task A_work_order_whose_production_started_cannot_go_back_to_pending()
     {
         await RunWithServerAsync(async (application, client) =>

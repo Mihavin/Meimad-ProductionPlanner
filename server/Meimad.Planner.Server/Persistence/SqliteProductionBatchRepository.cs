@@ -1072,6 +1072,44 @@ internal sealed class SqliteProductionBatchRepository : IProductionBatchReposito
         return await GetByIdAsync(batchId, cancellationToken);
     }
 
+    public async Task<(ProductionBatch Batch, WorkOrderRefreshSummary Summary)?> RefreshOperationsFromCaseAsync(
+        string batchId,
+        DateTimeOffset now,
+        EditAuthority editAuthority,
+        CancellationToken cancellationToken)
+    {
+        SqliteWorkOrderRouteRefresh.Result result;
+        await using (var connection = await database.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = connection.BeginTransaction(deferred: false))
+        {
+            var actor = await EnsureEditAuthorityAsync(connection, transaction, editAuthority, cancellationToken);
+            if (!await ExistsAsync(
+                    connection, transaction,
+                    "SELECT EXISTS(SELECT 1 FROM production_batches WHERE id = $id);",
+                    "$id", batchId, cancellationToken))
+            {
+                return null;
+            }
+            if (await ExistsAsync(
+                    connection, transaction,
+                    "SELECT EXISTS(SELECT 1 FROM production_batches WHERE id = $id AND status IN ('complete', 'completed', 'cancelled'));",
+                    "$id", batchId, cancellationToken))
+            {
+                throw new ProductionBatchReleaseException(
+                    "work_order_closed",
+                    "This Work Order is complete or cancelled; its operations are production history and are not reloaded from the Case.");
+            }
+            result = await SqliteWorkOrderRouteRefresh.RefreshOnRequestAsync(
+                connection, transaction, batchId, actor ?? "planner", now, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        var batch = await GetByIdAsync(batchId, cancellationToken);
+        return batch is null
+            ? null
+            : (batch, new WorkOrderRefreshSummary(
+                result.OperationsAdded, result.OperationsUpdated, result.OperationsRemoved, result.NumberConflicts));
+    }
+
     private static BatchAllocation ReadAllocation(SqliteDataReader reader)
     {
         var token = reader.GetString(2);

@@ -23,6 +23,43 @@ internal static class ProductionBatchEndpoints
             SetReleaseStateAsync(batchId, true, context, service, token));
         batches.MapPost("/{batchId}/unrelease", (string batchId, HttpContext context, ProductionBatchService service, CancellationToken token) =>
             SetReleaseStateAsync(batchId, false, context, service, token));
+        batches.MapPost("/{batchId}/refresh-operations", RefreshOperationsAsync);
+    }
+
+    /// <summary>
+    /// POST /api/v1/batches/{id}/refresh-operations: reloads the Work Order's operations from its Case
+    /// without changing its release state (Manage Work Orders permission).
+    /// </summary>
+    private static async Task<IResult> RefreshOperationsAsync(
+        string batchId,
+        HttpContext httpContext,
+        ProductionBatchService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadEditAuthority(httpContext, out var editAuthority, out var accessError))
+            return accessError!;
+        try
+        {
+            var (batch, summary) = await service.RefreshOperationsFromCaseAsync(batchId, editAuthority!, cancellationToken);
+            return Results.Ok(new WorkOrderRefreshResponse(
+                ProductionBatchResponse.FromDomain(batch),
+                summary.OperationsAdded,
+                summary.OperationsUpdated,
+                summary.OperationsRemoved,
+                summary.NumberConflicts));
+        }
+        catch (ProductionBatchReleaseException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
+        catch (ProductionBatchNotFoundException)
+        {
+            return Error(StatusCodes.Status404NotFound, "resource_not_found", "The requested Production Batch was not found.", httpContext);
+        }
+        catch (EditModeMutationException exception)
+        {
+            return Error(StatusCodes.Status409Conflict, exception.Code, exception.Message, httpContext);
+        }
     }
 
     /// <summary>POST /api/v1/batches/{id}/release and /unrelease: planner release state (Edit Mode).</summary>

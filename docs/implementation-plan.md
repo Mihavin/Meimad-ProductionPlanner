@@ -1116,3 +1116,11 @@ A check of all 24 stored Cimatron reports gave sizes for every row, and the name
 **Tests:** Server `GCodeReleaseApiTests` (subprograms stored, numbered, downloadable, analysed, missing calls reported; placeholder and duplicate-number refusals leave nothing), `ProductionPackageApiTests.Package_copies_the_release_subprograms_unchanged_beside_the_runnable_program`, `NcSubprogramCallsTests`, migration version 88; client `CaseWorkspaceViewModelTests.Choosing_a_program_ticks_the_subprograms_it_calls_and_the_release_sends_the_ticked_ones`, `NcProgramFoldersTests.Released_subprograms_follow_the_program_and_shared_ones_are_copied`.
 
 **Open points:** Okuma `CALL O<name>` and Siemens-style named subprogram calls are not detected (they are not numbered `M98`/`G65` calls); such files can still be added by hand. The Offset Loader and verification macros (O9001–O9003) are commissioned on the machine and appear as calls not included only if a legacy template names them literally.
+
+## Refresh a Work Order from its Case on request (2026-09-28)
+
+**Owner decision (2026-09-28):** "Add an option to refresh operation in work order (reload from case operations) without move it to pending status."
+
+**Implemented:** `POST /api/v1/batches/{batchId}/refresh-operations` runs `SqliteWorkOrderRouteRefresh` for one pending or released Work Order (`RefreshOnRequestAsync`; complete and cancelled are refused with `409 work_order_closed`) and keeps its release state; the refresh rules are those of a pending Work Order, so started work, packages, bench sessions and locked production history are never changed. The Case form's Work Orders tab has **Refresh from Case**; the status line reports updated, added and removed operations and any number conflicts. he/ru texts.
+
+**Tests:** `WorkOrderRouteReleaseTests.Refresh_from_case_reloads_a_released_work_order_without_returning_it_to_pending`; client `CaseWorkspaceViewModelTests.Refresh_from_case_reloads_a_released_work_order_and_reports_what_changed`.

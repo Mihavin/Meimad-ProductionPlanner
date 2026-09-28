@@ -172,6 +172,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginEditBatchCommand = new AsyncCommand(BeginEditBatchAsync, () => CanBeginEditBatch);
         ReleaseBatchCommand = new AsyncCommand(() => SetSelectedBatchReleaseAsync(true), () => CanReleaseBatch);
         UnreleaseBatchCommand = new AsyncCommand(() => SetSelectedBatchReleaseAsync(false), () => CanUnreleaseBatch);
+        RefreshBatchOperationsCommand = new AsyncCommand(RefreshSelectedBatchOperationsAsync, () => CanRefreshBatchOperations);
         CancelCreateBatchCommand = new AsyncCommand(CancelCreateBatchAsync, () => IsCreatingBatch && !IsBusy);
         CreateBatchCommand = new AsyncCommand(CreateBatchAsync, () => CanCreateBatch);
         RefreshBatchMaterialCommand = new AsyncCommand(LoadSelectedBatchMaterialSafeAsync,
@@ -346,6 +347,9 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
     public WorkOrderMaterialOrdersViewModel WorkOrderMaterialOrders { get; } = new();
 
     public AsyncCommand UnreleaseBatchCommand { get; }
+
+    /// <summary>"Refresh from Case": reloads the selected Work Order's operations, released or pending.</summary>
+    public AsyncCommand RefreshBatchOperationsCommand { get; }
 
     public AsyncCommand BeginEditBatchCommand { get; }
 
@@ -613,6 +617,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
                 BeginEditBatchCommand.RaiseCanExecuteChanged();
                 ReleaseBatchCommand.RaiseCanExecuteChanged();
                 UnreleaseBatchCommand.RaiseCanExecuteChanged();
+                RefreshBatchOperationsCommand.RaiseCanExecuteChanged();
                 BatchMaterial = null;
                 MaterialReceiptReservations.Clear();
                 RaiseCommandStates();
@@ -783,6 +788,10 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
 
     public bool CanUnreleaseBatch => CanManageBatches && SelectedBatch is { IsReleased: true };
+
+    public bool CanRefreshBatchOperations => CanManageBatches && SelectedBatch is not null
+        && !string.Equals(SelectedBatch.Status, "complete", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(SelectedBatch.Status, "cancelled", StringComparison.OrdinalIgnoreCase);
 
     public string BatchListAuthorityText => isKitaronManagedCase
         ? "Work Orders come from Kitaron. Release a pending Work Order to production; allocations follow Kitaron."
@@ -2569,6 +2578,47 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Reloads the selected Work Order's operations from the Case Operations (owner decision
+    /// 2026-09-28): operations that have not started take the Case's current data, new Case
+    /// Operations are added, removed ones leave; a released Work Order stays released and started
+    /// work is never changed.
+    /// </summary>
+    internal async Task RefreshSelectedBatchOperationsAsync()
+    {
+        var batch = SelectedBatch;
+        if (batch is null || apiClient is null || !CanRefreshBatchOperations) return;
+        IsBusy = true;
+        try
+        {
+            var result = await apiClient.RefreshBatchOperationsAsync(batch.BatchId, clientId, editGeneration);
+            var saved = result.Batch;
+            var index = Batches.IndexOf(batch);
+            if (index >= 0) Batches[index] = saved;
+            SelectedBatch = saved;
+            var number = saved.BatchNumber;
+            var (added, updated, removed) = (result.OperationsAdded, result.OperationsUpdated, result.OperationsRemoved);
+            StatusMessage = added + updated + removed == 0
+                ? $"Work Order {number} already matches the Case Operations."
+                : $"Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed. Started operations were not changed.";
+            if (result.NumberConflicts.Count > 0)
+            {
+                var operations = string.Join(", ", result.NumberConflicts);
+                StatusMessage += " " + $"Not renumbered or added because another operation of the Work Order uses the number: {operations}.";
+            }
+            if (added + updated + removed > 0) PlanChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (IsExpected(exception))
+        {
+            StatusMessage = FriendlyMessage(exception);
+        }
+        finally
+        {
+            IsBusy = false;
+            RaiseStateProperties();
+        }
+    }
+
     internal async Task CancelSelectedBatchProductionAsync()
     {
         var batch = SelectedBatch;
@@ -3168,6 +3218,7 @@ internal sealed class CaseWorkspaceViewModel : INotifyPropertyChanged
         BeginCreateBatchCommand.RaiseCanExecuteChanged();
         ReleaseBatchCommand.RaiseCanExecuteChanged();
         UnreleaseBatchCommand.RaiseCanExecuteChanged();
+        RefreshBatchOperationsCommand.RaiseCanExecuteChanged();
         BeginEditBatchCommand.RaiseCanExecuteChanged();
         CancelCreateBatchCommand.RaiseCanExecuteChanged();
         CreateBatchCommand.RaiseCanExecuteChanged();

@@ -234,6 +234,13 @@ internal interface IPlannerApiClient : IDisposable
         long editGeneration,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+    /// <summary>Reloads the Work Order's operations from its Case without changing its release state.</summary>
+    Task<WorkOrderRefreshResult> RefreshBatchOperationsAsync(
+        string batchId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     Task<ProductionBatch> CancelBatchProductionAsync(
         string batchId,
         CancelProductionBatchRequest request,
@@ -1754,6 +1761,23 @@ internal sealed class PlannerApiClient : IPlannerApiClient
             editGeneration.ToString(CultureInfo.InvariantCulture));
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return await ReadSuccessAsync<ProductionBatch>(response, cancellationToken);
+    }
+
+    public async Task<WorkOrderRefreshResult> RefreshBatchOperationsAsync(
+        string batchId,
+        string clientId,
+        long editGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post,
+            $"api/v1/batches/{Uri.EscapeDataString(batchId)}/refresh-operations",
+            clientId);
+        request.Headers.Add(
+            EditGenerationHeader,
+            editGeneration.ToString(CultureInfo.InvariantCulture));
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadSuccessAsync<WorkOrderRefreshResult>(response, cancellationToken);
     }
 
     public async Task<BatchMaterialReconciliation> GetBatchMaterialAsync(

@@ -828,6 +828,8 @@
                                             ToolTip="Release the selected pending work order to production." />
                                     <Button Content="Return to pending" Command="{Binding UnreleaseBatchCommand}"
                                             ToolTip="Return the selected released work order to pending." />
+                                    <Button Content="Refresh from Case" Command="{Binding RefreshBatchOperationsCommand}"
+                                            ToolTip="Reload the selected work order's operations from the Case Operations without returning it to pending. Operations that have started are not changed." />
                                     <Button Content="Delete Selected" Click="DeleteBatch_Click" IsEnabled="{Binding CanDeleteSelectedBatch}" />
                                     <Button Content="Edit Selected" Command="{Binding BeginEditBatchCommand}" />
                                     <Button Content="Cancel production" Click="CancelBatchProduction_Click"

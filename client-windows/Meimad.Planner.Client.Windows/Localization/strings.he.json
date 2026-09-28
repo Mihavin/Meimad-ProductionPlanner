@@ -4462,5 +4462,10 @@
   "Called but not included: {programs}. The release goes ahead; these programs must already be on the machine.": "נקראות אך לא נכללו: {programs}. השחרור ממשיך; תוכניות אלה חייבות כבר להיות במכונה.",
   "{included}. Must be on the machine: {programs}": "{included}. חייבות להיות במכונה: {programs}",
   "{count} subprogram file(s) released with it.": "{count} קבצי תת-תוכנית שוחררו איתה.",
-  "Must be on the machine: {programs}.": "חייבות להיות במכונה: {programs}."
+  "Must be on the machine: {programs}.": "חייבות להיות במכונה: {programs}.",
+  "Refresh from Case": "רענון מהפריט",
+  "Reload the selected work order's operations from the Case Operations without returning it to pending. Operations that have started are not changed.": "טעינה מחדש של פעולות פקודת העבודה שנבחרה מפעולות הפריט, בלי להחזיר אותה להמתנה. פעולות שהתחילו אינן משתנות.",
+  "Work Order {number} already matches the Case Operations.": "פקודת העבודה {number} כבר תואמת את פעולות הפריט.",
+  "Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed. Started operations were not changed.": "פקודת העבודה {number} נטענה מחדש מהפריט: {updated} עודכנו, {added} נוספו, {removed} הוסרו. פעולות שהתחילו לא שונו.",
+  "Not renumbered or added because another operation of the Work Order uses the number: {operations}.": "לא מוספרו מחדש או נוספו כי פעולה אחרת בפקודת העבודה משתמשת במספר: {operations}."
 }

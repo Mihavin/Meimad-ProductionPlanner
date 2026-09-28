@@ -4462,5 +4462,10 @@
   "Called but not included: {programs}. The release goes ahead; these programs must already be on the machine.": "Вызываются, но не включены: {programs}. Выпуск выполняется; эти программы уже должны быть на станке.",
   "{included}. Must be on the machine: {programs}": "{included}. Должны быть на станке: {programs}",
   "{count} subprogram file(s) released with it.": "Вместе с ней выпущено файлов подпрограмм: {count}.",
-  "Must be on the machine: {programs}.": "Должны быть на станке: {programs}."
+  "Must be on the machine: {programs}.": "Должны быть на станке: {programs}.",
+  "Refresh from Case": "Обновить из изделия",
+  "Reload the selected work order's operations from the Case Operations without returning it to pending. Operations that have started are not changed.": "Перезагрузить операции выбранного заказа-наряда из операций изделия, не возвращая его в ожидание. Начатые операции не изменяются.",
+  "Work Order {number} already matches the Case Operations.": "Заказ-наряд {number} уже соответствует операциям изделия.",
+  "Work Order {number} reloaded from the Case: {updated} updated, {added} added, {removed} removed. Started operations were not changed.": "Заказ-наряд {number} перезагружен из изделия: обновлено {updated}, добавлено {added}, удалено {removed}. Начатые операции не изменены.",
+  "Not renumbered or added because another operation of the Work Order uses the number: {operations}.": "Не перенумерованы и не добавлены, потому что номер занят другой операцией заказа-наряда: {operations}."
 }
