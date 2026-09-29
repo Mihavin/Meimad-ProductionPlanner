@@ -21,9 +21,15 @@ public sealed class SpindleInterfaceApiTests
         var bt40 = Assert.Single(library.GetProperty("adaptors").EnumerateArray());
         Assert.Equal(("BT40", 65.4, 44.45, 63d, 25d), (bt40.GetProperty("name").GetString(), bt40.GetProperty("taperLength").GetDouble(),
             bt40.GetProperty("gaugeDiameter").GetDouble(), bt40.GetProperty("toolChangerDiameter").GetDouble(), bt40.GetProperty("toolChangerLength").GetDouble()));
-        var stud = Assert.Single(library.GetProperty("pullStuds").EnumerateArray());
-        Assert.Equal("HAAS BT40 45° M16", stud.GetProperty("name").GetString());
-        Assert.Equal(27.94, stud.GetProperty("exposedLength").GetDouble());
+        // The BT40 studs of the published standards (schema v92): L1 is the length above the holder.
+        var studs = library.GetProperty("pullStuds").EnumerateArray().ToDictionary(value => value.GetProperty("pullStudId").GetString()!);
+        Assert.Equal(9, studs.Count);
+        Assert.Equal(("HAAS BT40 45° M16", 34.93, 23d), (studs["haas-bt40-45-m16"].GetProperty("name").GetString(),
+            studs["haas-bt40-45-m16"].GetProperty("exposedLength").GetDouble(), studs["haas-bt40-45-m16"].GetProperty("pilotDiameter").GetDouble()));
+        Assert.Equal((90d, 35d, 15d, 60d), (studs["mas-p40t-3"].GetProperty("angle").GetDouble(), studs["mas-p40t-3"].GetProperty("exposedLength").GetDouble(),
+            studs["mas-p40t-3"].GetProperty("knobDiameter").GetDouble(), studs["mas-p40t-3"].GetProperty("overallLength").GetDouble()));
+        Assert.Equal((15d, 29d), (studs["jis-b6339-40p"].GetProperty("angle").GetDouble(), studs["jis-b6339-40p"].GetProperty("exposedLength").GetDouble()));
+        Assert.Equal(19.1, studs["mazak-bt40-45"].GetProperty("exposedLength").GetDouble());
 
         // Without the Setup permission nothing changes.
         using var anonymous = new HttpClient(server.Application.GetTestServer().CreateHandler()) { BaseAddress = client.BaseAddress };
@@ -98,7 +104,7 @@ public sealed class SpindleInterfaceApiTests
         Assert.Equal("bt40", root.GetProperty("machineSpindleAdaptorId").GetString());
         Assert.Equal("haas-bt40-45-m16", root.GetProperty("machinePullStudId").GetString());
         Assert.Equal(1, root.GetProperty("spindleAdaptors").GetArrayLength());
-        Assert.Equal(2, root.GetProperty("pullStuds").GetArrayLength());
+        Assert.Equal(10, root.GetProperty("pullStuds").GetArrayLength());
         var rows = root.GetProperty("tools").EnumerateArray().ToArray();
         Assert.Equal(studId, rows[0].GetProperty("pullStudId").GetString());
         Assert.Equal(JsonValueKind.Null, rows[0].GetProperty("spindleAdaptorId").ValueKind);

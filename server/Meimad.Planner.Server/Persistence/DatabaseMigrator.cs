@@ -96,7 +96,8 @@ internal sealed class DatabaseMigrator
         new SchemaV88NcSubprogramsMigration(),
         new SchemaV89ReportEmailSignInMigration(),
         new SchemaV90SetupRestartMigration(),
-        new SchemaV91SpindleInterfaceMigration()
+        new SchemaV91SpindleInterfaceMigration(),
+        new SchemaV92Bt40PullStudsMigration()
     ];
 
     private readonly SqliteDatabase database;

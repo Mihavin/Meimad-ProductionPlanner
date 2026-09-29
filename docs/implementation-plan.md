@@ -1283,3 +1283,22 @@ Nothing is stored. Windows **Setup → Employees / Resources** now has inner tab
 - Collets are listed but not drawn in spindle mode (the formula has no collet term).
 - Other extensions are subtracted from HL.
 - Seeded dimensions should be checked against the actual tooling.
+
+### BT40 pull stud library (2026-09-29, schema v92)
+
+Owner request: "Find the dimensions for all BT40 pullstuds in web and add it to the pullstuds lib."
+
+Migration v92 inserts:
+- MAS 403 P40T-1/-2/-3 at 45°/60°/90°, solid and with a Ø4 coolant hole (-1H/-2H/-3H): L 60, L1 35, L2 28, flange Ø23, Ø17, knob Ø15, neck Ø10, M16;
+- JIS B6339-40P at 15°: L 54, L1 29, Ø23/Ø17, Ø7 hole;
+- Mazak BT40 at 45°: L 44.1, L1 19.1, Ø22/Ø17, Ø7 hole.
+
+Sources: the Jimmore/JIC pull stud catalog, pp. 45–46, and the Showa Tool MAS table. An existing name is skipped.
+
+The v91 HAAS entry had used L2 (27.94, flange to grip) as its length above the holder. It is corrected to L1 34.93 with flange Ø23, since it is the MAS P40T-1 geometry, unless it was edited in Setup.
+
+The JIS B6339 PA and PB and DIN 69872 studs are left out: they are for DIN 69871 holders, not BT40.
+
+Open points:
+- For JIS 40P and Mazak, the knob diameter is taken as the catalog's D1 and the neck is not published (drawn dashed).
+- Check all entries against the studs in use.

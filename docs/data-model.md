@@ -725,6 +725,7 @@ Planner sources: Work Orders linked through `kitaron_sync_links` (`production_ba
 - `machine_spindle_interfaces`: `machine_id` (primary key), `spindle_adaptor_id`, `pull_stud_id`, `version`, `updated_at`, `updated_by`. This is the Machine's default.
 - `tool_preparation_tools.spindle_adaptor_id` and `.pull_stud_id` (nullable): a saved tool's override, part of the immutable version and of its content hash.
 - Seeded with BT40 and HAAS BT40 45° M16. Entries used by a Machine or a saved tool cannot be deleted (restricting foreign keys).
+- Schema v92 adds the published BT40 pull studs: MAS 403 P40T-1/-2/-3 (45°/60°/90°) solid and with a Ø4 coolant hole (-1H/-2H/-3H), JIS B6339-40P (15°) and Mazak BT40 (45°), each with L, L1 (the length above the holder, stored as the exposed length), knob, neck and flange diameters and its source in the notes. Existing names are skipped. The seeded HAAS stud is corrected to L1 34.93 and flange Ø23 unless it was edited.
 - The tool shape dimension `outsideHolderLength` (OHL) is stored in `shape_json` like the other dimensions.
 
 ## Setup restart for a newer G-code release (schema v90)
